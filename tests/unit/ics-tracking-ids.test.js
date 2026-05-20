@@ -23,6 +23,12 @@ function readTeamPage() {
     return readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
 }
 
+function expectUtilsCacheTokenAtLeast(source, minVersion) {
+    const match = source.match(/\.\/js\/utils\.js\?v=(\d+)/);
+    expect(match).not.toBeNull();
+    expect(Number(match[1])).toBeGreaterThanOrEqual(minVersion);
+}
+
 describe('ICS recurring tracking ids', () => {
     it('keeps recurring occurrences distinct when matching tracked calendar events', () => {
         const ics = [
@@ -74,9 +80,9 @@ describe('ICS recurring tracking ids', () => {
     });
 
     it('bumps utils cache tokens anywhere the new tracking exports are imported', () => {
-        expect(readEditSchedule()).toContain("./js/utils.js?v=10");
-        expect(readParentDashboard()).toContain("./js/utils.js?v=10");
-        expect(readGamePlan()).toContain("./js/utils.js?v=10");
-        expect(readTeamPage()).toContain("./js/utils.js?v=10");
+        expectUtilsCacheTokenAtLeast(readEditSchedule(), 10);
+        expectUtilsCacheTokenAtLeast(readParentDashboard(), 10);
+        expectUtilsCacheTokenAtLeast(readGamePlan(), 10);
+        expectUtilsCacheTokenAtLeast(readTeamPage(), 10);
     });
 });

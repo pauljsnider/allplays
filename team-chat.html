@@ -227,8 +227,8 @@
     </div>
 
     <script type="module">
-        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=14';
+        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=14';
+        import { checkAuth } from './js/auth.js?v=16';
         import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=31';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=1';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
@@ -243,8 +243,13 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
         import { getApp } from './js/vendor/firebase-app.js';
+        import { getAppHomeUrl, getAppLoginUrl, isAppMode } from './js/native-app.js?v=4';
+        import { loadMobileParentProfile } from './js/mobile-parent-data.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
+        if (isAppMode()) {
+            renderHeader(document.getElementById('header-container'), {});
+        }
 
         /**
          * Format message text with simple markdown-like syntax:
@@ -418,7 +423,7 @@
         // Initialize
         checkAuth(async (user) => {
             if (!user) {
-                window.location.href = 'login.html';
+                window.location.href = getAppLoginUrl();
                 return;
             }
 
@@ -428,7 +433,7 @@
             teamId = getTeamIdFromUrl();
             if (!teamId) {
                 alert('No team specified');
-                window.location.href = 'dashboard.html';
+                window.location.href = getAppHomeUrl();
                 return;
             }
 
@@ -437,13 +442,15 @@
                 currentTeam = await getTeam(teamId);
                 if (!currentTeam) {
                     alert('Team not found');
-                    window.location.href = 'dashboard.html';
+                    window.location.href = getAppHomeUrl();
                     return;
                 }
                 currentTeam.id = teamId;
 
                 // Load user profile
-                currentUserProfile = await getUserProfile(user.uid);
+                currentUserProfile = isAppMode()
+                    ? await loadMobileParentProfile(user, { getUserProfile })
+                    : await getUserProfile(user.uid);
                 if (currentUserProfile?.photoUrl) {
                     senderPhotoCache.set(user.uid, currentUserProfile.photoUrl);
                 }
@@ -457,7 +464,7 @@
 
                 if (!canAccessTeamChat(userWithProfile, currentTeam)) {
                     alert('You do not have access to this team chat');
-                    window.location.href = 'dashboard.html';
+                    window.location.href = getAppHomeUrl();
                     return;
                 }
 
@@ -467,8 +474,8 @@
                 }
 
                 // Render team navigation banner with appropriate access level
-                const accessLevel = canModerate ? 'full' : 'parent';
-                const exitUrl = canModerate ? 'dashboard.html' : 'parent-dashboard.html';
+                const accessLevel = isAppMode() ? 'parent' : (canModerate ? 'full' : 'parent');
+                const exitUrl = isAppMode() ? getAppHomeUrl() : (canModerate ? 'dashboard.html' : 'parent-dashboard.html');
                 renderTeamAdminBanner(document.getElementById('team-banner'), {
                     team: currentTeam,
                     teamId: teamId,

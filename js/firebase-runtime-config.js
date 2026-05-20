@@ -11,7 +11,7 @@ const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
     measurementId: 'G-E48D0L8L40'
 };
 const DEFAULT_IMAGE_FIREBASE_CONFIG = {
-    apiKey: 'AIzaSyCxeLIe1ZcbX_GH5TEg1MBo8vmxGs6cttE',
+    apiKey: 'AIzaSyCerM6cMh3M9wH6FcvbOjoBog4ukikWRZM',
     authDomain: 'game-flow-img.firebaseapp.com',
     projectId: 'game-flow-img',
     storageBucket: 'game-flow-img.firebasestorage.app',
@@ -53,6 +53,10 @@ async function fetchFirebaseConfigFromHosting() {
         ? window.location.origin
         : 'http://localhost'; // Fallback for Node.js tests
     const absoluteUrl = new URL(FIREBASE_INIT_JSON_URL, baseUrl).href;
+    const protocol = new URL(absoluteUrl).protocol;
+    if (protocol !== 'http:' && protocol !== 'https:') {
+        throw new Error(`Firebase Hosting init config is unavailable for ${protocol} origins`);
+    }
     const response = await fetch(absoluteUrl, { cache: 'no-store' });
     if (!response.ok) {
         throw new Error(`Firebase config request failed (${response.status})`);

@@ -1,0 +1,106 @@
+name: update-changelog
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to add to the changelog
+        required: true
+        type: number
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-changelog-${{ github.event.pull_request.number || github.event.inputs.pr_number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  update-changelog:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && !startsWith(github.event.pull_request.head.ref, 'automation/changelog-pr-'))
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v5
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Resolve pull request number
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "number=${{ github.event.inputs.pr_number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Collect pull request metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          gh pr view "$PR_NUMBER" \
+            --json number,title,body,url,mergedAt,labels,files,author \
+            > .changelog-pr.json
+
+      - name: Require merged pull request
+        run: |
+          node -e "const fs = require('node:fs'); const pr = JSON.parse(fs.readFileSync('.changelog-pr.json', 'utf8')); if (!pr.mergedAt) { console.error('PR #' + pr.number + ' is not merged; refusing to update the changelog.'); process.exit(1); }"
+
+      - name: Update changelog
+        run: node scripts/update-changelog-from-pr.mjs --pr-json .changelog-pr.json --changelog changelog.html
+
+      - name: Show changelog diff
+        run: git diff -- changelog.html
+
+      - name: Commit changelog update
+        id: commit
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          if git diff --quiet -- changelog.html; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          branch="automation/changelog-pr-${PR_NUMBER}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$branch:refs/remotes/origin/$branch" || true
+          git switch -C "$branch"
+          git add changelog.html
+          git commit -m "Update changelog for PR #${PR_NUMBER}"
+          git push --force-with-lease origin "$branch:$branch"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Open changelog pull request
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          CHANGELOG_BRANCH: ${{ steps.commit.outputs.branch }}
+        run: |
+          existing="$(gh pr list --head "$CHANGELOG_BRANCH" --base master --state open --json number --jq '.[0].number // empty')"
+          title="Update changelog for PR #${PR_NUMBER}"
+          body="Automated changelog update for merged PR #${PR_NUMBER}."
+
+          if [ -n "$existing" ]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+          else
+            gh pr create --base master --head "$CHANGELOG_BRANCH" --title "$title" --body "$body"
+          fi

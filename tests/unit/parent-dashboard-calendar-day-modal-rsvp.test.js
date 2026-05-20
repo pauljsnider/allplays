@@ -105,10 +105,10 @@ const location = deps.location;
 const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
-        .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/db\.js\?v=\d+';/, 'const { getParentDashboardData, redeemParentInvite, getTeam, getTeams, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, submitRsvpForPlayer, getRsvps, getRsvpSummaries, createRideOffer, listRideOffersForEvent, requestRideSpot, updateRideRequestStatus, closeRideOffer, cancelRideRequest, getAggregatedStatsForPlayer, createParentMembershipRequest, listMyParentMembershipRequests, listParentTeamFeeRecipients } = deps.db;')
-        .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/utils\.js\?v=10';/, 'const { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } = deps.utils;')
+        .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/db\.js\?v=\d+';/, 'const { getParentDashboardData, redeemParentInvite, getTeam, getTeams, getPlayers, getGames, getTrackedCalendarEventUids, getUnreadChatCounts, getPracticeSessions, getPracticePacketCompletions, upsertPracticePacketCompletion, updateUserProfile, getUserProfile, submitRsvp, submitRsvpForPlayer, getRsvps, getRsvpSummaries, createRideOffer, listRideOffersForEvent, requestRideSpot, updateRideRequestStatus, closeRideOffer, cancelRideRequest, getAggregatedStatsForPlayer, createParentMembershipRequest, listMyParentMembershipRequests, listParentTeamFeeRecipients, listCertificatesForPlayer } = deps.db;')
+        .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/utils\.js\?v=\d+';/, 'const { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } = deps.utils;')
         .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/parent-incentives\.js\?v=3';/, 'const { getIncentiveRules, saveIncentiveRule: saveIncentiveRuleFn, toggleIncentiveRule: toggleIncentiveRuleFn, retireIncentiveRule: retireIncentiveRuleFn, markGamePaid: markGamePaidFn, unmarkGamePaid: unmarkGamePaidFn, getPaidGames, calculateEarnings, formatCents, getApplicableRulesForGame, getStatOptionsForTeam, renderIncentivesPanel, renderRuleBuilder, getCapSetting, saveCapSetting: saveCapSettingFn } = deps.parentIncentives;')
-        .replace("import { requireAuth, checkAuth } from './js/auth.js?v=14';", 'const { requireAuth, checkAuth } = deps.auth;')
+        .replace(/import\s*\{\s*requireAuth,\s*checkAuth\s*\}\s*from '\.\/js\/auth\.js\?v=\d+';/, 'const { requireAuth, checkAuth } = deps.auth;')
         .replace(
             /import\s*\{[\s\S]*?\}\s*from '\.\/js\/parent-dashboard-packets\.js\?v=3';/,
             'const { resolvePracticePacketSessionIdForEvent: resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent: resolvePracticePacketContextForEventBase, getScopedPracticePacketRow: getScopedPracticePacketRowBase, buildPracticePacketCompletionPayload: buildPracticePacketCompletionPayloadBase } = deps.parentDashboardPackets;'
@@ -122,6 +122,8 @@ const Blob = deps.Blob;
         .replace(/import\s*\{\s*renderParentTeamFees\s*\}\s*from '\.\/js\/parent-dashboard-fees\.js\?v=\d+';/, 'const { renderParentTeamFees } = deps.parentDashboardFees;')
         .replace("import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';", 'const { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;')
         .replace(/import\s*\{\s*renderFamilyPlanSection\s*\}\s*from '\.\/js\/family-plan\.js\?v=\d+';/, 'const { renderFamilyPlanSection } = deps.familyPlan;')
+        .replace(/import\s*\{\s*getAppScheduleUrl,\s*isAppMode,\s*withAppContext\s*\}\s*from '\.\/js\/native-app\.js\?v=\d+';/, 'const { getAppScheduleUrl, isAppMode, withAppContext } = deps.nativeApp;')
+        .replace(/import\s*\{\s*auth\s+as\s+firebaseAuth\s*\}\s*from '\.\/js\/firebase\.js\?v=\d+';/, 'const { auth: firebaseAuth } = deps.firebase;')
         .replace(/\binit\(\);\s*$/, `
 window.__parentDashboardTestHooks = {
     setAllScheduleEvents(value) {
@@ -231,7 +233,8 @@ function createDeps(submitRecorder) {
             async getAggregatedStatsForPlayer() { return null; },
             async createParentMembershipRequest() {},
             async listMyParentMembershipRequests() { return []; },
-            async listParentTeamFeeRecipients() { return []; }
+            async listParentTeamFeeRecipients() { return []; },
+            async listCertificatesForPlayer() { return []; }
         },
         utils: {
             renderHeader() {},
@@ -315,6 +318,20 @@ function createDeps(submitRecorder) {
         },
         familyPlan: {
             async renderFamilyPlanSection() {}
+        },
+        nativeApp: {
+            getAppScheduleUrl() { return 'calendar.html'; },
+            isAppMode() { return false; },
+            withAppContext(url) { return url; }
+        },
+        firebase: {
+            auth: {
+                app: {
+                    options: {
+                        projectId: 'test-project'
+                    }
+                }
+            }
         }
     };
 }

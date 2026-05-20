@@ -52,18 +52,19 @@
                     <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-2 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">Parent Dashboard</h1>
                     <p class="text-gray-600 text-sm md:text-base">Track your athletes' schedules and stats.</p>
                 </div>
-                <a href="calendar.html"
+                <a id="parent-calendar-link" href="calendar.html"
                     class="inline-flex items-center gap-2 bg-white text-primary-600 px-4 py-3 rounded-xl border border-primary-200 hover:bg-primary-50 transition font-semibold text-sm">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
                     Calendar
                 </a>
             </div>
         </div>
+        <div id="app-load-status" class="hidden mb-4 rounded-xl border px-4 py-3 text-sm"></div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Left Column: My Players -->
             <div class="lg:col-span-1 space-y-6">
-                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+                <div id="parent-access-request-card" class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
                     <div class="p-4 border-b border-gray-100 bg-gray-50">
                         <h2 class="text-lg font-bold text-gray-900">My Players</h2>
                     </div>
@@ -86,7 +87,7 @@
                 </div>
 
                 <!-- Coach Invite Info -->
-                <div class="bg-blue-50 rounded-2xl p-6 border border-blue-100">
+                <div id="coach-invite-card" class="bg-blue-50 rounded-2xl p-6 border border-blue-100">
                     <h3 class="font-semibold text-blue-900 mb-2">Need to add another player?</h3>
                     <p class="text-sm text-blue-800">Ask the coach to send you an invite code for that player. Once you have it, you can redeem it here.</p>
                     <div class="mt-4">
@@ -95,7 +96,7 @@
                     </div>
                 </div>
 
-                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+                <div id="request-team-access-card" class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
                     <div class="p-4 border-b border-gray-100 bg-gray-50">
                         <h2 class="text-lg font-bold text-gray-900">Request Team Access</h2>
                         <p class="text-xs text-gray-500 mt-1">Don't have an invite code yet? Request parent access from a coach or team admin.</p>
@@ -140,7 +141,7 @@
                     </div>
                     <div id="team-fees-list" class="p-6 space-y-4"></div>
                 </div>
-                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden min-h-[500px]">
+                <div id="schedule-section" class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden min-h-[500px]">
                     <div class="p-6 border-b border-gray-100 bg-gray-50 flex justify-between items-center gap-3">
                         <h2 class="text-xl font-bold text-gray-900">Schedule</h2>
                         <div class="flex items-center gap-2">
@@ -283,8 +284,8 @@
             listMyParentMembershipRequests,
             listParentTeamFeeRecipients,
             listCertificatesForPlayer
-        } from './js/db.js?v=50';
-        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
+        } from './js/db.js?v=52';
+        import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=14';
         import {
             getIncentiveRules,
             saveIncentiveRule as saveIncentiveRuleFn,
@@ -302,7 +303,7 @@
             getCapSetting,
             saveCapSetting as saveCapSettingFn,
         } from './js/parent-incentives.js?v=3';
-        import { requireAuth, checkAuth } from './js/auth.js?v=14';
+        import { requireAuth, checkAuth } from './js/auth.js?v=16';
         import {
             resolvePracticePacketSessionIdForEvent as resolvePracticePacketSessionIdForEventBase,
             resolvePracticePacketContextForEvent as resolvePracticePacketContextForEventBase,
@@ -318,9 +319,14 @@
         import { renderParentTeamFees } from './js/parent-dashboard-fees.js?v=4';
         import { renderFamilyPlanSection } from './js/family-plan.js?v=2';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
+        import { getAppScheduleUrl, isAppMode, withAppContext } from './js/native-app.js?v=4';
+        import { auth as firebaseAuth } from './js/firebase.js?v=13';
 
         renderFooter(document.getElementById('footer-container'));
 
+        const isMobileAppMode = isAppMode();
+        const appHydrationTimeoutMs = 8000;
+        const appOptionalTimeoutMs = 5000;
         let allScheduleEvents = [];
         let currentUserId = null;
         let currentUser = null;
@@ -376,6 +382,180 @@
                 .replace(/'/g, '&#39;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
+        }
+
+        function withTimeout(promise, label, timeoutMs) {
+            if (!timeoutMs) return promise;
+            let timeoutId;
+            const timeout = new Promise((_, reject) => {
+                timeoutId = window.setTimeout(() => {
+                    const error = new Error(`${label} timed out.`);
+                    error.code = 'timeout';
+                    reject(error);
+                }, timeoutMs);
+            });
+
+            return Promise.race([promise, timeout]).finally(() => {
+                window.clearTimeout(timeoutId);
+            });
+        }
+
+        function maybeTimeout(promise, label, timeoutMs) {
+            return isMobileAppMode ? withTimeout(promise, label, timeoutMs) : promise;
+        }
+
+        function setAppLoadStatus(message, tone = 'neutral') {
+            if (!isMobileAppMode) return;
+            const el = document.getElementById('app-load-status');
+            if (!el) return;
+            const toneClasses = {
+                neutral: 'border-blue-200 bg-blue-50 text-blue-800',
+                success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                warning: 'border-amber-200 bg-amber-50 text-amber-800',
+                error: 'border-red-200 bg-red-50 text-red-800'
+            };
+            el.className = `mb-4 rounded-xl border px-4 py-3 text-sm ${toneClasses[tone] || toneClasses.neutral}`;
+            el.textContent = message;
+            el.classList.remove('hidden');
+        }
+
+        function countUniqueTeams(children = []) {
+            return new Set((children || []).map((child) => child?.teamId).filter(Boolean)).size;
+        }
+
+        function toDashboardEventDate(value) {
+            if (!value) return null;
+            const date = value?.toDate ? value.toDate() : new Date(value);
+            return Number.isNaN(date?.getTime?.()) ? null : date;
+        }
+
+        function normalizeInitialScheduleEvents(events = []) {
+            return (events || []).map((event) => {
+                const date = toDashboardEventDate(event?.date);
+                if (!date) return null;
+                return {
+                    ...event,
+                    id: event.id || event.eventId || event.uid || '',
+                    type: event.type || 'game',
+                    date,
+                    childId: event.childId || event.playerId || '',
+                    childName: event.childName || event.playerName || 'Player',
+                    isDbGame: event.isDbGame !== false,
+                    isCancelled: event.isCancelled || event.status === 'cancelled'
+                };
+            }).filter(Boolean);
+        }
+
+        function renderInitialSchedule(data) {
+            allScheduleEvents = normalizeInitialScheduleEvents(data?.upcomingGames || []);
+            allPracticePacketSessions = [];
+            initPlayerFilter(data?.children || []);
+            setScheduleFilter('upcoming-all');
+            renderScheduleFromControls();
+            renderPracticePackets();
+        }
+
+        function prepareMobileMvpLayout() {
+            if (!isMobileAppMode) return;
+            document.getElementById('coach-invite-card')?.classList.add('hidden');
+            document.getElementById('request-team-access-card')?.classList.add('hidden');
+            document.getElementById('family-plan-card')?.classList.add('hidden');
+            document.getElementById('team-fees-card')?.classList.add('hidden');
+            document.getElementById('practice-packets-card')?.classList.add('hidden');
+            const calendarLink = document.getElementById('parent-calendar-link');
+            if (calendarLink) calendarLink.href = getAppScheduleUrl();
+        }
+
+        function scrollToAppHashTarget() {
+            if (!isMobileAppMode || !window.location.hash) return false;
+            const target = document.getElementById(window.location.hash.slice(1));
+            if (!target) return false;
+            window.setTimeout(() => target.scrollIntoView({ block: 'start', behavior: 'auto' }), 0);
+            return true;
+        }
+
+        function decodeFirestoreValue(value) {
+            if (!value || typeof value !== 'object') return null;
+            if (Object.prototype.hasOwnProperty.call(value, 'stringValue')) return value.stringValue;
+            if (Object.prototype.hasOwnProperty.call(value, 'integerValue')) return Number(value.integerValue);
+            if (Object.prototype.hasOwnProperty.call(value, 'doubleValue')) return Number(value.doubleValue);
+            if (Object.prototype.hasOwnProperty.call(value, 'booleanValue')) return value.booleanValue === true;
+            if (Object.prototype.hasOwnProperty.call(value, 'timestampValue')) return new Date(value.timestampValue);
+            if (Object.prototype.hasOwnProperty.call(value, 'nullValue')) return null;
+            if (value.arrayValue) {
+                return (value.arrayValue.values || []).map((item) => decodeFirestoreValue(item));
+            }
+            if (value.mapValue) {
+                return decodeFirestoreFields(value.mapValue.fields || {});
+            }
+            return null;
+        }
+
+        function decodeFirestoreFields(fields = {}) {
+            return Object.fromEntries(
+                Object.entries(fields).map(([key, value]) => [key, decodeFirestoreValue(value)])
+            );
+        }
+
+        async function readUserProfileViaRest(user) {
+            const projectId = firebaseAuth?.app?.options?.projectId;
+            if (!projectId || !user?.uid || typeof user.getIdToken !== 'function') {
+                throw new Error('Firebase REST profile fallback is unavailable.');
+            }
+
+            const token = await withTimeout(user.getIdToken(), 'Auth token', appOptionalTimeoutMs);
+            const response = await withTimeout(fetch(`https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/users/${encodeURIComponent(user.uid)}`, {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            }), 'Profile REST request', appOptionalTimeoutMs);
+
+            if (response.status === 404) return null;
+            if (!response.ok) {
+                throw new Error(`Profile REST request failed (${response.status}).`);
+            }
+
+            const payload = await response.json();
+            return decodeFirestoreFields(payload.fields || {});
+        }
+
+        function normalizeMobileParentChildren(parentOf = []) {
+            if (!Array.isArray(parentOf)) return [];
+            return parentOf
+                .map((child) => {
+                    const teamId = child?.teamId || '';
+                    const playerId = child?.playerId || child?.id || '';
+                    if (!teamId || !playerId) return null;
+                    return {
+                        ...child,
+                        teamId,
+                        playerId,
+                        playerName: child.playerName || child.name || 'Player',
+                        teamName: child.teamName || child.team || 'Team',
+                        playerPhotoUrl: child.playerPhotoUrl || child.photoUrl || ''
+                    };
+                })
+                .filter(Boolean);
+        }
+
+        async function loadMobileParentDashboardData(user) {
+            let profile = null;
+
+            if (user?.isNativeRestSession) {
+                profile = await readUserProfileViaRest(user);
+            } else {
+                try {
+                    profile = await withTimeout(getUserProfile(user.uid), 'Profile', appOptionalTimeoutMs);
+                } catch (error) {
+                    console.warn('[parent-dashboard] Firestore profile read timed out in app mode, trying REST fallback:', error);
+                    profile = await readUserProfileViaRest(user);
+                }
+            }
+
+            return {
+                upcomingGames: [],
+                children: normalizeMobileParentChildren(profile?.parentOf || [])
+            };
         }
 
         function setParentMembershipRequestStatus(message, tone = 'neutral') {
@@ -867,21 +1047,38 @@
 
         async function init() {
             try {
+                prepareMobileMvpLayout();
                 const user = await requireAuth();
                 currentUserId = user.uid;
                 currentUser = user;
+                renderHeader(document.getElementById('header-container'), user);
+                setAppLoadStatus('Loading your players and teams...');
 
                 // Allow checkAuth to populate user object fully
                 checkAuth((updatedUser) => {
                      renderHeader(document.getElementById('header-container'), updatedUser);
                 });
 
-                const [data] = await Promise.all([
-                    getParentDashboardData(user.uid),
-                    loadRequestAccessOptions(),
-                    refreshParentMembershipRequestList(user.uid)
-                ]);
-                await loadParentCertificateLinks(data.children);
+                let data = { children: [] };
+                try {
+                    data = isMobileAppMode
+                        ? await loadMobileParentDashboardData(user)
+                        : await getParentDashboardData(user.uid);
+                } catch (error) {
+                    console.error('[parent-dashboard] Failed to load parent dashboard data:', error);
+                    renderPlayers([]);
+                    renderTeamChats([]);
+                    const playersContainer = document.getElementById('my-players-list');
+                    const teamsContainer = document.getElementById('team-chats-list');
+                    if (playersContainer) {
+                        playersContainer.innerHTML = '<div class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Unable to load linked players. Sign out and sign back in, then try again.</div>';
+                    }
+                    if (teamsContainer) {
+                        teamsContainer.innerHTML = '<div class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Unable to load linked teams right now.</div>';
+                    }
+                    throw error;
+                }
+
                 renderPlayers(data.children);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
@@ -889,15 +1086,52 @@
                     if (!teamChildrenByTeamId.has(child.teamId)) teamChildrenByTeamId.set(child.teamId, []);
                     teamChildrenByTeamId.get(child.teamId).push(child);
                 });
+                renderTeamChats(data.children, {});
+                renderInitialSchedule(data);
+                setAppLoadStatus(`Loaded ${data.children.length} player${data.children.length === 1 ? '' : 's'} across ${countUniqueTeams(data.children)} team${countUniqueTeams(data.children) === 1 ? '' : 's'}.`, 'success');
+                if (isMobileAppMode) {
+                    if (!scrollToAppHashTarget()) {
+                        window.setTimeout(() => window.scrollTo({ top: 0, left: 0, behavior: 'auto' }), 0);
+                    }
+                }
 
                 // Get unique team IDs and fetch unread counts
                 const teamIds = [...new Set(data.children.map(c => c.teamId).filter(Boolean))];
-                await ensureParentTeamAccess(user.uid, teamIds);
-                const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
-                renderTeamChats(data.children, unreadCounts);
-                await renderFamilyPlanSection(document.getElementById('family-plan-card'), user, { playerLinks: data.children || [] });
-                await loadParentTeamFees(user.uid, data.children);
+                if (!isMobileAppMode) {
+                    loadParentCertificateLinks(data.children)
+                        .then(() => renderPlayers(data.children))
+                        .catch((error) => {
+                            console.warn('[parent-dashboard] Optional certificate links failed:', error);
+                        });
+
+                    ensureParentTeamAccess(user.uid, teamIds)
+                        .then(() => getUnreadChatCounts(user.uid, teamIds))
+                        .then((unreadCounts) => renderTeamChats(data.children, unreadCounts))
+                        .catch((error) => {
+                            console.warn('[parent-dashboard] Optional team chat unread counts failed:', error);
+                        });
+                }
+
                 queueParentDashboardHydration(data.children, user.uid);
+
+                if (!isMobileAppMode) {
+                    maybeTimeout(loadOptionalParentAccessPanels(user.uid), 'Parent access panels', appOptionalTimeoutMs).catch((error) => {
+                        console.warn('[parent-dashboard] Optional parent access panels failed:', error);
+                    });
+
+                    maybeTimeout(renderFamilyPlanSection(document.getElementById('family-plan-card'), user, { playerLinks: data.children || [] }), 'Family plan', appOptionalTimeoutMs)
+                        .catch((error) => {
+                            console.warn('[parent-dashboard] Optional family plan failed:', error);
+                            const familyPlanCard = document.getElementById('family-plan-card');
+                            if (familyPlanCard) {
+                                familyPlanCard.innerHTML = '<div class="p-6 text-center text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl">Family plan details could not be loaded right now.</div>';
+                            }
+                        });
+
+                    maybeTimeout(loadParentTeamFees(user.uid, data.children), 'Team fees', appOptionalTimeoutMs).catch((error) => {
+                        console.warn('[parent-dashboard] Optional team fees failed:', error);
+                    });
+                }
 
                 // Redeem Code Logic
                 document.getElementById('redeem-code-btn').addEventListener('click', async () => {
@@ -936,6 +1170,18 @@
             }
         }
 
+        async function loadOptionalParentAccessPanels(userId) {
+            const [requestOptionsResult] = await Promise.allSettled([
+                loadRequestAccessOptions(),
+                refreshParentMembershipRequestList(userId)
+            ]);
+
+            if (requestOptionsResult.status === 'rejected') {
+                console.warn('[parent-dashboard] Failed to load request access options:', requestOptionsResult.reason);
+                setParentMembershipRequestStatus('Team access options could not be loaded right now.', 'error');
+            }
+        }
+
         async function loadParentTeamFees(userId, children) {
             const card = document.getElementById('team-fees-card');
             const list = document.getElementById('team-fees-list');
@@ -961,10 +1207,12 @@
         function queueParentDashboardHydration(children, userId) {
             const runId = ++parentDashboardHydrationRun;
             window.setTimeout(() => {
-                hydrateParentDashboardData(children, userId, runId).catch((error) => {
+                maybeTimeout(hydrateParentDashboardData(children, userId, runId), 'Schedule hydration', appHydrationTimeoutMs).catch((error) => {
                     if (runId !== parentDashboardHydrationRun) return;
                     console.error('[parent-dashboard] Failed to hydrate schedule data:', error);
-                    allScheduleEvents = [];
+                    if (!allScheduleEvents.length) {
+                        allScheduleEvents = [];
+                    }
                     allPracticePacketSessions = [];
                     initPlayerFilter(children);
                     setScheduleFilter('upcoming-all');
@@ -1040,6 +1288,7 @@
             setScheduleFilter('upcoming-all');
             renderScheduleFromControls();
             renderPracticePackets();
+            scrollToAppHashTarget();
         }
 
         async function ensureParentTeamAccess(userId, teamIds, options = {}) {
@@ -1343,11 +1592,11 @@
                 `).join('')}
             `;
 
-            select.addEventListener('change', (e) => {
+            select.onchange = (e) => {
                 const playerId = e.target.value || '';
                 renderScheduleFromControls(playerId);
                 renderPracticePackets(playerId);
-            });
+            };
         }
 
         function getFilteredScheduleEvents(selectedPlayerId = '') {
@@ -1942,6 +2191,10 @@
                 const unreadBadge = unread > 0
                     ? `<span class="ml-1 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold text-white bg-red-500 rounded-full min-w-[18px]">${unread > 99 ? '99+' : unread}</span>`
                     : '';
+                const chatHref = isMobileAppMode
+                    ? withAppContext(`messages.html#teamId=${encodeURIComponent(team.teamId)}`)
+                    : `team-chat.html#teamId=${team.teamId}`;
+                const viewHref = `team.html#teamId=${team.teamId}`;
 
                 return `
                 <div class="flex items-center gap-3 p-3 rounded-xl border border-gray-200">
@@ -1953,15 +2206,15 @@
                         <div class="text-xs text-gray-500 truncate">${escapeHtml(team.playerNames.join(', '))}</div>
                     </div>
                     <div class="flex items-center gap-2 flex-shrink-0">
-                        <a href="team.html#teamId=${team.teamId}"
+                        ${isMobileAppMode ? '' : `<a href="${viewHref}"
                            class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
                             </svg>
                             View
-                        </a>
-                        <a href="team-chat.html#teamId=${team.teamId}"
+                        </a>`}
+                        <a href="${chatHref}"
                            class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium ${unread > 0 ? 'text-white bg-primary-600 hover:bg-primary-700' : 'text-gray-600 bg-gray-100 hover:bg-gray-200'} rounded-lg transition">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>

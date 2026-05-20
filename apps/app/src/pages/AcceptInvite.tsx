@@ -1,0 +1,188 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { CheckCircle2, KeyRound, LogIn, ShieldCheck, UserPlus, XCircle } from 'lucide-react';
+import { AuthFrame } from '../components/AuthFrame';
+import {
+  clearPendingInvite,
+  completeEmailLink,
+  isEmailLink,
+  mapLegacyRedirectToAppRoute,
+  readPendingInvite,
+  redeemInviteForUser,
+  rememberPendingInvite
+} from '../lib/authService';
+import type { AuthState } from '../lib/types';
+
+export function AcceptInvite({ auth }: { auth: AuthState }) {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const pendingInvite = readPendingInvite();
+  const urlCode = (searchParams.get('code') || '').trim().toUpperCase();
+  const code = urlCode || pendingInvite.code.trim().toUpperCase();
+  const inviteType = (searchParams.get('type') || pendingInvite.type || 'parent').trim().toLowerCase();
+  const [manualCode, setManualCode] = useState(code);
+  const [email, setEmail] = useState(window.localStorage.getItem('emailForSignIn') || '');
+  const [state, setState] = useState<'idle' | 'processing' | 'email-link' | 'success' | 'error'>('idle');
+  const [message, setMessage] = useState('');
+  const processedKeyRef = useRef('');
+
+  const authUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    if (code) {
+      params.set('code', code);
+      params.set('type', inviteType);
+    }
+    return `/auth?${params.toString()}`;
+  }, [code, inviteType]);
+
+  async function redeem(codeToRedeem: string) {
+    if (!auth.user) {
+      rememberPendingInvite(codeToRedeem, inviteType);
+      navigate(`${authUrl}&mode=login`);
+      return;
+    }
+
+    const normalizedCode = codeToRedeem.trim().toUpperCase();
+    const key = `${auth.user.uid}:${normalizedCode}`;
+    if (processedKeyRef.current === key) {
+      return;
+    }
+    processedKeyRef.current = key;
+
+    setState('processing');
+    setMessage('Processing invite...');
+
+    try {
+      const result = await redeemInviteForUser(auth.user.uid, normalizedCode, auth.user.email);
+      await auth.refresh();
+      clearPendingInvite();
+      setState('success');
+      setMessage(result?.message || 'Invite accepted.');
+      window.setTimeout(() => navigate(mapLegacyRedirectToAppRoute(result?.redirectUrl), { replace: true }), 700);
+    } catch (error: any) {
+      processedKeyRef.current = '';
+      setState('error');
+      setMessage(error?.message || 'Unable to accept this invite.');
+    }
+  }
+
+  useEffect(() => {
+    if (isEmailLink(window.location.href) && !auth.user) {
+      setState('email-link');
+      return;
+    }
+
+    if (!auth.loading && auth.user && code) {
+      redeem(code);
+    }
+  }, [auth.loading, auth.user, code]);
+
+  const handleManualSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    const normalizedCode = manualCode.trim().toUpperCase();
+    if (!normalizedCode || normalizedCode.length !== 8) {
+      setState('error');
+      setMessage('Please enter a valid 8-character invite code.');
+      return;
+    }
+    await redeem(normalizedCode);
+  };
+
+  const handleEmailLink = async (event: FormEvent) => {
+    event.preventDefault();
+    setState('processing');
+    setMessage('Completing sign-in link...');
+
+    try {
+      const result = await completeEmailLink(email, window.location.href);
+      await auth.refresh();
+      const codeToRedeem = code || pendingInvite.code;
+      if (codeToRedeem) {
+        const inviteResult = await redeemInviteForUser(result.user.uid, codeToRedeem, result.user.email || email);
+        clearPendingInvite();
+        setState('success');
+        setMessage(inviteResult?.message || 'Invite accepted.');
+        window.setTimeout(() => navigate(mapLegacyRedirectToAppRoute(inviteResult?.redirectUrl), { replace: true }), 700);
+      } else {
+        setState('success');
+        setMessage('Signed in successfully.');
+        window.setTimeout(() => navigate('/home', { replace: true }), 700);
+      }
+    } catch (error: any) {
+      setState('error');
+      setMessage(error?.message || 'Unable to complete this sign-in link.');
+    }
+  };
+
+  return (
+    <AuthFrame eyebrow="Invite" backTo="/auth" backLabel="Back to sign in">
+      <div className="flex items-start gap-3">
+        <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <UserPlus className="h-6 w-6" aria-hidden="true" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-black text-gray-950">Accept invite</h1>
+          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Redeem an invite code, link your account, then continue to the right dashboard.</p>
+        </div>
+      </div>
+
+      {code && !auth.user && state !== 'email-link' ? (
+        <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
+          <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">Invite found</div>
+          <div className="mt-1 font-mono text-lg font-black tracking-widest text-primary-900">{code}</div>
+          <div className="mt-3 grid gap-2">
+            <Link to={`${authUrl}&mode=login`} className="primary-button justify-center">
+              <LogIn className="h-4 w-4" aria-hidden="true" />
+              Sign in to accept
+            </Link>
+            <Link to={`${authUrl}&mode=signup`} className="secondary-button justify-center">
+              <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+              Create account with code
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
+      {state === 'email-link' ? (
+        <form className="mt-4 space-y-3" onSubmit={handleEmailLink}>
+          <p className="text-sm font-semibold leading-6 text-gray-600">Enter the email address that received this invite link.</p>
+          <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" />
+          <button type="submit" className="primary-button w-full justify-center">Continue</button>
+        </form>
+      ) : null}
+
+      <form className="mt-4 space-y-3" onSubmit={handleManualSubmit}>
+        <label className="block">
+          <span className="mb-1.5 flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
+            <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+            Invite code
+          </span>
+          <input className="auth-input text-center font-mono uppercase tracking-widest" value={manualCode} onChange={(event) => setManualCode(event.target.value.toUpperCase())} maxLength={8} placeholder="XXXXXXXX" />
+        </label>
+        <button type="submit" className="secondary-button w-full justify-center" disabled={state === 'processing'}>
+          {auth.user ? 'Join team' : 'Continue with code'}
+        </button>
+      </form>
+
+      {state === 'processing' ? <Status icon={KeyRound} message={message} tone="neutral" /> : null}
+      {state === 'success' ? <Status icon={CheckCircle2} message={message} tone="success" /> : null}
+      {state === 'error' ? <Status icon={XCircle} message={message} tone="error" /> : null}
+    </AuthFrame>
+  );
+}
+
+function Status({ icon: Icon, message, tone }: { icon: typeof KeyRound; message: string; tone: 'neutral' | 'success' | 'error' }) {
+  const classes = {
+    neutral: 'border-primary-100 bg-primary-50 text-primary-800',
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    error: 'border-rose-200 bg-rose-50 text-rose-800'
+  };
+
+  return (
+    <div className={`mt-4 flex items-center gap-2 rounded-xl border p-3 text-sm font-bold ${classes[tone]}`}>
+      <Icon className="h-4 w-4 flex-none" aria-hidden="true" />
+      {message}
+    </div>
+  );
+}

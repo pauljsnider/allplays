@@ -1,7 +1,7 @@
 {
   "appId": "ai.allplays.lite",
-  "appName": "ALL PLAYS Lite",
-  "webDir": "mobile-lite",
+  "appName": "ALL PLAYS",
+  "webDir": "apps/app/dist",
   "plugins": {
     "FirebaseAuthentication": {
       "skipNativeAuth": true,

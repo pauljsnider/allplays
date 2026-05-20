@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('admin invite signup cache busting', () => {
+    function expectAuthCacheTokenAtLeast(source, minVersion) {
+        const match = source.match(/auth\.js\?v=(\d+)/);
+        expect(match).not.toBeNull();
+        expect(Number(match[1])).toBeGreaterThanOrEqual(minVersion);
+    }
+
     it('pins fresh module versions for the admin invite signup path', () => {
         const authSource = readFileSync(resolve(process.cwd(), 'js/auth.js'), 'utf8');
 
@@ -36,7 +42,7 @@ describe('admin invite signup cache busting', () => {
 
         for (const relativePath of authConsumers) {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            expect(source).toContain('auth.js?v=15');
+            expectAuthCacheTokenAtLeast(source, 15);
         }
     });
 });

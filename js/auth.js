@@ -5,6 +5,7 @@ import {
     signOut,
     onAuthStateChanged,
     GoogleAuthProvider,
+    signInWithCredential,
     signInWithPopup,
     signInWithRedirect,
     getRedirectResult,
@@ -19,6 +20,10 @@ import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemPare
 import { executeEmailPasswordSignup } from './signup-flow.js?v=3';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';
+import { getAppLoginUrl, getAppPostAuthRedirectUrl, isAppMode, isNativeApp, signInWithNativeGoogle } from './native-app.js?v=4';
+
+const NATIVE_AUTH_SESSION_STORAGE_KEY = 'allplays-native-auth-session';
+const NATIVE_AUTH_OBSERVER_TIMEOUT_MS = 4000;
 
 async function cleanupFailedNewUser(user, context) {
     if (!user) {
@@ -124,6 +129,16 @@ export async function loginWithGoogle(activationCode = null) {
     console.log('[Google Auth] Starting hybrid auth flow...');
 
     try {
+        if (isNativeApp()) {
+            console.log('[Google Auth] Attempting native Google sign-in...');
+            const result = await signInWithNativeGoogle({
+                auth,
+                GoogleAuthProvider,
+                signInWithCredential
+            });
+            return await processGoogleAuthResult(result, activationCode);
+        }
+
         // Try popup first - works on most desktop browsers and is smoother UX
         console.log('[Google Auth] Attempting popup sign-in...');
         const result = await signInWithPopup(auth, provider);
@@ -159,6 +174,83 @@ function clearPendingActivationCode() {
     } catch (storageError) {
         console.error('Error clearing pending activation code:', storageError);
     }
+}
+
+function readNativeAuthSession() {
+    try {
+        const rawSession = window.localStorage?.getItem(NATIVE_AUTH_SESSION_STORAGE_KEY);
+        return rawSession ? JSON.parse(rawSession) : null;
+    } catch (error) {
+        console.warn('[auth] Unable to read native auth fallback session:', error);
+        return null;
+    }
+}
+
+function writeNativeAuthSession(session) {
+    try {
+        window.localStorage?.setItem(NATIVE_AUTH_SESSION_STORAGE_KEY, JSON.stringify(session));
+    } catch (error) {
+        console.warn('[auth] Unable to update native auth fallback session:', error);
+    }
+}
+
+function clearNativeAuthSession() {
+    try {
+        window.localStorage?.removeItem(NATIVE_AUTH_SESSION_STORAGE_KEY);
+    } catch (error) {
+        console.warn('[auth] Unable to clear native auth fallback session:', error);
+    }
+}
+
+async function refreshNativeAuthSession(session) {
+    const apiKey = session?.apiKey || auth.app?.options?.apiKey || '';
+    if (!apiKey || !session?.refreshToken) {
+        throw new Error('Native auth refresh is unavailable.');
+    }
+
+    const response = await fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+            grant_type: 'refresh_token',
+            refresh_token: session.refreshToken
+        })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error?.message || 'Unable to refresh native auth session.');
+    }
+
+    const expiresInSeconds = Number.parseInt(payload.expires_in || '3600', 10);
+    const nextSession = {
+        ...session,
+        uid: payload.user_id || session.uid,
+        idToken: payload.id_token || session.idToken,
+        refreshToken: payload.refresh_token || session.refreshToken,
+        expirationTime: Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000
+    };
+    writeNativeAuthSession(nextSession);
+    return nextSession;
+}
+
+function getNativeAuthFallbackUser() {
+    const session = readNativeAuthSession();
+    if (!session?.uid || !session?.idToken) return null;
+
+    return {
+        uid: session.uid,
+        email: session.email || '',
+        isNativeRestSession: true,
+        async getIdToken(forceRefresh = false) {
+            let currentSession = readNativeAuthSession() || session;
+            if (forceRefresh || Number(currentSession.expirationTime || 0) < Date.now() + 60000) {
+                currentSession = await refreshNativeAuthSession(currentSession);
+            }
+            return currentSession.idToken;
+        }
+    };
 }
 
 // Shared function to process Google auth result (used by both popup and redirect flows)
@@ -291,41 +383,88 @@ export async function handleGoogleRedirectResult() {
 }
 
 export function logout() {
+    clearNativeAuthSession();
     return signOut(auth);
 }
 
 export function requireAuth() {
     return new Promise((resolve, reject) => {
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
-            unsubscribe();
+        let settled = false;
+        let timeoutId = null;
+        let unsubscribe = null;
+
+        const finish = (callback) => {
+            if (settled) return;
+            settled = true;
+            if (timeoutId) window.clearTimeout(timeoutId);
+            if (typeof unsubscribe === 'function') unsubscribe();
+            callback();
+        };
+
+        if (isAppMode()) {
+            timeoutId = window.setTimeout(() => {
+                const fallbackUser = getNativeAuthFallbackUser();
+                if (fallbackUser) {
+                    finish(() => resolve(fallbackUser));
+                    return;
+                }
+
+                finish(() => {
+                    window.location.href = getAppLoginUrl();
+                    reject(new Error('Not authenticated'));
+                });
+            }, NATIVE_AUTH_OBSERVER_TIMEOUT_MS);
+        }
+
+        unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
-                resolve(user);
+                finish(() => resolve(user));
             } else {
-                window.location.href = 'login.html';
-                reject('Not authenticated');
+                const fallbackUser = isAppMode() ? getNativeAuthFallbackUser() : null;
+                if (fallbackUser) {
+                    finish(() => resolve(fallbackUser));
+                    return;
+                }
+
+                finish(() => {
+                    window.location.href = getAppLoginUrl();
+                    reject(new Error('Not authenticated'));
+                });
             }
         });
+        if (settled && typeof unsubscribe === 'function') {
+            unsubscribe();
+        }
     });
 }
 
 export function getRedirectUrl(user) {
     // 1. If Coach or Admin, go to main dashboard
     if (user.isAdmin || (user.coachOf && user.coachOf.length > 0)) {
-        return 'dashboard.html';
+        return getAppPostAuthRedirectUrl('dashboard.html');
     }
     // 2. If Parent, go to parent dashboard
     if (user.parentOf && user.parentOf.length > 0) {
-        return 'parent-dashboard.html';
+        return getAppPostAuthRedirectUrl('parent-dashboard.html');
     }
     // 3. Default fallback
-    return 'dashboard.html';
+    return getAppPostAuthRedirectUrl('dashboard.html');
 }
 
 export function checkAuth(callback, options = {}) {
     const { skipEmailVerificationCheck = true } = options;
 
     return onAuthStateChanged(auth, async (user) => {
+        if (!user && isAppMode()) {
+            user = getNativeAuthFallbackUser();
+        }
+
         if (user) {
+            if (user.isNativeRestSession) {
+                callback(user);
+                return;
+            }
+
             try {
                 let profile = await getUserProfile(user.uid) || {};
 

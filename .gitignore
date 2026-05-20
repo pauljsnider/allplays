@@ -71,3 +71,12 @@ packages.microsoft.gpg
 
 # Local temp files
 .tmp-http.pid
+
+# Generated mobile bundled web assets
+apps/app/dist/
+mobile-lite/parent-dashboard.html
+mobile-lite/calendar.html
+mobile-lite/team-chat.html
+mobile-lite/js/
+mobile-lite/css/
+mobile-lite/img/

@@ -1,3 +1,5 @@
+import { getAppHomeUrl, getAppLoginUrl, getAppMessagesUrl, getAppScheduleUrl, isAppMode, withAppContext } from './native-app.js?v=4';
+
 export function getUrlParams() {
   // Combine params from both search (?) and hash (#)
   const searchParams = new URLSearchParams(window.location.search);
@@ -65,6 +67,65 @@ export async function shareOrCopy({ title = '', text = '', url = '', clipboardTe
 }
 
 export function renderHeader(container, user) {
+  if (!container) return;
+
+  if (isAppMode()) {
+    const currentPath = window.location.pathname.split('/').pop() || 'index.html';
+    const isAppHome = currentPath === 'parent-dashboard.html' && !window.location.hash;
+    container.innerHTML = `
+      <header class="allplays-app-header">
+        <a href="${getAppHomeUrl()}" class="allplays-app-brand" aria-label="ALL PLAYS home">
+          <img src="img/logo_small.png" alt="">
+          <span>ALL PLAYS</span>
+        </a>
+        <nav class="allplays-app-nav" aria-label="App navigation">
+          ${isAppHome ? '' : '<button id="allplays-app-back" type="button">Back</button>'}
+          <a href="${getAppScheduleUrl()}">Schedule</a>
+          <button id="allplays-app-menu-toggle" type="button" aria-expanded="false" aria-controls="allplays-app-menu">Menu</button>
+        </nav>
+        <div id="allplays-app-menu" class="allplays-app-menu hidden">
+          <a href="${getAppHomeUrl()}">Dashboard</a>
+          <a href="${getAppScheduleUrl()}">Schedule</a>
+          <a href="${getAppMessagesUrl()}">Messages</a>
+          ${user ? '<button id="allplays-app-logout" type="button">Sign out</button>' : `<a href="${getAppLoginUrl()}">Sign in</a>`}
+        </div>
+      </header>
+    `;
+
+    container.querySelector('#allplays-app-back')?.addEventListener('click', () => {
+      if (window.history.length > 1) {
+        window.history.back();
+        return;
+      }
+      window.location.href = getAppHomeUrl();
+    });
+
+    const menuToggle = container.querySelector('#allplays-app-menu-toggle');
+    const menu = container.querySelector('#allplays-app-menu');
+    const closeMenu = () => {
+      menu?.classList.add('hidden');
+      menuToggle?.setAttribute('aria-expanded', 'false');
+    };
+    menuToggle?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const isOpen = !menu?.classList.contains('hidden');
+      menu?.classList.toggle('hidden', isOpen);
+      menuToggle.setAttribute('aria-expanded', String(!isOpen));
+    });
+    menu?.addEventListener('click', (event) => event.stopPropagation());
+    document.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeMenu();
+    });
+
+    container.querySelector('#allplays-app-logout')?.addEventListener('click', async () => {
+      const { logout } = await import('./auth.js?v=16');
+      await logout();
+      window.location.href = getAppLoginUrl();
+    });
+    return;
+  }
+
   container.innerHTML = `
       <header class="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-50 border-b border-gray-200">
         <nav class="container mx-auto px-4 py-4">
@@ -183,7 +244,7 @@ export function renderHeader(container, user) {
 
     // Add logout handler
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=15');
+      const { logout } = await import('./auth.js?v=16');
       await logout();
       window.location.href = 'index.html';
     });
@@ -240,6 +301,12 @@ export function getSafeImageUrl(value) {
 }
 
 export function renderFooter(container) {
+  if (!container) return;
+  if (isAppMode()) {
+    container.innerHTML = '';
+    return;
+  }
+
   container.innerHTML = `
       <footer class="bg-gray-900 text-gray-400 py-12 md:py-16">
         <div class="container mx-auto px-4">

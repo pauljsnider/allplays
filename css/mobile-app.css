@@ -1,0 +1,230 @@
+html.allplays-app-document {
+    background: #f6f8fb;
+}
+
+body.allplays-app-mode {
+    min-height: 100vh;
+    background: #f6f8fb;
+    padding-bottom: env(safe-area-inset-bottom);
+    overflow-x: hidden;
+}
+
+body.allplays-app-mode #footer-container,
+body.allplays-app-mode .allplays-app-hide {
+    display: none !important;
+}
+
+body.allplays-app-mode #coach-invite-card,
+body.allplays-app-mode #request-team-access-card,
+body.allplays-app-mode #family-plan-card,
+body.allplays-app-mode #team-fees-card,
+body.allplays-app-mode #practice-packets-card {
+    display: none !important;
+}
+
+.allplays-app-header {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: max(10px, env(safe-area-inset-top)) 14px 10px;
+    border-bottom: 1px solid #d9e2ec;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(14px);
+}
+
+.allplays-app-menu {
+    position: absolute;
+    top: calc(100% - 4px);
+    right: 10px;
+    display: flex;
+    min-width: 168px;
+    max-width: calc(100vw - 20px);
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #d9e2ec;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 18px 36px rgba(16, 24, 40, 0.16);
+}
+
+.allplays-app-menu.hidden {
+    display: none;
+}
+
+.allplays-app-menu a,
+.allplays-app-menu button {
+    display: block;
+    width: 100%;
+    border: 0;
+    border-bottom: 1px solid #eef2f6;
+    padding: 12px 14px;
+    background: #ffffff;
+    color: #101828;
+    font-size: 0.94rem;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: left;
+    text-decoration: none;
+}
+
+.allplays-app-menu a:last-child,
+.allplays-app-menu button:last-child {
+    border-bottom: 0;
+}
+
+.allplays-app-brand {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 10px;
+    color: #101828;
+    text-decoration: none;
+}
+
+.allplays-app-brand img {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    border: 1px solid #d9e2ec;
+    border-radius: 8px;
+    object-fit: cover;
+}
+
+.allplays-app-brand span {
+    display: block;
+    overflow: hidden;
+    color: #101828;
+    font-size: 1rem;
+    font-weight: 800;
+    line-height: 1.1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.allplays-app-nav {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 8px;
+}
+
+.allplays-app-nav a,
+.allplays-app-nav button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    border: 1px solid #d9e2ec;
+    border-radius: 7px;
+    padding: 7px 10px;
+    background: #ffffff;
+    color: #344054;
+    font-size: 0.84rem;
+    font-weight: 750;
+    line-height: 1;
+    text-decoration: none;
+}
+
+.allplays-app-nav button {
+    cursor: pointer;
+}
+
+body.allplays-app-mode main.container {
+    width: 100%;
+    max-width: 760px;
+    padding: 16px 12px 24px;
+    overflow-x: hidden;
+}
+
+body.allplays-app-mode main.container > .mb-8,
+body.allplays-app-mode main.container > .mb-8.md\:mb-12 {
+    margin-bottom: 16px;
+}
+
+body.allplays-app-mode h1 {
+    max-width: 100%;
+    font-size: 1.5rem;
+    line-height: 1.12;
+    overflow-wrap: anywhere;
+}
+
+body.allplays-app-mode h2 {
+    line-height: 1.2;
+}
+
+body.allplays-app-mode .rounded-2xl,
+body.allplays-app-mode .rounded-xl {
+    border-radius: 10px;
+}
+
+body.allplays-app-mode .shadow-lg,
+body.allplays-app-mode .shadow-md {
+    box-shadow: 0 10px 24px rgba(16, 24, 40, 0.07);
+}
+
+body.allplays-app-mode .chat-container {
+    height: calc(100vh - 290px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    min-height: 260px;
+}
+
+@media (max-width: 640px) {
+    .allplays-app-brand span {
+        max-width: 104px;
+    }
+
+    .allplays-app-nav {
+        gap: 6px;
+    }
+
+    .allplays-app-nav a,
+    .allplays-app-nav button {
+        min-height: 32px;
+        padding: 6px 8px;
+        font-size: 0.78rem;
+    }
+
+    body.allplays-app-mode main.container {
+        padding: 14px 10px 22px;
+    }
+
+    body.allplays-app-mode .grid {
+        gap: 16px;
+    }
+
+    body.allplays-app-mode .p-6 {
+        padding: 16px;
+    }
+
+    body.allplays-app-mode .px-6 {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    body.allplays-app-mode .py-8,
+    body.allplays-app-mode .md\:py-12 {
+        padding-top: 16px;
+        padding-bottom: 20px;
+    }
+}
+
+@media (max-width: 380px) {
+    .allplays-app-header {
+        gap: 8px;
+        padding-right: 10px;
+        padding-left: 10px;
+    }
+
+    .allplays-app-brand img {
+        width: 32px;
+        height: 32px;
+    }
+
+    .allplays-app-brand span {
+        display: none;
+    }
+}

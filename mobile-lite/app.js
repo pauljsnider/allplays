@@ -1,49 +1,23 @@
-import { Capacitor, registerPlugin } from './vendor/capacitor-core.js';
-import { initializeApp } from './vendor/firebase-app.js';
 import {
-    getAuth,
     GoogleAuthProvider,
-    indexedDBLocalPersistence,
-    initializeAuth,
+    auth,
+    db,
+    doc,
     onAuthStateChanged,
     sendPasswordResetEmail,
-    signInWithCredential,
-    signInWithEmailAndPassword,
-    signOut
-} from './vendor/firebase-auth.js';
-import {
-    collection,
-    doc,
-    getDoc,
-    getDocs,
-    getFirestore,
-    query,
     serverTimestamp,
     setDoc,
-    where
-} from './vendor/firebase-firestore.js';
+    signInWithCredential,
+    signInWithEmailAndPassword
+} from './js/firebase.js?v=13';
+import { getAppHomeUrl, isNativeApp, markAppMode, signInWithNativeGoogle } from './js/native-app.js?v=4';
 
-const firebaseConfig = {
-    apiKey: 'AIzaSyDoixIoKJuUVWdmImwjYRTthjKOv2mU0Jc',
-    authDomain: 'game-flow-c6311.firebaseapp.com',
-    projectId: 'game-flow-c6311',
-    storageBucket: 'game-flow-c6311.firebasestorage.app',
-    messagingSenderId: '1030107289033',
-    appId: '1:1030107289033:web:7154238712942475143046',
-    measurementId: 'G-E48D0L8L40'
-};
+markAppMode();
 
-const app = initializeApp(firebaseConfig);
-let auth;
-try {
-    auth = initializeAuth(app, {
-        persistence: indexedDBLocalPersistence
-    });
-} catch (error) {
-    console.warn('[mobile-lite] Explicit auth initialization fell back to getAuth:', error);
-    auth = getAuth(app);
-}
-const db = getFirestore(app);
+const AUTH_TIMEOUT_MS = 15000;
+const FIREBASE_AUTH_STORAGE_DB = 'firebaseLocalStorageDb';
+const FIREBASE_AUTH_STORAGE_STORE = 'firebaseLocalStorage';
+const NATIVE_AUTH_SESSION_STORAGE_KEY = 'allplays-native-auth-session';
 
 const els = {
     signedOutView: document.getElementById('signed-out-view'),
@@ -54,34 +28,9 @@ const els = {
     loginButton: document.getElementById('login-button'),
     googleButton: document.getElementById('google-button'),
     resetButton: document.getElementById('reset-button'),
-    logoutButton: document.getElementById('logout-button'),
     authMessage: document.getElementById('auth-message'),
-    platformBadge: document.getElementById('platform-badge'),
-    firebaseState: document.getElementById('firebase-state'),
-    profileState: document.getElementById('profile-state'),
-    originState: document.getElementById('origin-state'),
-    sessionSubtitle: document.getElementById('session-subtitle'),
-    profileEmail: document.getElementById('profile-email'),
-    profileUid: document.getElementById('profile-uid'),
-    profileRoles: document.getElementById('profile-roles'),
-    profileTeams: document.getElementById('profile-teams'),
-    teamsState: document.getElementById('teams-state'),
-    teamsList: document.getElementById('teams-list')
+    launchMessage: document.getElementById('launch-message')
 };
-
-const FIRESTORE_TIMEOUT_MS = 10000;
-const FirebaseAuthentication = registerPlugin('FirebaseAuthentication');
-
-function getPlatformLabel() {
-    const platform = Capacitor.getPlatform();
-    return platform === 'ios' || platform === 'android' ? platform.toUpperCase() : 'Web';
-}
-
-function getNativeFirebaseAuthPlugin() {
-    return Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('FirebaseAuthentication')
-        ? FirebaseAuthentication
-        : null;
-}
 
 function setMessage(message, tone = 'neutral') {
     els.authMessage.textContent = message || '';
@@ -94,23 +43,18 @@ function setBusy(isBusy) {
     els.resetButton.disabled = isBusy;
 }
 
-function getAuthEmail() {
+function getEmail() {
     return els.email.value.trim().toLowerCase();
 }
 
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-}
-
-function withTimeout(promise, label, timeoutMs = FIRESTORE_TIMEOUT_MS) {
+function withTimeout(promise, message, timeoutMs = AUTH_TIMEOUT_MS) {
     let timeoutId;
     const timeout = new Promise((_, reject) => {
-        timeoutId = window.setTimeout(() => reject(new Error(label)), timeoutMs);
+        timeoutId = window.setTimeout(() => {
+            const error = new Error(message);
+            error.code = 'auth/network-request-failed';
+            reject(error);
+        }, timeoutMs);
     });
 
     return Promise.race([promise, timeout]).finally(() => {
@@ -120,8 +64,17 @@ function withTimeout(promise, label, timeoutMs = FIRESTORE_TIMEOUT_MS) {
 
 function describeAuthError(error) {
     const code = error?.code || '';
-    if (isBlockedRefererError(error)) {
-        return getBlockedRefererGuidance();
+    const message = `${code} ${error?.message || ''} ${error?.restCode || ''}`;
+    if (
+        (message.includes('requests-from-referer-') && message.includes('are-blocked')) ||
+        message.includes('HTTP_REFERRER_BLOCKED') ||
+        message.includes('API_KEY_HTTP_REFERRER_BLOCKED')
+    ) {
+        const origin = window.location.origin || window.location.href;
+        if (origin.startsWith('capacitor://')) {
+            return 'Firebase is blocking this app origin. Add capacitor://localhost to the web API key restrictions.';
+        }
+        return `Firebase is blocking this local origin (${origin}). Run the app from the configured mobile dev URL or add this origin to the web API key restrictions.`;
     }
     if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
         return 'Email or password is incorrect.';
@@ -141,270 +94,270 @@ function describeAuthError(error) {
     if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         return 'Google sign-in was cancelled.';
     }
-    if (code === 'auth/unauthorized-domain') {
-        return 'Firebase has not authorized this app origin for Google sign-in.';
-    }
     return error?.message || 'Authentication failed.';
 }
 
-function isBlockedRefererError(error) {
-    const details = `${error?.code || ''} ${error?.message || ''}`;
-    return details.includes('requests-from-referer-') && details.includes('are-blocked');
+function getFirebaseAuthStorageKey() {
+    const apiKey = auth.app?.options?.apiKey || '';
+    const appName = auth.app?.name || '[DEFAULT]';
+    return `firebase:authUser:${apiKey}:${appName}`;
 }
 
-function getBlockedRefererGuidance() {
-    const origin = window.location.origin || 'capacitor://localhost';
-    return `Firebase is blocking ${origin}. Add ${origin}/* to the Firebase Web API key HTTP referrers, or use native Firebase app config for store builds.`;
+function persistNativeAuthFallbackSession(session) {
+    const sessionPayload = {
+        uid: session.uid || '',
+        email: session.email || '',
+        idToken: session.idToken || '',
+        refreshToken: session.refreshToken || '',
+        expirationTime: session.expirationTime || 0,
+        apiKey: auth.app?.options?.apiKey || ''
+    };
+
+    try {
+        window.localStorage?.setItem(NATIVE_AUTH_SESSION_STORAGE_KEY, JSON.stringify(sessionPayload));
+    } catch (error) {
+        console.warn('[mobile] Unable to persist native auth fallback session:', error);
+    }
 }
 
-function getRoleSummary(profile = {}) {
-    const roles = [];
-    if (profile.isAdmin === true) roles.push('Admin');
-    if (Array.isArray(profile.coachOf) && profile.coachOf.length > 0) roles.push('Coach');
-    if (Array.isArray(profile.parentOf) && profile.parentOf.length > 0) roles.push('Parent');
-    return roles.length ? roles.join(', ') : 'Member';
+function readNativeAuthFallbackSession() {
+    try {
+        const rawSession = window.localStorage?.getItem(NATIVE_AUTH_SESSION_STORAGE_KEY);
+        return rawSession ? JSON.parse(rawSession) : null;
+    } catch (error) {
+        console.warn('[mobile] Unable to read native auth fallback session:', error);
+        return null;
+    }
 }
 
-function getTeamSummary(profile = {}) {
-    const teamIds = new Set();
-    if (Array.isArray(profile.coachOf)) {
-        profile.coachOf.filter(Boolean).forEach((teamId) => teamIds.add(teamId));
+function hasNativeAuthFallbackSession() {
+    const session = readNativeAuthFallbackSession();
+    return !!(session?.uid && session?.idToken && session?.refreshToken);
+}
+
+function normalizeProviderData(providerUserInfo = [], email = '') {
+    const providers = Array.isArray(providerUserInfo) ? providerUserInfo : [];
+    const mappedProviders = providers.map((provider) => ({
+        providerId: provider.providerId || 'password',
+        uid: provider.rawId || provider.federatedId || provider.email || email,
+        displayName: provider.displayName || null,
+        email: provider.email || email || null,
+        phoneNumber: provider.phoneNumber || null,
+        photoURL: provider.photoUrl || null
+    }));
+
+    if (!mappedProviders.some((provider) => provider.providerId === 'password')) {
+        mappedProviders.push({
+            providerId: 'password',
+            uid: email,
+            displayName: null,
+            email,
+            phoneNumber: null,
+            photoURL: null
+        });
     }
-    if (Array.isArray(profile.parentTeamIds)) {
-        profile.parentTeamIds.filter(Boolean).forEach((teamId) => teamIds.add(teamId));
+
+    return mappedProviders;
+}
+
+function openFirebaseAuthStorage() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(FIREBASE_AUTH_STORAGE_DB, 1);
+        request.onupgradeneeded = () => {
+            const database = request.result;
+            if (!database.objectStoreNames.contains(FIREBASE_AUTH_STORAGE_STORE)) {
+                database.createObjectStore(FIREBASE_AUTH_STORAGE_STORE, { keyPath: 'fbase_key' });
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error('Unable to open auth storage.'));
+    });
+}
+
+async function persistNativeRestAuthSession(signInPayload, lookupUser = {}) {
+    const email = signInPayload.email || lookupUser.email || '';
+    const expiresInSeconds = Number.parseInt(signInPayload.expiresIn || '3600', 10);
+    const authUser = {
+        uid: signInPayload.localId,
+        email,
+        emailVerified: lookupUser.emailVerified === true,
+        displayName: signInPayload.displayName || lookupUser.displayName || null,
+        isAnonymous: false,
+        photoURL: signInPayload.profilePicture || lookupUser.photoUrl || null,
+        phoneNumber: lookupUser.phoneNumber || null,
+        tenantId: null,
+        providerData: normalizeProviderData(lookupUser.providerUserInfo, email),
+        stsTokenManager: {
+            refreshToken: signInPayload.refreshToken,
+            accessToken: signInPayload.idToken,
+            expirationTime: Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000
+        },
+        _redirectEventId: undefined,
+        createdAt: lookupUser.createdAt || undefined,
+        lastLoginAt: lookupUser.lastLoginAt || `${Date.now()}`,
+        apiKey: auth.app?.options?.apiKey || '',
+        appName: auth.app?.name || '[DEFAULT]'
+    };
+
+    persistNativeAuthFallbackSession({
+        uid: authUser.uid,
+        email: authUser.email,
+        idToken: signInPayload.idToken,
+        refreshToken: signInPayload.refreshToken,
+        expirationTime: authUser.stsTokenManager.expirationTime
+    });
+
+    const database = await openFirebaseAuthStorage();
+    try {
+        await new Promise((resolve, reject) => {
+            const transaction = database.transaction(FIREBASE_AUTH_STORAGE_STORE, 'readwrite');
+            transaction.objectStore(FIREBASE_AUTH_STORAGE_STORE).put({
+                fbase_key: getFirebaseAuthStorageKey(),
+                value: authUser
+            });
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error || new Error('Unable to persist auth session.'));
+            transaction.onabort = () => reject(transaction.error || new Error('Auth session persistence was aborted.'));
+        });
+    } finally {
+        database.close();
     }
-    if (Array.isArray(profile.parentOf)) {
-        profile.parentOf
-            .map((entry) => entry?.teamId)
-            .filter(Boolean)
-            .forEach((teamId) => teamIds.add(teamId));
+
+    return {
+        uid: authUser.uid,
+        email: authUser.email
+    };
+}
+
+function createRestAuthError(payload, fallbackMessage) {
+    const restCode = payload?.error?.message || '';
+    const error = new Error(fallbackMessage || restCode || 'Authentication failed.');
+    error.restCode = restCode;
+    if (
+        restCode === 'EMAIL_NOT_FOUND' ||
+        restCode === 'INVALID_PASSWORD' ||
+        restCode === 'INVALID_LOGIN_CREDENTIALS'
+    ) {
+        error.code = 'auth/invalid-credential';
+    } else if (restCode === 'TOO_MANY_ATTEMPTS_TRY_LATER') {
+        error.code = 'auth/too-many-requests';
+    } else if (restCode.includes('REFERER') || restCode.includes('REFERRER')) {
+        error.code = 'auth/requests-from-referer-are-blocked';
+    } else {
+        error.code = 'auth/network-request-failed';
     }
-    return teamIds.size ? `${teamIds.size} linked` : 'None found';
+    return error;
+}
+
+async function callFirebaseAuthRest(endpoint, payload) {
+    const apiKey = auth.app?.options?.apiKey;
+    if (!apiKey) {
+        throw new Error('Firebase API key is missing.');
+    }
+
+    const response = await withTimeout(fetch(`https://identitytoolkit.googleapis.com/v1/${endpoint}?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    }), 'Firebase Auth request timed out.');
+    const responsePayload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw createRestAuthError(responsePayload);
+    }
+    return responsePayload;
+}
+
+async function signInWithNativeRestSession(email, password) {
+    const signInPayload = await callFirebaseAuthRest('accounts:signInWithPassword', {
+        email,
+        password,
+        returnSecureToken: true
+    });
+    const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+        idToken: signInPayload.idToken
+    }).catch((error) => {
+        console.warn('[mobile] Unable to load native REST auth profile:', error);
+        return {};
+    });
+    const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+    return persistNativeRestAuthSession(signInPayload, lookupUser);
+}
+
+function showSignedOut() {
+    els.signedOutView.classList.remove('hidden');
+    els.signedInView.classList.add('hidden');
+}
+
+function showLaunching() {
+    els.signedOutView.classList.add('hidden');
+    els.signedInView.classList.remove('hidden');
+}
+
+function openDashboard() {
+    showLaunching();
+    if (els.launchMessage) {
+        els.launchMessage.textContent = 'Loading your dashboard...';
+    }
+    window.location.replace(getAppHomeUrl());
 }
 
 async function updateLastLogin(user) {
     try {
-        await withTimeout(setDoc(doc(db, 'users', user.uid), {
+        await setDoc(doc(db, 'users', user.uid), {
             email: user.email || '',
             lastLogin: serverTimestamp()
-        }, { merge: true }), 'Last login update timed out');
+        }, { merge: true });
     } catch (error) {
-        console.warn('[mobile-lite] Unable to update lastLogin:', error);
+        console.warn('[mobile] Unable to update lastLogin:', error);
     }
 }
 
-async function loadProfile(user) {
-    els.profileState.textContent = 'Loading';
-    const snapshot = await withTimeout(getDoc(doc(db, 'users', user.uid)), 'Profile load timed out');
-    if (!snapshot.exists()) {
-        els.profileState.textContent = 'No users profile document';
-        return {};
-    }
-    els.profileState.textContent = 'Loaded';
-    return snapshot.data() || {};
-}
-
-function isTeamActive(team) {
-    return team?.active !== false;
-}
-
-function normalizeTeam(docSnapshot, access) {
-    return {
-        id: docSnapshot.id,
-        access,
-        ...docSnapshot.data()
-    };
-}
-
-function getParentTeamIds(profile = {}) {
-    const teamIds = new Set();
-    if (Array.isArray(profile.parentTeamIds)) {
-        profile.parentTeamIds.filter(Boolean).forEach((teamId) => teamIds.add(teamId));
-    }
-    if (Array.isArray(profile.parentOf)) {
-        profile.parentOf
-            .map((entry) => entry?.teamId)
-            .filter(Boolean)
-            .forEach((teamId) => teamIds.add(teamId));
-    }
-    return Array.from(teamIds);
-}
-
-async function getParentTeam(teamId) {
-    const snapshot = await getDoc(doc(db, 'teams', teamId));
-    return snapshot.exists() ? normalizeTeam(snapshot, 'parent') : null;
-}
-
-async function loadTeams(user, profile = {}) {
-    els.teamsState.textContent = 'Loading';
-    els.teamsList.innerHTML = '<p class="empty-state">Loading your teams...</p>';
-
-    const email = (user.email || profile.email || '').trim().toLowerCase();
-    const ownedTeamsQuery = getDocs(query(collection(db, 'teams'), where('ownerId', '==', user.uid)));
-    const adminTeamsQuery = email
-        ? getDocs(query(collection(db, 'teams'), where('adminEmails', 'array-contains', email)))
-        : Promise.resolve({ docs: [] });
-    const parentTeamQueries = getParentTeamIds(profile).map((teamId) => getParentTeam(teamId));
-
-    const [ownedTeamsSnapshot, adminTeamsSnapshot, parentTeams] = await withTimeout(
-        Promise.all([
-            ownedTeamsQuery,
-            adminTeamsQuery,
-            Promise.all(parentTeamQueries)
-        ]),
-        'Teams load timed out'
-    );
-
-    const teamsById = new Map();
-    ownedTeamsSnapshot.docs.forEach((teamDoc) => teamsById.set(teamDoc.id, normalizeTeam(teamDoc, 'full')));
-    adminTeamsSnapshot.docs.forEach((teamDoc) => teamsById.set(teamDoc.id, normalizeTeam(teamDoc, 'full')));
-    parentTeams.filter(Boolean).forEach((team) => {
-        if (!teamsById.has(team.id)) {
-            teamsById.set(team.id, team);
-        }
-    });
-
-    const teams = Array.from(teamsById.values())
-        .filter(isTeamActive)
-        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-
-    renderTeams(teams);
-    return teams;
-}
-
-function renderTeams(teams) {
-    els.teamsState.textContent = `${teams.length} found`;
-
-    if (teams.length === 0) {
-        els.teamsList.innerHTML = `
-            <div class="empty-state">
-                <strong>No teams found</strong>
-                <span>This account is signed in, but no coach/admin or parent teams are linked yet.</span>
-            </div>
-        `;
-        return;
-    }
-
-    els.teamsList.innerHTML = teams.map((team) => {
-        const name = team.name || 'Unnamed team';
-        const sport = team.sport || 'Sport not set';
-        const access = team.access === 'parent' ? 'Parent view' : 'Full access';
-        const initials = name.trim().charAt(0).toUpperCase() || 'T';
-        const imageMarkup = team.photoUrl
-            ? `<img src="${escapeHtml(team.photoUrl)}" alt="" class="team-photo">`
-            : `<span class="team-initial">${escapeHtml(initials)}</span>`;
-
-        return `
-            <article class="team-card">
-                <div class="team-avatar">
-                    ${imageMarkup}
-                </div>
-                <div class="team-details">
-                    <h3>${escapeHtml(name)}</h3>
-                    <p>${escapeHtml(sport)}</p>
-                    <span>${escapeHtml(access)}</span>
-                </div>
-            </article>
-        `;
-    }).join('');
-}
-
-function renderSignedOut() {
-    els.signedOutView.classList.remove('hidden');
-    els.signedInView.classList.add('hidden');
-    els.firebaseState.textContent = 'Signed out';
-    els.profileState.textContent = 'Waiting';
-    els.profileEmail.textContent = '-';
-    els.profileUid.textContent = '-';
-    els.profileRoles.textContent = '-';
-    els.profileTeams.textContent = '-';
-    els.teamsState.textContent = 'Waiting';
-    els.teamsList.innerHTML = '';
-}
-
-async function renderSignedIn(user) {
-    els.signedOutView.classList.add('hidden');
-    els.signedInView.classList.remove('hidden');
-    els.firebaseState.textContent = 'Signed in';
-    els.sessionSubtitle.textContent = 'Firebase session is active in this WebView.';
-    els.profileEmail.textContent = user.email || '(no email)';
-    els.profileUid.textContent = user.uid;
-    els.profileRoles.textContent = 'Loading';
-    els.profileTeams.textContent = 'Loading';
-    els.teamsState.textContent = 'Loading';
-
-    try {
-        const profile = await loadProfile(user);
-        els.profileRoles.textContent = getRoleSummary(profile);
-        updateLastLogin(user);
-        const teams = await loadTeams(user, profile);
-        els.profileTeams.textContent = teams.length ? `${teams.length} linked` : getTeamSummary(profile);
-    } catch (error) {
-        console.error('[mobile-lite] Dashboard load failed:', error);
-        els.profileState.textContent = 'Failed';
-        els.profileRoles.textContent = 'Unknown';
-        els.profileTeams.textContent = 'Unknown';
-        els.teamsState.textContent = 'Failed';
-        els.teamsList.innerHTML = `
-            <div class="empty-state error-state">
-                <strong>Dashboard failed to load</strong>
-                <span>${escapeHtml(error?.message || 'Unknown Firestore error')}</span>
-            </div>
-        `;
-    }
-}
-
-async function signIn(event) {
+async function handleEmailSignIn(event) {
     event.preventDefault();
-    setMessage('');
     setBusy(true);
+    setMessage('');
 
     try {
-        const email = getAuthEmail();
-        const password = els.password.value;
-        await signInWithEmailAndPassword(auth, email, password);
-        setMessage('Signed in.', 'success');
+        setMessage('Signing in...');
+        const email = getEmail();
+        const user = isNativeApp()
+            ? await signInWithNativeRestSession(email, els.password.value)
+            : (await withTimeout(signInWithEmailAndPassword(auth, email, els.password.value), 'Firebase sign-in timed out.')).user;
+        setMessage('Opening dashboard...', 'success');
+        updateLastLogin(user);
+        openDashboard();
     } catch (error) {
-        console.error('[mobile-lite] Sign-in failed:', error);
-        if (isBlockedRefererError(error)) {
-            els.firebaseState.textContent = 'Blocked native referrer';
-        }
+        console.error('[mobile] Email sign-in failed:', error);
         setMessage(describeAuthError(error), 'error');
     } finally {
         setBusy(false);
     }
 }
 
-async function signInWithGoogle() {
-    const nativeAuth = getNativeFirebaseAuthPlugin();
-    if (!nativeAuth?.signInWithGoogle) {
-        setMessage('Google sign-in is only available in the native app build.', 'error');
-        return;
-    }
-
-    setMessage('');
+async function handleGoogleSignIn() {
     setBusy(true);
+    setMessage('');
 
     try {
-        const result = await nativeAuth.signInWithGoogle({ skipNativeAuth: true });
-        const idToken = result?.credential?.idToken;
-        if (!idToken) {
-            throw new Error('Google sign-in did not return an ID token.');
-        }
-
-        const credential = GoogleAuthProvider.credential(idToken);
-        await signInWithCredential(auth, credential);
-        setMessage('Signed in with Google.', 'success');
+        const userCredential = await signInWithNativeGoogle({
+            auth,
+            GoogleAuthProvider,
+            signInWithCredential
+        });
+        updateLastLogin(userCredential.user);
+        openDashboard();
     } catch (error) {
-        console.error('[mobile-lite] Google sign-in failed:', error);
+        console.error('[mobile] Google sign-in failed:', error);
         setMessage(describeAuthError(error), 'error');
     } finally {
         setBusy(false);
     }
 }
 
-async function sendReset() {
-    const email = getAuthEmail();
+async function handlePasswordReset() {
+    const email = getEmail();
     if (!email) {
         setMessage('Enter your email first.', 'error');
         els.email.focus();
@@ -421,61 +374,39 @@ async function sendReset() {
         });
         setMessage('Password reset email sent.', 'success');
     } catch (error) {
-        console.error('[mobile-lite] Reset email failed:', error);
-        if (isBlockedRefererError(error)) {
-            els.firebaseState.textContent = 'Blocked native referrer';
-        }
+        console.error('[mobile] Password reset failed:', error);
         setMessage(describeAuthError(error), 'error');
     } finally {
         setBusy(false);
     }
 }
 
-async function logOut() {
-    setMessage('');
-    els.profileState.textContent = 'Signing out';
-    const nativeAuth = getNativeFirebaseAuthPlugin();
-    const [, webSignOut] = await Promise.allSettled([
-        nativeAuth?.signOut?.(),
-        signOut(auth)
-    ]);
-    if (webSignOut.status === 'rejected') {
-        throw webSignOut.reason;
+els.loginForm.addEventListener('submit', handleEmailSignIn);
+els.googleButton.addEventListener('click', handleGoogleSignIn);
+els.resetButton.addEventListener('click', handlePasswordReset);
+
+let authObserverSettled = false;
+const authObserverTimeout = window.setTimeout(() => {
+    if (authObserverSettled) return;
+    authObserverSettled = true;
+    if (isNativeApp() && hasNativeAuthFallbackSession()) {
+        openDashboard();
+        return;
     }
-}
+    showSignedOut();
+}, 4000);
 
-async function start() {
-    els.platformBadge.textContent = getPlatformLabel();
-    els.originState.textContent = window.location.origin || '(local file origin)';
-    els.firebaseState.textContent = 'Initializing';
-
-    els.loginForm.addEventListener('submit', signIn);
-    els.googleButton.addEventListener('click', signInWithGoogle);
-    els.resetButton.addEventListener('click', sendReset);
-    els.logoutButton.addEventListener('click', () => {
-        logOut().catch((error) => {
-            console.error('[mobile-lite] Sign-out failed:', error);
-            els.profileState.textContent = 'Sign-out failed';
-        });
-    });
-
-    onAuthStateChanged(auth, (user) => {
-        if (user) {
-            renderSignedIn(user);
-        } else {
-            renderSignedOut();
-        }
-    });
-
-    window.setTimeout(() => {
-        if (els.firebaseState.textContent === 'Initializing') {
-            els.firebaseState.textContent = 'Ready, waiting for auth state';
-        }
-    }, 1500);
-}
-
-start().catch((error) => {
-    console.error('[mobile-lite] Startup failed:', error);
-    els.firebaseState.textContent = 'Startup failed';
-    setMessage(error?.message || 'Startup failed.', 'error');
+onAuthStateChanged(auth, (user) => {
+    if (authObserverSettled) return;
+    authObserverSettled = true;
+    window.clearTimeout(authObserverTimeout);
+    if (user) {
+        openDashboard();
+        return;
+    }
+    if (isNativeApp() && hasNativeAuthFallbackSession()) {
+        openDashboard();
+        return;
+    }
+    showSignedOut();
 });

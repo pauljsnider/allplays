@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="allplays-app-mode" content="1">
+    <title>Messages - ALL PLAYS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/styles.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            800: '#3730a3',
+                            900: '#312e81'
+                        }
+                    }
+                }
+            }
+        };
+    </script>
+    <link id="allplays-app-mode-stylesheet" rel="stylesheet" href="css/mobile-app.css?v=4">
+    <script id="allplays-app-mode-bootstrap">
+        (() => {
+            window.__ALLPLAYS_FORCE_APP_MODE__ = true;
+            try {
+                window.sessionStorage?.setItem('allplays-app-mode', '1');
+            } catch (_) {}
+
+            document.documentElement.classList.add('allplays-app-document');
+            const applyBodyMode = () => {
+                document.body?.classList.add('allplays-app-mode', 'allplays-platform-native');
+            };
+
+            if (document.body) {
+                applyBodyMode();
+            } else {
+                document.addEventListener('DOMContentLoaded', applyBodyMode, { once: true });
+            }
+        })();
+    </script>
+</head>
+<body class="bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
+    <div id="header-container"></div>
+
+    <main class="container mx-auto px-4 py-8 md:py-12">
+        <div class="mb-6">
+            <h1 class="text-3xl md:text-4xl font-bold mb-2 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">Messages</h1>
+            <p class="text-gray-600 text-sm md:text-base">Team conversations for your linked players.</p>
+        </div>
+
+        <div id="messages-status" class="mb-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">Loading team chats...</div>
+
+        <section class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+            <div class="p-4 border-b border-gray-100 bg-gray-50">
+                <h2 class="text-lg font-bold text-gray-900">Team Chats</h2>
+            </div>
+            <div id="messages-team-list" class="p-4 space-y-3">
+                <div class="text-center py-8">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                    <p class="text-sm text-gray-500">Loading messages...</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="footer-container"></div>
+
+    <script type="module">
+        import { getUserProfile } from './js/db.js?v=52';
+        import { requireAuth } from './js/auth.js?v=16';
+        import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=14';
+        import { getAppHomeUrl, withAppContext } from './js/native-app.js?v=4';
+        import {
+            buildMobileTeamSummaries,
+            listMobileTeamChatMessages,
+            loadMobileParentProfile,
+            normalizeMobileParentChildren,
+            sendMobileTeamChatMessage,
+            syncMobileParentScope
+        } from './js/mobile-parent-data.js?v=2';
+
+        renderFooter(document.getElementById('footer-container'));
+
+        const status = document.getElementById('messages-status');
+        const list = document.getElementById('messages-team-list');
+        const state = {
+            user: null,
+            profile: null,
+            teams: [],
+            selectedTeamId: ''
+        };
+
+        function setStatus(message, tone = 'neutral') {
+            const toneClasses = {
+                neutral: 'border-blue-200 bg-blue-50 text-blue-800',
+                success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+                error: 'border-red-200 bg-red-50 text-red-800'
+            };
+            status.className = `mb-4 rounded-xl border px-4 py-3 text-sm ${toneClasses[tone] || toneClasses.neutral}`;
+            status.textContent = message;
+            status.classList.toggle('hidden', !message);
+        }
+
+        function renderTeams(teams) {
+            if (!teams.length) {
+                list.innerHTML = `
+                    <div class="text-center py-10">
+                        <p class="text-sm text-gray-500">No team chats are available yet.</p>
+                        <a href="${getAppHomeUrl()}" class="mt-4 inline-flex items-center justify-center rounded-lg border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-semibold text-primary-700">Back to dashboard</a>
+                    </div>
+                `;
+                return;
+            }
+
+            list.innerHTML = teams.map((team) => {
+                const chatUrl = withAppContext(`messages.html#teamId=${encodeURIComponent(team.teamId)}`);
+                const playerCopy = team.playerNames.length ? team.playerNames.join(', ') : 'Linked team';
+                const activeClasses = team.teamId === state.selectedTeamId
+                    ? 'border-primary-300 bg-primary-50'
+                    : 'border-gray-200 hover:border-primary-200 hover:bg-primary-50';
+                return `
+                    <a href="${chatUrl}" data-team-id="${escapeHtml(team.teamId)}" class="flex items-center gap-3 rounded-xl border ${activeClasses} p-4 transition">
+                        <div class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-primary-100">
+                            <span class="text-sm font-bold text-primary-700">${escapeHtml((team.teamName || 'T').charAt(0).toUpperCase())}</span>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <div class="truncate font-semibold text-gray-900">${escapeHtml(team.teamName)}</div>
+                            <div class="truncate text-xs text-gray-500">${escapeHtml(playerCopy)}</div>
+                        </div>
+                        <span class="rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-semibold text-white">Open</span>
+                    </a>
+                `;
+            }).join('');
+        }
+
+        function getSelectedTeamIdFromUrl() {
+            const hashParams = new URLSearchParams(window.location.hash.replace('#', ''));
+            const searchParams = new URLSearchParams(window.location.search);
+            return hashParams.get('teamId') || searchParams.get('teamId') || '';
+        }
+
+        function getSelectedTeam() {
+            return state.teams.find((team) => team.teamId === state.selectedTeamId) || null;
+        }
+
+        function formatMessageTime(value) {
+            const date = value?.toDate ? value.toDate() : new Date(value || Date.now());
+            if (Number.isNaN(date.getTime())) return '';
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        }
+
+        function renderMessageBubble(message) {
+            const isOwn = message.senderId === state.user?.uid;
+            const name = message.senderName || message.senderEmail || 'Team member';
+            return `
+                <div class="flex ${isOwn ? 'justify-end' : 'justify-start'}">
+                    <div class="max-w-[82%]">
+                        <div class="mb-1 text-xs text-gray-500 ${isOwn ? 'text-right' : ''}">
+                            <span class="font-semibold">${escapeHtml(isOwn ? 'You' : name)}</span>
+                            <span class="ml-1">${escapeHtml(formatMessageTime(message.createdAt))}</span>
+                        </div>
+                        <div class="rounded-2xl px-4 py-2 text-sm leading-relaxed ${isOwn ? 'rounded-br-sm bg-primary-600 text-white' : 'rounded-bl-sm bg-gray-100 text-gray-900'}">
+                            ${escapeHtml(message.text || '')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderChatShell(team) {
+            const playerCopy = team.playerNames.length ? team.playerNames.join(', ') : 'Linked team';
+            const messagesId = `mobile-chat-messages-${team.teamId}`;
+            const formId = `mobile-chat-form-${team.teamId}`;
+            const inputId = `mobile-chat-input-${team.teamId}`;
+            const refreshId = `mobile-chat-refresh-${team.teamId}`;
+
+            list.innerHTML = `
+                <div class="space-y-4">
+                    ${state.teams.length > 1 ? `<div class="space-y-2">${state.teams.map((option) => {
+                        const url = withAppContext(`messages.html#teamId=${encodeURIComponent(option.teamId)}`);
+                        const active = option.teamId === team.teamId;
+                        return `<a href="${url}" class="inline-flex items-center rounded-full border px-3 py-1.5 text-xs font-semibold ${active ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600'}">${escapeHtml(option.teamName)}</a>`;
+                    }).join(' ')}</div>` : ''}
+                    <div class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-md">
+                        <div class="flex items-center justify-between gap-3 border-b border-gray-100 bg-gray-50 p-4">
+                            <div class="min-w-0">
+                                <h2 class="truncate text-lg font-bold text-gray-900">${escapeHtml(team.teamName)}</h2>
+                                <p class="truncate text-xs text-gray-500">${escapeHtml(playerCopy)}</p>
+                            </div>
+                            <button id="${refreshId}" type="button" class="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-semibold text-gray-600">Refresh</button>
+                        </div>
+                        <div id="${messagesId}" class="h-[48vh] min-h-[320px] space-y-3 overflow-y-auto p-4">
+                            <div class="text-center py-8">
+                                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto mb-2"></div>
+                                <p class="text-sm text-gray-500">Loading messages...</p>
+                            </div>
+                        </div>
+                        <form id="${formId}" class="flex gap-2 border-t border-gray-200 bg-gray-50 p-3">
+                            <input id="${inputId}" type="text" maxlength="2000" autocomplete="off" placeholder="Type a message..." class="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                            <button type="submit" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Send</button>
+                        </form>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById(refreshId)?.addEventListener('click', () => loadSelectedTeamMessages());
+            document.getElementById(formId)?.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const input = document.getElementById(inputId);
+                const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+                const text = input.value.trim();
+                if (!text) return;
+                submitButton.disabled = true;
+                try {
+                    await sendMobileTeamChatMessage(state.user, team.teamId, {
+                        text,
+                        senderName: state.profile?.fullName || state.profile?.displayName || state.user.email || 'Parent',
+                        senderPhotoUrl: state.profile?.photoUrl || ''
+                    });
+                    input.value = '';
+                    await loadSelectedTeamMessages();
+                } catch (error) {
+                    console.error('[messages] Failed to send mobile chat message:', error);
+                    setStatus('Message could not be sent. Check your connection and try again.', 'error');
+                } finally {
+                    submitButton.disabled = false;
+                    input.focus();
+                }
+            });
+        }
+
+        async function loadSelectedTeamMessages() {
+            const team = getSelectedTeam();
+            if (!team) return;
+            const messagesContainer = document.getElementById(`mobile-chat-messages-${team.teamId}`);
+            if (!messagesContainer) return;
+
+            try {
+                const messages = await listMobileTeamChatMessages(state.user, team.teamId);
+                if (!messages.length) {
+                    messagesContainer.innerHTML = `
+                        <div class="py-12 text-center text-gray-500">
+                            <p class="font-medium">No messages yet</p>
+                            <p class="text-sm">Start the team conversation.</p>
+                        </div>
+                    `;
+                } else {
+                    messagesContainer.innerHTML = messages.map(renderMessageBubble).join('');
+                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                }
+                setStatus(`Loaded ${team.teamName} messages.`, 'success');
+            } catch (error) {
+                console.error('[messages] Failed to load mobile chat messages:', error);
+                messagesContainer.innerHTML = '<div class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Unable to load this team chat.</div>';
+                setStatus('Unable to load this team chat. Your team access may need to sync; try again in a moment.', 'error');
+            }
+        }
+
+        async function selectTeamFromUrl() {
+            state.selectedTeamId = getSelectedTeamIdFromUrl();
+            if (!state.selectedTeamId && state.teams.length === 1) {
+                state.selectedTeamId = state.teams[0].teamId;
+            }
+
+            const team = getSelectedTeam();
+            if (!team) {
+                renderTeams(state.teams);
+                setStatus(`Loaded ${state.teams.length} team chat${state.teams.length === 1 ? '' : 's'}.`, 'success');
+                return;
+            }
+
+            renderChatShell(team);
+            await loadSelectedTeamMessages();
+        }
+
+        async function init() {
+            try {
+                const user = await requireAuth();
+                state.user = user;
+                renderHeader(document.getElementById('header-container'), user);
+                let profile = await loadMobileParentProfile(user, { getUserProfile });
+                profile = await syncMobileParentScope(user, profile);
+                state.profile = profile || {};
+                const children = normalizeMobileParentChildren(profile?.parentOf || []);
+                const teams = buildMobileTeamSummaries(children);
+                state.teams = teams;
+                await selectTeamFromUrl();
+            } catch (error) {
+                console.error('[messages] Failed to load team chats:', error);
+                renderHeader(document.getElementById('header-container'), null);
+                list.innerHTML = '<div class="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">Unable to load team chats right now.</div>';
+                setStatus('Unable to load messages. Sign out and sign back in, then try again.', 'error');
+            }
+        }
+
+        window.addEventListener('hashchange', () => {
+            selectTeamFromUrl().catch((error) => {
+                console.error('[messages] Failed to switch team chat:', error);
+                setStatus('Unable to switch team chats right now.', 'error');
+            });
+        });
+
+        init();
+    </script>
+</body>
+</html>

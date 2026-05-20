@@ -1,6 +1,6 @@
-# ALL PLAYS Lite Mobile Proof
+# ALL PLAYS Mobile App
 
-This folder is the smallest Capacitor proof for Firebase Auth in a native shell.
+This folder contains the Capacitor WebView app. The mobile app uses the existing ALL PLAYS HTML/JS pages as bundled first-class routes, with a small native adapter for iOS/Android behavior.
 
 ## Local browser test
 
@@ -18,30 +18,35 @@ npm run mobile:run:ios
 npm run mobile:run:android
 ```
 
-## Firebase referer requirement
+## Current MVP surface
 
-The bundled iOS app runs from `capacitor://localhost`. If sign-in shows:
+- `index.html`: minimal app login/boot screen.
+- `parent-dashboard.html`: signed-in home screen for parents.
+- `calendar.html`: schedule and RSVP flow.
+- `team-chat.html`: team messaging from linked teams.
 
-```text
-auth/requests-from-referer-capacitor://localhost-are-blocked
-```
+The app does not use iframes for the MVP surface. iOS and Android share the same bundled pages and shared JS modules; platform differences stay in Capacitor/Firebase config and the native adapter.
 
-the Firebase Web API key is rejecting the native WebView origin. In Google Cloud Console, open the API key used by the primary Firebase web app and add this allowed HTTP referrer:
+## Native scope
 
-```text
-capacitor://localhost/*
-```
+- Included now: email/password login, password reset, shared app-mode routing, and native Google sign-in when the Capacitor Firebase Authentication plugin is available.
+- Deferred: push notifications and store-specific notification preferences.
 
-Keep the existing web entries for `allplays.ai`, `www.allplays.ai`, `localhost`, and `127.0.0.1`.
+## Firebase native app notes
 
-For production app-store builds, the stronger path is adding iOS and Android apps to the Firebase project and using native Firebase auth config for provider flows such as Google sign-in.
+The native projects currently keep the registered package and bundle identifier `ai.allplays.lite` so the checked-in Firebase native config files continue to match local builds.
 
-## Dashboard proof
+Before TestFlight or store submission, register final production native Firebase apps, replace:
 
-Do not use `https://allplays.ai/dashboard.html` as the first native proof after sign-in. The native shell runs on `capacitor://localhost`, while the hosted web app runs on `https://allplays.ai`, so browser auth persistence is not shared between them.
+- `ios/App/App/GoogleService-Info.plist`
+- `android/app/google-services.json`
 
-The lite proof now loads a small in-app dashboard directly from Firestore after sign-in:
+Then update the matching native identifiers in:
 
-- owned teams: `teams.ownerId == currentUser.uid`
-- admin teams: `teams.adminEmails` contains the signed-in email
-- parent teams: `users/{uid}.parentOf` / `parentTeamIds`
+- `capacitor.config.json`
+- `ios/App/App.xcodeproj/project.pbxproj`
+- `android/app/build.gradle`
+- `android/app/src/main/java/.../MainActivity.java`
+- `android/app/src/main/res/values/strings.xml`
+
+Keep Firebase Web API key restrictions aligned with local web testing and the native WebView origin `capacitor://localhost/*`.

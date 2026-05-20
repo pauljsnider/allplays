@@ -88,11 +88,11 @@ const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
         .replace(
-            "import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } from './js/db.js?v=33';",
+            /import\s*\{\s*getUserTeamsWithAccess,\s*getParentTeams,\s*getGames,\s*getTeam,\s*getTrackedCalendarEventUids,\s*getUserProfile,\s*submitRsvp,\s*submitRsvpForPlayer,\s*getMyRsvp,\s*getRsvpSummaries,\s*getRsvps\s*\}\s*from '\.\/js\/db\.js\?v=\d+';/,
             'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } = deps.db;'
         )
         .replace(
-            "import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=12';",
+            /import\s*\{\s*renderHeader,\s*renderFooter,\s*escapeHtml,\s*formatDate,\s*formatTime,\s*fetchAndParseCalendar,\s*expandRecurrence,\s*buildGlobalCalendarIcsEvent,\s*isTrackedCalendarEvent\s*\}\s*from '\.\/js\/utils\.js\?v=\d+';/,
             'const { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } = deps.utils;'
         )
         .replace(
@@ -100,7 +100,7 @@ const Blob = deps.Blob;
             'const { mergeGlobalCalendarIcsEvents } = deps.calendarIcsSync;'
         )
         .replace(
-            "import { requireAuth, checkAuth } from './js/auth.js?v=15';",
+            /import\s*\{\s*requireAuth,\s*checkAuth\s*\}\s*from '\.\/js\/auth\.js\?v=\d+';/,
             'const { requireAuth, checkAuth } = deps.auth;'
         )
         .replace(

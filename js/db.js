@@ -3805,9 +3805,12 @@ export async function getParentDashboardData(userId) {
 
     for (const child of children) {
         if (!child.teamId) continue;
-        const team = await getTeam(child.teamId);
+        const team = await getTeam(child.teamId, { includeInactive: true });
         if (!team) continue;
-        activeChildren.push(child);
+        activeChildren.push({
+            ...child,
+            teamName: child.teamName || team.name || 'Team'
+        });
 
         let events = eventsByTeam.get(child.teamId);
         if (!events) {
@@ -3823,7 +3826,9 @@ export async function getParentDashboardData(userId) {
             .map(e => ({
                 ...e,
                 teamId: child.teamId,
-                teamName: child.teamName,
+                teamName: child.teamName || team.name || 'Team',
+                childId: child.playerId,
+                playerId: child.playerId,
                 childName: child.playerName
             }));
 
