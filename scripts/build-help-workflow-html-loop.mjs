@@ -514,7 +514,8 @@ function renderArticle({ title, roles, bodyHtml, summary, readTimeMin }) {
     ${standardChromeScript()}
     <script>
       (function() {
-        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'));
+        const headings = Array.from(document.querySelectorAll('.help-workflow-body h2[id]'))
+          .filter((h) => h.id !== 'in-this-article');
         const toc = document.getElementById('workflow-toc');
         const mobileToc = document.getElementById('workflow-mobile-toc');
         if (!toc || !headings.length) return;
