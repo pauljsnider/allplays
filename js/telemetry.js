@@ -330,13 +330,16 @@ export function captureTelemetryEvent(name, properties = {}, options = {}) {
     return event;
 }
 
-async function sendEvents(events, keepalive = false) {
+export async function sendEvents(events, keepalive = false) {
     const authToken = await getAuthToken();
-    const payload = JSON.stringify({
+    const payloadObject = {
         sentAt: new Date().toISOString(),
-        authToken,
         events
-    });
+    };
+    if (authToken) {
+        payloadObject.authToken = authToken;
+    }
+    const payload = JSON.stringify(payloadObject);
 
     if (keepalive && navigator.sendBeacon) {
         const blob = new Blob([payload], { type: 'application/json' });
@@ -360,7 +363,7 @@ async function sendEvents(events, keepalive = false) {
     }
 }
 
-async function getAuthToken() {
+export async function getAuthToken() {
     const firebaseAuth = await loadFirebaseAuthModule();
     const user = firebaseAuth?.auth?.currentUser;
     if (!user?.getIdToken) return null;
@@ -372,7 +375,7 @@ async function getAuthToken() {
     }
 }
 
-function flush(keepalive = false) {
+export async function flush(keepalive = false) {
     if (flushTimer) {
         window.clearTimeout(flushTimer);
         flushTimer = null;
@@ -380,9 +383,11 @@ function flush(keepalive = false) {
     if (!enabled || !endpoint || queue.length === 0) return;
 
     const events = queue.splice(0, MAX_BATCH_SIZE);
-    sendEvents(events, keepalive).catch(() => {
+    try {
+        await sendEvents(events, keepalive);
+    } catch (error) {
         queue = events.concat(queue).slice(0, MAX_QUEUE_SIZE);
-    });
+    }
 
     if (!keepalive && queue.length > 0) {
         scheduleFlush(queue.length >= MAX_BATCH_SIZE ? 0 : FLUSH_INTERVAL_MS);
