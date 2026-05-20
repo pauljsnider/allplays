@@ -6,8 +6,8 @@ import type { AuthState } from '../lib/types';
 
 export function Teams({ auth }: { auth: AuthState }) {
   return (
-    <div className="space-y-4">
-      <section className="app-card p-4">
+    <div className="teams-page space-y-4">
+      <section className="teams-header app-card p-4">
         <div className="app-label">My Teams</div>
         <h1 className="mt-1 text-2xl font-black text-gray-950">Teams, roles, roster summary</h1>
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
@@ -20,7 +20,7 @@ export function Teams({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      <section className="grid gap-3 lg:grid-cols-2">
+      <section className="teams-grid grid gap-3 lg:grid-cols-2">
         {mockTeams.map((team) => {
           const nextGame = mockGames.find((game) => game.id === team.nextGameId);
           return (

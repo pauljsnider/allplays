@@ -43,7 +43,7 @@ export default function App() {
 }
 
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {
-  if (auth.loading) {
+  if (auth.loading && !auth.user) {
     return <LoadingScreen />;
   }
 

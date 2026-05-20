@@ -14,6 +14,7 @@ import {
   X
 } from 'lucide-react';
 import { capabilities } from '../data/capabilities';
+import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState, NavItem } from '../lib/types';
 import { CategoryBadge, RoleBadge, StatusBadge } from './Badges';
 
@@ -34,6 +35,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [addTeamOpen, setAddTeamOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -65,70 +67,145 @@ export function AppShell({ auth, children }: AppShellProps) {
   };
 
   return (
-    <div className="app-page">
-      <header className="safe-top sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 pb-3">
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-center gap-3 text-left"
-            onClick={() => navigate('/home')}
-            aria-label="Go to home"
-          >
-            <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
-            <span className="min-w-0">
-              <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS APP</span>
-              <span className="block truncate text-xs font-bold text-gray-500">
-                {auth.roles.length ? auth.roles.join(' + ') : 'Signed out preview'}
-              </span>
-            </span>
-          </button>
-          <div className="flex flex-none items-center gap-2">
-            <button
-              type="button"
-              className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
-              onClick={() => setSearchOpen(true)}
-              aria-label="Search"
-              title="Search"
-            >
-              <Search className="h-5 w-5" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="primary-button !h-10 !min-h-10 !w-10 !p-0 sm:!w-auto sm:!px-3"
-              onClick={() => setAddTeamOpen(true)}
-              aria-label="Add team"
-              title="Add team"
-            >
-              <Plus className="h-5 w-5" aria-hidden="true" />
-              <span className="hidden sm:inline">Add Team</span>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto w-full max-w-5xl px-4 py-4 sm:py-6">{children}</main>
-
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur">
-        <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
-
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-extrabold transition ${
-                  isActive ? 'bg-primary-50 text-primary-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'
-                }`}
+    <div className={isDesktopWeb ? 'desktop-app-page' : 'app-page'}>
+      {isDesktopWeb ? (
+        <>
+          <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
+            <div className="mx-auto flex max-w-7xl items-center gap-4 px-6 py-3">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                onClick={() => navigate('/home')}
+                aria-label="Go to home"
               >
-                <Icon className="h-5 w-5" aria-hidden="true" />
-                <span className="max-w-full truncate">{item.label}</span>
-              </NavLink>
-            );
-          })}
-        </div>
-      </nav>
+                <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
+                <span className="min-w-0">
+                  <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
+                  <span className="block truncate text-xs font-bold text-gray-500">
+                    {auth.roles.length ? auth.roles.join(' + ') : 'Signed out preview'}
+                  </span>
+                </span>
+              </button>
+              <div className="flex flex-none items-center gap-2">
+                <button
+                  type="button"
+                  className="ghost-button !h-10 !min-h-10"
+                  onClick={() => setSearchOpen(true)}
+                >
+                  <Search className="h-5 w-5" aria-hidden="true" />
+                  Search
+                </button>
+                <button
+                  type="button"
+                  className="primary-button !h-10 !min-h-10"
+                  onClick={() => setAddTeamOpen(true)}
+                >
+                  <Plus className="h-5 w-5" aria-hidden="true" />
+                  Add Team
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <div className="mx-auto grid max-w-7xl grid-cols-[236px_minmax(0,1fr)] gap-6 px-6 py-6">
+            <aside className="sticky top-[84px] h-[calc(100vh-108px)] self-start rounded-2xl border border-gray-200 bg-white p-3 shadow-app">
+              <nav className="space-y-1" aria-label="Primary navigation">
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
+
+                  return (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      className={`flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-black transition ${
+                        isActive ? 'bg-primary-50 text-primary-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'
+                      }`}
+                    >
+                      <Icon className="h-5 w-5" aria-hidden="true" />
+                      <span>{item.label}</span>
+                    </NavLink>
+                  );
+                })}
+              </nav>
+              <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <div className="app-label">Account</div>
+                <div className="mt-1 truncate text-sm font-black text-gray-950">{auth.user?.displayName || auth.user?.email || 'ALL PLAYS User'}</div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {auth.roles.map((role) => <RoleBadge key={role} role={role} />)}
+                </div>
+              </div>
+            </aside>
+            <main className="min-w-0 pb-8">{children}</main>
+          </div>
+        </>
+      ) : (
+        <>
+          <header className="safe-top sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
+            <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 pb-3">
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                onClick={() => navigate('/home')}
+                aria-label="Go to home"
+              >
+                <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
+                <span className="min-w-0">
+                  <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS APP</span>
+                  <span className="block truncate text-xs font-bold text-gray-500">
+                    {auth.roles.length ? auth.roles.join(' + ') : 'Signed out preview'}
+                  </span>
+                </span>
+              </button>
+              <div className="flex flex-none items-center gap-2">
+                <button
+                  type="button"
+                  className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
+                  onClick={() => setSearchOpen(true)}
+                  aria-label="Search"
+                  title="Search"
+                >
+                  <Search className="h-5 w-5" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="primary-button !h-10 !min-h-10 !w-10 !p-0 sm:!w-auto sm:!px-3"
+                  onClick={() => setAddTeamOpen(true)}
+                  aria-label="Add team"
+                  title="Add team"
+                >
+                  <Plus className="h-5 w-5" aria-hidden="true" />
+                  <span className="hidden sm:inline">Add Team</span>
+                </button>
+              </div>
+            </div>
+          </header>
+
+          <main className="mx-auto w-full max-w-5xl px-4 py-4 sm:py-6">{children}</main>
+
+          <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur">
+            <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path || (item.path !== '/home' && location.pathname.startsWith(item.path + '/'));
+
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-extrabold transition ${
+                      isActive ? 'bg-primary-50 text-primary-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'
+                    }`}
+                  >
+                    <Icon className="h-5 w-5" aria-hidden="true" />
+                    <span className="max-w-full truncate">{item.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          </nav>
+        </>
+      )}
 
       {searchOpen ? (
         <div className="fixed inset-0 z-50 bg-gray-950/40 px-3 py-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Search features">

@@ -26,8 +26,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   }, [filter]);
 
   return (
-    <div className="space-y-4">
-      <section className="app-card p-4">
+    <div className="schedule-page space-y-4">
+      <section className="schedule-header app-card p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="app-label">Schedule</div>
@@ -47,7 +47,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className="schedule-filters flex gap-2 overflow-x-auto pb-1">
         {[
           ['all', 'All'],
           ['games', 'Games'],
@@ -71,7 +71,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       {view === 'calendar' ? (
         <CalendarPreview games={visibleGames} />
       ) : (
-        <div className="space-y-3">
+        <div className="schedule-list space-y-3">
           {visibleGames.map((game) => (
             <GameCard key={game.id} game={game} />
           ))}

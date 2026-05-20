@@ -1,29 +1,77 @@
 import { Link, useParams } from 'react-router-dom';
 import { Bot, ChevronLeft, ChevronRight, Edit3, MessageCircle, Paperclip, Send, ShieldCheck, Smile, Trash2 } from 'lucide-react';
 import { mockMessages, mockTeams } from '../data/mockData';
+import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 
 export function Messages({ auth }: { auth: AuthState }) {
   const { teamId } = useParams();
+  const { isDesktopWeb } = useShellLayout();
   const activeTeam = teamId ? mockTeams.find((team) => team.id === teamId) : undefined;
+
+  if (isDesktopWeb) {
+    return <DesktopMessages auth={auth} activeTeamId={activeTeam?.id} />;
+  }
 
   if (activeTeam) {
     return <ChatWindow auth={auth} teamId={activeTeam.id} teamName={activeTeam.name} />;
   }
 
   return (
-    <div className="space-y-4">
-      <section className="app-card p-4">
-        <div className="app-label">Messages</div>
-        <h1 className="mt-1 text-2xl font-black text-gray-950">Team chats</h1>
-        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
-          Keeps the current chat model in view: conversations, unread state, attachments, reactions, AI mention, edit/delete, and moderation.
-        </p>
-      </section>
+    <div className="messages-page space-y-4">
+      <MessagesHeader />
+      <MessageList />
+    </div>
+  );
+}
 
-      <section className="space-y-3">
-        {mockMessages.map((message) => (
-          <Link key={message.teamId} to={`/messages/${message.teamId}`} className="app-card flex items-center gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
+function DesktopMessages({ auth, activeTeamId }: { auth: AuthState; activeTeamId?: string }) {
+  const selectedTeam = activeTeamId ? mockTeams.find((team) => team.id === activeTeamId) : mockTeams[0];
+
+  return (
+    <div className="messages-page messages-page-web space-y-4">
+      <MessagesHeader />
+      <section className="messages-two-pane">
+        <div className="messages-list-pane">
+          <MessageList activeTeamId={selectedTeam?.id} compact />
+        </div>
+        <div className="min-w-0">
+          {selectedTeam ? (
+            <ChatWindow auth={auth} teamId={selectedTeam.id} teamName={selectedTeam.name} embedded />
+          ) : (
+            <div className="app-card p-6 text-sm font-semibold text-gray-600">Select a team chat.</div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function MessagesHeader() {
+  return (
+    <section className="messages-header app-card p-4">
+      <div className="app-label">Messages</div>
+      <h1 className="mt-1 text-2xl font-black text-gray-950">Team chats</h1>
+      <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+        Keeps the current chat model in view: conversations, unread state, attachments, reactions, AI mention, edit/delete, and moderation.
+      </p>
+    </section>
+  );
+}
+
+function MessageList({ activeTeamId = '', compact = false }: { activeTeamId?: string; compact?: boolean }) {
+  return (
+    <section className={compact ? 'space-y-2' : 'space-y-3'}>
+      {mockMessages.map((message) => {
+        const active = activeTeamId === message.teamId;
+        return (
+          <Link
+            key={message.teamId}
+            to={`/messages/${message.teamId}`}
+            className={`app-card flex items-center gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${
+              active ? '!border-primary-200 bg-primary-50/40' : ''
+            }`}
+          >
             <div className="relative flex h-12 w-12 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
               <MessageCircle className="h-6 w-6" aria-hidden="true" />
               {message.unreadCount ? (
@@ -43,13 +91,13 @@ export function Messages({ auth }: { auth: AuthState }) {
             </div>
             <ChevronRight className="h-5 w-5 flex-none text-gray-400" aria-hidden="true" />
           </Link>
-        ))}
-      </section>
-    </div>
+        );
+      })}
+    </section>
   );
 }
 
-function ChatWindow({ auth, teamId, teamName }: { auth: AuthState; teamId: string; teamName: string }) {
+function ChatWindow({ auth, teamId, teamName, embedded = false }: { auth: AuthState; teamId: string; teamName: string; embedded?: boolean }) {
   const preview = mockMessages.find((message) => message.teamId === teamId);
   const messages = [
     { id: '1', sender: 'Coach Jamie', body: preview?.lastMessage || 'Welcome to the team chat.', time: '8:12 AM', mine: false },
@@ -58,10 +106,10 @@ function ChatWindow({ auth, teamId, teamName }: { auth: AuthState; teamId: strin
   ];
 
   return (
-    <div className="space-y-4">
-      <section className="sticky top-[69px] z-20 rounded-2xl border border-gray-200 bg-white p-3 shadow-app">
+    <div className={`chat-window space-y-4 ${embedded ? 'chat-window-embedded' : ''}`}>
+      <section className={`${embedded ? '' : 'sticky top-[69px] z-20'} rounded-2xl border border-gray-200 bg-white p-3 shadow-app`}>
         <div className="flex items-center gap-3">
-          <Link to="/messages" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" aria-label="Back to messages">
+          <Link to="/messages" className={`ghost-button !h-10 !min-h-10 !w-10 !p-0 ${embedded ? 'hidden' : ''}`} aria-label="Back to messages">
             <ChevronLeft className="h-5 w-5" aria-hidden="true" />
           </Link>
           <div className="min-w-0 flex-1">

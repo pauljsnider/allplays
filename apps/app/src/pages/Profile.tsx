@@ -35,6 +35,7 @@ import {
   uploadProfilePhoto
 } from '../lib/profileService';
 import { enablePushNotificationsForUser } from '../lib/pushService';
+import { useShellLayout } from '../lib/useShellLayout';
 import type { AccessCodeRecord, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
 import type { AuthState } from '../lib/types';
 
@@ -58,6 +59,7 @@ const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
 
 export function Profile({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
+  const { isDesktopWeb } = useShellLayout();
   const user = auth.user;
   const [profile, setProfile] = useState<ProfileDocument>({});
   const [fullName, setFullName] = useState('');
@@ -428,8 +430,8 @@ export function Profile({ auth }: { auth: AuthState }) {
   }
 
   return (
-    <div className="space-y-4">
-      <section className="app-card p-4">
+    <div className={isDesktopWeb ? 'profile-page profile-page-web' : 'space-y-4'}>
+      <section className="app-card profile-summary-card p-4">
         <div className="flex items-center gap-3">
           <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-primary-700">
             {photoPreview ? <img src={photoPreview} alt="" className="h-full w-full object-cover" /> : <UserCircle className="h-9 w-9" aria-hidden="true" />}
@@ -446,7 +448,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      <div className="sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
+      <div className="profile-section-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
         <div className="grid min-w-max grid-cols-4 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
           {profileSections.map((section) => {
             const active = activeProfileSection === section.id;

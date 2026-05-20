@@ -47,6 +47,7 @@ const pendingInviteTypeKey = 'allplays-app-pending-invite-type';
 const authTimeoutMs = 15000;
 const nativeAuthObserverTimeoutMs = 4000;
 const profileHydrationTimeoutMs = 8000;
+const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
 const nativeAuthSessionStorageKey = 'allplays-native-auth-session';
@@ -65,6 +66,7 @@ type FirebaseUser = {
   delete?: () => Promise<void>;
   getIdToken?: (forceRefresh?: boolean) => Promise<string>;
   isNativeRestSession?: boolean;
+  isNewUser?: boolean;
 };
 
 type UserCredential = {
@@ -81,12 +83,13 @@ type NativeAuthSession = {
   uid: string;
   email: string;
   idToken: string;
-  refreshToken: string;
+  refreshToken?: string;
   expirationTime: number;
   apiKey: string;
   displayName?: string | null;
   photoUrl?: string | null;
   emailVerified?: boolean;
+  provider?: 'rest' | 'native-plugin';
 };
 
 type NativeProviderInfo = {
@@ -104,9 +107,11 @@ type NativeRestSignInPayload = {
   email?: string;
   displayName?: string;
   profilePicture?: string;
+  photoUrl?: string;
   idToken: string;
   refreshToken: string;
   expiresIn?: string;
+  isNewUser?: boolean;
 };
 
 type NativeRestLookupUser = {
@@ -118,6 +123,29 @@ type NativeRestLookupUser = {
   providerUserInfo?: NativeProviderInfo[];
   createdAt?: string;
   lastLoginAt?: string;
+};
+
+type NativePluginUser = {
+  uid?: string;
+  email?: string | null;
+  displayName?: string | null;
+  photoUrl?: string | null;
+  emailVerified?: boolean;
+  metadata?: {
+    creationTime?: number;
+    lastSignInTime?: number;
+  };
+};
+
+type NativePluginSignInResult = {
+  user?: NativePluginUser | null;
+  credential?: {
+    idToken?: string;
+    accessToken?: string;
+  } | null;
+  additionalUserInfo?: {
+    isNewUser?: boolean;
+  } | null;
 };
 
 function normalizeEmail(email: string) {
@@ -147,6 +175,18 @@ function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = authTi
       window.clearTimeout(timeoutId);
     }
   });
+}
+
+async function runBestEffortAuthCleanup(label: string, cleanup: () => Promise<unknown>) {
+  try {
+    await withTimeout(
+      Promise.resolve().then(cleanup),
+      `${label} timed out.`,
+      signOutCleanupTimeoutMs
+    );
+  } catch (error) {
+    console.warn(`[app-auth] ${label} failed during sign-out:`, error);
+  }
 }
 
 export function describeAuthError(error: any) {
@@ -327,9 +367,47 @@ async function refreshNativeAuthSession(session: NativeAuthSession) {
   return nextSession;
 }
 
+async function getNativePluginToken(forceRefresh = false) {
+  if (!(Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
+    throw new Error('Native Firebase auth is unavailable.');
+  }
+
+  const result = await FirebaseAuthentication.getIdToken({ forceRefresh });
+  if (!result?.token) {
+    throw new Error('Native Firebase auth did not return an ID token.');
+  }
+  return result.token;
+}
+
+async function refreshNativePluginAuthSession(session: NativeAuthSession) {
+  const currentUserResult = await FirebaseAuthentication.getCurrentUser().catch(() => ({ user: null }));
+  const currentUser = currentUserResult?.user as NativePluginUser | null;
+  if (!currentUser?.uid) {
+    throw new Error('Native Firebase auth has no signed-in user.');
+  }
+  if (session.uid && currentUser.uid !== session.uid) {
+    throw new Error('Native Firebase auth session does not match the saved app session.');
+  }
+
+  const idToken = await getNativePluginToken(true);
+  const nextSession: NativeAuthSession = {
+    ...session,
+    uid: currentUser.uid,
+    email: currentUser.email || session.email || '',
+    idToken,
+    expirationTime: Date.now() + 55 * 60 * 1000,
+    displayName: currentUser.displayName || session.displayName || null,
+    photoUrl: currentUser.photoUrl || session.photoUrl || null,
+    emailVerified: currentUser.emailVerified === true || session.emailVerified === true,
+    provider: 'native-plugin'
+  };
+  writeNativeAuthSession(nextSession);
+  return nextSession;
+}
+
 function getNativeAuthFallbackUser(): FirebaseUser | null {
   const session = readNativeAuthSession();
-  if (!session?.uid || !session?.idToken || !session?.refreshToken) {
+  if (!session?.uid || !session?.idToken || (!session.refreshToken && session.provider !== 'native-plugin')) {
     return null;
   }
 
@@ -343,9 +421,14 @@ function getNativeAuthFallbackUser(): FirebaseUser | null {
     async getIdToken(forceRefresh = false) {
       let currentSession = readNativeAuthSession() || session;
       if (forceRefresh || Number(currentSession.expirationTime || 0) < Date.now() + 60000) {
-        currentSession = await refreshNativeAuthSession(currentSession);
+        currentSession = currentSession.provider === 'native-plugin'
+          ? await refreshNativePluginAuthSession(currentSession)
+          : await refreshNativeAuthSession(currentSession);
       }
       return currentSession.idToken;
+    },
+    async delete() {
+      await deleteNativeAuthUser();
     }
   };
 }
@@ -363,13 +446,15 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
   const email = signInPayload.email || lookupUser.email || '';
   const expiresInSeconds = Number.parseInt(signInPayload.expiresIn || '3600', 10);
   const expirationTime = Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000;
+  const now = `${Date.now()}`;
+  const photoUrl = signInPayload.profilePicture || signInPayload.photoUrl || lookupUser.photoUrl || null;
   const authUser = {
     uid: signInPayload.localId,
     email,
     emailVerified: lookupUser.emailVerified === true,
     displayName: signInPayload.displayName || lookupUser.displayName || null,
     isAnonymous: false,
-    photoURL: signInPayload.profilePicture || lookupUser.photoUrl || null,
+    photoURL: photoUrl,
     phoneNumber: lookupUser.phoneNumber || null,
     tenantId: null,
     providerData: normalizeProviderData(lookupUser.providerUserInfo, email),
@@ -378,6 +463,11 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
       accessToken: signInPayload.idToken,
       expirationTime
     },
+    metadata: {
+      creationTime: signInPayload.isNewUser ? now : lookupUser.createdAt,
+      lastSignInTime: lookupUser.lastLoginAt || now
+    },
+    isNewUser: signInPayload.isNewUser === true,
     _redirectEventId: undefined,
     createdAt: lookupUser.createdAt || undefined,
     lastLoginAt: lookupUser.lastLoginAt || `${Date.now()}`,
@@ -394,7 +484,8 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
     apiKey: auth.app?.options?.apiKey || '',
     displayName: authUser.displayName,
     photoUrl: authUser.photoURL,
-    emailVerified: authUser.emailVerified
+    emailVerified: authUser.emailVerified,
+    provider: 'rest'
   });
 
   const database = await openFirebaseAuthStorage();
@@ -419,7 +510,9 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
     emailVerified: authUser.emailVerified,
     displayName: authUser.displayName,
     photoURL: authUser.photoURL,
+    metadata: authUser.metadata,
     isNativeRestSession: true,
+    isNewUser: authUser.isNewUser,
     async getIdToken(forceRefresh = false) {
       let currentSession = readNativeAuthSession();
       if (!currentSession) {
@@ -429,13 +522,99 @@ async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPaylo
           idToken: signInPayload.idToken,
           refreshToken: signInPayload.refreshToken,
           expirationTime,
-          apiKey: auth.app?.options?.apiKey || ''
+          apiKey: auth.app?.options?.apiKey || '',
+          provider: 'rest'
         };
       }
       if (forceRefresh || Number(currentSession.expirationTime || 0) < Date.now() + 60000) {
         currentSession = await refreshNativeAuthSession(currentSession);
       }
       return currentSession.idToken;
+    },
+    async delete() {
+      await deleteNativeAuthUser();
+    }
+  };
+}
+
+function nativeMetadataToAuthMetadata(metadata: NativePluginUser['metadata'] = {}) {
+  const creationTime = metadata.creationTime ? new Date(metadata.creationTime).toISOString() : undefined;
+  const lastSignInTime = metadata.lastSignInTime ? new Date(metadata.lastSignInTime).toISOString() : undefined;
+  return {
+    creationTime,
+    lastSignInTime
+  };
+}
+
+async function persistNativePluginAuthSession(nativeResult: NativePluginSignInResult): Promise<FirebaseUser> {
+  const currentUserResult = await FirebaseAuthentication.getCurrentUser().catch(() => ({ user: null }));
+  const pluginUser = nativeResult.user || (currentUserResult?.user as NativePluginUser | null);
+  if (!pluginUser?.uid) {
+    throw new Error('Native Google sign-in did not return a Firebase user.');
+  }
+
+  const idToken = await getNativePluginToken(true);
+  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+    idToken
+  }).catch((error) => {
+    console.warn('[app-auth] Unable to load native Firebase auth profile:', error);
+    return {};
+  }) as { users?: NativeRestLookupUser[] };
+  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+  const email = pluginUser.email || lookupUser.email || '';
+  const displayName = pluginUser.displayName || lookupUser.displayName || null;
+  const photoUrl = pluginUser.photoUrl || lookupUser.photoUrl || null;
+  const metadata = nativeMetadataToAuthMetadata(pluginUser.metadata);
+  const expirationTime = Date.now() + 55 * 60 * 1000;
+  const isNewUser = nativeResult.additionalUserInfo?.isNewUser === true;
+
+  writeNativeAuthSession({
+    uid: pluginUser.uid,
+    email,
+    idToken,
+    expirationTime,
+    apiKey: auth.app?.options?.apiKey || '',
+    displayName,
+    photoUrl,
+    emailVerified: pluginUser.emailVerified === true || lookupUser.emailVerified === true,
+    provider: 'native-plugin'
+  });
+  await clearFirebaseAuthStorageSession();
+
+  return {
+    uid: pluginUser.uid,
+    email,
+    emailVerified: pluginUser.emailVerified === true || lookupUser.emailVerified === true,
+    displayName,
+    photoURL: photoUrl,
+    metadata: {
+      creationTime: isNewUser ? `${Date.now()}` : metadata.creationTime || lookupUser.createdAt,
+      lastSignInTime: metadata.lastSignInTime || lookupUser.lastLoginAt || `${Date.now()}`
+    },
+    isNativeRestSession: true,
+    isNewUser,
+    async getIdToken(forceRefresh = false) {
+      let currentSession = readNativeAuthSession();
+      if (!currentSession) {
+        currentSession = {
+          uid: pluginUser.uid || '',
+          email,
+          idToken,
+          expirationTime,
+          apiKey: auth.app?.options?.apiKey || '',
+          displayName,
+          photoUrl,
+          emailVerified: pluginUser.emailVerified === true || lookupUser.emailVerified === true,
+          provider: 'native-plugin'
+        };
+      }
+      if (forceRefresh || Number(currentSession.expirationTime || 0) < Date.now() + 60000) {
+        currentSession = await refreshNativePluginAuthSession(currentSession);
+      }
+      return currentSession.idToken;
+    },
+    async delete() {
+      await deleteNativeAuthUser();
     }
   };
 }
@@ -480,6 +659,28 @@ async function callFirebaseAuthRest(endpoint: string, payload: Record<string, un
   return responsePayload;
 }
 
+async function deleteNativeAuthUser() {
+  const session = readNativeAuthSession();
+  if (!session?.idToken) {
+    clearNativeAuthSession();
+    await clearFirebaseAuthStorageSession();
+    return;
+  }
+
+  try {
+    if (session.provider === 'native-plugin' && (Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
+      await FirebaseAuthentication.deleteUser();
+    } else {
+      await callFirebaseAuthRest('accounts:delete', {
+        idToken: session.idToken
+      });
+    }
+  } finally {
+    clearNativeAuthSession();
+    await clearFirebaseAuthStorageSession();
+  }
+}
+
 async function signInWithNativeRestSession(email: string, password: string) {
   const signInPayload = await callFirebaseAuthRest('accounts:signInWithPassword', {
     email,
@@ -496,8 +697,61 @@ async function signInWithNativeRestSession(email: string, password: string) {
   return persistNativeRestAuthSession(signInPayload, lookupUser);
 }
 
+function getNativeGoogleRequestUri() {
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return origin.startsWith('http://') || origin.startsWith('https://') ? origin : 'https://allplays.ai';
+}
+
+async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAccessToken?: string | null) {
+  const postBody = new URLSearchParams({
+    providerId: 'google.com'
+  });
+
+  if (googleIdToken) {
+    postBody.set('id_token', googleIdToken);
+  }
+  if (googleAccessToken) {
+    postBody.set('access_token', googleAccessToken);
+  }
+
+  const signInPayload = await callFirebaseAuthRest('accounts:signInWithIdp', {
+    postBody: postBody.toString(),
+    requestUri: getNativeGoogleRequestUri(),
+    returnIdpCredential: true,
+    returnSecureToken: true
+  }) as NativeRestSignInPayload;
+  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+    idToken: signInPayload.idToken
+  }).catch((error) => {
+    console.warn('[app-auth] Unable to load native Google REST auth profile:', error);
+    return {};
+  }) as { users?: NativeRestLookupUser[] };
+  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+  return persistNativeRestAuthSession(signInPayload, lookupUser);
+}
+
 function isNewFirebaseUser(user: FirebaseUser) {
+  if (typeof user.isNewUser === 'boolean') {
+    return user.isNewUser;
+  }
   return Boolean(user.metadata?.creationTime && user.metadata.creationTime === user.metadata.lastSignInTime);
+}
+
+function isCancelledAuthError(error: any) {
+  const message = `${error?.code || ''} ${error?.message || ''}`.toLowerCase();
+  return message.includes('cancel') || message.includes('closed');
+}
+
+function isNetworkOrTimeoutAuthError(error: any) {
+  const message = `${error?.code || ''} ${error?.message || ''}`.toLowerCase();
+  return (
+    message.includes('network') ||
+    message.includes('timed out') ||
+    message.includes('request failed') ||
+    message.includes('offline') ||
+    message.includes('could not connect') ||
+    message.includes('couldn’t connect')
+  );
 }
 
 function rolesFromProfile(profile: Record<string, unknown> = {}): UserRole[] {
@@ -737,9 +991,11 @@ async function signInWithNativeGoogleCredential() {
     throw new Error('Native Google sign-in is only available in the iOS or Android app.');
   }
 
+  console.info('[app-auth] Native Google: requesting Google ID token.');
   const result = await withTimeout(
-    FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true }),
-    'Google sign-in timed out.'
+    FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true }) as Promise<NativePluginSignInResult>,
+    'Native Google sign-in timed out.',
+    authTimeoutMs
   );
   const idToken = result?.credential?.idToken;
   const accessToken = result?.credential?.accessToken;
@@ -747,11 +1003,25 @@ async function signInWithNativeGoogleCredential() {
     throw new Error('Google sign-in did not return an ID token.');
   }
 
-  const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
-  return withTimeout(
-    signInWithCredential(auth, credential) as Promise<UserCredential>,
-    'Firebase Google sign-in timed out.'
-  );
+  const credential = GoogleAuthProvider.credential(idToken);
+  try {
+    console.info('[app-auth] Native Google: signing into Firebase Web Auth.');
+    return await withTimeout(
+      signInWithCredential(auth, credential) as Promise<UserCredential>,
+      'Firebase Google sign-in timed out.',
+      authTimeoutMs
+    );
+  } catch (error) {
+    if (isNetworkOrTimeoutAuthError(error) && !isCancelledAuthError(error)) {
+      console.warn('[app-auth] Native Google web credential exchange failed; using REST session fallback:', error);
+      const user = await signInWithNativeGoogleRestSession(idToken, accessToken);
+      return {
+        user,
+        nativeRest: true
+      } as UserCredential;
+    }
+    throw error;
+  }
 }
 
 async function processGoogleResult(result: UserCredential | null, activationCode?: string | null) {
@@ -765,6 +1035,8 @@ async function processGoogleResult(result: UserCredential | null, activationCode
       fullName: result.user.displayName || '',
       photoUrl: result.user.photoURL || '',
       lastLogin: new Date()
+    }).catch((error: unknown) => {
+      console.warn('[app-auth] Unable to update Google lastLogin; continuing sign-in:', error);
     });
     return result;
   }
@@ -852,6 +1124,10 @@ export async function signInWithGoogleAccount(activationCode?: string | null) {
 }
 
 export async function completeGoogleRedirect() {
+  if (isNativeRuntime()) {
+    return null;
+  }
+
   const result = await getRedirectResult(auth);
   return processGoogleResult(result as UserCredential | null);
 }
@@ -1019,7 +1295,11 @@ export function mapLegacyRedirectToAppRoute(redirectUrl?: string) {
 
 export async function signOut() {
   clearNativeAuthSession();
-  await clearFirebaseAuthStorageSession();
-  await FirebaseAuthentication.signOut().catch(() => undefined);
-  await firebaseSignOut(auth).catch(() => undefined);
+  await runBestEffortAuthCleanup('Firebase auth storage cleanup', clearFirebaseAuthStorageSession);
+  await runBestEffortAuthCleanup('Native Firebase sign-out', async () => {
+    if ((Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {
+      await FirebaseAuthentication.signOut();
+    }
+  });
+  await runBestEffortAuthCleanup('Web Firebase sign-out', () => firebaseSignOut(auth));
 }

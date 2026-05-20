@@ -69,10 +69,15 @@ export function useAuth(): AuthState {
   }, []);
 
   const signOutAndClear = useCallback(async () => {
-    setLoading(true);
     setError(null);
+    const cleanup = signOut();
+    setUser(null);
+    setProfile(null);
+    setLoading(false);
     try {
-      await signOut();
+      await cleanup;
+    } catch (signOutError: any) {
+      console.warn('[app-auth] Sign-out cleanup did not complete cleanly:', signOutError);
     } finally {
       setUser(null);
       setProfile(null);

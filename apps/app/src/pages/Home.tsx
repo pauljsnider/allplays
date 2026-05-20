@@ -10,8 +10,8 @@ export function Home({ auth }: { auth: AuthState }) {
   const unreadMessages = mockMessages.reduce((total, message) => total + message.unreadCount, 0);
 
   return (
-    <div className="space-y-4">
-      <section className="rounded-2xl border border-primary-100 bg-white p-4 shadow-app">
+    <div className="home-page space-y-4">
+      <section className="home-hero rounded-2xl border border-primary-100 bg-white p-4 shadow-app">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="app-label">Home</div>
@@ -33,7 +33,7 @@ export function Home({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      <section className="space-y-3">
+      <section className="home-schedule-section space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="app-section-title">Schedule</h2>
           <Link to="/schedule" className="text-sm font-black text-primary-700">View all</Link>
@@ -43,7 +43,7 @@ export function Home({ auth }: { auth: AuthState }) {
         ))}
       </section>
 
-      <section className="grid gap-3 lg:grid-cols-2">
+      <section className="home-secondary-grid grid gap-3 lg:grid-cols-2">
         <div className="app-card p-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="app-section-title">My Players</h2>
@@ -85,7 +85,7 @@ export function Home({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-3">
+      <section className="home-quick-grid grid gap-3 sm:grid-cols-3">
         <QuickCard icon={Dumbbell} title="Practice Packet" detail="Home packets, attendance, drills, and parent follow-up." to="/capabilities/drills" />
         <QuickCard icon={Car} title="Rideshare" detail="Seats, requests, and event-level coordination." to="/schedule" />
         <QuickCard icon={BarChart3} title="Performance" detail="Match reports, summaries, stats, clips, and insights." to="/capabilities/player-profile" />

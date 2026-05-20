@@ -145,3 +145,132 @@ a {
   border-color: #818cf8;
   box-shadow: 0 0 0 3px #e0e7ff;
 }
+
+.desktop-app-page {
+  min-height: 100vh;
+  background: #f6f8fb;
+}
+
+.desktop-app-page .app-card {
+  border-radius: 12px;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.05);
+}
+
+.desktop-app-page .app-section-title {
+  font-size: 1rem;
+}
+
+.desktop-app-page .profile-page-web {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.desktop-app-page .profile-page-web .profile-summary-card {
+  grid-column: 1 / -1;
+}
+
+.desktop-app-page .profile-page-web .profile-summary-card .h-16 {
+  height: 56px;
+  width: 56px;
+}
+
+.desktop-app-page .profile-page-web .profile-section-nav {
+  grid-column: 1;
+  top: 84px;
+  margin: 0;
+  overflow: visible;
+  background: transparent;
+  padding: 0;
+}
+
+.desktop-app-page .profile-page-web .profile-section-nav > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.desktop-app-page .profile-page-web .profile-section-nav button {
+  justify-content: flex-start;
+  border-radius: 10px;
+  padding-left: 12px;
+  padding-right: 12px;
+  text-align: left;
+}
+
+.desktop-app-page .profile-page-web > section:not(.profile-summary-card) {
+  grid-column: 2;
+}
+
+.desktop-app-page .home-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.desktop-app-page .home-hero,
+.desktop-app-page .home-quick-grid {
+  grid-column: 1 / -1;
+}
+
+.desktop-app-page .home-schedule-section {
+  grid-column: 1;
+}
+
+.desktop-app-page .home-secondary-grid {
+  grid-column: 2;
+  grid-row: 2 / span 2;
+  grid-template-columns: 1fr;
+}
+
+.desktop-app-page .home-quick-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.desktop-app-page .schedule-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+
+.desktop-app-page .schedule-header {
+  padding: 22px;
+}
+
+.desktop-app-page .schedule-filters {
+  overflow: visible;
+  padding-bottom: 0;
+}
+
+.desktop-app-page .schedule-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 14px;
+}
+
+.desktop-app-page .messages-two-pane {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.desktop-app-page .messages-list-pane {
+  position: sticky;
+  top: 84px;
+  max-height: calc(100vh - 108px);
+  overflow: auto;
+}
+
+.desktop-app-page .chat-window-embedded .app-card {
+  min-height: 420px;
+}
+
+.desktop-app-page .teams-grid {
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+}

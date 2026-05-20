@@ -138,6 +138,12 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
       const result = await signInWithGoogleAccount(code || null);
       if (result) {
+        if (result.nativeRest) {
+          window.location.hash = `#${mode === 'signup' ? '/verify-pending' : inviteCode ? postAuthRoute : '/home'}`;
+          window.location.reload();
+          return;
+        }
+
         const hydrated = await hydrateFirebaseUser(result.user).catch(() => null);
         await auth.refresh();
         navigate(mode === 'signup' ? '/verify-pending' : inviteCode ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user), { replace: true });

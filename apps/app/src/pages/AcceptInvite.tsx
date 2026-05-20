@@ -28,18 +28,14 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   const processedKeyRef = useRef('');
 
   const authUrl = useMemo(() => {
-    const params = new URLSearchParams();
-    if (code) {
-      params.set('code', code);
-      params.set('type', inviteType);
-    }
-    return `/auth?${params.toString()}`;
+    return buildInviteAuthUrl(code, inviteType);
   }, [code, inviteType]);
 
   async function redeem(codeToRedeem: string) {
     if (!auth.user) {
-      rememberPendingInvite(codeToRedeem, inviteType);
-      navigate(`${authUrl}&mode=login`);
+      const normalizedCode = codeToRedeem.trim().toUpperCase();
+      rememberPendingInvite(normalizedCode, inviteType);
+      navigate(`${buildInviteAuthUrl(normalizedCode, inviteType)}&mode=login`);
       return;
     }
 
@@ -170,6 +166,16 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       {state === 'error' ? <Status icon={XCircle} message={message} tone="error" /> : null}
     </AuthFrame>
   );
+}
+
+function buildInviteAuthUrl(code: string, inviteType: string) {
+  const params = new URLSearchParams();
+  const normalizedCode = code.trim().toUpperCase();
+  if (normalizedCode) {
+    params.set('code', normalizedCode);
+    params.set('type', inviteType);
+  }
+  return `/auth?${params.toString()}`;
 }
 
 function Status({ icon: Icon, message, tone }: { icon: typeof KeyRound; message: string; tone: 'neutral' | 'success' | 'error' }) {
