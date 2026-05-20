@@ -1388,6 +1388,10 @@ async function postPreEventReminderChatMessage({ teamId, gameId, event, payload 
   return { messageId, created: true };
 }
 
+function isPreEventReminderChatMessage(data) {
+  return data?.aiMeta?.type === 'pre-event-reminder' || data?.senderId === 'scheduled-reminder';
+}
+
 async function markReminderSending(eventRef, claimId, now) {
   return firestore.runTransaction(async (transaction) => {
     const snap = await transaction.get(eventRef);
@@ -1417,6 +1421,9 @@ async function markReminderSent(eventRef, claimId, sendResult) {
     'scheduleNotifications.pushFailureCount': Number(sendResult?.failureCount || 0),
     'scheduleNotifications.chatMessageId': sendResult?.chatMessageId || null,
     'scheduleNotifications.chatMessageCreated': sendResult?.chatMessageCreated === true,
+    'scheduleNotifications.chatMessageError': sendResult?.chatMessageError
+      ? sendResult.chatMessageError
+      : admin.firestore.FieldValue.delete(),
     'scheduleNotifications.rsvpEmailCount': Number(sendResult?.rsvpEmailCount || 0)
   });
 }
@@ -1452,7 +1459,15 @@ async function dispatchDuePreEventReminders(now = new Date()) {
 
     try {
       const payload = buildPreEventReminderPayload({ teamId, gameId, event: claimedEvent });
-      const chatResult = await postPreEventReminderChatMessage({ teamId, gameId, event: claimedEvent, payload });
+      let chatResult = { messageId: null, created: false };
+      let chatMessageError = null;
+      try {
+        chatResult = await postPreEventReminderChatMessage({ teamId, gameId, event: claimedEvent, payload });
+      } catch (chatError) {
+        chatMessageError = chatError;
+        console.error('Failed to write pre-event reminder chat fallback', { teamId, gameId, error: chatError });
+      }
+
       const sendResult = await sendCategoryNotification({
         teamId,
         gameId,
@@ -1470,6 +1485,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
         ...sendResult,
         chatMessageId: chatResult.messageId,
         chatMessageCreated: chatResult.created,
+        chatMessageError: chatMessageError?.message || null,
         rsvpEmailCount: emailResult.sentCount
       });
       results.push({
@@ -1499,6 +1515,7 @@ exports.notifyTeamChatMessageCreated = functions.firestore
     const text = String(data.text || '').trim();
     const imageUrl = String(data.imageUrl || '').trim();
     if (!text && !imageUrl) return null;
+    if (isPreEventReminderChatMessage(data)) return null;
 
     const teamId = context.params.teamId;
     const actorUid = data.senderId || null;
