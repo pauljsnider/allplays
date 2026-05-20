@@ -9,13 +9,31 @@
     "test:smoke": "playwright test --config=playwright.smoke.config.js",
     "test:smoke:team-fallback": "playwright test tests/smoke/team-fallback-regressions.spec.js --config=playwright.smoke.config.js --reporter=line",
     "ci:firebase-rules": "node scripts/validate-firebase-rules-ci.mjs",
-    "serve:firebase": "firebase emulators:start --only hosting --project demo-allplays"
+    "serve:firebase": "firebase emulators:start --only hosting --project demo-allplays",
+    "app:dev": "npm --prefix apps/app run dev",
+    "app:build": "npm --prefix apps/app run build",
+    "app:preview": "npm --prefix apps/app run preview",
+    "mobile:serve": "npm run app:dev",
+    "mobile:sync": "npm run app:build && npx cap sync",
+    "mobile:build:ios": "npm run mobile:sync && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build",
+    "mobile:build:android": "npm run mobile:sync && cd android && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" ./gradlew :app:assembleDebug",
+    "mobile:open:ios": "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap open ios",
+    "mobile:open:android": "npx cap open android",
+    "mobile:run:ios": "npm run app:build && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npx cap run ios",
+    "mobile:run:android": "npm run app:build && JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" npx cap run android"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.3.4",
     "@playwright/test": "^1.59.1",
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@capacitor-firebase/authentication": "^8.2.0",
+    "@capacitor-firebase/messaging": "^8.2.0",
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
+    "firebase": "^12.13.0",
     "html-to-image": "^1.11.13",
     "jsdom": "^29.1.1"
   }

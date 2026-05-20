@@ -1,0 +1,794 @@
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import {
+  Bell,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle2,
+  Clipboard,
+  Copy,
+  ImagePlus,
+  KeyRound,
+  Link2,
+  Loader2,
+  LogOut,
+  Mail,
+  RefreshCw,
+  Save,
+  Send,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  UserCircle,
+  XCircle
+} from 'lucide-react';
+import { describeAuthError, reloadCurrentUser, resendVerificationEmail, sendResetEmail, setCurrentUserPassword } from '../lib/authService';
+import {
+  createProfileAccessCode,
+  loadNotificationPreferences,
+  loadNotificationTeams,
+  loadProfileAccessCodes,
+  loadProfileDocument,
+  normalizeNotificationPreferences,
+  saveNotificationPreferences,
+  saveProfileDocument,
+  uploadProfilePhoto
+} from '../lib/profileService';
+import { enablePushNotificationsForUser } from '../lib/pushService';
+import type { AccessCodeRecord, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
+import type { AuthState } from '../lib/types';
+
+type Tone = 'neutral' | 'success' | 'error';
+
+type Status = {
+  message: string;
+  tone: Tone;
+};
+
+type ProfileSectionId = 'account' | 'alerts' | 'invites' | 'security';
+
+const emptyPreferences = normalizeNotificationPreferences(null);
+const collapsedInviteCount = 3;
+const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
+  { id: 'account', label: 'Account' },
+  { id: 'alerts', label: 'Alerts' },
+  { id: 'invites', label: 'Invites' },
+  { id: 'security', label: 'Security' }
+];
+
+export function Profile({ auth }: { auth: AuthState }) {
+  const navigate = useNavigate();
+  const user = auth.user;
+  const [profile, setProfile] = useState<ProfileDocument>({});
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [photoUrl, setPhotoUrl] = useState('');
+  const [photoPreview, setPhotoPreview] = useState('');
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoChanged, setPhotoChanged] = useState(false);
+  const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
+  const [accessCodes, setAccessCodes] = useState<AccessCodeRecord[]>([]);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [invitePhone, setInvitePhone] = useState('');
+  const [generatedCode, setGeneratedCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState('');
+  const [profileStatus, setProfileStatus] = useState<Status | null>(null);
+  const [verificationStatus, setVerificationStatus] = useState<Status | null>(null);
+  const [notificationStatus, setNotificationStatus] = useState<Status | null>(null);
+  const [passwordStatus, setPasswordStatus] = useState<Status | null>(null);
+  const [inviteStatus, setInviteStatus] = useState<Status | null>(null);
+  const [copyStatus, setCopyStatus] = useState('');
+  const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
+  const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>('account');
+
+  const displayName = fullName || user?.displayName || profile.displayName || user?.email || 'ALL PLAYS User';
+  const showPasswordSection = profile.signInMethod === 'emailLink' && !profile.hasPassword;
+  const updatedAt = useMemo(() => formatTimestamp(profile.updatedAt), [profile.updatedAt]);
+  const signupLink = generatedCode ? buildSignupLink(generatedCode) : '';
+  const visibleAccessCodes = inviteHistoryExpanded ? accessCodes : accessCodes.slice(0, collapsedInviteCount);
+  const hiddenAccessCodeCount = Math.max(0, accessCodes.length - visibleAccessCodes.length);
+
+  const selectProfileSection = (sectionId: ProfileSectionId) => {
+    setActiveProfileSection(sectionId);
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProfile() {
+      if (!user) {
+        return;
+      }
+
+      setLoading(true);
+      setProfileStatus(null);
+      setNotificationStatus(null);
+      setInviteStatus(null);
+
+      try {
+        const [loadedProfile, teams, codes] = await Promise.all([
+          loadProfileDocument(user.uid).catch((error) => {
+            console.warn('[profile] Unable to load profile:', error);
+            setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
+            return {} as ProfileDocument;
+          }),
+          loadNotificationTeams(user.uid, user.email).catch((error) => {
+            console.warn('[profile] Unable to load notification teams:', error);
+            setNotificationStatus({ message: 'Unable to load teams for notifications.', tone: 'error' });
+            return [];
+          }),
+          loadProfileAccessCodes(user.uid).catch((error) => {
+            console.warn('[profile] Unable to load access codes:', error);
+            setInviteStatus({ message: 'Unable to load invite history.', tone: 'error' });
+            return [];
+          })
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setProfile(loadedProfile);
+        setFullName(loadedProfile.fullName || user.displayName || '');
+        setPhone(loadedProfile.phone || '');
+        setPhotoUrl(loadedProfile.photoUrl || '');
+        setPhotoPreview(loadedProfile.photoUrl || '');
+        setPhotoFile(null);
+        setPhotoChanged(false);
+        setNotificationTeams(teams);
+        setSelectedTeamId((current) => {
+          if (current && teams.some((team) => team.id === current)) {
+            return current;
+          }
+          return teams[0]?.id || '';
+        });
+        setAccessCodes(codes);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPreferences() {
+      if (!user || !selectedTeamId) {
+        setNotificationPreferences(emptyPreferences);
+        return;
+      }
+
+      try {
+        const preferences = await loadNotificationPreferences(user.uid, selectedTeamId);
+        if (!cancelled) {
+          setNotificationPreferences(preferences);
+        }
+      } catch (error) {
+        console.warn('[profile] Unable to load notification preferences:', error);
+        if (!cancelled) {
+          setNotificationPreferences(emptyPreferences);
+          setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
+        }
+      }
+    }
+
+    loadPreferences();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedTeamId, user]);
+
+  const handlePhotoChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setProfileStatus({ message: 'Choose an image file.', tone: 'error' });
+      event.target.value = '';
+      return;
+    }
+
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+    setPhotoChanged(true);
+    setProfileStatus(null);
+  };
+
+  const removePhoto = () => {
+    setPhotoFile(null);
+    setPhotoUrl('');
+    setPhotoPreview('');
+    setPhotoChanged(true);
+  };
+
+  const saveProfile = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!user) {
+      return;
+    }
+
+    setBusy('profile');
+    setProfileStatus(null);
+
+    try {
+      let nextPhotoUrl = photoUrl || '';
+      if (photoChanged && photoFile) {
+        setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
+        nextPhotoUrl = await uploadProfilePhoto(photoFile);
+      }
+
+      await saveProfileDocument(user.uid, {
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        email: user.email,
+        photoUrl: nextPhotoUrl || null
+      });
+
+      const nextProfile = await loadProfileDocument(user.uid);
+      setProfile(nextProfile);
+      setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');
+      setPhotoPreview(nextProfile.photoUrl || nextPhotoUrl || '');
+      setPhotoFile(null);
+      setPhotoChanged(false);
+      setProfileStatus({ message: 'Profile saved.', tone: 'success' });
+      await auth.refresh();
+    } catch (error: any) {
+      setProfileStatus({ message: formatProfileSaveError(error), tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const resendVerification = async () => {
+    setBusy('verification');
+    setVerificationStatus(null);
+
+    try {
+      await resendVerificationEmail();
+      setVerificationStatus({ message: 'Verification email sent. Check your inbox.', tone: 'success' });
+    } catch (error) {
+      setVerificationStatus({ message: describeAuthError(error), tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const refreshVerification = async () => {
+    setBusy('refresh-verification');
+    setVerificationStatus(null);
+
+    try {
+      await reloadCurrentUser();
+      await auth.refresh();
+      setVerificationStatus({ message: 'Verification status refreshed.', tone: 'success' });
+    } catch (error) {
+      setVerificationStatus({ message: describeAuthError(error), tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const saveNotifications = async () => {
+    if (!user || !selectedTeamId) {
+      setNotificationStatus({ message: 'Select a team first.', tone: 'error' });
+      return;
+    }
+
+    setBusy('notifications');
+    setNotificationStatus(null);
+
+    try {
+      const saved = await saveNotificationPreferences(user.uid, selectedTeamId, notificationPreferences);
+      setNotificationPreferences(saved);
+      setNotificationStatus({ message: 'Notification preferences saved.', tone: 'success' });
+    } catch (error: any) {
+      setNotificationStatus({ message: error?.message || 'Failed to save notification preferences.', tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const enablePush = async () => {
+    if (!user) {
+      setNotificationStatus({ message: 'No signed-in user is loaded.', tone: 'error' });
+      return;
+    }
+
+    setBusy('push');
+    setNotificationStatus(null);
+
+    try {
+      await enablePushNotificationsForUser(user.uid);
+      setNotificationStatus({ message: 'Push is enabled on this device.', tone: 'success' });
+    } catch (error: any) {
+      setNotificationStatus({ message: error?.message || 'Failed to enable push notifications.', tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const sendPasswordReset = async () => {
+    if (!user?.email) {
+      setPasswordStatus({ message: 'No account email is loaded.', tone: 'error' });
+      return;
+    }
+
+    setBusy('password-reset');
+    setPasswordStatus(null);
+
+    try {
+      await sendResetEmail(user.email);
+      setPasswordStatus({ message: 'Password reset email sent.', tone: 'success' });
+    } catch (error) {
+      setPasswordStatus({ message: describeAuthError(error), tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const setPassword = async (event: FormEvent) => {
+    event.preventDefault();
+    setPasswordStatus(null);
+
+    if (newPassword.length < 6) {
+      setPasswordStatus({ message: 'Password must be at least 6 characters.', tone: 'error' });
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordStatus({ message: 'Passwords do not match.', tone: 'error' });
+      return;
+    }
+
+    setBusy('password');
+
+    try {
+      await setCurrentUserPassword(newPassword);
+      setNewPassword('');
+      setConfirmPassword('');
+      setProfile((current) => ({ ...current, hasPassword: true }));
+      setPasswordStatus({ message: 'Password set successfully.', tone: 'success' });
+      await auth.refresh();
+    } catch (error) {
+      setPasswordStatus({ message: describeAuthError(error), tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const createInviteCode = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!user) {
+      return;
+    }
+
+    if (!inviteEmail.trim() && !invitePhone.trim()) {
+      setInviteStatus({ message: 'Enter an email or phone number.', tone: 'error' });
+      return;
+    }
+
+    setBusy('invite');
+    setInviteStatus(null);
+
+    try {
+      const code = await createProfileAccessCode(user.uid, inviteEmail.trim(), invitePhone.trim());
+      setGeneratedCode(code);
+      setInviteEmail('');
+      setInvitePhone('');
+      setAccessCodes(await loadProfileAccessCodes(user.uid));
+      setInviteHistoryExpanded(true);
+      setInviteStatus({ message: 'Invite code generated.', tone: 'success' });
+    } catch (error: any) {
+      setInviteStatus({ message: error?.message || 'Failed to generate invite code.', tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus(label);
+      window.setTimeout(() => setCopyStatus(''), 1800);
+    } catch {
+      setCopyStatus('Copy failed');
+      window.setTimeout(() => setCopyStatus(''), 1800);
+    }
+  };
+
+  const handleSignOut = async () => {
+    setBusy('logout');
+    try {
+      await auth.signOut();
+      navigate('/auth', { replace: true });
+    } finally {
+      setBusy('');
+    }
+  };
+
+  if (!user) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="app-card p-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-16 w-16 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-primary-700">
+            {photoPreview ? <img src={photoPreview} alt="" className="h-full w-full object-cover" /> : <UserCircle className="h-9 w-9" aria-hidden="true" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="app-label">Profile</div>
+            <h1 className="truncate text-2xl font-black text-gray-950">{displayName}</h1>
+            <p className="truncate text-sm font-semibold text-gray-600">{user.email || 'No email loaded'}</p>
+            <p className="mt-1 text-xs font-bold text-gray-400">Last updated: {updatedAt}</p>
+          </div>
+          <button type="button" className="ghost-button flex-none !px-3" onClick={handleSignOut} disabled={busy === 'logout'} aria-label="Sign out">
+            {busy === 'logout' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <LogOut className="h-4 w-4" aria-hidden="true" />}
+          </button>
+        </div>
+      </section>
+
+      <div className="sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
+        <div className="grid min-w-max grid-cols-4 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+          {profileSections.map((section) => {
+            const active = activeProfileSection === section.id;
+            return (
+              <button
+                key={section.id}
+                type="button"
+                className={`min-h-10 rounded-xl px-3 text-sm font-black transition ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'}`}
+                onClick={() => selectProfileSection(section.id)}
+                aria-pressed={active}
+              >
+                {section.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {activeProfileSection === 'account' ? (
+      <section className="app-card p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="app-label">Account profile</div>
+            <h2 className="mt-1 app-section-title">Your Account</h2>
+          </div>
+          {loading ? <Loader2 className="h-5 w-5 animate-spin text-primary-600" aria-hidden="true" /> : null}
+        </div>
+
+        <form className="mt-4 space-y-4" onSubmit={saveProfile}>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="secondary-button cursor-pointer">
+              <ImagePlus className="h-4 w-4" aria-hidden="true" />
+              Choose photo
+              <input type="file" accept="image/*" className="sr-only" onChange={handlePhotoChange} />
+            </label>
+            {photoPreview ? (
+              <button type="button" className="ghost-button" onClick={removePhoto}>
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                Remove
+              </button>
+            ) : null}
+          </div>
+
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Email</span>
+            <input className="auth-input bg-gray-100 text-gray-600" value={user.email || ''} disabled />
+          </label>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Full name</span>
+              <input className="auth-input" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Your name" />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Phone</span>
+              <input className="auth-input" type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="123-456-7890" />
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="submit" className="primary-button" disabled={busy === 'profile'}>
+              {busy === 'profile' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+              Save profile
+            </button>
+            <StatusMessage status={profileStatus} />
+          </div>
+        </form>
+      </section>
+      ) : null}
+
+      {activeProfileSection === 'alerts' ? (
+      <section className="app-card p-4">
+        <div className="flex items-center gap-2 text-sm font-black text-primary-800">
+          <Bell className="h-4 w-4" aria-hidden="true" />
+          Notification preferences
+        </div>
+        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Per-team alerts for live chat, score updates, and schedule changes.</p>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Team</span>
+            <select className="auth-input" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+              <option value="">Select a team</option>
+              {notificationTeams.map((team) => (
+                <option key={team.id} value={team.id}>{team.name || team.id}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="secondary-button self-end" onClick={enablePush} disabled={busy === 'push'}>
+            {busy === 'push' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+            Enable push
+          </button>
+        </div>
+
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <PreferenceToggle label="Live Chat" checked={notificationPreferences.liveChat} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveChat: checked }))} />
+          <PreferenceToggle label="Live Score" checked={notificationPreferences.liveScore} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveScore: checked }))} />
+          <PreferenceToggle label="Schedule Changes" checked={notificationPreferences.schedule} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, schedule: checked }))} />
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId}>
+            {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            Save preferences
+          </button>
+          <StatusMessage status={notificationStatus} />
+        </div>
+      </section>
+      ) : null}
+
+      {activeProfileSection === 'security' ? (
+      <section className="app-card p-4">
+        <div className="flex items-center gap-2 text-sm font-black text-primary-800">
+          <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+          Account settings
+        </div>
+        <div className={`mt-3 rounded-xl border p-3 ${user.emailVerified ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+          <div className="flex items-center gap-2 text-sm font-black">
+            {user.emailVerified ? <CheckCircle2 className="h-5 w-5 text-emerald-700" aria-hidden="true" /> : <XCircle className="h-5 w-5 text-amber-700" aria-hidden="true" />}
+            <span className={user.emailVerified ? 'text-emerald-800' : 'text-amber-800'}>{user.emailVerified ? 'Email verified' : 'Email not verified'}</span>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {!user.emailVerified ? (
+              <button type="button" className="secondary-button" onClick={resendVerification} disabled={busy === 'verification'}>
+                {busy === 'verification' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
+                Resend email
+              </button>
+            ) : null}
+            <button type="button" className="ghost-button" onClick={refreshVerification} disabled={busy === 'refresh-verification'}>
+              {busy === 'refresh-verification' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              Refresh
+            </button>
+          </div>
+          <StatusMessage status={verificationStatus} className="mt-3" />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {auth.roles.map((role) => (
+            <span key={role} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 text-sm font-black text-primary-700">
+              {role}
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            </span>
+          ))}
+        </div>
+
+        {showPasswordSection ? (
+          <form className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3" onSubmit={setPassword}>
+            <div className="flex items-center gap-2 text-sm font-black text-amber-900">
+              <KeyRound className="h-4 w-4" aria-hidden="true" />
+              Set a password
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <input className="auth-input" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength={6} placeholder="New password" />
+              <input className="auth-input" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength={6} placeholder="Confirm password" />
+            </div>
+            <button type="submit" className="secondary-button mt-3" disabled={busy === 'password'}>
+              {busy === 'password' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
+              Set password
+            </button>
+          </form>
+        ) : null}
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button type="button" className="secondary-button" onClick={sendPasswordReset} disabled={busy === 'password-reset'}>
+            <Mail className="h-4 w-4" aria-hidden="true" />
+            Send password reset
+          </button>
+          <button type="button" className="secondary-button" onClick={auth.refresh}>
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            Refresh account
+          </button>
+          <Link to="/verify-pending" className="ghost-button">
+            <Mail className="h-4 w-4" aria-hidden="true" />
+            Verification page
+          </Link>
+          <button type="button" className="ghost-button" onClick={handleSignOut} disabled={busy === 'logout'}>
+            {busy === 'logout' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <LogOut className="h-4 w-4" aria-hidden="true" />}
+            Sign out
+          </button>
+        </div>
+        <StatusMessage status={passwordStatus} className="mt-3" />
+      </section>
+      ) : null}
+
+      {activeProfileSection === 'invites' ? (
+      <section className="app-card p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-black text-primary-800">
+              <Clipboard className="h-4 w-4" aria-hidden="true" />
+              Invite codes
+            </div>
+            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Create one-time access codes and keep recent history handy.</p>
+          </div>
+          {accessCodes.length ? (
+            <span className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-black text-gray-600">{accessCodes.length} total</span>
+          ) : null}
+        </div>
+
+        <form className="mt-4 space-y-3" onSubmit={createInviteCode}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <input className="auth-input" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="coach@example.com" />
+            <input className="auth-input" type="tel" value={invitePhone} onChange={(event) => setInvitePhone(event.target.value)} placeholder="(555) 123-4567" />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="submit" className="primary-button" disabled={busy === 'invite'}>
+              {busy === 'invite' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
+              Generate code
+            </button>
+            <StatusMessage status={inviteStatus} />
+          </div>
+        </form>
+
+        {generatedCode ? (
+          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+            <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-emerald-700">Generated code</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <code className="rounded-lg bg-white px-4 py-2 text-2xl font-black tracking-widest text-gray-950">{generatedCode}</code>
+              <button type="button" className="secondary-button" onClick={() => copyText(generatedCode, 'Code copied')}>
+                <Copy className="h-4 w-4" aria-hidden="true" />
+                Copy
+              </button>
+              <button type="button" className="secondary-button" onClick={() => copyText(signupLink, 'Link copied')}>
+                <Link2 className="h-4 w-4" aria-hidden="true" />
+                Copy link
+              </button>
+              {copyStatus ? <span className="text-sm font-black text-emerald-700">{copyStatus}</span> : null}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mt-4 space-y-2">
+          {accessCodes.length ? visibleAccessCodes.map((code) => (
+            <AccessCodeCard key={code.id} code={code} onCopy={copyText} />
+          )) : (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No codes generated yet.</div>
+          )}
+        </div>
+
+        {accessCodes.length > collapsedInviteCount ? (
+          <button type="button" className="ghost-button mt-3 w-full justify-center" onClick={() => setInviteHistoryExpanded((current) => !current)}>
+            {inviteHistoryExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+            {inviteHistoryExpanded ? 'Show fewer codes' : `Show ${hiddenAccessCodeCount} more`}
+          </button>
+        ) : null}
+      </section>
+      ) : null}
+    </div>
+  );
+}
+
+function PreferenceToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="flex min-h-14 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3">
+      <input className="h-5 w-5 accent-primary-600" type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <span className="text-sm font-black text-gray-700">{label}</span>
+    </label>
+  );
+}
+
+function AccessCodeCard({ code, onCopy }: { code: AccessCodeRecord; onCopy: (text: string, label: string) => void }) {
+  const signupLink = buildSignupLink(code.code);
+  return (
+    <div className={`rounded-xl border p-3 ${code.used ? 'border-gray-200 bg-gray-50' : 'border-primary-200 bg-white'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <code className="rounded-lg bg-primary-50 px-3 py-1.5 text-lg font-black tracking-widest text-primary-900">{code.code}</code>
+          <span className={`rounded-full px-2 py-1 text-[11px] font-black uppercase tracking-[0.04em] ${code.used ? 'bg-gray-200 text-gray-700' : 'bg-emerald-100 text-emerald-700'}`}>{code.used ? 'Used' : 'Active'}</span>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(code.code, 'Code copied')}>
+            <Copy className="h-4 w-4" aria-hidden="true" />
+          </button>
+          {!code.used ? (
+            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(signupLink, 'Link copied')}>
+              <Link2 className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div className="mt-2 space-y-1 text-xs font-semibold text-gray-500">
+        {code.email ? <div className="break-all">{code.email}</div> : null}
+        {code.phone ? <div>{code.phone}</div> : null}
+        <div>Created {formatTimestamp(code.createdAt, 'date')}</div>
+        {code.used && code.usedAt ? <div className="text-emerald-700">Used {formatTimestamp(code.usedAt, 'date')}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+function StatusMessage({ status, className = '' }: { status: Status | null; className?: string }) {
+  if (!status?.message) {
+    return null;
+  }
+
+  const toneClass = status.tone === 'success' ? 'text-emerald-700' : status.tone === 'error' ? 'text-rose-700' : 'text-gray-600';
+  return <span className={`text-sm font-bold ${toneClass} ${className}`}>{status.message}</span>;
+}
+
+function formatTimestamp(value: unknown, mode: 'date' | 'datetime' = 'datetime') {
+  const date = toDate(value);
+  if (!date) {
+    return '—';
+  }
+
+  if (mode === 'date') {
+    return date.toLocaleDateString();
+  }
+
+  return date.toLocaleString();
+}
+
+function toDate(value: any): Date | null {
+  if (!value) {
+    return null;
+  }
+  if (typeof value.toDate === 'function') {
+    return value.toDate();
+  }
+  if (value instanceof Date) {
+    return value;
+  }
+  if (typeof value.seconds === 'number') {
+    return new Date(value.seconds * 1000);
+  }
+  return null;
+}
+
+function buildSignupLink(code: string) {
+  const origin = window.location.protocol === 'capacitor:' ? 'https://allplays.ai' : window.location.origin;
+  return `${origin}/login.html?code=${encodeURIComponent(code)}`;
+}
+
+function formatProfileSaveError(error: any) {
+  const message = String(error?.message || 'Profile save failed.');
+  if (/requests-from-referer/i.test(message)) {
+    return 'Image uploads are allowlisted for the app and local dev on localhost:8000 or localhost:8100. Refresh the app and try again.';
+  }
+  if (/permission|unauthori[sz]ed/i.test(message)) {
+    return 'Upload reached Firebase, but this account does not have permission to save the image.';
+  }
+  if (/cors/i.test(message)) {
+    return 'Image upload was blocked by browser upload settings. Refresh the app and try again.';
+  }
+  return message;
+}

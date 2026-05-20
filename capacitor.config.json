@@ -1,0 +1,16 @@
+{
+  "appId": "ai.allplays.lite",
+  "appName": "ALL PLAYS",
+  "webDir": "apps/app/dist",
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": [
+        "google.com"
+      ]
+    }
+  },
+  "server": {
+    "cleartext": false
+  }
+}
