@@ -49,11 +49,17 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
             publicData: {
                 playerName: player.name,
                 playerNumber: player.number,
+                participated: true,
+                participationStatus: 'appeared',
+                participationSource: 'standard-tracker-finish',
                 stats: publicStats
             },
             privateData: Object.keys(privateStats).length > 0 ? {
                 playerName: player.name,
                 playerNumber: player.number,
+                participated: true,
+                participationStatus: 'appeared',
+                participationSource: 'standard-tracker-finish',
                 stats: privateStats
             } : null
         };
