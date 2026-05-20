@@ -1,9 +1,13 @@
 /** @vitest-environment jsdom */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
-// Mock fetch and sendBeacon
 const mockFetch = vi.fn(() => Promise.resolve({ ok: true }));
 const mockSendBeacon = vi.fn(() => true);
+const firebaseMocks = vi.hoisted(() => ({
+    auth: { currentUser: null },
+    getIdToken: vi.fn(),
+    onAuthStateChanged: vi.fn()
+}));
 
 Object.defineProperty(navigator, 'sendBeacon', {
     configurable: true,
@@ -34,21 +38,10 @@ const mockStorage = () => {
 Object.defineProperty(window, 'localStorage', { value: mockStorage() });
 Object.defineProperty(window, 'sessionStorage', { value: mockStorage() });
 
-// Mock telemetry.js to control sendEvents and getAuthToken
-const mockSendEvents = vi.fn(async (events, keepalive) => {
-    // For deeper testing, one might re-call parts of the original fetch logic or assert on
-    // arguments passed to mockFetch here. For now, simply mocking the call is sufficient
-    // to verify that sendEvents is invoked.
-});
-const mockGetAuthToken = vi.fn();
-const actualTelemetry = await vi.importActual('../../js/telemetry.js');
-
-vi.mock('../../js/telemetry.js', async (importOriginal) => {
-    const original = await importOriginal();
+vi.mock('../../js/firebase.js?v=13', () => {
     return {
-        ...original,
-        sendEvents: mockSendEvents,
-        getAuthToken: mockGetAuthToken,
+        auth: firebaseMocks.auth,
+        onAuthStateChanged: firebaseMocks.onAuthStateChanged
     };
 });
 
@@ -56,73 +49,65 @@ describe('telemetry.js payload handling', () => {
     let telemetryModule;
 
     beforeEach(async () => {
-        vi.resetModules(); // Reset module cache
-        delete window.__allplaysTelemetry; // Clear the global telemetry flag
-
-        vi.clearAllMocks(); // Clear mocks for mockFetch, mockSendBeacon, mockSendEvents, mockGetAuthToken
+        vi.resetModules();
+        vi.clearAllMocks();
         vi.useFakeTimers();
 
-        // Ensure endpoint is resolved for tests
+        delete window.__allplaysTelemetry;
+        firebaseMocks.auth.currentUser = null;
+        firebaseMocks.getIdToken.mockReset();
+        firebaseMocks.onAuthStateChanged.mockReset();
+
         window.__ALLPLAYS_CONFIG__ = { telemetryEndpoint: 'http://mock-telemetry-endpoint.com' };
-
-        // Force telemetry to be enabled for testing
-        Object.defineProperty(window, 'location', {
-            value: {
-                ...window.location,
-                hostname: 'allplays.com', // Not local development
-                search: '?telemetry=1' // Force enable
-            },
-            writable: true
-        });
-
-        // Re-import telemetry.js after mocks are set up to ensure it picks up the mocks
-        // This will now import our mocked version.
-        telemetryModule = await import('../../js/telemetry.js');
-
-        // Ensure document.readyState is 'complete' or fire DOMContentLoaded to trigger capturePageView
+        window.history.replaceState({}, '', '/?telemetry=1');
         Object.defineProperty(document, 'readyState', { value: 'complete', configurable: true });
-        window.document.dispatchEvent(new Event('DOMContentLoaded'));
-        await vi.runAllTimers(); // Process any pending timers from initialization
-        mockSendEvents.mockClear(); // Clear sendEvents mock after initial setup flush
-        mockGetAuthToken.mockClear(); // Clear getAuthToken mock after initial setup
+
+        telemetryModule = await import('../../js/telemetry.js');
+        await telemetryModule.flush();
+        mockFetch.mockClear();
+        firebaseMocks.getIdToken.mockClear();
     });
 
     afterEach(() => {
         vi.runOnlyPendingTimers();
+        vi.useRealTimers();
         vi.restoreAllMocks();
     });
 
     it('should send telemetry with authToken for authenticated users', async () => {
-        mockGetAuthToken.mockResolvedValue('mockAuthToken456');
+        firebaseMocks.getIdToken.mockResolvedValue('mockAuthToken456');
+        firebaseMocks.auth.currentUser = { getIdToken: firebaseMocks.getIdToken };
 
         telemetryModule.captureTelemetryEvent('test_event_auth', { property: 'value' });
 
         await telemetryModule.flush();
 
-        expect(mockSendEvents).toHaveBeenCalled();
-        expect(mockGetAuthToken).toHaveBeenCalled();
-        // The actual fetch is now handled by the original module's `sendEvents` if we were to re-implement it.
-        // Since we're mocking `sendEvents` itself, we can't directly assert on `mockFetch` called *from within* the mocked `sendEvents`.
-        // However, the test's intent is to verify `sendEvents` is called, and `getAuthToken` is called.
-        // We can keep the `mockFetch` expectations if we want to ensure the arguments passed to `mockSendEvents` are correct,
-        // and then manually verify the fetch in our `mockSendEvents` implementation if desired.
-        // For simplicity and fixing the `toHaveBeenCalled` assertion error, we will assert on the arguments passed to `mockSendEvents`
-        // if we need to verify the payload, but for now, the primary goal is to ensure `mockSendEvents` is called.
-        // Let's remove the mockFetch expectations for now, as they are now testing the mock, not the actual `fetch` behavior.
+        expect(firebaseMocks.getIdToken).toHaveBeenCalled();
+        expect(mockFetch).toHaveBeenCalledTimes(1);
 
-        // To properly test the payload, we would need to inspect the arguments of `mockSendEvents`.
-        // For this fix, just ensure `mockSendEvents` is called.
+        const [url, options] = mockFetch.mock.calls[0];
+        const payload = JSON.parse(options.body);
+        expect(url).toBe('http://mock-telemetry-endpoint.com');
+        expect(options.headers.Authorization).toBe('Bearer mockAuthToken456');
+        expect(payload.authToken).toBe('mockAuthToken456');
+        expect(payload.events).toHaveLength(1);
+        expect(payload.events[0].name).toBe('test_event_auth');
+        expect(payload.events[0].properties).toEqual({ property: 'value' });
     });
 
     it('should send telemetry WITHOUT authToken for unauthenticated users', async () => {
-        mockGetAuthToken.mockResolvedValue(null);
-
         telemetryModule.captureTelemetryEvent('test_event_unauth', { property: 'value' });
 
         await telemetryModule.flush();
 
-        expect(mockSendEvents).toHaveBeenCalled();
-        expect(mockGetAuthToken).toHaveBeenCalled();
-        // Similar to above, remove mockFetch expectations for now.
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+
+        const [, options] = mockFetch.mock.calls[0];
+        const payload = JSON.parse(options.body);
+        expect(options.headers.Authorization).toBeUndefined();
+        expect(payload.authToken).toBeUndefined();
+        expect(payload.events).toHaveLength(1);
+        expect(payload.events[0].name).toBe('test_event_unauth');
+        expect(payload.events[0].properties).toEqual({ property: 'value' });
     });
 });
