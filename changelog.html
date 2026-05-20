@@ -103,6 +103,90 @@
         <h2 class="release-title">Spring 2026 Release</h2>
         <p class="release-subtitle">New sports, full payment pipeline, registration management, team media, live-tracker resilience improvements, broadcasting overhaul, calendar feeds, org scheduling tools, and a wide range of roster and access control improvements.</p>
 
+        <!-- Latest Updates -->
+        <p class="group-heading">Latest Updates</p>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Schedule reminders now fall back to team chat</span>
+          </div>
+          <p class="entry-body">Timed pre-event reminders can post into the default team chat as an in-app record when families miss push, email, or device-level notifications. Reminder messages use deterministic IDs to avoid duplicate retry spam, and delivery audit fields are recorded on schedule notifications.</p>
+          <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
+        </div>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Parent sign-up slots for team assignments</span>
+          </div>
+          <p class="entry-body">Admins can mark assignment slots, such as snack duty, as parent-claimable from the schedule editor. Parents see Sign up and Release actions on their dashboard, while admin-managed assignment details remain protected.</p>
+          <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
+        </div>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-registration">Registration</span>
+            <span class="entry-title">Registration checkout and capacity flow refinements</span>
+          </div>
+          <p class="entry-body">Online registration checkout now prepares the registration before redirecting to Stripe, carries registration context through success and cancellation returns, and restores button and spinner state after full-option errors. Full, non-waitlisted options are hidden from selection so families only choose valid registration paths.</p>
+          <a class="entry-link" href="workflow-registration.html">→ Registration workflow</a>
+        </div>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-roster">Roster</span>
+            <span class="entry-title">Co-parent access for athlete profiles</span>
+          </div>
+          <p class="entry-body">Primary parents can invite another family member to share access to an athlete profile. The invite creates a scoped co-parent access code, supports existing-account detection, and connects the invited family member to the athlete once redeemed.</p>
+          <a class="entry-link" href="workflow-roster.html">→ Roster workflow</a>
+        </div>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-media">Media</span>
+            <span class="entry-title">Safer team media item renaming</span>
+          </div>
+          <p class="entry-body">Team media rename handling, validation, and security-rule coverage were tightened so media titles can be updated without loosening album visibility or ownership protections.</p>
+          <a class="entry-link" href="workflow-team-media.html">→ Team Media workflow</a>
+        </div>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Help, workflow, and admin clarity updates</span>
+          </div>
+          <p class="entry-body">The Help Portal now includes a searchable Team Operations entry, workflow table-of-contents links skip the self-referential In This Article heading, and the admin team action now says Deactivate instead of Delete to match the retained-data behavior.</p>
+          <a class="entry-link" href="help.html">→ Help Center</a>
+        </div>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-ai">AI</span>
+            <span class="entry-title">Certificates workflow polish</span>
+          </div>
+          <p class="entry-body">The certificates landing page now emphasizes Start new run as the primary action, while custom AI description hints are carried through batch description generation for more tailored certificate copy.</p>
+          <a class="entry-link" href="workflow-awards-certificates.html">→ Awards &amp; Certificates workflow</a>
+        </div>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Cleaner stat reports and completed-game links</span>
+          </div>
+          <p class="entry-body">Player reports now show default stat columns even when every player has zero stats, and completed-game detail links use standard query parameters so game pages receive team and game IDs consistently.</p>
+          <a class="entry-link" href="workflow-postgame.html">→ Postgame workflow</a>
+        </div>
+
+        <div class="entry">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Security, telemetry, and invite reliability fixes</span>
+          </div>
+          <p class="entry-body">Backend URL validation was hardened against SSRF edge cases, telemetry auth payload tests were stabilized, unsupported chat last-read snapshot behavior was removed, and invite-based signup keeps auto-applied activation codes hidden across login and sign-up mode switches.</p>
+          <a class="entry-link" href="workflow-admin-ops.html">→ Admin operations workflow</a>
+        </div>
+
         <!-- New Features -->
         <p class="group-heading">New Features</p>
 
