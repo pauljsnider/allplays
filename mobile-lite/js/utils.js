@@ -1,0 +1,1824 @@
+import { getAppHomeUrl, getAppLoginUrl, getAppMessagesUrl, getAppScheduleUrl, isAppMode, withAppContext } from './native-app.js?v=4';
+
+export function getUrlParams() {
+  // Combine params from both search (?) and hash (#)
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.substring(1));
+
+  const params = {};
+  for (const [key, value] of searchParams) params[key] = value;
+  for (const [key, value] of hashParams) params[key] = value;
+
+  return params;
+}
+
+export function setUrlParams(params) {
+  const searchParams = new URLSearchParams(params);
+  window.location.hash = searchParams.toString();
+}
+
+export function escapeHtml(unsafe) {
+  if (unsafe === null || unsafe === undefined) return '';
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+export function formatDate(timestamp) {
+  if (!timestamp) return '';
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return date.toLocaleDateString();
+}
+
+export function formatShortDate(timestamp) {
+  if (!timestamp) return '';
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+export function formatTime(timestamp) {
+  if (!timestamp) return '';
+  const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+export async function shareOrCopy({ title = '', text = '', url = '', clipboardText = '' }) {
+  const shareText = clipboardText || `${text}\n${url}`;
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text, url });
+      return { status: 'shared' };
+    } catch (err) {
+      if (err && err.name === 'AbortError') return { status: 'aborted' };
+    }
+  }
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(shareText);
+      return { status: 'copied' };
+    } catch (err) {
+      return { status: 'failed' };
+    }
+  }
+  return { status: 'failed' };
+}
+
+export function renderHeader(container, user) {
+  if (!container) return;
+
+  if (isAppMode()) {
+    const currentPath = window.location.pathname.split('/').pop() || 'index.html';
+    const isAppHome = currentPath === 'parent-dashboard.html' && !window.location.hash;
+    container.innerHTML = `
+      <header class="allplays-app-header">
+        <a href="${getAppHomeUrl()}" class="allplays-app-brand" aria-label="ALL PLAYS home">
+          <img src="img/logo_small.png" alt="">
+          <span>ALL PLAYS</span>
+        </a>
+        <nav class="allplays-app-nav" aria-label="App navigation">
+          ${isAppHome ? '' : '<button id="allplays-app-back" type="button">Back</button>'}
+          <a href="${getAppScheduleUrl()}">Schedule</a>
+          <button id="allplays-app-menu-toggle" type="button" aria-expanded="false" aria-controls="allplays-app-menu">Menu</button>
+        </nav>
+        <div id="allplays-app-menu" class="allplays-app-menu hidden">
+          <a href="${getAppHomeUrl()}">Dashboard</a>
+          <a href="${getAppScheduleUrl()}">Schedule</a>
+          <a href="${getAppMessagesUrl()}">Messages</a>
+          ${user ? '<button id="allplays-app-logout" type="button">Sign out</button>' : `<a href="${getAppLoginUrl()}">Sign in</a>`}
+        </div>
+      </header>
+    `;
+
+    container.querySelector('#allplays-app-back')?.addEventListener('click', () => {
+      if (window.history.length > 1) {
+        window.history.back();
+        return;
+      }
+      window.location.href = getAppHomeUrl();
+    });
+
+    const menuToggle = container.querySelector('#allplays-app-menu-toggle');
+    const menu = container.querySelector('#allplays-app-menu');
+    const closeMenu = () => {
+      menu?.classList.add('hidden');
+      menuToggle?.setAttribute('aria-expanded', 'false');
+    };
+    menuToggle?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const isOpen = !menu?.classList.contains('hidden');
+      menu?.classList.toggle('hidden', isOpen);
+      menuToggle.setAttribute('aria-expanded', String(!isOpen));
+    });
+    menu?.addEventListener('click', (event) => event.stopPropagation());
+    document.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeMenu();
+    });
+
+    container.querySelector('#allplays-app-logout')?.addEventListener('click', async () => {
+      const { logout } = await import('./auth.js?v=16');
+      await logout();
+      window.location.href = getAppLoginUrl();
+    });
+    return;
+  }
+
+  container.innerHTML = `
+      <header class="bg-white/80 backdrop-blur-md shadow-sm sticky top-0 z-50 border-b border-gray-200">
+        <nav class="container mx-auto px-4 py-4">
+          <div class="flex items-center justify-between">
+            <a href="index.html" class="flex items-center space-x-3 hover:opacity-80 transition">
+              <div class="w-10 h-10 rounded-lg overflow-hidden border border-gray-200">
+                <img src="img/logo_small.png" alt="ALL PLAYS" class="w-full h-full object-cover">
+              </div>
+              <div>
+                <h1 class="text-xl md:text-2xl font-bold bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">ALL PLAYS</h1>
+                <p class="text-xs text-gray-500 hidden sm:block">Modern Team Management</p>
+              </div>
+            </a>
+
+            <!-- Desktop Nav -->
+            <div class="hidden md:flex items-center gap-4" id="nav-auth-actions-desktop">
+              <a href="teams.html" class="text-sm font-medium text-gray-600 hover:text-primary-600 transition">Browse Teams</a>
+              <a id="nav-my-players-desktop" href="parent-dashboard.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">My Players</a>
+              <a id="nav-my-teams-desktop" href="dashboard.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">My Teams</a>
+              <a id="nav-profile-desktop" href="profile.html" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition">Profile</a>
+              <a id="nav-signin-desktop" href="login.html" class="text-sm font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
+              <a id="nav-cta-desktop" href="login.html#signup" class="text-sm font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md hover:shadow-lg">Get Started</a>
+              <button id="nav-logout-desktop" class="hidden text-sm font-medium text-gray-600 hover:text-primary-700 transition" type="button">Log out</button>
+            </div>
+
+            <!-- Mobile Menu Button -->
+            <button id="mobile-menu-btn" class="md:hidden p-2 text-gray-600 hover:text-primary-600 focus:outline-none">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+              </svg>
+            </button>
+          </div>
+
+          <!-- Mobile Menu -->
+          <div id="mobile-menu" class="hidden md:hidden mt-4 pb-4 border-t border-gray-100">
+            <div class="flex flex-col space-y-3 pt-4" id="nav-auth-actions-mobile">
+              <a href="teams.html" class="block text-base font-medium text-gray-600 hover:text-primary-600 transition">Browse Teams</a>
+              <a id="nav-my-players-mobile" href="parent-dashboard.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">My Players</a>
+              <a id="nav-my-teams-mobile" href="dashboard.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">My Teams</a>
+              <a id="nav-profile-mobile" href="profile.html" class="hidden block text-base font-medium text-gray-600 hover:text-primary-700 transition">Profile</a>
+              <a id="nav-signin-mobile" href="login.html" class="block text-base font-medium text-primary-600 hover:text-primary-700 transition">Sign In</a>
+              <a id="nav-cta-mobile" href="login.html#signup" class="block text-center text-base font-medium px-4 py-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg hover:from-primary-700 hover:to-primary-800 transition shadow-md">Get Started</a>
+              <button id="nav-logout-mobile" class="hidden w-full text-left block text-base font-medium text-gray-600 hover:text-primary-700 transition" type="button">Log out</button>
+            </div>
+          </div>
+        </nav>
+      </header>
+    `;
+
+  // Mobile menu toggle
+  const mobileBtn = container.querySelector('#mobile-menu-btn');
+  const mobileMenu = container.querySelector('#mobile-menu');
+  mobileBtn.addEventListener('click', () => {
+    mobileMenu.classList.toggle('hidden');
+  });
+
+  // Update navigation based on auth state
+  const updateNav = (suffix) => {
+    const navSignIn = container.querySelector(`#nav-signin-${suffix}`);
+    const navCta = container.querySelector(`#nav-cta-${suffix}`);
+    const navLogout = container.querySelector(`#nav-logout-${suffix}`);
+    const navProfile = container.querySelector(`#nav-profile-${suffix}`);
+    const navMyPlayers = container.querySelector(`#nav-my-players-${suffix}`);
+    const navMyTeams = container.querySelector(`#nav-my-teams-${suffix}`);
+
+    if (user) {
+      const hasParentLinks = Array.isArray(user.parentOf) && user.parentOf.length > 0;
+      const hasCoachAccess = user.isAdmin || (Array.isArray(user.coachOf) && user.coachOf.length > 0);
+
+      if (navMyPlayers) {
+        navMyPlayers.classList.remove('hidden');
+        navMyPlayers.href = 'parent-dashboard.html';
+        // Optional: if user has no parent links, we still let them in;
+        // the page will explain they have no linked players.
+      }
+
+      if (navMyTeams) {
+        navMyTeams.classList.remove('hidden');
+        navMyTeams.href = 'dashboard.html';
+      }
+
+      if (navSignIn) {
+        // Hide the generic Sign In link when logged in
+        navSignIn.classList.add('hidden');
+      }
+
+      // CTA button logic
+      if (user.isAdmin) {
+        // Admins see "Admin Dashboard"
+        navCta.textContent = 'Admin Dashboard';
+        navCta.href = 'admin.html';
+        navCta.classList.remove('hidden');
+      } else {
+        // Regular users don't see the CTA button
+        navCta.classList.add('hidden');
+      }
+
+      navLogout.classList.remove('hidden');
+      navProfile.classList.remove('hidden');
+    } else {
+      if (navMyPlayers) navMyPlayers.classList.add('hidden');
+      if (navMyTeams) navMyTeams.classList.add('hidden');
+
+      if (navSignIn) {
+        navSignIn.classList.remove('hidden');
+        navSignIn.textContent = 'Sign In';
+        navSignIn.href = 'login.html';
+      }
+
+      navCta.textContent = 'Get Started';
+      navCta.href = 'login.html#signup';
+
+      navLogout.classList.add('hidden');
+      navProfile.classList.add('hidden');
+    }
+
+    // Add logout handler
+    navLogout.addEventListener('click', async () => {
+      const { logout } = await import('./auth.js?v=16');
+      await logout();
+      window.location.href = 'index.html';
+    });
+  };
+
+  updateNav('desktop');
+  updateNav('mobile');
+
+  // Keep telemetry available on new pages that use the shared header but miss
+  // the global module tag.
+  try {
+    import('./telemetry.js?v=1').catch((e) => console.warn('[Telemetry] Failed to load:', e));
+  } catch (e) {
+    console.warn('[Telemetry] Failed to initialize:', e);
+  }
+
+  // Global search: injected into the shared header in one place.
+  // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
+  try {
+    import('./global-search.js?v=7')
+      .then(({ setupHeaderSearch }) => {
+        if (typeof setupHeaderSearch === 'function') {
+          setupHeaderSearch({ user, headerContainer: container });
+        }
+      })
+      .catch((e) => console.warn('[GlobalSearch] Failed to load:', e));
+  } catch (e) {
+    console.warn('[GlobalSearch] Failed to initialize:', e);
+  }
+}
+
+export function getSafeImageUrl(value) {
+  if (!value) return '';
+  const strValue = String(value);
+
+  // Directly check for absolute http/https URLs
+  if (strValue.startsWith('https://') || strValue.startsWith('http://')) {
+    // Basic validation to prevent common scriptable protocols being snuck in
+    if (strValue.match(/^https?:\/\//i)) {
+      return strValue;
+    }
+  }
+
+  try {
+    const url = new URL(strValue, window.location.origin);
+    if (url.protocol === 'http:' || url.protocol === 'https:') {
+      return url.href;
+    }
+  } catch (err) {
+    // URL constructor failed, likely invalid format or unsupported protocol
+    return '';
+  }
+  return '';
+}
+
+export function renderFooter(container) {
+  if (!container) return;
+  if (isAppMode()) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = `
+      <footer class="bg-gray-900 text-gray-400 py-12 md:py-16">
+        <div class="container mx-auto px-4">
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+            <div class="col-span-1 md:col-span-2">
+              <div class="flex items-center space-x-3 mb-4">
+                <div class="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-700 rounded-lg flex items-center justify-center">
+                  <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                  </svg>
+                </div>
+                <h3 class="text-xl font-bold text-white">ALL PLAYS</h3>
+              </div>
+              <p class="text-sm max-w-md">Modern team management and statistics platform for coaches. Track stats, manage schedules, and build winning teams—completely free.</p>
+            </div>
+
+            <div>
+              <h4 class="text-white font-semibold mb-4">Platform</h4>
+              <ul class="space-y-2 text-sm">
+                <li><a href="teams.html" class="hover:text-white transition">Browse Teams</a></li>
+                <li><a href="dashboard.html" class="hover:text-white transition">Dashboard</a></li>
+                <li><a href="login.html" class="hover:text-white transition">Sign In</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <h4 class="text-white font-semibold mb-4">Support</h4>
+              <ul class="space-y-2 text-sm">
+                <li><a href="help.html" class="hover:text-white transition">Help Center</a></li>
+                <li><a href="mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Support" class="hover:text-white transition">Contact</a></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="border-t border-gray-800 pt-8 text-center text-sm space-y-1">
+            <p>&copy; 2025 ALL PLAYS. Built with ❤️ for coaches everywhere.</p>
+            <p>Created by <a href="https://paulsnider.net" class="text-gray-200 hover:text-white underline">Paul Snider</a>.</p>
+          </div>
+        </div>
+      </footer>
+    `;
+}
+
+// Calendar / ICS Parsing Functions
+
+/**
+ * Fetch and parse an ICS calendar file
+ * @param {string} url - URL to the .ics file
+ * @returns {Promise<Array>} Array of parsed calendar events
+ */
+export async function fetchAndParseCalendar(url) {
+  const timeoutMs = 5000;
+  const cleanedUrl = url.trim();
+  const normalizedUrl = cleanedUrl.replace(/^http:\/\//i, 'https://');
+
+  function resolveCalendarFunctionUrl() {
+    const globalConfig = window.__ALLPLAYS_CONFIG__;
+    const configuredUrl = globalConfig?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+    if (typeof configuredUrl === 'string' && configuredUrl.trim()) {
+      return configuredUrl.trim();
+    }
+    const metaTagUrl = document.querySelector('meta[name="allplays-calendar-function-url"]')?.content;
+    if (typeof metaTagUrl === 'string' && metaTagUrl.trim()) {
+      return metaTagUrl.trim();
+    }
+    return null;
+  }
+
+  function normalizeIcsText(text) {
+    const marker = 'BEGIN:VCALENDAR';
+    const markerIndex = text.indexOf(marker);
+    if (markerIndex === -1) {
+      return text;
+    }
+    return text.slice(markerIndex);
+  }
+
+  async function fetchWithTimeout(fetchUrl) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch(fetchUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    return response;
+  }
+
+  async function fetchViaFunction(targetUrl) {
+    const calendarFetchFunctionUrl = resolveCalendarFunctionUrl();
+    if (!calendarFetchFunctionUrl) {
+      throw new Error('Calendar fetch function URL is not configured');
+    }
+    const functionUrl = `${calendarFetchFunctionUrl}?url=${encodeURIComponent(targetUrl)}&forceRefresh=true`;
+    const response = await fetchWithTimeout(functionUrl);
+    if (!response.ok) {
+      throw new Error(`Function fetch failed: ${response.status} ${response.statusText}`);
+    }
+    const payload = await response.json();
+    if (!payload?.ok || !payload?.icsText) {
+      throw new Error(payload?.error || 'Invalid function response');
+    }
+    return payload.icsText;
+  }
+
+  function buildProxyUrls(targetUrl) {
+    const httpsUrl = targetUrl.trim().replace(/^http:\/\//i, 'https://');
+    const cacheBustUrl = httpsUrl.includes('?')
+      ? `${httpsUrl}&cachebust=${Date.now()}`
+      : `${httpsUrl}?cachebust=${Date.now()}`;
+    return [
+      `https://corsproxy.io/?${encodeURIComponent(httpsUrl)}`,
+      `https://r.jina.ai/https://${cacheBustUrl.replace(/^https:\/\//i, '')}`,
+      `https://r.jina.ai/https://${httpsUrl.replace(/^https:\/\//i, '')}`,
+      `https://r.jina.ai/http://${httpsUrl.replace(/^https?:\/\//i, '')}`
+    ];
+  }
+
+  try {
+    // First try Firebase function to avoid browser CORS/proxy issues
+    try {
+      const functionIcsText = await fetchViaFunction(normalizedUrl);
+      return parseICS(normalizeIcsText(functionIcsText));
+    } catch (functionError) {
+      console.warn('Function calendar fetch failed, falling back to client fetch:', functionError);
+    }
+
+    // Try direct fetch first
+    const response = await fetchWithTimeout(normalizedUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch calendar: ${response.statusText}`);
+    }
+    const icsText = await response.text();
+    return parseICS(normalizeIcsText(icsText));
+  } catch (error) {
+    // If direct fetch fails, try with proxy fallbacks
+    const shouldTryProxy = error.name === 'TypeError' ||
+                           error.name === 'AbortError' ||
+                           error.message.includes('fetch') ||
+                           error.message.includes('CORS');
+    if (shouldTryProxy) {
+      const proxyUrls = buildProxyUrls(url);
+      for (const proxyUrl of proxyUrls) {
+        try {
+          console.log('Calendar fetch failed, trying proxy:', proxyUrl);
+          const response = await fetchWithTimeout(proxyUrl);
+          if (!response.ok) {
+            throw new Error(`Proxy fetch failed: ${response.status} ${response.statusText}`);
+          }
+          const icsText = await response.text();
+          return parseICS(normalizeIcsText(icsText));
+        } catch (proxyError) {
+          console.warn('Proxy fetch attempt failed:', proxyError);
+        }
+      }
+      throw new Error('Cannot fetch calendar. All proxy attempts failed.');
+    }
+    console.error('Error fetching calendar:', error);
+    throw error;
+  }
+}
+
+/**
+ * Parse ICS calendar text into event objects
+ * @param {string} icsText - Raw ICS file content
+ * @returns {Array} Array of parsed events
+ */
+export function parseICS(icsText) {
+  const rawEvents = [];
+  const lines = icsText.split(/\r\n|\n|\r/);
+
+  let currentEvent = null;
+  let currentField = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim();
+
+    // Handle line continuation (lines starting with space/tab)
+    while (i + 1 < lines.length && (lines[i + 1].startsWith(' ') || lines[i + 1].startsWith('\t'))) {
+      i++;
+      line += lines[i].trim();
+    }
+
+    if (line === 'BEGIN:VEVENT') {
+      currentEvent = {};
+    } else if (line === 'END:VEVENT' && currentEvent) {
+      const hasStandardEventFields = currentEvent.dtstart && currentEvent.summary;
+      const hasRecurringOverrideFields =
+        typeof currentEvent.uid === 'string' &&
+        currentEvent.uid.trim() &&
+        currentEvent.recurrenceId instanceof Date &&
+        !Number.isNaN(currentEvent.recurrenceId.getTime());
+      if (hasStandardEventFields || hasRecurringOverrideFields) {
+        rawEvents.push(currentEvent);
+      }
+      currentEvent = null;
+    } else if (currentEvent) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex > 0) {
+        const field = line.substring(0, colonIndex);
+        const value = line.substring(colonIndex + 1);
+
+        const parsedField = parseICSField(field);
+        const fieldName = parsedField.name;
+
+        switch (fieldName) {
+          case 'DTSTART':
+            currentEvent.dtstart = parseICSDate(value, parsedField.params);
+            if (isRecurringWallClockDateTime(value)) {
+              const recurrenceTimeZone = normalizeICSTzid(parsedField.params.TZID);
+              if (recurrenceTimeZone) {
+                currentEvent.recurrenceTimeZone = recurrenceTimeZone;
+              }
+            }
+            currentEvent.recurrenceAbsoluteTime = isAbsoluteRecurringDateTime(value);
+            break;
+          case 'DTEND':
+            currentEvent.dtend = parseICSDate(value, parsedField.params);
+            break;
+          case 'RECURRENCE-ID':
+            currentEvent.recurrenceId = parseICSDate(value, parsedField.params);
+            break;
+          case 'SUMMARY':
+            currentEvent.summary = value;
+            currentEvent.isPractice = isPracticeEvent(value);
+            break;
+          case 'DESCRIPTION':
+            currentEvent.description = value;
+            break;
+          case 'LOCATION':
+            currentEvent.location = value.replace(/\\n/g, '\n').replace(/\\,/g, ',');
+            break;
+          case 'UID':
+            currentEvent.uid = value;
+            break;
+          case 'STATUS':
+            currentEvent.status = value;
+            break;
+          case 'RRULE':
+            currentEvent.rrule = parseICSRRule(value);
+            break;
+          case 'EXDATE': {
+            const rawDates = value.split(',').map((token) => token.trim()).filter(Boolean);
+            const parsedDates = rawDates
+              .map((rawDate) => parseICSDate(rawDate, parsedField.params))
+              .filter((parsedDate) => parsedDate instanceof Date && !Number.isNaN(parsedDate.getTime()));
+            if (parsedDates.length) {
+              if (!Array.isArray(currentEvent.exDates)) currentEvent.exDates = [];
+              currentEvent.exDates.push(...parsedDates);
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return buildICSOccurrences(rawEvents);
+}
+
+const ICS_DAY_TO_INDEX = {
+  SU: 0,
+  MO: 1,
+  TU: 2,
+  WE: 3,
+  TH: 4,
+  FR: 5,
+  SA: 6
+};
+const DAY_CODES = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MAX_ICS_RECURRENCE_OCCURRENCES = 366;
+
+function addDaysPreservingLocalTime(date, days) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function addDaysPreservingAbsoluteTime(date, days) {
+  return new Date(date.getTime() + (days * MS_PER_DAY));
+}
+
+function isRecurringWallClockDateTime(icsDate) {
+  return (
+    typeof icsDate === 'string' &&
+    icsDate.length > 8 &&
+    !icsDate.endsWith('Z') &&
+    !/([+-])(\d{2}):?(\d{2})$/.test(icsDate)
+  );
+}
+
+function normalizeICSTzid(rawTzid) {
+  if (typeof rawTzid !== 'string') return null;
+  const tzid = rawTzid.replace(/^\//, '');
+  return tzid || null;
+}
+
+function isAbsoluteRecurringDateTime(icsDate) {
+  return (
+    typeof icsDate === 'string' &&
+    icsDate.length > 8 &&
+    (
+      icsDate.endsWith('Z') ||
+      /([+-])(\d{2}):?(\d{2})$/.test(icsDate)
+    )
+  );
+}
+
+function addDaysPreservingRecurrenceWallTime(date, days, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return addDaysPreservingAbsoluteTime(date, days);
+  }
+
+  if (!recurrenceTimeZone) {
+    return addDaysPreservingLocalTime(date, days);
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, recurrenceTimeZone);
+  if (!wallClock) {
+    return addDaysPreservingLocalTime(date, days);
+  }
+
+  const shiftedDay = new Date(Date.UTC(wallClock.year, wallClock.month, wallClock.day + days));
+  const shifted = parseDateTimeInTimeZone({
+    year: shiftedDay.getUTCFullYear(),
+    month: shiftedDay.getUTCMonth(),
+    day: shiftedDay.getUTCDate(),
+    hour: wallClock.hour,
+    minute: wallClock.minute,
+    second: wallClock.second,
+    timeZone: recurrenceTimeZone
+  });
+
+  return shifted || addDaysPreservingLocalTime(date, days);
+}
+
+function getRecurrenceWeekday(date, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return date.getUTCDay();
+  }
+
+  if (!recurrenceTimeZone) {
+    return date.getDay();
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, recurrenceTimeZone);
+  if (!wallClock) {
+    return date.getDay();
+  }
+
+  return new Date(Date.UTC(wallClock.year, wallClock.month, wallClock.day)).getUTCDay();
+}
+
+function getRecurrenceDayNumber(date, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  if (preserveAbsoluteTime) {
+    return Math.floor(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) / MS_PER_DAY);
+  }
+
+  if (!recurrenceTimeZone) {
+    return toCalendarDayNumber(date);
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, recurrenceTimeZone);
+  if (!wallClock) {
+    return toCalendarDayNumber(date);
+  }
+
+  return Math.floor(Date.UTC(wallClock.year, wallClock.month, wallClock.day) / MS_PER_DAY);
+}
+
+function toCalendarDayNumber(date) {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MS_PER_DAY);
+}
+
+function parseICSRRule(rawRule) {
+  if (!rawRule || typeof rawRule !== 'string') return null;
+  const parts = rawRule.split(';');
+  const parsed = {};
+
+  for (const part of parts) {
+    const equalsIndex = part.indexOf('=');
+    if (equalsIndex <= 0) continue;
+    const key = part.substring(0, equalsIndex).trim().toUpperCase();
+    const value = part.substring(equalsIndex + 1).trim();
+    if (!value) continue;
+
+    switch (key) {
+      case 'FREQ':
+        parsed.freq = value.toUpperCase();
+        break;
+      case 'INTERVAL':
+        parsed.interval = Math.max(1, parseInt(value, 10) || 1);
+        break;
+      case 'COUNT': {
+        const count = parseInt(value, 10);
+        if (!Number.isNaN(count) && count > 0) parsed.count = count;
+        break;
+      }
+      case 'UNTIL': {
+        const untilDate = parseICSDate(value);
+        if (untilDate instanceof Date && !Number.isNaN(untilDate.getTime())) {
+          parsed.until = untilDate;
+        }
+        break;
+      }
+      case 'BYDAY':
+        parsed.byDays = value
+          .split(',')
+          .map((dayCode) => dayCode.trim().toUpperCase())
+          .filter((dayCode) => dayCode in ICS_DAY_TO_INDEX);
+        break;
+    }
+  }
+
+  if (!parsed.freq) return null;
+  return parsed;
+}
+
+function expandRecurringICSEvent(event) {
+  const {
+    rrule,
+    exDates = [],
+    recurrenceTimeZone = null,
+    recurrenceAbsoluteTime = false,
+    ...baseEvent
+  } = event;
+  if (!rrule) return [baseEvent];
+
+  const freq = String(rrule.freq || '').toUpperCase();
+  if (freq !== 'DAILY' && freq !== 'WEEKLY') return [baseEvent];
+
+  const startDate = baseEvent.dtstart;
+  if (!(startDate instanceof Date) || Number.isNaN(startDate.getTime())) return [baseEvent];
+  const durationMs =
+    baseEvent.dtend instanceof Date && !Number.isNaN(baseEvent.dtend.getTime())
+      ? baseEvent.dtend.getTime() - startDate.getTime()
+      : null;
+
+  let untilBoundary = null;
+  if (rrule.until instanceof Date && !Number.isNaN(rrule.until.getTime())) {
+    untilBoundary = new Date(rrule.until);
+    const isLocalMidnight =
+      untilBoundary.getHours() === 0 &&
+      untilBoundary.getMinutes() === 0 &&
+      untilBoundary.getSeconds() === 0 &&
+      untilBoundary.getMilliseconds() === 0;
+    if (isLocalMidnight) {
+      untilBoundary.setHours(23, 59, 59, 999);
+    }
+  }
+
+  const interval = Math.max(1, Number(rrule.interval) || 1);
+  const countLimit = Number(rrule.count) > 0 ? Number(rrule.count) : Infinity;
+  const exDateTimes = new Set(
+    exDates
+      .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()))
+      .map((date) => date.getTime())
+  );
+
+  const occurrences = [];
+  const pushOccurrence = (occurrenceStart) => {
+    const timestamp = occurrenceStart.getTime();
+    if (exDateTimes.has(timestamp)) return;
+    const occurrence = {
+      ...baseEvent,
+      dtstart: new Date(timestamp),
+      recurrenceId: new Date(timestamp)
+    };
+    if (durationMs != null) {
+      occurrence.dtend = new Date(timestamp + durationMs);
+    } else {
+      delete occurrence.dtend;
+    }
+    occurrence.id = buildICSOccurrenceId(occurrence.uid, occurrence.recurrenceId);
+    occurrences.push(occurrence);
+  };
+
+  if (freq === 'DAILY') {
+    let cursor = new Date(startDate);
+    let generated = 0;
+
+    while (generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
+      if (untilBoundary && cursor > untilBoundary) break;
+      pushOccurrence(cursor);
+      generated++;
+      cursor = addDaysPreservingRecurrenceWallTime(cursor, interval, recurrenceTimeZone, recurrenceAbsoluteTime);
+    }
+
+    return occurrences;
+  }
+
+  const defaultDayCode = DAY_CODES[getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime)];
+  const byDays = Array.isArray(rrule.byDays) && rrule.byDays.length
+    ? Array.from(new Set(rrule.byDays))
+    : [defaultDayCode];
+  const byDayIndexes = new Set(byDays.map((dayCode) => ICS_DAY_TO_INDEX[dayCode]).filter((idx) => idx != null));
+  if (!byDayIndexes.size) {
+    byDayIndexes.add(getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime));
+  }
+
+  const startWeekAnchor = new Date(startDate);
+  startWeekAnchor.setHours(0, 0, 0, 0);
+  startWeekAnchor.setDate(startWeekAnchor.getDate() - getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime));
+
+  let cursor = new Date(startDate);
+  let generated = 0;
+  while (generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
+    if (untilBoundary && cursor > untilBoundary) break;
+    const cursorDayStart = new Date(cursor);
+    cursorDayStart.setHours(0, 0, 0, 0);
+    const cursorWeekAnchor = new Date(cursorDayStart);
+    const cursorWeekday = getRecurrenceWeekday(cursor, recurrenceTimeZone, recurrenceAbsoluteTime);
+    cursorWeekAnchor.setDate(cursorWeekAnchor.getDate() - cursorWeekday);
+    const weekDiff = Math.floor((getRecurrenceDayNumber(cursorWeekAnchor, recurrenceTimeZone, recurrenceAbsoluteTime) - getRecurrenceDayNumber(startWeekAnchor, recurrenceTimeZone, recurrenceAbsoluteTime)) / 7);
+    const isCadencedWeek = weekDiff >= 0 && weekDiff % interval === 0;
+    const isMatchingWeekday = byDayIndexes.has(cursorWeekday);
+
+    if (isCadencedWeek && isMatchingWeekday && cursor >= startDate) {
+      pushOccurrence(cursor);
+      generated++;
+    }
+
+    cursor = addDaysPreservingRecurrenceWallTime(cursor, 1, recurrenceTimeZone, recurrenceAbsoluteTime);
+  }
+
+  return occurrences;
+}
+
+function buildICSOccurrences(rawEvents) {
+  const events = [];
+  const overridesByUid = new Map();
+  const mastersByUid = new Map();
+
+  rawEvents.forEach((event) => {
+    if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
+      if (!overridesByUid.has(event.uid)) overridesByUid.set(event.uid, []);
+      overridesByUid.get(event.uid).push(event);
+      return;
+    }
+
+    if (event?.uid && event.rrule) {
+      if (!mastersByUid.has(event.uid)) mastersByUid.set(event.uid, []);
+      mastersByUid.get(event.uid).push(event);
+    }
+  });
+
+  rawEvents.forEach((event) => {
+    if (event?.uid && event.recurrenceId instanceof Date && !Number.isNaN(event.recurrenceId.getTime())) {
+      if (!hasMasterForRecurringOverride(mastersByUid, event.uid)) {
+        const overrideEvent = buildICSOverrideOccurrence(event);
+        if (overrideEvent) events.push(overrideEvent);
+      }
+      return;
+    }
+
+    if (event?.uid && event.rrule) {
+      const overrides = overridesByUid.get(event.uid) || [];
+      const overrideExDates = overrides
+        .map((overrideEvent) => overrideEvent.recurrenceId)
+        .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()));
+      const expandedEvents = expandRecurringICSEvent({
+        ...event,
+        exDates: [...(event.exDates || []), ...overrideExDates]
+      });
+      events.push(...expandedEvents);
+      overrides.forEach((overrideEvent) => {
+        const resolvedOverride = buildICSOverrideOccurrence(overrideEvent, event);
+        if (resolvedOverride) events.push(resolvedOverride);
+      });
+      return;
+    }
+
+    events.push(event);
+  });
+
+  return events;
+}
+
+function hasMasterForRecurringOverride(mastersByUid, uid) {
+  const masters = mastersByUid.get(uid);
+  return Array.isArray(masters) && masters.length > 0;
+}
+
+function buildICSOverrideOccurrence(overrideEvent, masterEvent = null) {
+  const occurrenceAnchor = overrideEvent?.recurrenceId;
+  if (!(occurrenceAnchor instanceof Date) || Number.isNaN(occurrenceAnchor.getTime())) {
+    return null;
+  }
+
+  if (String(overrideEvent?.status || '').toUpperCase() === 'CANCELLED') {
+    return null;
+  }
+
+  const {
+    rrule: ignoredRule,
+    exDates: ignoredExDates,
+    recurrenceTimeZone: ignoredTimeZone,
+    recurrenceAbsoluteTime: ignoredAbsoluteTime,
+    ...baseMaster
+  } = masterEvent || {};
+  const {
+    rrule,
+    exDates,
+    recurrenceTimeZone,
+    recurrenceAbsoluteTime,
+    ...baseOverride
+  } = overrideEvent || {};
+
+  return {
+    ...baseMaster,
+    ...baseOverride,
+    recurrenceId: new Date(occurrenceAnchor.getTime()),
+    id: buildICSOccurrenceId(baseOverride.uid || baseMaster.uid, occurrenceAnchor)
+  };
+}
+
+function buildICSOccurrenceId(uid, recurrenceId) {
+  const normalizedUid = typeof uid === 'string' ? uid.trim() : '';
+  if (!normalizedUid) return '';
+  if (!(recurrenceId instanceof Date) || Number.isNaN(recurrenceId.getTime())) {
+    return normalizedUid;
+  }
+  return `${normalizedUid}__${recurrenceId.toISOString()}`;
+}
+
+/**
+ * Parse ICS field declaration with optional parameters.
+ * Example: DTSTART;TZID=America/New_York;VALUE=DATE-TIME
+ * @param {string} field - Field text before colon
+ * @returns {{name: string, params: Object}} Field name + parameter map
+ */
+function parseICSField(field) {
+  const parts = tokenizeICSFieldParts(field);
+  const name = (parts[0] || '').toUpperCase();
+  const params = {};
+
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+    const equalsIndex = part.indexOf('=');
+    if (equalsIndex <= 0) continue;
+
+    const key = part.substring(0, equalsIndex).toUpperCase();
+    const rawValue = part.substring(equalsIndex + 1).trim();
+    params[key] = decodeICSParamValue(rawValue);
+  }
+
+  return { name, params };
+}
+
+/**
+ * Split ICS field declaration into parameter parts while preserving escaped/quoted semicolons.
+ * @param {string} field - Raw field declaration
+ * @returns {string[]} Field name + parameter segments
+ */
+function tokenizeICSFieldParts(field) {
+  const parts = [];
+  let current = '';
+  let inQuotes = false;
+  let escaped = false;
+
+  for (let i = 0; i < field.length; i++) {
+    const char = field[i];
+
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      current += char;
+      continue;
+    }
+
+    if (char === ';' && !inQuotes) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  parts.push(current);
+  return parts;
+}
+
+/**
+ * Decode ICS parameter value escaping.
+ * Supports quoted values and common backslash/caret escape forms seen in feeds.
+ * @param {string} rawValue - Raw parameter value text
+ * @returns {string} Decoded parameter value
+ */
+function decodeICSParamValue(rawValue) {
+  let value = rawValue.trim();
+  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+    value = value.slice(1, -1);
+  }
+
+  value = value
+    .replace(/\\([\\;,:"])/g, '$1')
+    .replace(/\^\^/g, '^')
+    .replace(/\^n/gi, '\n')
+    .replace(/\^'/g, '"');
+
+  return value;
+}
+
+/**
+ * Parse ICS date format to JavaScript Date
+ * @param {string} icsDate - Date string from ICS file
+ * @param {Object} params - ICS property parameters (TZID, VALUE, etc)
+ * @returns {Date} JavaScript Date object
+ */
+function parseICSDate(icsDate, params = {}) {
+  // ICS dates are in format: 20251115T020000Z or 20251115
+  const year = parseInt(icsDate.substring(0, 4));
+  const month = parseInt(icsDate.substring(4, 6)) - 1; // JS months are 0-indexed
+  const day = parseInt(icsDate.substring(6, 8));
+
+  if (icsDate.length > 8) {
+    // Has time component
+    const hour = parseInt(icsDate.substring(9, 11));
+    const minute = parseInt(icsDate.substring(11, 13));
+    const second = parseInt(icsDate.substring(13, 15) || '0');
+
+    if (icsDate.endsWith('Z')) {
+      // UTC time
+      return new Date(Date.UTC(year, month, day, hour, minute, second));
+    }
+
+    const offsetMatch = icsDate.match(/([+-])(\d{2}):?(\d{2})$/);
+    if (offsetMatch) {
+      const sign = offsetMatch[1] === '+' ? 1 : -1;
+      const offsetHours = parseInt(offsetMatch[2], 10);
+      const offsetMinutes = parseInt(offsetMatch[3], 10);
+
+      if (
+        offsetHours > 14 ||
+        offsetMinutes > 59 ||
+        (offsetHours === 14 && offsetMinutes !== 0)
+      ) {
+        console.warn('Invalid ICS numeric UTC offset:', icsDate);
+        return null;
+      }
+
+      const totalOffsetMinutes = sign * ((offsetHours * 60) + offsetMinutes);
+      const utcMs = Date.UTC(year, month, day, hour, minute, second) - (totalOffsetMinutes * 60000);
+      return new Date(utcMs);
+    }
+
+    const rawTzid = typeof params.TZID === 'string' ? params.TZID : '';
+    const tzid = normalizeICSTzid(rawTzid);
+    if (rawTzid && !tzid) {
+      console.warn('Malformed ICS TZID value, dropping event date:', rawTzid, icsDate);
+      return null;
+    }
+
+    if (tzid) {
+      const tzDate = parseDateTimeInTimeZone({
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        timeZone: tzid
+      });
+
+      if (tzDate) return tzDate;
+      console.warn('Unable to resolve ICS TZID datetime, dropping event date:', tzid, icsDate);
+      return null;
+    }
+
+    // Floating/local ICS time: preserve existing local-browser behavior.
+    return new Date(year, month, day, hour, minute, second);
+  } else {
+    // Date only
+    return new Date(year, month, day);
+  }
+}
+
+/**
+ * Convert calendar wall time in an IANA timezone to an absolute Date.
+ * @param {Object} args - Date-time parts and timezone
+ * @returns {Date|null} Converted Date or null when timezone cannot be resolved
+ */
+function parseDateTimeInTimeZone(args) {
+  const {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+    timeZone
+  } = args;
+
+  const initialUtcMs = Date.UTC(year, month, day, hour, minute, second);
+  let resolvedUtcMs = initialUtcMs;
+  let didConverge = false;
+  const maxOffsetIterations = 8;
+
+  // Iterate because timezone offsets can vary with DST near boundaries.
+  for (let i = 0; i < maxOffsetIterations; i++) {
+    const offsetMinutes = getTimeZoneOffsetMinutes(new Date(resolvedUtcMs), timeZone);
+    if (offsetMinutes == null) {
+      console.warn('Unable to resolve timezone offset while parsing ICS TZID datetime:', timeZone);
+      return null;
+    }
+
+    const nextUtcMs = Date.UTC(year, month, day, hour, minute, second) - (offsetMinutes * 60000);
+    if (nextUtcMs === resolvedUtcMs) {
+      didConverge = true;
+      break;
+    }
+    resolvedUtcMs = nextUtcMs;
+  }
+
+  if (!didConverge) {
+    console.warn(
+      'Timezone offset iteration did not converge for ICS TZID datetime:',
+      timeZone,
+      `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+    );
+    return null;
+  }
+
+  const resolvedDate = new Date(resolvedUtcMs);
+  const roundTripped = getWallClockPartsInTimeZone(resolvedDate, timeZone);
+  if (
+    !roundTripped ||
+    roundTripped.year !== year ||
+    roundTripped.month !== month ||
+    roundTripped.day !== day ||
+    roundTripped.hour !== hour ||
+    roundTripped.minute !== minute ||
+    roundTripped.second !== second
+  ) {
+    console.warn(
+      'Detected invalid or non-existent local time for ICS TZID datetime:',
+      timeZone,
+      `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+    );
+    return null;
+  }
+
+  return resolvedDate;
+}
+
+let shortOffsetSupport;
+
+function parseShortOffsetZonePart(zonePart, options = {}) {
+  const { requireTwoDigitHours = false } = options;
+  if (!zonePart || zonePart === 'GMT' || zonePart === 'UTC') return 0;
+
+  const offsetMatch = zonePart.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/);
+  if (!offsetMatch) return null;
+
+  const rawHours = offsetMatch[2];
+  if (requireTwoDigitHours && rawHours.length !== 2) return null;
+
+  const sign = offsetMatch[1] === '+' ? 1 : -1;
+  const hours = parseInt(rawHours, 10);
+  const minutes = parseInt(offsetMatch[3] || '0', 10);
+  if (
+    Number.isNaN(hours) ||
+    Number.isNaN(minutes) ||
+    hours > 14 ||
+    minutes > 59 ||
+    (hours === 14 && minutes !== 0)
+  ) {
+    return null;
+  }
+
+  return sign * ((hours * 60) + minutes);
+}
+
+function supportsShortOffsetTimeZoneName() {
+  if (shortOffsetSupport != null) return shortOffsetSupport;
+
+  try {
+    const probeDate = new Date(Date.UTC(2026, 0, 15, 12, 0, 0));
+    const probeFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      timeZoneName: 'shortOffset',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+
+    const zonePart = probeFormatter.formatToParts(probeDate)
+      .find((part) => part.type === 'timeZoneName')?.value || '';
+    shortOffsetSupport = parseShortOffsetZonePart(zonePart, { requireTwoDigitHours: true }) != null;
+  } catch (_) {
+    shortOffsetSupport = false;
+  }
+
+  return shortOffsetSupport;
+}
+
+/**
+ * Resolve timezone offset (minutes from UTC) for a Date in a given IANA timezone.
+ * @param {Date} date - Reference date
+ * @param {string} timeZone - IANA timezone name
+ * @returns {number|null} Offset in minutes, or null if unavailable
+ */
+function getTimeZoneOffsetMinutes(date, timeZone) {
+  const parseOffsetFromZonePart = (zonePart) => {
+    // Convention used throughout this module: offsetMinutes = local time minus UTC.
+    // Example: "GMT+05" => +300 because local time is 5 hours ahead of UTC.
+    return parseShortOffsetZonePart(zonePart, { requireTwoDigitHours: true });
+  };
+
+  if (supportsShortOffsetTimeZoneName()) {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        timeZoneName: 'shortOffset',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      });
+
+      const parts = formatter.formatToParts(date);
+      const zonePart = parts.find((part) => part.type === 'timeZoneName')?.value || '';
+      const parsedOffset = parseOffsetFromZonePart(zonePart);
+      if (parsedOffset != null) return parsedOffset;
+    } catch (error) {
+      // Browser may partially support shortOffset. Fall through to component-diff fallback.
+      if (!(error instanceof RangeError)) {
+        console.warn('Unable to resolve timezone offset via shortOffset for ICS TZID:', timeZone, error);
+      }
+    }
+  }
+
+  const wallClock = getWallClockPartsInTimeZone(date, timeZone);
+  if (!wallClock) {
+    console.warn('Unable to resolve timezone offset for ICS TZID:', timeZone);
+    return null;
+  }
+
+  const asUtcWallClock = Date.UTC(
+    wallClock.year,
+    wallClock.month,
+    wallClock.day,
+    wallClock.hour,
+    wallClock.minute,
+    wallClock.second
+  );
+
+  return Math.round((asUtcWallClock - date.getTime()) / 60000);
+}
+
+/**
+ * Resolve wall-clock parts in a timezone for a given Date.
+ * @param {Date} date - Instant to represent in target timezone
+ * @param {string} timeZone - IANA timezone name
+ * @returns {{year:number,month:number,day:number,hour:number,minute:number,second:number}|null}
+ */
+function getWallClockPartsInTimeZone(date, timeZone) {
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    });
+
+    const parts = formatter.formatToParts(date);
+    const getPart = (type) => parseInt(parts.find((part) => part.type === type)?.value || '', 10);
+    const year = getPart('year');
+    const month = getPart('month') - 1;
+    const day = getPart('day');
+    const hour = getPart('hour');
+    const minute = getPart('minute');
+    const second = getPart('second');
+
+    if ([year, month, day, hour, minute, second].some((value) => Number.isNaN(value))) {
+      return null;
+    }
+
+    return { year, month, day, hour, minute, second };
+  } catch (error) {
+    console.warn('Unable to resolve timezone wall-clock parts for ICS TZID:', timeZone, error);
+    return null;
+  }
+}
+
+/**
+ * Extract opponent name from event summary
+ * Patterns: "Team @ Opponent", "Team vs Opponent", "Opponent vs Team"
+ * @param {string} summary - Event summary/title
+ * @param {string} teamName - Name of the team (optional)
+ * @returns {string} Opponent name or summary if no pattern matched
+ */
+export function extractOpponent(summary, teamName = '') {
+  if (!summary) return 'Unknown';
+
+  // Check for "@ Opponent" pattern
+  const atMatch = summary.match(/@\s*(.+)/);
+  if (atMatch) {
+    return atMatch[1].trim();
+  }
+
+  // Check for "vs Opponent" pattern
+  const vsMatch = summary.match(/vs\.?\s+(.+)/i);
+  if (vsMatch) {
+    const opponent = vsMatch[1].trim();
+    if (teamName) {
+      const escaped = teamName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const cleaned = opponent.replace(new RegExp(`\\b${escaped}\\b`, 'gi'), '').trim();
+      if (cleaned) return cleaned;
+    }
+    return opponent;
+  }
+
+  // Check for "Opponent vs Team" pattern (reverse)
+  const reverseVsMatch = summary.match(/(.+?)\s+vs\.?\s+/i);
+  if (reverseVsMatch && teamName && summary.toLowerCase().includes(teamName.toLowerCase())) {
+    const opponent = reverseVsMatch[1].trim();
+    if (!opponent.toLowerCase().includes(teamName.toLowerCase())) {
+      return opponent;
+    }
+  }
+
+  // No pattern matched, return summary
+  return summary;
+}
+
+/**
+ * Check if event is a practice (not a game)
+ * @param {string} summary - Event summary/title
+ * @returns {boolean} True if event is a practice
+ */
+export function isPracticeEvent(summary) {
+  if (!summary) return false;
+  const lowerSummary = summary.toLowerCase();
+  return lowerSummary.includes('practice') ||
+    lowerSummary.includes('training') ||
+    lowerSummary.includes('skills club');
+}
+
+/**
+ * Resolve event type for ICS events, preserving explicit parser booleans and
+ * falling back to summary heuristics when isPractice is missing.
+ * @param {Object} event - Parsed ICS event
+ * @returns {'practice'|'game'} Event type for calendar filtering
+ */
+export function getCalendarEventType(event) {
+  const isPractice = typeof event?.isPractice === 'boolean'
+    ? event.isPractice
+    : isPracticeEvent(event?.summary || '');
+  return isPractice ? 'practice' : 'game';
+}
+
+/**
+ * Resolve normalized calendar event status for ICS events.
+ * @param {Object} event - Parsed ICS event
+ * @returns {'scheduled'|'cancelled'} Event status
+ */
+export function getCalendarEventStatus(event) {
+  const normalizedStatus = String(event?.status || '').trim().toUpperCase();
+  if (normalizedStatus === 'CANCELLED' || normalizedStatus === 'CANCELED') {
+    return 'cancelled';
+  }
+
+  const normalizedSummary = String(event?.summary || '').toUpperCase();
+  if (normalizedSummary.includes('[CANCELED]') || normalizedSummary.includes('[CANCELLED]')) {
+    return 'cancelled';
+  }
+
+  return 'scheduled';
+}
+
+function stripCancelledCalendarPrefix(summary) {
+  return String(summary || '').replace(/^\s*\[(?:CANCELED|CANCELLED)\]\s*/i, '');
+}
+
+/**
+ * Resolve the id used to track a parsed ICS event in Firestore and the UI.
+ * Recurring occurrences should prefer their generated occurrence id.
+ * @param {Object} event - Parsed ICS event
+ * @returns {string} Stable tracking id or empty string
+ */
+export function getCalendarEventTrackingId(event) {
+  const occurrenceId = typeof event?.id === 'string' ? event.id.trim() : '';
+  if (occurrenceId) return occurrenceId;
+
+  const uid = typeof event?.uid === 'string' ? event.uid.trim() : '';
+  return uid;
+}
+
+/**
+ * Check whether a parsed ICS event is already tracked in Firestore.
+ * Recurring occurrences match by occurrence id; single events fall back to uid.
+ * @param {Object} event - Parsed ICS event
+ * @param {string[]|Set<string>} trackedCalendarEventIds - Stored tracked ids
+ * @returns {boolean}
+ */
+export function isTrackedCalendarEvent(event, trackedCalendarEventIds) {
+  const trackedIds = trackedCalendarEventIds instanceof Set
+    ? trackedCalendarEventIds
+    : new Set(Array.isArray(trackedCalendarEventIds) ? trackedCalendarEventIds : []);
+  const trackingId = getCalendarEventTrackingId(event);
+  if (trackingId && trackedIds.has(trackingId)) {
+    return true;
+  }
+
+  const uid = typeof event?.uid === 'string' ? event.uid.trim() : '';
+  const hasOccurrenceId = typeof event?.id === 'string' && event.id.includes('__');
+  if (!hasOccurrenceId && uid && trackedIds.has(uid)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Convert a parsed ICS event into the view model used by the global calendar.
+ * @param {Object} options
+ * @param {Object} options.team
+ * @param {string} options.teamColor
+ * @param {Object} options.event
+ * @returns {Object|null}
+ */
+export function buildGlobalCalendarIcsEvent({ team, teamColor, event }) {
+  const eventDate = event?.dtstart instanceof Date ? event.dtstart : new Date(event?.dtstart);
+  if (Number.isNaN(eventDate.getTime())) {
+    return null;
+  }
+
+  const title = stripCancelledCalendarPrefix(event?.summary) || 'Event';
+
+  return {
+    id: getCalendarEventTrackingId(event) || `ics-${eventDate.getTime()}`,
+    teamId: team.id,
+    teamName: team.name,
+    teamColor,
+    type: getCalendarEventType(event),
+    title,
+    date: eventDate,
+    location: event.location || 'TBD',
+    status: getCalendarEventStatus(event),
+    end: event?.dtend instanceof Date ? event.dtend : null, // Add this line
+    source: 'ics'
+  };
+}
+
+// ============================================
+// Practice & Event Utilities - Phase 1
+// ============================================
+
+/**
+ * Format a time range for display (e.g., "6:00 PM - 8:00 PM")
+ * @param {Date|Timestamp|string} start - Start time
+ * @param {Date|Timestamp|string} end - End time
+ * @returns {string} Formatted time range
+ */
+export function formatTimeRange(start, end) {
+  if (!start) return '';
+  const startStr = formatTime(start);
+  if (!end) return startStr;
+  const endStr = formatTime(end);
+  return `${startStr} - ${endStr}`;
+}
+
+/**
+ * Compute default end time based on event type
+ * @param {Date|Timestamp|string} startDate - Start date/time
+ * @param {string} type - Event type ('game' or 'practice')
+ * @returns {Date|null} Default end time
+ */
+export function getDefaultEndTime(startDate, type = 'game') {
+  if (!startDate) return null;
+  const date = startDate.toDate ? startDate.toDate() : new Date(startDate);
+  // Practices default to 1.5 hours, games to 2 hours
+  const durationMs = type === 'practice' ? 90 * 60 * 1000 : 120 * 60 * 1000;
+  return new Date(date.getTime() + durationMs);
+}
+
+// ============================================
+// Recurring Practices - Phase 2
+// ============================================
+
+/**
+ * Generate a UUID v4 for series identification
+ * @returns {string} UUID string
+ */
+export function generateSeriesId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+function toLocalDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Expand a recurring practice master into individual occurrences
+ * @param {Object} master - The series master document
+ * @param {number} windowDays - Number of days to expand into the future (default 180)
+ * @returns {Array} Array of occurrence objects
+ */
+export function expandRecurrence(master, windowDays = 180) {
+  // If not a series master, return as single item
+  if (!master.isSeriesMaster || !master.recurrence) {
+    return [master];
+  }
+
+  const occurrences = [];
+  const now = new Date();
+  const pastWindow = 14; // Show past 14 days for recent cancellations
+  const windowStart = new Date(now.getTime() - pastWindow * 24 * 60 * 60 * 1000);
+  const windowEnd = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
+
+  const { freq, interval = 1, byDays = [], until, count } = master.recurrence;
+  const normalizedInterval = Math.max(1, Number(interval) || 1);
+  const exDates = master.exDates || [];
+  const overrides = master.overrides || {};
+  let untilBoundary = null;
+
+  if (until) {
+    const untilDate = until.toDate ? until.toDate() : new Date(until);
+    untilBoundary = new Date(untilDate);
+
+    const isLocalMidnight =
+      untilBoundary.getHours() === 0 &&
+      untilBoundary.getMinutes() === 0 &&
+      untilBoundary.getSeconds() === 0 &&
+      untilBoundary.getMilliseconds() === 0;
+    const isUtcMidnight =
+      untilBoundary.getUTCHours() === 0 &&
+      untilBoundary.getUTCMinutes() === 0 &&
+      untilBoundary.getUTCSeconds() === 0 &&
+      untilBoundary.getUTCMilliseconds() === 0;
+
+    // Handle UTC date-only parsing first (new Date('YYYY-MM-DD') from date inputs).
+    if (isUtcMidnight) {
+      untilBoundary = new Date(
+        untilBoundary.getUTCFullYear(),
+        untilBoundary.getUTCMonth(),
+        untilBoundary.getUTCDate(),
+        23,
+        59,
+        59,
+        999
+      );
+    } else if (isLocalMidnight) {
+      // Local date-only values should include the full local end date.
+      untilBoundary.setHours(23, 59, 59, 999);
+    }
+  }
+
+  // Start from series creation date
+  const seriesStart = master.date?.toDate ? master.date.toDate() : new Date(master.date || master.createdAt?.toDate?.() || now);
+  const seriesStartDayNumber = Math.floor(seriesStart.getTime() / MS_PER_DAY);
+  const seriesStartDayOfWeek = seriesStart.getDay();
+  const seriesStartWeekStartDayNumber = seriesStartDayNumber - seriesStartDayOfWeek;
+  let current = new Date(seriesStart);
+  if (current < windowStart) {
+    // Start iteration near the visible window so old series are still expanded.
+    current = new Date(windowStart);
+    current.setHours(
+      seriesStart.getHours(),
+      seriesStart.getMinutes(),
+      seriesStart.getSeconds(),
+      seriesStart.getMilliseconds()
+    );
+
+    if (freq === 'weekly') {
+      const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
+      const currentDayOfWeek = current.getDay();
+      const currentWeekStartDayNumber = currentDayNumber - currentDayOfWeek;
+      const weeksSinceSeriesStartAtCursor = Math.floor(
+        (currentWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7
+      );
+      const weekOffset = ((weeksSinceSeriesStartAtCursor % normalizedInterval) + normalizedInterval) % normalizedInterval;
+
+      if (weekOffset !== 0) {
+        current.setDate(current.getDate() + ((normalizedInterval - weekOffset) * 7));
+      }
+    }
+  }
+  let generated = 0;
+  if (count && current > seriesStart) {
+    const precountCursor = new Date(seriesStart);
+    const precountMaxIterations = Math.max(366, Math.ceil((current.getTime() - seriesStart.getTime()) / MS_PER_DAY) + 366);
+    let precountIterations = 0;
+
+    while (precountCursor < current && generated < count && precountIterations < precountMaxIterations) {
+      precountIterations++;
+
+      const precountDayOfWeek = precountCursor.getDay();
+      const precountDayCode = DAY_CODES[precountDayOfWeek];
+      const precountDayNumber = Math.floor(precountCursor.getTime() / MS_PER_DAY);
+      const precountDaysSinceSeriesStart = precountDayNumber - seriesStartDayNumber;
+      const precountWeekStartDayNumber = precountDayNumber - precountDayOfWeek;
+      const precountWeeksSinceSeriesStart = Math.floor((precountWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7);
+      const precountWeeklyIntervalMatch =
+        precountWeeksSinceSeriesStart >= 0 &&
+        (precountWeeksSinceSeriesStart % normalizedInterval === 0);
+
+      let matches = false;
+      if (freq === 'weekly' && byDays.length > 0) {
+        matches = byDays.includes(precountDayCode) && precountWeeklyIntervalMatch && precountDaysSinceSeriesStart >= 0;
+      } else if (freq === 'daily') {
+        matches = precountDaysSinceSeriesStart >= 0 && (precountDaysSinceSeriesStart % normalizedInterval === 0);
+      } else if (freq === 'weekly' && byDays.length === 0) {
+        matches = precountDayOfWeek === seriesStartDayOfWeek && precountWeeklyIntervalMatch;
+        matches = matches && precountDaysSinceSeriesStart >= 0;
+      }
+
+      if (matches) {
+        generated++;
+      }
+
+      precountCursor.setDate(precountCursor.getDate() + 1);
+    }
+  }
+
+  // Safety limit for day-by-day traversal plus one-year buffer for edge cases.
+  const daysToTraverse = Math.ceil((windowEnd.getTime() - current.getTime()) / MS_PER_DAY);
+  const maxIterations = Math.max(366, daysToTraverse + 366);
+  let iterations = 0;
+
+  while (current <= windowEnd && iterations < maxIterations) {
+    iterations++;
+
+    // Check end conditions
+    if (untilBoundary) {
+      if (current > untilBoundary) break;
+    }
+    if (count && generated >= count) break;
+
+    const isoDate = toLocalDateKey(current);
+    const currentDayOfWeek = current.getDay();
+    const dayCode = DAY_CODES[currentDayOfWeek];
+    const currentDayNumber = Math.floor(current.getTime() / MS_PER_DAY);
+    const daysSinceSeriesStart = currentDayNumber - seriesStartDayNumber;
+    const currentWeekStartDayNumber = currentDayNumber - currentDayOfWeek;
+    const weeksSinceSeriesStart = Math.floor((currentWeekStartDayNumber - seriesStartWeekStartDayNumber) / 7);
+    const weeklyIntervalMatch =
+      weeksSinceSeriesStart >= 0 &&
+      (weeksSinceSeriesStart % normalizedInterval === 0);
+
+    // Check if this day matches the recurrence pattern
+    let matches = false;
+    if (freq === 'weekly' && byDays.length > 0) {
+      matches = byDays.includes(dayCode) && weeklyIntervalMatch && daysSinceSeriesStart >= 0;
+    } else if (freq === 'daily') {
+      matches = daysSinceSeriesStart >= 0 && (daysSinceSeriesStart % normalizedInterval === 0);
+    } else if (freq === 'weekly' && byDays.length === 0) {
+      // If no specific days, match the same day as series start
+      matches = currentDayOfWeek === seriesStartDayOfWeek && weeklyIntervalMatch;
+      matches = matches && daysSinceSeriesStart >= 0;
+    }
+
+    if (matches) {
+      generated++;
+    }
+
+    // Only process if within visible window and matches pattern
+    if (matches && current >= windowStart && !exDates.includes(isoDate)) {
+      const override = overrides[isoDate] || {};
+
+      // Build the occurrence object
+      const occurrence = {
+        ...master,
+        id: master.id, // Keep master ID for reference
+        masterId: master.id,
+        instanceDate: isoDate,
+        isInstance: true,
+        // Apply overrides or use master defaults
+        title: override.title || master.title,
+        location: override.location || master.location,
+        notes: override.notes || master.notes,
+        startTime: override.startTime || master.startTime,
+        endTime: override.endTime || master.endTime,
+        // Mark if this occurrence has been modified
+        isModified: Object.keys(override).length > 0
+      };
+
+      // Compute actual date/time for this occurrence
+      if (master.startTime) {
+        const [hours, minutes] = (override.startTime || master.startTime).split(':').map(Number);
+        const occDate = new Date(current);
+        occDate.setHours(hours, minutes, 0, 0);
+        occurrence.date = occDate;
+
+        if (master.endTime || override.endTime) {
+          const effectiveEndTime = override.endTime || master.endTime;
+          const [endHours, endMinutes] = effectiveEndTime.split(':').map(Number);
+          const endDate = new Date(current);
+          const explicitEndDayOffset = override.endDayOffset ?? master.endDayOffset;
+          const endDayOffset = explicitEndDayOffset !== undefined
+            ? Math.max(0, Number(explicitEndDayOffset) || 0)
+            : ((endHours * 60 + endMinutes) < (hours * 60 + minutes) ? 1 : 0);
+
+          endDate.setHours(endHours, endMinutes, 0, 0);
+          endDate.setDate(endDate.getDate() + endDayOffset);
+          occurrence.end = endDate;
+        }
+      } else {
+        occurrence.date = new Date(current);
+      }
+
+      occurrences.push(occurrence);
+    }
+
+    // Advance to next day
+    current.setDate(current.getDate() + 1);
+  }
+
+  return occurrences;
+}
+
+/**
+ * Format recurrence rule for display
+ * @param {Object} recurrence - Recurrence object { freq, interval, byDays, until, count }
+ * @returns {string} Human-readable recurrence description
+ */
+// ============================================
+// Location Utilities
+// ============================================
+
+const zipCache = new Map();
+
+export async function resolveZip(zip) {
+  if (!zip) return null;
+  if (zipCache.has(zip)) return zipCache.get(zip);
+  try {
+    const res = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(zip)}`);
+    if (!res.ok) {
+      zipCache.set(zip, null);
+      return null;
+    }
+    const data = await res.json();
+    const place = data?.places?.[0];
+    if (!place) {
+      zipCache.set(zip, null);
+      return null;
+    }
+    const city = place['place name'];
+    const state = place['state abbreviation'];
+    const label = `${city}, ${state}`;
+    zipCache.set(zip, label);
+    return label;
+  } catch (err) {
+    zipCache.set(zip, null);
+    return null;
+  }
+}
+
+export function formatRecurrence(recurrence) {
+  if (!recurrence) return '';
+
+  const { freq, interval = 1, byDays = [], until, count } = recurrence;
+
+  let text = '';
+
+  // Frequency
+  if (freq === 'daily') {
+    text = interval === 1 ? 'Daily' : `Every ${interval} days`;
+  } else if (freq === 'weekly') {
+    if (interval === 1) {
+      text = 'Weekly';
+    } else {
+      text = `Every ${interval} weeks`;
+    }
+
+    // Days
+    if (byDays.length > 0) {
+      const dayNames = {
+        'SU': 'Sun', 'MO': 'Mon', 'TU': 'Tue', 'WE': 'Wed',
+        'TH': 'Thu', 'FR': 'Fri', 'SA': 'Sat'
+      };
+      const dayList = byDays.map(d => dayNames[d] || d).join(', ');
+      text += ` on ${dayList}`;
+    }
+  }
+
+  // End condition
+  if (until) {
+    const untilDate = until.toDate ? until.toDate() : new Date(until);
+    text += ` until ${untilDate.toLocaleDateString()}`;
+  } else if (count) {
+    text += `, ${count} times`;
+  }
+
+  return text;
+}
