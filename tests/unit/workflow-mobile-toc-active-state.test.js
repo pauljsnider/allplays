@@ -6,6 +6,7 @@ function readRepoFile(relativePath) {
 }
 
 function expectMobileTocActiveStateSupport(source) {
+    expect(source).toContain(".filter((h) => h.id !== 'in-this-article');");
     expect(source).toContain('const allLinks = [...links];');
     expect(source).toContain('const ensureMobileToc = () => {');
     expect(source).toContain('if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;');
@@ -21,7 +22,7 @@ function expectMobileTocActiveStateSupport(source) {
 
 describe('workflow mobile TOC active state', () => {
     it('keeps generated workflow pages updating cloned mobile TOC links', () => {
-        expectMobileTocActiveStateSupport(readRepoFile('workflow-game-day.html'));
+        expectMobileTocActiveStateSupport(readRepoFile('workflow-postgame.html'));
     });
 
     it('keeps the workflow HTML generator aligned with the runtime fix', () => {
