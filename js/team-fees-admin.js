@@ -222,7 +222,7 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
     if (!date) throw new Error('Enter a manual payment date.');
 
     const currentBalance = Number(currentBalanceCents);
-    const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : paymentAmountCents;
+    const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : Number.MAX_SAFE_INTEGER;
     const priorPaid = Number(currentPaidCents);
     const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
     const amountPaidCents = priorPaidCents + paymentAmountCents;
