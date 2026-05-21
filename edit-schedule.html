@@ -1125,6 +1125,7 @@
             }
 
             if (!confirm(formatTournamentAdvancementPreviewMessage({ poolName }, plan))) return;
+            if (plan.requiresPoolProtectionOverride && !confirm(formatTournamentPoolProtectionOverrideMessage(plan))) return;
 
             await applyTournamentAdvancementPatches(currentTeamId, plan.patches, games);
             await loadSchedule();
@@ -1245,7 +1246,8 @@
             if (!plan.patches?.length) return 'Bracket slots already match this final ranking.';
             const slotCount = plan.previewRows?.length || plan.patches.length;
             const overwriteText = plan.requiresOverwriteConfirmation ? ' Existing assignments will require confirmation.' : '';
-            return `${slotCount} bracket slot update${slotCount === 1 ? '' : 's'} ready for preview.${overwriteText}`;
+            const poolProtectionText = plan.requiresPoolProtectionOverride ? ' Same-pool conflicts require override confirmation.' : '';
+            return `${slotCount} bracket slot update${slotCount === 1 ? '' : 's'} ready for preview.${overwriteText}${poolProtectionText}`;
         }
 
         function formatTournamentAdvancementPreviewMessage(pool = {}, plan = {}) {
@@ -1260,10 +1262,25 @@
             const fallbackLines = !previewLines.length
                 ? (plan.patches || []).map((patch) => `• ${patch.gameId}`)
                 : [];
-            const warning = plan.requiresOverwriteConfirmation
+            const overwriteWarning = plan.requiresOverwriteConfirmation
                 ? 'Existing bracket assignments will be overwritten.\n\n'
                 : '';
-            return `${warning}Preview bracket advancement for ${pool.poolName || plan.poolName}:\n\n${[...previewLines, ...fallbackLines].join('\n')}${overflowText}\n\nSave ${plan.patches?.length || 0} tournament game update${(plan.patches?.length || 0) === 1 ? '' : 's'}?`;
+            const poolProtectionWarning = plan.requiresPoolProtectionOverride
+                ? 'Same-pool matchups were detected and will require a separate override confirmation before saving.\n\n'
+                : '';
+            return `${overwriteWarning}${poolProtectionWarning}Preview bracket advancement for ${pool.poolName || plan.poolName}:\n\n${[...previewLines, ...fallbackLines].join('\n')}${overflowText}\n\nSave ${plan.patches?.length || 0} tournament game update${(plan.patches?.length || 0) === 1 ? '' : 's'}?`;
+        }
+
+        function formatTournamentPoolProtectionOverrideMessage(plan = {}) {
+            const conflicts = Array.isArray(plan.poolProtectionConflicts) ? plan.poolProtectionConflicts : [];
+            const conflictLines = conflicts.slice(0, 20).map((conflict) => {
+                const matchup = conflict.matchupLabel || `${conflict.homeTeamName || 'TBD'} vs ${conflict.awayTeamName || 'TBD'}`;
+                return `• ${conflict.gameId}: ${matchup} from ${conflict.poolName || 'the same pool'}`;
+            });
+            const overflowText = conflicts.length > conflictLines.length
+                ? `\n• ${conflicts.length - conflictLines.length} more same-pool matchup${conflicts.length - conflictLines.length === 1 ? '' : 's'}`
+                : '';
+            return `Pool-protection conflict detected. These same-pool matchup${conflicts.length === 1 ? '' : 's'} will be saved only if you intentionally override the protection warning:\n\n${conflictLines.join('\n')}${overflowText}\n\nOverride pool protection and continue saving?`;
         }
 
         function closeTournamentStandingsModal() {
@@ -1404,6 +1421,7 @@
             }
 
             if (!confirm(formatTournamentAdvancementPreviewMessage(pool, plan))) return;
+            if (plan.requiresPoolProtectionOverride && !confirm(formatTournamentPoolProtectionOverrideMessage(plan))) return;
 
             await applyTournamentAdvancementPatches(currentTeamId, plan.patches, tournamentAdvancementGames);
             await loadSchedule();
@@ -1442,7 +1460,7 @@
                                             <div class="text-sm font-semibold text-gray-900">${escapeHtml(pool.poolName)}</div>
                                             <div class="text-xs text-gray-500">${pool.gameCount} completed pool game${pool.gameCount === 1 ? '' : 's'}</div>
                                             ${pool.isOverridden && pool.override ? `<div class="text-xs text-amber-700 mt-1">${escapeHtml(formatTournamentOverrideAudit(pool.override))}</div>` : '<div class="text-xs text-gray-500 mt-1">Using computed standings</div>'}
-                                            <div class="text-xs ${advancementPlan.skipped ? 'text-slate-500' : (advancementPlan.requiresOverwriteConfirmation ? 'text-amber-700' : 'text-emerald-700')} mt-1">${escapeHtml(formatTournamentAdvancementStatus(advancementPlan))}</div>
+                                            <div class="text-xs ${advancementPlan.skipped ? 'text-slate-500' : ((advancementPlan.requiresOverwriteConfirmation || advancementPlan.requiresPoolProtectionOverride) ? 'text-amber-700' : 'text-emerald-700')} mt-1">${escapeHtml(formatTournamentAdvancementStatus(advancementPlan))}</div>
                                         </div>
                                         <div class="flex flex-col gap-2">
                                             <button type="button" data-edit-tournament-pool="${escapeHtml(poolKey)}" class="px-3 py-1.5 rounded bg-indigo-100 text-indigo-700 text-sm font-medium hover:bg-indigo-200">Edit final ranking</button>

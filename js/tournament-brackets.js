@@ -166,6 +166,91 @@ export function resolveTournamentGame(game = {}, gamesByIdInput, poolStandings =
     return resolved;
 }
 
+
+function resolveGameResultSlotSource(gamesById, source, poolStandings, memo, context = {}) {
+    const upstreamId = normalizeString(source.gameId);
+    if (!upstreamId) return { teamName: null, sourcePoolName: null, ready: false };
+    const upstream = gamesById.get(upstreamId);
+    if (!upstream) return { teamName: null, sourcePoolName: null, ready: false };
+
+    const upstreamResolved = resolveTournamentGameSources(upstream, gamesById, poolStandings, memo);
+    const outcome = normalizeString(source.outcome) || 'winner';
+    const side = outcome === 'loser' ? getTournamentLoser(upstream) : getTournamentWinner(upstream);
+    if (!side) return { teamName: null, sourcePoolName: null, ready: false };
+
+    return side === 'home' ? upstreamResolved.home : upstreamResolved.away;
+}
+
+function resolveTournamentSourceWithPool(source = {}, gamesById, poolStandings, memo, context = {}) {
+    const sourceType = normalizeString(source.sourceType) || 'team';
+    if (sourceType === 'pool_seed') {
+        const teamName = getPoolSeedTeamName(poolStandings, source, context);
+        return {
+            teamName,
+            sourcePoolName: getTournamentPoolLabel(source, context),
+            ready: !!teamName
+        };
+    }
+    if (sourceType === 'game_result') {
+        return resolveGameResultSlotSource(gamesById, source, poolStandings, memo, context);
+    }
+    return {
+        teamName: normalizeString(source.teamName),
+        sourcePoolName: null,
+        ready: !!normalizeString(source.teamName)
+    };
+}
+
+function resolveTournamentGameSources(game = {}, gamesByIdInput, poolStandings = {}, memo = new Map()) {
+    const gameId = normalizeString(game.id);
+    if (gameId && memo.has(gameId)) return memo.get(gameId);
+
+    const placeholder = {
+        home: { teamName: null, sourcePoolName: null, ready: false },
+        away: { teamName: null, sourcePoolName: null, ready: false }
+    };
+    if (gameId) memo.set(gameId, placeholder);
+
+    const tournament = game?.tournament || {};
+    const slotAssignments = tournament.slotAssignments || {};
+    const gamesById = gamesByIdInput instanceof Map
+        ? gamesByIdInput
+        : new Map(Array.isArray(gamesByIdInput) ? gamesByIdInput.map((item) => [item.id, item]) : []);
+    const resolved = {
+        home: resolveTournamentSourceWithPool(slotAssignments.home || {}, gamesById, poolStandings, memo, tournament),
+        away: resolveTournamentSourceWithPool(slotAssignments.away || {}, gamesById, poolStandings, memo, tournament)
+    };
+
+    if (gameId) memo.set(gameId, resolved);
+    return resolved;
+}
+
+function collectPoolProtectionConflicts(games = [], poolStandings = {}, gameIds = null) {
+    const eligibleGameIds = gameIds instanceof Set ? gameIds : null;
+    const gamesById = new Map((games || []).filter((game) => game?.id).map((game) => [game.id, game]));
+    const memo = new Map();
+
+    return (games || [])
+        .filter((game) => String(game?.competitionType || '').toLowerCase() === 'tournament' && game?.tournament?.slotAssignments)
+        .filter((game) => !eligibleGameIds || eligibleGameIds.has(game.id))
+        .map((game) => {
+            const sources = resolveTournamentGameSources(game, gamesById, poolStandings, memo);
+            const homePoolName = normalizeString(sources.home?.sourcePoolName);
+            const awayPoolName = normalizeString(sources.away?.sourcePoolName);
+            const homeTeamName = normalizeString(sources.home?.teamName);
+            const awayTeamName = normalizeString(sources.away?.teamName);
+            if (!homePoolName || homePoolName !== awayPoolName || !homeTeamName || !awayTeamName) return null;
+            return {
+                gameId: game.id,
+                poolName: homePoolName,
+                homeTeamName,
+                awayTeamName,
+                matchupLabel: `${homeTeamName} vs ${awayTeamName}`
+            };
+        })
+        .filter(Boolean);
+}
+
 function resolvedStatesEqual(current = {}, next = {}) {
     return current.homeLabel === next.homeLabel
         && current.awayLabel === next.awayLabel
@@ -288,7 +373,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: [],
             patches: [],
             previewRows: [],
-            requiresOverwriteConfirmation: false
+            requiresOverwriteConfirmation: false,
+            requiresPoolProtectionOverride: false,
+            poolProtectionConflicts: []
         };
     }
 
@@ -301,7 +388,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: [],
             patches: [],
             previewRows: [],
-            requiresOverwriteConfirmation: false
+            requiresOverwriteConfirmation: false,
+            requiresPoolProtectionOverride: false,
+            poolProtectionConflicts: []
         };
     }
 
@@ -314,7 +403,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: requiredSeeds,
             patches: [],
             previewRows: [],
-            requiresOverwriteConfirmation: false
+            requiresOverwriteConfirmation: false,
+            requiresPoolProtectionOverride: false,
+            poolProtectionConflicts: []
         };
     }
 
@@ -328,7 +419,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds,
             patches: [],
             previewRows: [],
-            requiresOverwriteConfirmation: false
+            requiresOverwriteConfirmation: false,
+            requiresPoolProtectionOverride: false,
+            poolProtectionConflicts: []
         };
     }
 
@@ -342,6 +435,7 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
     };
     const patches = collectTournamentAdvancementPatches(games, { poolStandings });
     const previewRows = buildTournamentAdvancementPreviewRows(games, patches);
+    const poolProtectionConflicts = collectPoolProtectionConflicts(games, poolStandings, new Set(patches.map((patch) => patch.gameId)));
 
     return {
         skipped: false,
@@ -352,6 +446,8 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
         patches,
         previewRows,
         requiresOverwriteConfirmation: previewRows.some((row) => row.overwritesExistingTeam),
+        requiresPoolProtectionOverride: poolProtectionConflicts.length > 0,
+        poolProtectionConflicts,
         poolStandings
     };
 }
