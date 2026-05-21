@@ -218,6 +218,39 @@ export function collectTournamentPoolSeeds(games = [], poolNameInput) {
     return Array.from(seeds).sort((a, b) => a - b);
 }
 
+function buildPoolProtectionWarningRows(games = [], patches = []) {
+    const gamesById = new Map((games || []).filter((game) => game?.id).map((game) => [game.id, game]));
+
+    return (patches || []).map((patch) => {
+        const game = gamesById.get(patch?.gameId) || {};
+        const tournament = game?.tournament || {};
+        const slotAssignments = tournament.slotAssignments || {};
+        const nextResolved = patch?.tournament?.resolved || {};
+        const homeSource = slotAssignments.home || {};
+        const awaySource = slotAssignments.away || {};
+        if ((normalizeString(homeSource.sourceType) || 'team') !== 'pool_seed') return null;
+        if ((normalizeString(awaySource.sourceType) || 'team') !== 'pool_seed') return null;
+
+        const homePoolName = getTournamentPoolLabel(homeSource, tournament);
+        const awayPoolName = getTournamentPoolLabel(awaySource, tournament);
+        if (!homePoolName || homePoolName !== awayPoolName) return null;
+
+        const homeTeamName = normalizeString(nextResolved.homeTeamName);
+        const awayTeamName = normalizeString(nextResolved.awayTeamName);
+        if (!homeTeamName || !awayTeamName) return null;
+
+        return {
+            gameId: patch.gameId,
+            poolName: homePoolName,
+            homeTeamName,
+            awayTeamName,
+            homeSourceLabel: describeTournamentSource(homeSource, tournament),
+            awaySourceLabel: describeTournamentSource(awaySource, tournament),
+            warning: `${homeTeamName} and ${awayTeamName} both advanced from ${homePoolName}.`
+        };
+    }).filter(Boolean);
+}
+
 function buildTournamentAdvancementPreviewRows(games = [], patches = []) {
     const gamesById = new Map((games || []).filter((game) => game?.id).map((game) => [game.id, game]));
 
@@ -288,6 +321,7 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: [],
             patches: [],
             previewRows: [],
+            poolProtectionWarnings: [],
             requiresOverwriteConfirmation: false
         };
     }
@@ -301,6 +335,7 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: [],
             patches: [],
             previewRows: [],
+            poolProtectionWarnings: [],
             requiresOverwriteConfirmation: false
         };
     }
@@ -314,6 +349,7 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: requiredSeeds,
             patches: [],
             previewRows: [],
+            poolProtectionWarnings: [],
             requiresOverwriteConfirmation: false
         };
     }
@@ -328,6 +364,7 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds,
             patches: [],
             previewRows: [],
+            poolProtectionWarnings: [],
             requiresOverwriteConfirmation: false
         };
     }
@@ -342,6 +379,7 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
     };
     const patches = collectTournamentAdvancementPatches(games, { poolStandings });
     const previewRows = buildTournamentAdvancementPreviewRows(games, patches);
+    const poolProtectionWarnings = buildPoolProtectionWarningRows(games, patches);
 
     return {
         skipped: false,
@@ -351,6 +389,7 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
         missingSeeds: [],
         patches,
         previewRows,
+        poolProtectionWarnings,
         requiresOverwriteConfirmation: previewRows.some((row) => row.overwritesExistingTeam),
         poolStandings
     };
