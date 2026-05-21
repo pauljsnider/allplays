@@ -106,6 +106,18 @@ import {
     updateOfficiatingSlotResponse
 } from './officiating-utils.js?v=3';
 import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=2';
+export {
+    TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
+    assertTeamEmailAttachmentLimit,
+    buildTeamEmailDeliveryPayload,
+    deleteTeamEmailAttachment,
+    getTeamEmailAttachmentTotalBytes,
+    getTeamEmailDraft,
+    normalizeTeamEmailAttachments,
+    queueTeamEmailSend,
+    saveTeamEmailDraft,
+    uploadTeamEmailAttachment
+} from './team-email-attachments.js?v=1';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;

@@ -1523,6 +1523,16 @@ service cloud.firestore {
         }
       }
 
+      // Team email drafts and sent delivery history are coach/admin only.
+      match /emailDrafts/{draftId} {
+        allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /emailSends/{sendId} {
+        allow read, create: if isTeamOwnerOrAdmin(teamId);
+        allow update, delete: if false;
+      }
+
       // Chat messages subcollection
       match /chatMessages/{messageId} {
         // List queries are unfiltered by target metadata in existing clients.
