@@ -11,6 +11,7 @@ import { PlayerDetail } from './pages/PlayerDetail';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
 import { Schedule } from './pages/Schedule';
+import { ScheduleEventDetail } from './pages/ScheduleEventDetail';
 import { TeamDetail } from './pages/TeamDetail';
 import { Teams } from './pages/Teams';
 import { VerifyPending } from './pages/VerifyPending';
@@ -29,6 +30,7 @@ export default function App() {
       <Route path="/" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
       <Route path="/home" element={<Protected auth={auth}><Home auth={auth} /></Protected>} />
       <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
+      <Route path="/schedule/:teamId/:eventId" element={<Protected auth={auth}><ScheduleEventDetail auth={auth} /></Protected>} />
       <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
       <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
       <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />

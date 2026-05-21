@@ -1,128 +1,1167 @@
-import { useMemo, useState } from 'react';
-import { CalendarDays, Download, Filter, ListChecks } from 'lucide-react';
-import { GameCard } from '../components/GameCard';
-import { mockGames } from '../data/mockData';
-import type { AuthState, Game } from '../lib/types';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { loadParentSchedule, type ParentScheduleChild } from '../lib/scheduleService';
+import { useShellLayout } from '../lib/useShellLayout';
+import {
+  buildScheduleIcs,
+  buildScheduleAgendaText,
+  filterParentScheduleEvents,
+  formatEventDateLabel,
+  formatEventTimeLabel,
+  getCalendarScheduleEntries,
+  getParentScheduleTeamOptions,
+  getPracticePacketRows,
+  getScheduleTitle,
+  getScheduleMapHref,
+  normalizeRsvpResponse,
+  type CalendarScheduleEntry,
+  type ParentScheduleEvent,
+  type ParentScheduleFilter,
+  type ParentScheduleTeamOption,
+  type PracticePacketScheduleRow,
+  type RsvpResponse,
+  type ScheduleTimeRange,
+  type ScheduleViewMode
+} from '../lib/scheduleLogic';
+import type { AuthState } from '../lib/types';
 
-type ScheduleFilter = 'all' | 'games' | 'practices' | 'rsvp';
+const filterOptions: Array<{ value: ParentScheduleFilter; label: string }> = [
+  { value: 'upcoming-all', label: 'All Upcoming' },
+  { value: 'upcoming-games', label: 'Upcoming Games' },
+  { value: 'upcoming-practices', label: 'Upcoming Practices' },
+  { value: 'availability', label: 'Availability' },
+  { value: 'recent-results', label: 'Recent Results' },
+  { value: 'past-all', label: 'Past Events' }
+];
+
+const timeRangeOptions: Array<{ value: ScheduleTimeRange; label: string }> = [
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+  { value: 'quarter', label: 'Quarter' },
+  { value: 'all', label: 'All' }
+];
+
+const upcomingListPageSize = 20;
+const pastListPageSize = 10;
+
+const rsvpLabels: Record<RsvpResponse, string> = {
+  going: 'Going',
+  maybe: 'Maybe',
+  not_going: "Can't go",
+  not_responded: 'RSVP needed'
+};
+
+const rsvpBadgeClasses: Record<RsvpResponse, string> = {
+  going: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  maybe: 'border-amber-200 bg-amber-50 text-amber-700',
+  not_going: 'border-rose-200 bg-rose-50 text-rose-700',
+  not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
+};
 
 export function Schedule({ auth }: { auth: AuthState }) {
-  const [filter, setFilter] = useState<ScheduleFilter>('all');
-  const [view, setView] = useState<'list' | 'calendar'>('list');
+  const { isDesktopWeb } = useShellLayout();
+  const [filter, setFilter] = useState<ParentScheduleFilter>('upcoming-all');
+  const [view, setView] = useState<ScheduleViewMode>('list');
+  const [selectedPlayerId, setSelectedPlayerId] = useState('');
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [timeRange, setTimeRange] = useState<ScheduleTimeRange>('all');
+  const [children, setChildren] = useState<ParentScheduleChild[]>([]);
+  const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [visibleListCount, setVisibleListCount] = useState(upcomingListPageSize);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1);
+  });
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
-  const visibleGames = useMemo(() => {
-    return mockGames.filter((game) => {
-      if (filter === 'games') {
-        return game.type === 'game';
+  const refreshSchedule = async () => {
+    if (!auth.user) return;
+    setLoading(true);
+    setError(null);
+    setStatusMessage(null);
+    try {
+      const result = await loadParentSchedule(auth.user);
+      setChildren(result.children);
+      setEvents(result.events);
+      if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
+        setSelectedPlayerId('');
       }
-      if (filter === 'practices') {
-        return game.type === 'practice';
+      if (selectedTeamId && !result.children.some((child) => child.teamId === selectedTeamId)) {
+        setSelectedTeamId('');
       }
-      if (filter === 'rsvp') {
-        return game.availability === 'needed';
+      const firstUpcoming = filterParentScheduleEvents(result.events, { filter: 'upcoming-all' })[0];
+      if (firstUpcoming) {
+        setCalendarMonth(new Date(firstUpcoming.date.getFullYear(), firstUpcoming.date.getMonth(), 1));
       }
-      return true;
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load schedule.');
+      setEvents([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshSchedule();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user?.uid]);
+
+  const visibleEvents = useMemo(() => (
+    filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
+  ), [events, filter, selectedPlayerId, selectedTeamId, timeRange]);
+
+  const listPageSize = filter === 'past-all' ? pastListPageSize : upcomingListPageSize;
+
+  useEffect(() => {
+    setVisibleListCount(filter === 'past-all' ? pastListPageSize : upcomingListPageSize);
+  }, [filter, selectedPlayerId, selectedTeamId, timeRange, view]);
+
+  const calendarEntries = useMemo(() => getCalendarScheduleEntries(visibleEvents), [visibleEvents]);
+  const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
+  const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
+  const selectedDayEntries = useMemo(() => {
+    if (!selectedDay) return [];
+    return calendarEntries.filter((event) =>
+      event.date.getFullYear() === selectedDay.getFullYear() &&
+      event.date.getMonth() === selectedDay.getMonth() &&
+      event.date.getDate() === selectedDay.getDate()
+    );
+  }, [calendarEntries, selectedDay]);
+
+  const counts = useMemo(() => ({
+    total: visibleEvents.length,
+    games: visibleEvents.filter((event) => event.type === 'game').length,
+    practices: visibleEvents.filter((event) => event.type === 'practice').length,
+    rsvpNeeded: visibleEvents.filter((event) => event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded').length,
+    packetsReady: packetRows.filter((row) => row.needsAction).length
+  }), [packetRows, visibleEvents]);
+  const webInsights = useMemo(() => buildScheduleWebInsights(visibleEvents), [visibleEvents]);
+
+  const handleExport = () => {
+    const exportEvents = filterParentScheduleEvents(events, {
+      filter: 'upcoming-all',
+      playerId: selectedPlayerId,
+      teamId: selectedTeamId,
+      timeRange: 'all'
     });
-  }, [filter]);
+    if (!exportEvents.length) {
+      setStatusMessage('No schedule events to export yet.');
+      return;
+    }
+
+    const ics = buildScheduleIcs(exportEvents);
+    const blob = new Blob([ics], { type: 'text/calendar' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const selectedChild = children.find((child) => child.playerId === selectedPlayerId);
+    link.download = selectedChild
+      ? `${selectedChild.playerName || 'player'}-schedule.ics`.replace(/[^a-z0-9]+/gi, '-').toLowerCase()
+      : 'family-schedule.ics';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setStatusMessage('Calendar export started.');
+  };
+
+  const handleCopyAgenda = async () => {
+    const agendaEvents = visibleEvents.length ? visibleEvents : filterParentScheduleEvents(events, {
+      filter: 'upcoming-all',
+      playerId: selectedPlayerId,
+      teamId: selectedTeamId,
+      timeRange
+    });
+    const text = buildScheduleAgendaText(agendaEvents);
+    if (!text) {
+      setStatusMessage('No schedule details to copy yet.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatusMessage('Schedule details copied.');
+    } catch {
+      setStatusMessage('Copy is not available in this browser.');
+    }
+  };
 
   return (
     <div className="schedule-page space-y-4">
-      <section className="schedule-header app-card p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="app-label">Schedule</div>
-            <h1 className="mt-1 text-2xl font-black text-gray-950">Games, practices, RSVP</h1>
-            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
-              Matches the parent-dashboard schedule direction: mobile list first, with event detail, per-player RSVP, rideshare, assignments, and calendar export hooks.
-            </p>
+      <section className="schedule-header app-card p-3 sm:hidden">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h1 className="text-lg font-black leading-tight text-gray-950">Schedule</h1>
+            <div className="mt-0.5 text-xs font-bold text-gray-500">
+              {formatCount(counts.total, 'event')} · {counts.rsvpNeeded} RSVP · {counts.packetsReady} packets
+            </div>
           </div>
-          <button type="button" className="secondary-button">
-            <Download className="h-4 w-4" aria-hidden="true" />
-            Sync
-          </button>
+          <div className="flex flex-none gap-1.5">
+            <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={refreshSchedule} disabled={loading} aria-label="Refresh schedule">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+            </button>
+            <button type="button" className="secondary-button !h-9 !min-h-9 !w-9 !p-0" onClick={handleExport} aria-label="Export calendar">
+              <Download className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">
+
+        <div className="mt-3 grid grid-cols-3 gap-2">
           <Segment active={view === 'list'} onClick={() => setView('list')} icon={ListChecks} label="List" />
           <Segment active={view === 'calendar'} onClick={() => setView('calendar')} icon={CalendarDays} label="Calendar" />
+          <Segment active={view === 'packets'} onClick={() => setView('packets')} icon={ClipboardCheck} label="Packets" />
+        </div>
+
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <label>
+            <span className="sr-only">Schedule filter</span>
+            <select
+              aria-label="Schedule filter"
+              className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black"
+              value={filter}
+              onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}
+            >
+              {filterOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="sr-only">Schedule range</span>
+            <select
+              aria-label="Schedule range"
+              className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black"
+              value={timeRange}
+              onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}
+            >
+              {timeRangeOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <label>
+            <span className="sr-only">Team filter</span>
+            <select aria-label="Team filter" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+              <option value="">All Teams</option>
+              {teamOptions.map((team) => (
+                <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="sr-only">Player filter</span>
+            <select aria-label="Player filter" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
+              <option value="">All Players</option>
+              {children.map((child) => (
+                <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
+              ))}
+            </select>
+          </label>
         </div>
       </section>
 
-      <div className="schedule-filters flex gap-2 overflow-x-auto pb-1">
-        {[
-          ['all', 'All'],
-          ['games', 'Games'],
-          ['practices', 'Practices'],
-          ['rsvp', 'RSVP needed']
-        ].map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            className={`inline-flex min-h-10 flex-none items-center gap-2 rounded-full border px-3 text-sm font-black ${
-              filter === value ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600'
-            }`}
-            onClick={() => setFilter(value as ScheduleFilter)}
-          >
-            <Filter className="h-4 w-4" aria-hidden="true" />
-            {label}
-          </button>
-        ))}
-      </div>
+      <section className="schedule-header app-card hidden p-3 sm:block sm:p-4">
+        <div className="schedule-web-hero-layout">
+          <div className="min-w-0 flex-1">
+            <div className="app-label">Schedule</div>
+            <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">Games, practices, RSVP</h1>
+            <p className="mt-2 hidden text-sm font-semibold leading-6 text-gray-600 sm:block">
+              A family command center for what is next, what needs a parent decision, and what can wait.
+            </p>
 
-      {view === 'calendar' ? (
-        <CalendarPreview games={visibleGames} />
-      ) : (
-        <div className="schedule-list space-y-3">
-          {visibleGames.map((game) => (
-            <GameCard key={game.id} game={game} />
-          ))}
-        </div>
-      )}
+            <div className="mt-3 grid grid-cols-5 gap-1.5 sm:mt-4 sm:gap-2">
+              <Metric label="Events" value={String(counts.total)} />
+              <Metric label="Games" value={String(counts.games)} />
+              <Metric label="Practices" value={String(counts.practices)} />
+              <Metric label="RSVP Needed" mobileLabel="RSVP" value={String(counts.rsvpNeeded)} />
+              <Metric label="Packets" value={String(counts.packetsReady)} />
+            </div>
 
-      {auth.isCoach || auth.isAdmin ? (
-        <section className="app-card p-4">
-          <div className="app-label">Coach/admin lite</div>
-          <h2 className="mt-1 app-section-title">RSVP Summary</h2>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <Summary label="Going" value="7" />
-            <Summary label="Maybe" value="1" />
-            <Summary label="Missing" value="3" />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={refreshSchedule} disabled={loading}>
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                Refresh
+              </button>
+              <button type="button" className="secondary-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={handleExport}>
+                <Download className="h-4 w-4" aria-hidden="true" />
+                .ics
+              </button>
+              <button type="button" className="secondary-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={handleCopyAgenda}>
+                <Copy className="h-4 w-4" aria-hidden="true" />
+                Copy agenda
+              </button>
+            </div>
           </div>
-        </section>
-      ) : null}
+
+          <ScheduleNextUpCard event={webInsights.nextEvent} />
+        </div>
+
+        {!isDesktopWeb ? (
+          <div className="mt-3 grid grid-cols-3 gap-2 sm:mt-4 sm:flex sm:flex-wrap">
+            <Segment active={view === 'list'} onClick={() => setView('list')} icon={ListChecks} label="List" />
+            <Segment active={view === 'calendar'} onClick={() => setView('calendar')} icon={CalendarDays} label="Calendar" />
+            <Segment active={view === 'packets'} onClick={() => setView('packets')} icon={ClipboardCheck} label="Packets" />
+            <label className="sm:hidden">
+              <span className="sr-only">Desktop schedule filter</span>
+              <select
+                aria-label="Desktop schedule filter"
+                className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black"
+                value={filter}
+                onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}
+              >
+                {filterOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="min-w-0 flex-1 sm:min-w-32 sm:max-w-40">
+              <span className="sr-only">Range</span>
+              <select aria-label="Range" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black sm:min-h-10 sm:text-sm" value={timeRange} onChange={(event) => setTimeRange(event.target.value as ScheduleTimeRange)}>
+                {timeRangeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="min-w-0 flex-1 sm:min-w-48 sm:max-w-64">
+              <span className="sr-only">Team</span>
+              <select aria-label="Team" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black sm:min-h-10 sm:text-sm" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+                <option value="">All Teams</option>
+                {teamOptions.map((team) => (
+                  <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
+                ))}
+              </select>
+            </label>
+            <label className="min-w-0 flex-1 sm:min-w-48 sm:max-w-64">
+              <span className="sr-only">Player</span>
+              <select aria-label="Player" className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black sm:min-h-10 sm:text-sm" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)}>
+                <option value="">All Players</option>
+                {children.map((child) => (
+                  <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+      </section>
+
+      <div className="schedule-workbench">
+        {isDesktopWeb ? (
+          <aside className="schedule-web-sidebar space-y-3">
+            <ScheduleWebControls
+              filter={filter}
+              view={view}
+              selectedPlayerId={selectedPlayerId}
+              selectedTeamId={selectedTeamId}
+              timeRange={timeRange}
+              children={children}
+              teamOptions={teamOptions}
+              loading={loading}
+              insights={webInsights}
+              onFilterChange={setFilter}
+              onViewChange={setView}
+              onPlayerChange={setSelectedPlayerId}
+              onTeamChange={setSelectedTeamId}
+              onTimeRangeChange={setTimeRange}
+              onRefresh={refreshSchedule}
+              onExport={handleExport}
+              onCopyAgenda={handleCopyAgenda}
+            />
+            <ScheduleActionQueue events={visibleEvents} />
+          </aside>
+        ) : null}
+
+        <div className="schedule-content-pane space-y-3">
+          {!isDesktopWeb ? (
+            <div className="schedule-filters hidden gap-2 overflow-x-auto pb-1 sm:flex">
+              {filterOptions.map((option) => (
+                <ScheduleFilterButton
+                  key={option.value}
+                  option={option}
+                  active={filter === option.value}
+                  onClick={() => setFilter(option.value)}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
+          {error ? <Status tone="error" message={error} /> : null}
+
+          {loading ? (
+            <LoadingSchedule />
+          ) : view === 'calendar' ? (
+            <CalendarSchedule
+              month={calendarMonth}
+              entries={calendarEntries}
+              selectedDay={selectedDay}
+              selectedDayEntries={selectedDayEntries}
+              onMonthChange={setCalendarMonth}
+              onDaySelect={setSelectedDay}
+              onDayClose={() => setSelectedDay(null)}
+            />
+          ) : view === 'packets' ? (
+            <PracticePacketsPanel rows={packetRows} />
+          ) : view === 'compact' ? (
+            <CompactScheduleList events={visibleEvents} />
+          ) : (
+            <ScheduleList
+              events={visibleEvents}
+              visibleCount={visibleListCount}
+              pageSize={listPageSize}
+              onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, visibleEvents.length))}
+            />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 function Segment({ active, onClick, icon: Icon, label }: { active: boolean; onClick: () => void; icon: typeof CalendarDays; label: string }) {
   return (
-    <button type="button" className={`secondary-button ${active ? '' : '!border-gray-200 !bg-white !text-gray-600 !shadow-none'}`} onClick={onClick}>
+    <button
+      type="button"
+      className={`inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-xs font-black transition sm:min-h-10 sm:rounded-xl sm:px-4 sm:text-sm ${
+        active ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600'
+      }`}
+      onClick={onClick}
+      aria-pressed={active}
+    >
       <Icon className="h-4 w-4" aria-hidden="true" />
       {label}
     </button>
   );
 }
 
-function CalendarPreview({ games }: { games: Game[] }) {
+function formatCount(value: number, label: string) {
+  return `${value} ${label}${value === 1 ? '' : 's'}`;
+}
+
+function Metric({ label, mobileLabel, value }: { label: string; mobileLabel?: string; value: string }) {
   return (
-    <div className="app-card p-4">
-      <div className="grid gap-2 sm:grid-cols-3">
-        {games.map((game) => (
-          <div key={game.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-            <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">{game.dateLabel}</div>
-            <div className="mt-1 text-sm font-black text-gray-950">{game.teamName}</div>
-            <div className="mt-1 text-xs font-semibold text-gray-600">{game.timeLabel} · {game.opponent}</div>
-          </div>
-        ))}
+    <div className="schedule-metric rounded-lg border border-gray-200 bg-gray-50 px-2 py-2 text-center sm:rounded-xl sm:p-3 sm:text-left">
+      <div className="text-base font-black leading-none text-gray-950 sm:text-xl sm:leading-normal">{value}</div>
+      <div className="mt-1 text-[10px] font-extrabold uppercase leading-tight text-gray-500 sm:text-xs sm:tracking-[0.04em]">
+        {mobileLabel ? (
+          <>
+            <span className="sm:hidden">{mobileLabel}</span>
+            <span className="hidden sm:inline">{label}</span>
+          </>
+        ) : label}
       </div>
     </div>
   );
 }
 
-function Summary({ label, value }: { label: string; value: string }) {
+function Status({ tone, message }: { tone: 'success' | 'error'; message: string }) {
+  const isError = tone === 'error';
   return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-      <div className="text-2xl font-black text-gray-950">{value}</div>
-      <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
+    <div className={`flex items-start gap-2 rounded-xl border p-3 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+      {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
+      {message}
     </div>
+  );
+}
+
+type ScheduleWebInsights = {
+  nextEvent: ParentScheduleEvent | null;
+  rsvpNeeded: number;
+  packetsReady: number;
+  openAssignments: number;
+  rideRequests: number;
+};
+
+function buildScheduleWebInsights(events: ParentScheduleEvent[]): ScheduleWebInsights {
+  return events.reduce<ScheduleWebInsights>((insights, event) => {
+    if (!insights.nextEvent && !event.isCancelled) insights.nextEvent = event;
+    if (event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded') insights.rsvpNeeded += 1;
+    if (event.type === 'practice' && event.practiceHomePacketSummary) insights.packetsReady += 1;
+    insights.openAssignments += event.assignments.filter((assignment) => assignment.claimable && !assignment.claim && !assignment.value).length;
+    insights.rideRequests += event.rideshareSummary?.requests || 0;
+    return insights;
+  }, {
+    nextEvent: null,
+    rsvpNeeded: 0,
+    packetsReady: 0,
+    openAssignments: 0,
+    rideRequests: 0
+  });
+}
+
+function ScheduleNextUpCard({ event }: { event: ParentScheduleEvent | null }) {
+  if (!event) {
+    return (
+      <div className="schedule-next-card rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4">
+        <div className="app-label">Next up</div>
+        <div className="mt-2 text-lg font-black text-gray-950">Nothing scheduled</div>
+        <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">Try another filter or player.</div>
+      </div>
+    );
+  }
+
+  const rsvp = normalizeRsvpResponse(event.myRsvp);
+  const actionText = getEventPrimaryActionText(event, rsvp);
+
+  return (
+    <Link to={getEventDetailPath(event)} className="schedule-next-card block rounded-xl border border-primary-100 bg-primary-50 p-4 transition hover:border-primary-200 hover:bg-primary-100">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="app-label text-primary-700">Next up</div>
+          <div className="mt-1 truncate text-lg font-black text-gray-950">{getScheduleTitle(event)}</div>
+          <div className="mt-1 text-sm font-bold text-gray-700">{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-600">{event.childName} · {event.location || 'Location TBD'}</div>
+        </div>
+        <span className={`inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
+          {rsvpLabels[rsvp]}
+        </span>
+      </div>
+      <div className="mt-3 inline-flex min-h-8 items-center gap-2 rounded-full bg-white px-3 text-xs font-black text-primary-700 shadow-sm">
+        {actionText}
+        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+      </div>
+    </Link>
+  );
+}
+
+function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, timeRange, children, teamOptions, loading, insights, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda }: {
+  filter: ParentScheduleFilter;
+  view: ScheduleViewMode;
+  selectedPlayerId: string;
+  selectedTeamId: string;
+  timeRange: ScheduleTimeRange;
+  children: ParentScheduleChild[];
+  teamOptions: ParentScheduleTeamOption[];
+  loading: boolean;
+  insights: ScheduleWebInsights;
+  onFilterChange: (filter: ParentScheduleFilter) => void;
+  onViewChange: (view: ScheduleViewMode) => void;
+  onPlayerChange: (playerId: string) => void;
+  onTeamChange: (teamId: string) => void;
+  onTimeRangeChange: (range: ScheduleTimeRange) => void;
+  onRefresh: () => void;
+  onExport: () => void;
+  onCopyAgenda: () => void;
+}) {
+  return (
+    <section className="app-card schedule-control-panel p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="app-label">Plan view</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Family agenda</h2>
+        </div>
+        <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={onRefresh} disabled={loading} aria-label="Refresh schedule">
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <Segment active={view === 'list'} onClick={() => onViewChange('list')} icon={ListChecks} label="List" />
+        <Segment active={view === 'compact'} onClick={() => onViewChange('compact')} icon={ListChecks} label="Compact" />
+        <Segment active={view === 'calendar'} onClick={() => onViewChange('calendar')} icon={CalendarDays} label="Calendar" />
+        <Segment active={view === 'packets'} onClick={() => onViewChange('packets')} icon={ClipboardCheck} label="Packets" />
+      </div>
+
+      <label className="mt-4 block">
+        <span className="app-label">Range</span>
+        <select aria-label="Time range" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={timeRange} onChange={(event) => onTimeRangeChange(event.target.value as ScheduleTimeRange)}>
+          {timeRangeOptions.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="mt-4 block">
+        <span className="app-label">Team</span>
+        <select aria-label="Team" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedTeamId} onChange={(event) => onTeamChange(event.target.value)}>
+          <option value="">All Teams</option>
+          {teamOptions.map((team) => (
+            <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="mt-4 block">
+        <span className="app-label">Player</span>
+        <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
+          <option value="">All Players</option>
+          {children.map((child) => (
+            <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
+          ))}
+        </select>
+      </label>
+
+      <div className="mt-4 space-y-2" aria-label="Schedule filters">
+        {filterOptions.map((option) => (
+          <ScheduleFilterButton
+            key={option.value}
+            option={option}
+            active={filter === option.value}
+            onClick={() => onFilterChange(option.value)}
+            fullWidth
+          />
+        ))}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button type="button" className="secondary-button w-full" onClick={onExport}>
+          <Download className="h-4 w-4" aria-hidden="true" />
+          Download
+        </button>
+        <button type="button" className="secondary-button w-full" onClick={onCopyAgenda}>
+          <Copy className="h-4 w-4" aria-hidden="true" />
+          Copy
+        </button>
+      </div>
+      <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 p-2 text-[11px] font-semibold leading-4 text-gray-500">
+        Use the calendar file for Apple or Google Calendar import. Copy agenda sends plain event details.
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <ScheduleInsightMini label="RSVP" value={insights.rsvpNeeded} />
+        <ScheduleInsightMini label="Packets" value={insights.packetsReady} />
+        <ScheduleInsightMini label="Tasks" value={insights.openAssignments} />
+        <ScheduleInsightMini label="Ride asks" value={insights.rideRequests} />
+      </div>
+    </section>
+  );
+}
+
+function ScheduleFilterButton({ option, active, onClick, fullWidth = false }: {
+  option: { value: ParentScheduleFilter; label: string };
+  active: boolean;
+  onClick: () => void;
+  fullWidth?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex min-h-10 flex-none items-center gap-2 rounded-full border px-3 text-sm font-black transition ${
+        active ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50'
+      } ${fullWidth ? 'w-full justify-start rounded-xl' : ''}`}
+      onClick={onClick}
+      aria-pressed={active}
+    >
+      <Filter className="h-4 w-4" aria-hidden="true" />
+      {option.label}
+    </button>
+  );
+}
+
+function ScheduleInsightMini({ label, value }: { label: string; value: number }) {
+  const active = value > 0;
+  return (
+    <div className={`rounded-xl border p-3 ${active ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
+      <div className={`text-lg font-black leading-none ${active ? 'text-amber-900' : 'text-gray-950'}`}>{value}</div>
+      <div className={`mt-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${active ? 'text-amber-700' : 'text-gray-500'}`}>{label}</div>
+    </div>
+  );
+}
+
+function ScheduleActionQueue({ events }: { events: ParentScheduleEvent[] }) {
+  const actionEvents = events
+    .map((event) => ({ event, action: getEventActionSummary(event) }))
+    .filter((item) => item.action)
+    .slice(0, 5);
+
+  return (
+    <section className="app-card schedule-action-queue p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="app-label">Needs attention</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Parent queue</h2>
+        </div>
+        <ClipboardCheck className="h-5 w-5 text-primary-600" aria-hidden="true" />
+      </div>
+      <div className="mt-3 space-y-2">
+        {actionEvents.length ? actionEvents.map(({ event, action }) => (
+          <Link key={event.eventKey} to={getEventDetailPath(event)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-black text-gray-950">{action}</div>
+                <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{event.childName} · {getScheduleTitle(event)}</div>
+              </div>
+              <ChevronRight className="mt-0.5 h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+            </div>
+          </Link>
+        )) : (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">
+            Nothing needs action for this filter.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function LoadingSchedule() {
+  return (
+    <div className="app-card p-6 text-center">
+      <RefreshCw className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">Loading schedule</div>
+      <div className="mt-1 text-xs font-semibold text-gray-500">Pulling teams, players, RSVP status, and calendar details.</div>
+    </div>
+  );
+}
+
+function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
+  events: ParentScheduleEvent[];
+  visibleCount: number;
+  pageSize: number;
+  onShowMore: () => void;
+}) {
+  if (!events.length) {
+    return (
+      <div className="app-card p-8 text-center">
+        <CalendarDays className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
+        <div className="mt-3 text-sm font-black text-gray-900">No events in this filter</div>
+        <div className="mt-1 text-xs font-semibold text-gray-500">Try another player or switch between upcoming and past events.</div>
+      </div>
+    );
+  }
+
+  const renderedEvents = events.slice(0, visibleCount);
+  const remainingCount = Math.max(events.length - renderedEvents.length, 0);
+
+  return (
+    <div className="space-y-3">
+      <div className="schedule-list overflow-hidden rounded-xl border border-gray-200 bg-white shadow-app sm:space-y-3 sm:overflow-visible sm:border-0 sm:bg-transparent sm:shadow-none">
+        {renderedEvents.map((event) => (
+          <ScheduleEventCard key={event.eventKey} event={event} />
+        ))}
+      </div>
+      {remainingCount > 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
+          <div className="text-xs font-bold text-gray-500">
+            Showing {renderedEvents.length} of {events.length} events
+          </div>
+          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore}>
+            Show {Math.min(pageSize, remainingCount)} more
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CompactScheduleList({ events }: { events: ParentScheduleEvent[] }) {
+  if (!events.length) {
+    return (
+      <div className="app-card p-8 text-center">
+        <CalendarDays className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
+        <div className="mt-3 text-sm font-black text-gray-900">No events in this filter</div>
+        <div className="mt-1 text-xs font-semibold text-gray-500">Try another team, player, range, or schedule type.</div>
+      </div>
+    );
+  }
+
+  return (
+    <section className="app-card overflow-hidden">
+      <div className="border-b border-gray-100 bg-gray-50 px-3 py-2">
+        <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Compact schedule</div>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {events.map((event) => {
+          const rsvp = normalizeRsvpResponse(event.myRsvp);
+          return (
+            <Link key={event.eventKey} to={getEventDetailPath(event)} className="grid grid-cols-[82px_minmax(0,1fr)_auto] gap-3 px-3 py-2.5 transition hover:bg-primary-50">
+              <div className="text-xs font-black text-gray-700">
+                <div>{formatEventDateLabel(event.date)}</div>
+                <div className="mt-0.5 text-gray-500">{formatEventTimeLabel(event.date)}</div>
+              </div>
+              <div className="min-w-0">
+                <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(event)}</div>
+                <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{event.childName} · {event.teamName} · {event.location || 'TBD'}</div>
+              </div>
+              <span className={`self-center rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
+                {rsvpLabels[rsvp]}
+              </span>
+            </Link>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function PracticePacketsPanel({ rows }: { rows: PracticePacketScheduleRow[] }) {
+  if (!rows.length) {
+    return (
+      <div className="app-card p-8 text-center">
+        <ClipboardCheck className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
+        <div className="mt-3 text-sm font-black text-gray-900">No practice packets in this filter</div>
+        <div className="mt-1 text-xs font-semibold text-gray-500">Packets appear when a practice has home drills or follow-up work.</div>
+      </div>
+    );
+  }
+
+  const readyCount = rows.filter((row) => row.needsAction).length;
+
+  return (
+    <section className="space-y-3">
+      <div className={`rounded-xl border p-3 ${readyCount ? 'border-blue-200 bg-blue-50' : 'border-emerald-200 bg-emerald-50'}`}>
+        <div className={`text-sm font-black ${readyCount ? 'text-blue-950' : 'text-emerald-900'}`}>
+          {readyCount ? `${readyCount} practice ${readyCount === 1 ? 'packet needs' : 'packets need'} review` : 'All visible packets are handled'}
+        </div>
+        <div className={`mt-0.5 text-xs font-semibold ${readyCount ? 'text-blue-800' : 'text-emerald-700'}`}>
+          Open a packet to review drills and mark the right player complete.
+        </div>
+      </div>
+      <div className="schedule-list overflow-hidden rounded-xl border border-gray-200 bg-white shadow-app sm:space-y-3 sm:overflow-visible sm:border-0 sm:bg-transparent sm:shadow-none">
+        {rows.map((row) => (
+          <Link key={`${row.event.eventKey}-packet`} to={getEventDetailPath(row.event)} className="block border-b border-gray-100 px-3 py-3 transition last:border-b-0 hover:bg-gray-50 sm:rounded-xl sm:border sm:border-blue-100 sm:bg-white sm:shadow-sm sm:hover:border-blue-200 sm:hover:bg-blue-50">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className={`h-2.5 w-2.5 flex-none rounded-full ${row.needsAction ? 'bg-blue-600' : row.status === 'completed' ? 'bg-emerald-500' : 'bg-gray-400'}`} aria-hidden="true" />
+                  <h2 className="truncate text-sm font-black text-gray-950">{getScheduleTitle(row.event)}</h2>
+                </div>
+                <div className="mt-1 truncate text-xs font-semibold text-gray-500">
+                  {row.event.childName} · {formatEventDateLabel(row.event.date)} {formatEventTimeLabel(row.event.date)} · {row.event.location || 'TBD'}
+                </div>
+                <div className="mt-1 truncate text-xs font-bold text-blue-800">
+                  {row.event.practiceHomePacketSummary}
+                </div>
+              </div>
+              <span className={`flex-none rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${row.needsAction ? 'bg-blue-100 text-blue-800' : row.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'}`}>
+                {row.needsAction ? 'Open' : row.status}
+              </span>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ScheduleEventCard({ event }: {
+  event: ParentScheduleEvent | CalendarScheduleEntry;
+}) {
+  const rsvp = normalizeRsvpResponse(event.myRsvp);
+  const eventTitle = getScheduleTitle(event);
+  const detailPath = getEventDetailPath(event);
+  const isRsvpNeeded = rsvp === 'not_responded' && event.isDbGame && !event.isCancelled;
+  const hasPracticePacket = event.type === 'practice' && Boolean(event.practiceHomePacketSummary);
+  const actionPills = getEventCardActionPills(event, rsvp);
+  const metadataPills = getEventMetadataPills(event);
+  const mapHref = getScheduleMapHref(event.location);
+
+  return (
+    <>
+      <Link to={detailPath} className={`block border-b border-gray-100 px-3 py-2 transition last:border-b-0 hover:bg-gray-50 sm:hidden ${event.isCancelled ? 'opacity-65' : ''}`}>
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-12 w-11 flex-none flex-col items-center justify-center rounded-lg bg-gray-50 ring-1 ring-gray-100">
+            <div className="text-[10px] font-black uppercase leading-none tracking-[0.04em] text-gray-500">{event.date.toLocaleDateString('en-US', { month: 'short' })}</div>
+            <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{event.date.getDate()}</div>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className={`h-2.5 w-2.5 flex-none rounded-full ${event.type === 'practice' ? 'bg-amber-500' : 'bg-primary-600'}`} aria-hidden="true" />
+              <h2 className={`truncate text-[15px] font-black leading-tight text-gray-950 ${event.isCancelled ? 'line-through' : ''}`}>{eventTitle}</h2>
+            </div>
+            <div className="mt-0.5 truncate text-xs font-bold leading-5 text-gray-600">
+              {event.childName} · {event.teamName}
+            </div>
+            <div className="truncate text-xs font-semibold leading-5 text-gray-500">
+              {event.location || 'TBD'}
+            </div>
+          </div>
+          <div className="flex w-[72px] flex-none flex-col items-end gap-1 text-right">
+            <span className="text-xs font-black text-gray-700">{formatEventTimeLabel(event.date)}</span>
+            {isRsvpNeeded ? <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase text-primary-700">RSVP</span> : null}
+            {hasPracticePacket ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Packet</span> : null}
+            {event.type === 'game' && getScoreLabel(event) ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">{getScoreLabel(event)}</span> : null}
+          </div>
+        </div>
+      </Link>
+
+      <article className={`app-card schedule-event-card hidden p-4 transition sm:block ${event.isCancelled ? 'opacity-65' : ''}`}>
+        <div className="flex items-start gap-3">
+          <div className="schedule-card-date flex h-16 w-16 flex-none flex-col items-center justify-center rounded-2xl bg-gray-50 shadow-inner ring-1 ring-gray-200">
+            <div className="text-2xl font-black leading-none text-gray-950">{event.date.getDate()}</div>
+            <div className="mt-1 text-[10px] font-black uppercase tracking-[0.08em] text-gray-500">{event.date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex min-h-6 items-center rounded-full px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${event.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}`}>
+              {event.type}
+            </span>
+            {event.isCancelled ? <span className="inline-flex min-h-6 items-center rounded-full bg-rose-100 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-rose-800">Cancelled</span> : null}
+            {hasPracticePacket ? <span className="inline-flex min-h-6 items-center rounded-full bg-blue-50 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-blue-700">Packet ready</span> : null}
+            <span className={`inline-flex min-h-6 items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
+              {rsvpLabels[rsvp]}
+            </span>
+            {metadataPills.map((pill) => (
+              <span key={pill} className="inline-flex min-h-6 items-center rounded-full bg-gray-100 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-600">
+                {pill}
+              </span>
+            ))}
+          </div>
+
+            <h2 className={`mt-2 text-lg font-black leading-tight text-gray-950 ${event.isCancelled ? 'line-through' : ''}`}>{eventTitle}</h2>
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm font-semibold text-gray-600">
+              <span>{formatEventTimeLabel(event.date)}</span>
+              <span className="inline-flex min-w-0 items-center gap-1">
+                <MapPin className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
+                <span className="truncate">{event.location || 'TBD'}</span>
+                {mapHref ? (
+                  <a href={mapHref} target="_blank" rel="noreferrer" className="ml-1 flex-none text-xs font-black text-primary-700 hover:underline" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                    Map
+                  </a>
+                ) : null}
+              </span>
+            </div>
+            <div className="mt-1 text-xs font-semibold text-gray-500">For {event.childName} · {event.teamName}</div>
+
+            {actionPills.length ? (
+              <div className="schedule-card-pills mt-3 flex flex-wrap gap-1.5">
+                {actionPills.map((pill) => (
+                  <span key={pill} className="inline-flex min-h-7 items-center rounded-full border border-gray-200 bg-white px-2.5 text-xs font-black text-gray-700">
+                    {pill}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            <div className="schedule-card-actions mt-3 flex items-center justify-between gap-3">
+              <Link to={detailPath} className="secondary-button min-h-9 px-3 py-2 text-xs">
+                {event.type === 'practice' ? 'Event details' : 'Game details'}
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+              <div className="hidden text-xs font-bold text-gray-400 xl:block">
+                {formatEventDateLabel(event.date)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </>
+  );
+}
+
+function getEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) {
+  const params = new URLSearchParams();
+  if (event.childId) params.set('childId', event.childId);
+  return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${params.toString() ? `?${params}` : ''}`;
+}
+
+function getEventPrimaryActionText(event: ParentScheduleEvent, rsvp: RsvpResponse) {
+  if (rsvp === 'not_responded' && event.isDbGame && !event.isCancelled) return 'Set availability';
+  if (event.type === 'practice' && event.practiceHomePacketSummary) return 'Review packet';
+  if (getOpenAssignmentCount(event) > 0) return 'Review assignments';
+  if ((event.rideshareSummary?.requests || 0) > 0) return 'Check ride requests';
+  return event.type === 'practice' ? 'Open practice' : 'Open game';
+}
+
+function getEventActionSummary(event: ParentScheduleEvent) {
+  const rsvp = normalizeRsvpResponse(event.myRsvp);
+  if (rsvp === 'not_responded' && event.isDbGame && !event.isCancelled) return `RSVP needed for ${event.childName}`;
+  if (event.type === 'practice' && event.practiceHomePacketSummary) return `Packet ready: ${event.practiceHomePacketSummary}`;
+  const openAssignments = getOpenAssignmentCount(event);
+  if (openAssignments > 0) return `${openAssignments} open ${openAssignments === 1 ? 'assignment' : 'assignments'}`;
+  const rideRequests = event.rideshareSummary?.requests || 0;
+  if (rideRequests > 0) return `${rideRequests} ride ${rideRequests === 1 ? 'request' : 'requests'}`;
+  return '';
+}
+
+function getEventCardActionPills(event: ParentScheduleEvent | CalendarScheduleEntry, rsvp: RsvpResponse) {
+  const pills: string[] = [];
+  if (rsvp === 'not_responded' && event.isDbGame && !event.isCancelled) pills.push('Availability needed');
+  if (event.type === 'practice' && event.practiceHomePacketSummary) pills.push(`Packet: ${event.practiceHomePacketSummary}`);
+  const openAssignments = getOpenAssignmentCount(event);
+  if (openAssignments > 0) pills.push(`${openAssignments} task${openAssignments === 1 ? '' : 's'} open`);
+  const seatsLeft = event.rideshareSummary?.seatsLeft || 0;
+  const rideRequests = event.rideshareSummary?.requests || 0;
+  if (seatsLeft > 0) pills.push(`${seatsLeft} seats open`);
+  if (rideRequests > 0) pills.push(`${rideRequests} ride ${rideRequests === 1 ? 'request' : 'requests'}`);
+  return pills.slice(0, 4);
+}
+
+function getEventMetadataPills(event: ParentScheduleEvent | CalendarScheduleEntry) {
+  return [
+    event.type === 'game' && getScoreLabel(event) ? `Final ${getScoreLabel(event)}` : '',
+    event.isHome === true ? 'Home' : event.isHome === false ? 'Away' : '',
+    event.seasonLabel ? event.seasonLabel : '',
+    event.competitionType ? event.competitionType : '',
+    event.isImported ? 'Imported' : ''
+  ].filter(Boolean).slice(0, 3);
+}
+
+function getScoreLabel(event: ParentScheduleEvent | CalendarScheduleEntry) {
+  if (event.type !== 'game') return '';
+  if (event.homeScore === null || event.homeScore === undefined || event.awayScore === null || event.awayScore === undefined) return '';
+  return `${event.homeScore}-${event.awayScore}`;
+}
+
+function getOpenAssignmentCount(event: ParentScheduleEvent | CalendarScheduleEntry) {
+  return event.assignments.filter((assignment) => assignment.claimable && !assignment.claim && !assignment.value).length;
+}
+
+function CalendarSchedule({ month, entries, selectedDay, selectedDayEntries, onMonthChange, onDaySelect, onDayClose }: {
+  month: Date;
+  entries: CalendarScheduleEntry[];
+  selectedDay: Date | null;
+  selectedDayEntries: CalendarScheduleEntry[];
+  onMonthChange: (month: Date) => void;
+  onDaySelect: (day: Date) => void;
+  onDayClose: () => void;
+}) {
+  const monthLabel = month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const monthStart = new Date(month.getFullYear(), month.getMonth(), 1);
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const startDow = monthStart.getDay();
+  const totalCells = Math.ceil((startDow + daysInMonth) / 7) * 7;
+  const entriesByDay = new Map<number, CalendarScheduleEntry[]>();
+  entries.forEach((entry) => {
+    if (entry.date.getFullYear() !== month.getFullYear() || entry.date.getMonth() !== month.getMonth()) return;
+    const day = entry.date.getDate();
+    entriesByDay.set(day, [...(entriesByDay.get(day) || []), entry]);
+  });
+
+  return (
+    <div className="space-y-3">
+      <section className="app-card overflow-hidden">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-100 bg-white p-3">
+          <button type="button" className="ghost-button min-h-9 px-3" onClick={() => onMonthChange(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            Prev
+          </button>
+          <div className="text-sm font-black text-gray-950">{monthLabel}</div>
+          <button type="button" className="ghost-button min-h-9 px-3" onClick={() => onMonthChange(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>
+            Next
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+            <div key={day} className="py-2 text-center text-[11px] font-black uppercase text-gray-500">{day}</div>
+          ))}
+        </div>
+        <div className="calendar-schedule-grid grid grid-cols-7">
+          {Array.from({ length: totalCells }, (_, index) => {
+            const dayNumber = index - startDow + 1;
+            const inMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
+            const dayEntries = inMonth ? entriesByDay.get(dayNumber) || [] : [];
+            const isSelected = selectedDay && selectedDay.getFullYear() === month.getFullYear() && selectedDay.getMonth() === month.getMonth() && selectedDay.getDate() === dayNumber;
+            const daySummary = dayEntries.length
+              ? `${dayEntries.length} ${dayEntries.length === 1 ? 'event' : 'events'}`
+              : '';
+            return (
+              <button
+                key={index}
+                type="button"
+                className={`min-h-24 border border-gray-100 p-1.5 text-left align-top ${inMonth ? 'bg-white hover:bg-gray-50' : 'bg-gray-50 text-gray-300'} ${isSelected ? 'ring-2 ring-primary-300' : ''}`}
+                disabled={!inMonth || dayEntries.length === 0}
+                onClick={() => onDaySelect(new Date(month.getFullYear(), month.getMonth(), dayNumber))}
+                aria-label={inMonth ? `${monthLabel} ${dayNumber}${daySummary ? `, ${daySummary}` : ''}` : undefined}
+              >
+                {inMonth ? <div className="text-xs font-black text-gray-700">{dayNumber}</div> : null}
+                <div className="mt-1 space-y-1">
+                  {dayEntries.slice(0, 2).map((entry) => (
+                    <div key={entry.eventKey} className={`truncate rounded px-1 py-0.5 text-[10px] font-bold ${entry.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}`}>
+                      {getScheduleTitle(entry)}
+                    </div>
+                  ))}
+                  {dayEntries.length > 2 ? <div className="text-[10px] font-semibold text-gray-400">+{dayEntries.length - 2} more</div> : null}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <CalendarEventPicker
+        day={selectedDay}
+        entries={selectedDayEntries}
+        onClose={onDayClose}
+      />
+    </div>
+  );
+}
+
+function CalendarEventPicker({ day, entries, onClose }: {
+  day: Date | null;
+  entries: CalendarScheduleEntry[];
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!day) return;
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeydown);
+    return () => window.removeEventListener('keydown', handleKeydown);
+  }, [day, onClose]);
+
+  if (!day) return null;
+
+  const dayLabel = day.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const eventCountLabel = `${entries.length} ${entries.length === 1 ? 'event' : 'events'}`;
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end bg-gray-950/40 p-0 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="calendar-event-picker-title">
+      <button type="button" className="absolute inset-0 h-full w-full cursor-default" onClick={onClose} aria-label="Close calendar events" />
+      <section className="relative w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:mx-auto sm:max-w-2xl sm:rounded-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+          <div className="min-w-0">
+            <div className="app-label">Calendar</div>
+            <h2 id="calendar-event-picker-title" className="mt-1 truncate text-lg font-black text-gray-950">{dayLabel}</h2>
+            <div className="mt-0.5 text-xs font-semibold text-gray-500">{eventCountLabel}</div>
+          </div>
+          <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        {entries.length ? (
+          <div className="max-h-[65vh] overflow-y-auto p-3 sm:max-h-[70vh]">
+            <div className="space-y-2">
+              {entries.map((entry) => (
+                <CalendarEventPickerRow key={entry.eventKey} entry={entry} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="p-5 text-sm font-semibold text-gray-500">No events on this day.</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function CalendarEventPickerRow({ entry }: { entry: CalendarScheduleEntry }) {
+  const rsvp = normalizeRsvpResponse(entry.myRsvp);
+  const needsRsvp = entry.childRsvps.some((child) => normalizeRsvpResponse(child.myRsvp) === 'not_responded') || rsvp === 'not_responded';
+  const childLabel = entry.childNames.length ? entry.childNames.join(', ') : entry.childName;
+  const actionLabel = entry.type === 'practice' ? 'Open practice' : 'Open game';
+
+  return (
+    <Link to={getEventDetailPath(entry)} className="block rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-primary-200 hover:bg-primary-50" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-start gap-3">
+        <div className="flex h-12 w-16 flex-none flex-col items-center justify-center rounded-xl bg-gray-50 ring-1 ring-gray-100">
+          <div className="text-sm font-black leading-none text-gray-950">{formatEventTimeLabel(entry.date)}</div>
+          <div className="mt-1 text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{entry.type}</div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className={`h-2.5 w-2.5 flex-none rounded-full ${entry.type === 'practice' ? 'bg-amber-500' : 'bg-primary-600'}`} aria-hidden="true" />
+            <h3 className="truncate text-sm font-black text-gray-950">{getScheduleTitle(entry)}</h3>
+          </div>
+          <div className="mt-1 truncate text-xs font-bold text-gray-600">{childLabel} · {entry.teamName}</div>
+          <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{entry.location || 'Location TBD'}</div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {needsRsvp ? <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase text-primary-700">RSVP needed</span> : null}
+            {entry.practiceHomePacketSummary ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Packet</span> : null}
+            {entry.childNames.length > 1 ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase text-gray-600">{entry.childNames.length} players</span> : null}
+          </div>
+        </div>
+        <span className="mt-1 flex-none rounded-full bg-gray-950 px-3 py-1.5 text-[11px] font-black text-white">{actionLabel}</span>
+      </div>
+    </Link>
   );
 }

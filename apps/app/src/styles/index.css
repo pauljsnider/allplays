@@ -235,22 +235,284 @@ a {
 .desktop-app-page .schedule-page {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 18px;
+  gap: 12px;
+}
+
+.desktop-app-page .schedule-page > :not([hidden]) ~ :not([hidden]),
+.desktop-app-page .event-detail-page > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0;
 }
 
 .desktop-app-page .schedule-header {
-  padding: 22px;
+  padding: 14px 16px;
+}
+
+.schedule-web-sidebar,
+.event-brief,
+.event-nav-desktop,
+.event-details-desktop {
+  display: none;
+}
+
+.desktop-app-page .schedule-web-hero-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.4fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.desktop-app-page .schedule-next-card {
+  min-height: 100%;
+  padding: 12px;
+}
+
+.desktop-app-page .schedule-next-card .mt-3 {
+  margin-top: 8px;
+}
+
+.desktop-app-page .schedule-header h1 {
+  margin-top: 2px;
+  font-size: 1.35rem;
+  line-height: 1.15;
+}
+
+.desktop-app-page .schedule-header p {
+  display: none;
+}
+
+.desktop-app-page .schedule-header .schedule-metric {
+  padding: 8px 10px;
+}
+
+.desktop-app-page .schedule-header .schedule-metric > div:first-child {
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.desktop-app-page .schedule-header .schedule-metric > div:last-child {
+  margin-top: 4px;
+  font-size: 0.66rem;
+}
+
+.desktop-app-page .schedule-header .ghost-button,
+.desktop-app-page .schedule-header .secondary-button {
+  min-height: 34px !important;
+  padding: 7px 10px !important;
+  font-size: 0.82rem !important;
+}
+
+.desktop-app-page .schedule-header > .mt-3 {
+  display: none;
+}
+
+.desktop-app-page .schedule-workbench {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.desktop-app-page .schedule-web-sidebar {
+  display: block;
+  position: sticky;
+  top: 84px;
+  max-height: calc(100vh - 108px);
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .desktop-app-page .schedule-filters {
-  overflow: visible;
-  padding-bottom: 0;
+  display: none;
 }
 
 .desktop-app-page .schedule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.desktop-app-page .schedule-event-card {
+  position: relative;
+  padding: 10px 142px 10px 12px;
+  border-radius: 12px;
+  box-shadow: 0 8px 18px rgba(16, 24, 40, 0.04);
+}
+
+.desktop-app-page .schedule-event-card .schedule-card-date {
+  width: 50px;
+  height: 50px;
+  border-radius: 12px;
+}
+
+.desktop-app-page .schedule-event-card .schedule-card-date > div:first-child {
+  font-size: 1.35rem;
+}
+
+.desktop-app-page .schedule-event-card h2 {
+  margin-top: 6px;
+  font-size: 1rem;
+}
+
+.desktop-app-page .schedule-event-card .min-h-6 {
+  min-height: 20px;
+}
+
+.desktop-app-page .schedule-event-card .schedule-card-pills {
+  margin-top: 8px;
+  gap: 4px;
+}
+
+.desktop-app-page .schedule-event-card .schedule-card-pills span {
+  min-height: 22px;
+  padding-left: 8px;
+  padding-right: 8px;
+  font-size: 0.7rem;
+}
+
+.desktop-app-page .schedule-event-card .schedule-card-actions {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  margin-top: 0;
+  transform: translateY(-50%);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.desktop-app-page .schedule-event-card .schedule-card-actions > div {
+  display: none;
+}
+
+.desktop-app-page .schedule-event-card .secondary-button {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+.desktop-app-page .schedule-control-panel,
+.desktop-app-page .schedule-action-queue {
+  padding: 12px;
+}
+
+.desktop-app-page .schedule-control-panel h2,
+.desktop-app-page .schedule-action-queue h2 {
+  font-size: 0.95rem;
+}
+
+.desktop-app-page .schedule-control-panel .mt-4 {
+  margin-top: 10px;
+}
+
+.desktop-app-page .schedule-control-panel .mt-1 {
+  margin-top: 4px;
+}
+
+.desktop-app-page .schedule-control-panel .auth-input {
+  min-height: 36px;
+  padding: 7px 10px !important;
+  font-size: 0.88rem;
+}
+
+.desktop-app-page .schedule-control-panel button {
+  min-height: 34px;
+}
+
+.desktop-app-page .schedule-control-panel .secondary-button {
+  min-height: 36px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+}
+
+.desktop-app-page .schedule-control-panel .rounded-xl.border.p-3 {
+  padding: 9px;
+}
+
+.desktop-app-page .schedule-action-queue .mt-3 {
+  margin-top: 8px;
+}
+
+.desktop-app-page .schedule-action-queue a {
+  padding: 10px;
+}
+
+.desktop-app-page .schedule-event-card:hover {
+  border-color: #c7d2fe;
+  box-shadow: 0 14px 28px rgba(16, 24, 40, 0.08);
+}
+
+.desktop-app-page .calendar-schedule-grid button {
+  min-height: 118px;
+}
+
+.desktop-app-page .event-detail-page {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  gap: 14px;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.desktop-app-page .event-detail-rail {
+  position: sticky;
+  top: 84px;
+  max-height: calc(100vh - 108px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.desktop-app-page .event-section-nav,
+.desktop-app-page .event-workflow-nav {
+  position: static;
+  top: auto;
+  background: transparent;
+  padding: 0;
+  backdrop-filter: none;
+}
+
+.desktop-app-page .event-section-nav > div,
+.desktop-app-page .event-workflow-nav > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.desktop-app-page .event-section-nav button,
+.desktop-app-page .event-workflow-nav button {
+  min-height: 42px;
+  justify-content: flex-start;
+  padding-left: 12px;
+  padding-right: 12px;
+  text-align: left;
+}
+
+.desktop-app-page .event-details-toggle,
+.desktop-app-page .event-nav-mobile,
+.desktop-app-page .event-details-mobile {
+  display: none;
+}
+
+.desktop-app-page .event-nav-desktop {
+  display: block;
+}
+
+.desktop-app-page .event-details-desktop {
+  display: block;
+}
+
+.desktop-app-page .event-brief {
+  display: flex;
+}
+
+.desktop-app-page .event-detail-content > .app-card,
+.desktop-app-page .event-detail-content > section,
+.desktop-app-page .event-detail-content > div.app-card {
+  max-width: 920px;
+}
+
+.desktop-app-page .event-detail-content .app-card {
+  border-radius: 12px;
 }
 
 .desktop-app-page .messages-two-pane {

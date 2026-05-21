@@ -31,8 +31,10 @@
     "@capacitor-firebase/authentication": "^8.2.0",
     "@capacitor-firebase/messaging": "^8.2.0",
     "@capacitor/android": "^8.3.4",
+    "@capacitor/browser": "^8.0.3",
     "@capacitor/core": "^8.3.4",
     "@capacitor/ios": "^8.3.4",
+    "@capacitor/share": "^8.0.1",
     "firebase": "^12.13.0",
     "html-to-image": "^1.11.13",
     "jsdom": "^29.1.1"

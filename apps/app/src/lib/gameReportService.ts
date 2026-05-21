@@ -1,0 +1,267 @@
+import {
+  getConfigs,
+  getGame,
+  getGameEvents,
+  getPlayers,
+  getTeam,
+  getTeamStatsForGame
+} from '../../../../js/db.js';
+import { collection, getDocs } from '../../../../js/firebase.js';
+import { db } from '../../../../js/firebase.js';
+import { resolveReportStatColumns, resolveOpponentReportStatColumns } from '../../../../js/game-report-stats.js';
+import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from '../../../../js/live-game-video.js';
+import { resolveLiveStatConfig } from '../../../../js/live-game-state.js';
+import { generateGameInsights } from '../../../../js/post-game-insights.js';
+import { resolvePostGameTeamStatFields } from '../../../../js/post-game-stat-editor.js';
+
+export type GameReportInsight = {
+  title: string;
+  body: string;
+  tone?: 'positive' | 'warning' | 'neutral' | string;
+};
+
+export type GameReportPlayerRow = {
+  playerId: string;
+  playerName: string;
+  number: string;
+  photoUrl?: string;
+  stats: Record<string, any>;
+  timeMs: number;
+  didNotPlay: boolean;
+};
+
+export type GameReportOpponentRow = {
+  id: string;
+  name: string;
+  number: string;
+  photoUrl?: string;
+  stats: Record<string, any>;
+};
+
+export type GameReportPlay = {
+  id: string;
+  text: string;
+  period: string;
+  clock: string;
+  timestamp: Date | null;
+};
+
+export type GameReportHighlightClip = {
+  title: string;
+  description: string;
+  period: string;
+  gameTime: string;
+  startMs: number | null;
+  endMs: number | null;
+  url: string;
+};
+
+export type GameReportData = {
+  team: Record<string, any>;
+  game: Record<string, any>;
+  summary: string;
+  statKeys: string[];
+  statLabels: Record<string, string>;
+  hasPlayingTime: boolean;
+  playerRows: GameReportPlayerRow[];
+  opponentStatKeys: string[];
+  opponentStatLabels: Record<string, string>;
+  opponentRows: GameReportOpponentRow[];
+  teamStatKeys: string[];
+  teamStatLabels: Record<string, string>;
+  teamStats: Record<string, any>;
+  statSheetPhotoUrl: string;
+  highlightClips: GameReportHighlightClip[];
+  plays: GameReportPlay[];
+  teamInsights: GameReportInsight[];
+  playerInsightRows: Array<{
+    playerId: string;
+    playerName: string;
+    insights: GameReportInsight[];
+  }>;
+  emptyInsightsMessage: string;
+};
+
+type AggregatedStatsResult = {
+  statsMap: Record<string, Record<string, any>>;
+  timeMap: Record<string, number>;
+  didNotPlayMap: Record<string, boolean>;
+};
+
+function toNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeDate(value: any): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value.toDate === 'function') {
+    const date = value.toDate();
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (typeof value.seconds === 'number') {
+    const date = new Date(value.seconds * 1000);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+async function loadAggregatedStats(teamId: string, gameId: string): Promise<AggregatedStatsResult> {
+  const snapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+  const statsMap: Record<string, Record<string, any>> = {};
+  const timeMap: Record<string, number> = {};
+  const didNotPlayMap: Record<string, boolean> = {};
+
+  snapshot.forEach((docSnap: any) => {
+    const data = docSnap.data() || {};
+    statsMap[docSnap.id] = data.stats || {};
+    timeMap[docSnap.id] = toNumber(data.timeMs);
+    didNotPlayMap[docSnap.id] = data.didNotPlay === true;
+  });
+
+  return { statsMap, timeMap, didNotPlayMap };
+}
+
+function normalizePlay(entry: any): GameReportPlay {
+  return {
+    id: String(entry?.id || ''),
+    text: String(entry?.text || entry?.message || 'Event logged'),
+    period: String(entry?.period || 'Q1'),
+    clock: String(entry?.clock || entry?.gameTime || ''),
+    timestamp: normalizeDate(entry?.timestamp)
+  };
+}
+
+function normalizeOpponentRows(opponentStats: Record<string, any> = {}): GameReportOpponentRow[] {
+  return Object.entries(opponentStats || {}).map(([id, rawStats]) => {
+    const { name, number, notes, photoUrl, ...stats } = rawStats || {};
+    void notes;
+    return {
+      id,
+      name: String(name || 'Opponent Player'),
+      number: String(number || '-'),
+      photoUrl: photoUrl ? String(photoUrl) : undefined,
+      stats
+    };
+  });
+}
+
+function normalizeHighlightClips(teamId: string, gameId: string, game: Record<string, any>): GameReportHighlightClip[] {
+  return (normalizeGameRecapHighlightClips(game) || []).slice(0, 8).map((clip: any) => {
+    const startMs = Number.isFinite(Number(clip.startMs)) ? Number(clip.startMs) : null;
+    const endMs = Number.isFinite(Number(clip.endMs)) ? Number(clip.endMs) : null;
+    const fallbackUrl = startMs !== null && endMs !== null
+      ? buildHighlightShareUrl({ origin: 'https://allplays.ai', teamId, gameId, startMs, endMs })
+      : '';
+    return {
+      title: String(clip.title || 'Highlight'),
+      description: String(clip.description || clip.title || 'Highlight'),
+      period: String(clip.period || ''),
+      gameTime: String(clip.gameTime || ''),
+      startMs,
+      endMs,
+      url: String(clip.videoUrl || fallbackUrl || '')
+    };
+  }).filter((clip: GameReportHighlightClip) => clip.url);
+}
+
+export async function loadGameReportSections(teamId: string, gameId: string): Promise<GameReportData> {
+  if (!teamId || !gameId) {
+    throw new Error('Team and game are required.');
+  }
+
+  const [team, game, players] = await Promise.all([
+    getTeam(teamId, { includeInactive: true }),
+    getGame(teamId, gameId),
+    getPlayers(teamId, { includeInactive: true })
+  ]);
+
+  if (!game) {
+    throw new Error('Game not found.');
+  }
+
+  const [configs, aggregateResult, rawEvents, teamStats] = await Promise.all([
+    getConfigs(teamId).catch(() => []),
+    loadAggregatedStats(teamId, gameId).catch((): AggregatedStatsResult => ({ statsMap: {}, timeMap: {}, didNotPlayMap: {} })),
+    getGameEvents(teamId, gameId, { limit: 100 }).catch(() => []),
+    getTeamStatsForGame(teamId, gameId).catch(() => ({}))
+  ]);
+
+  const resolvedConfig = resolveLiveStatConfig({
+    configs,
+    game,
+    team
+  });
+  const { statsMap, timeMap, didNotPlayMap } = aggregateResult;
+  const { statKeys, statLabels } = resolveReportStatColumns({
+    statsMap,
+    resolvedConfig
+  });
+  const opponentStats = game.opponentStats || {};
+  const { oppKeys, oppLabels } = resolveOpponentReportStatColumns({
+    opponentStats,
+    resolvedConfig
+  });
+  const teamStatFields = resolvePostGameTeamStatFields({ resolvedConfig, teamStats });
+  const teamStatKeys = teamStatFields.map((field: any) => String(field.fieldName || '').trim()).filter(Boolean);
+  const teamStatLabels = Object.fromEntries(teamStatFields.map((field: any) => [
+    String(field.fieldName || '').trim(),
+    String(field.label || field.fieldName || '').trim()
+  ]));
+  const insightEvents = (Array.isArray(rawEvents) ? rawEvents : [])
+    .map((entry: any) => ({
+      ...entry,
+      clock: entry?.clock || entry?.gameTime || ''
+    }))
+    .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0));
+  const plays = insightEvents.map(normalizePlay);
+  const insights = generateGameInsights({
+    team,
+    game,
+    players,
+    statsMap,
+    timeMap,
+    events: insightEvents
+  });
+
+  const safePlayers = Array.isArray(players) ? players : [];
+  const playerRows = safePlayers.map((player: any) => ({
+    playerId: String(player.id || ''),
+    playerName: String(player.name || 'Player'),
+    number: String(player.number || '-'),
+    photoUrl: player.photoUrl ? String(player.photoUrl) : undefined,
+    stats: statsMap[player.id] || {},
+    timeMs: timeMap[player.id] || 0,
+    didNotPlay: didNotPlayMap[player.id] === true
+  }));
+  const playerLookup = new Map(playerRows.map((player) => [player.playerId, player]));
+  const playerInsightRows = Object.entries(insights.playerInsightsById || {}).map(([playerId, playerInsights]) => ({
+    playerId,
+    playerName: playerLookup.get(playerId)?.playerName || 'Player',
+    insights: Array.isArray(playerInsights) ? playerInsights as GameReportInsight[] : []
+  })).filter((entry) => entry.insights.length > 0);
+
+  return {
+    team: team || { id: teamId },
+    game,
+    summary: String(game.summary || ''),
+    statKeys,
+    statLabels,
+    hasPlayingTime: Object.values(timeMap).some((time) => time > 0),
+    playerRows,
+    opponentStatKeys: oppKeys,
+    opponentStatLabels: oppLabels,
+    opponentRows: normalizeOpponentRows(opponentStats),
+    teamStatKeys,
+    teamStatLabels,
+    teamStats: teamStats || {},
+    statSheetPhotoUrl: game.statSheetPhotoUrl ? String(game.statSheetPhotoUrl) : '',
+    highlightClips: normalizeHighlightClips(teamId, gameId, game),
+    plays,
+    teamInsights: Array.isArray(insights.teamInsights) ? insights.teamInsights : [],
+    playerInsightRows,
+    emptyInsightsMessage: String(insights.emptyMessage || '')
+  };
+}

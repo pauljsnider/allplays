@@ -179,4 +179,82 @@ describe('React app auth/profile capability parity', () => {
             'nativeUploadProfilePhoto'
         ]);
     });
+
+    it('covers parent-dashboard.html schedule capabilities and filters in the React app schedule', () => {
+        const legacyParentDashboard = readProjectFile('parent-dashboard.html');
+        const schedulePage = readProjectFile('apps/app/src/pages/Schedule.tsx');
+        const scheduleEventDetail = readProjectFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const scheduleHub = readProjectFile('apps/app/src/lib/scheduleHub.ts');
+        const scheduleService = readProjectFile('apps/app/src/lib/scheduleService.ts');
+        const scheduleLogic = readProjectFile('apps/app/src/lib/scheduleLogic.ts');
+
+        expectContains(legacyParentDashboard, [
+            'schedule-view-list',
+            'schedule-view-calendar',
+            'player-filter',
+            'schedule-filter-upcoming-all',
+            'schedule-filter-upcoming-games',
+            'schedule-filter-upcoming-practices',
+            'schedule-filter-past-all',
+            'download-ics',
+            'renderEventRideshare',
+            'renderAssignments',
+            'submitGameRsvpFromButton'
+        ]);
+        expectContains(schedulePage, [
+            'loadParentSchedule',
+            'All Upcoming',
+            'Upcoming Games',
+            'Upcoming Practices',
+            'Past Events',
+            'All Players',
+            '.ics',
+            'RSVP needed',
+            'Game details',
+            'Event details',
+            'getEventDetailPath'
+        ]);
+        expectContains(scheduleEventDetail, [
+            'submitParentScheduleRsvp',
+            'Availability',
+            'Rideshare',
+            'Assignments',
+            'Game hub',
+            'Practice hub',
+            'MatchSummarySection',
+            'PlayerPerformanceSection',
+            'PlayByPlaySection',
+            'OpponentStatsSection',
+            'Insights',
+            'PracticePacketSection'
+        ]);
+        expectContains(scheduleHub, [
+            'Watch replay',
+            'Match report',
+            'Share practice',
+            'getPublicReplayHref',
+            'getPublicGameReportHref'
+        ]);
+        expectContains(scheduleService, [
+            'getGames',
+            'getPracticeSessions',
+            'getRsvps',
+            'getRsvpSummaries',
+            'listRideOffersForEvent',
+            'getAssignmentClaims',
+            'fetchAndParseCalendar',
+            'filterVisiblePracticeSessions',
+            'resolveMyRsvpByChildForGame',
+            'submitRsvpForPlayer'
+        ]);
+        expectContains(scheduleLogic, [
+            "'upcoming-all'",
+            "'upcoming-games'",
+            "'upcoming-practices'",
+            "'past-all'",
+            'filterParentScheduleEvents',
+            'getCalendarScheduleEntries',
+            'buildScheduleIcs'
+        ]);
+    });
 });
