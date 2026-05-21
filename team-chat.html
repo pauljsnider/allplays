@@ -75,6 +75,10 @@
                         Photos &amp; Videos
                         <span id="media-gallery-count" class="hidden rounded-full bg-primary-100 px-2 py-0.5 text-xs font-semibold text-primary-700"></span>
                     </button>
+                    <button id="email-panel-btn"
+                        class="hidden flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
+                        Team Email
+                    </button>
                     <button id="refresh-btn"
                         class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -90,6 +94,30 @@
                 <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Conversations</div>
                 <div id="conversations-list" class="flex gap-2 overflow-x-auto pb-1">
                     <button type="button" class="rounded-full bg-primary-600 px-3 py-1.5 text-sm font-medium text-white">Team-wide</button>
+                </div>
+            </div>
+
+            <div id="email-panel" class="hidden border-b border-gray-100 bg-white p-4 space-y-4">
+                <div class="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
+                    Send a backend email to roster contacts with email enabled. Sent messages are immutable and recipient email addresses are not shown here.
+                </div>
+                <div class="grid gap-3">
+                    <label class="block">
+                        <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Subject</span>
+                        <input id="email-subject" type="text" maxlength="160" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Practice update">
+                    </label>
+                    <label class="block">
+                        <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Message</span>
+                        <textarea id="email-body" rows="5" maxlength="20000" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Write the email message..."></textarea>
+                    </label>
+                    <div class="flex items-center justify-between gap-3">
+                        <div id="email-status" class="text-sm text-gray-600"></div>
+                        <button id="email-send-btn" type="button" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-50">Send email</button>
+                    </div>
+                </div>
+                <div>
+                    <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Sent email history</div>
+                    <div id="email-history" class="space-y-2 text-sm text-gray-600">No sent emails yet.</div>
                 </div>
             </div>
 
@@ -229,7 +257,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=14';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=31';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=32';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=1';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -476,6 +504,10 @@
                     exitUrl
                 });
                 await loadConversations();
+                if (canModerate) {
+                    document.getElementById('email-panel-btn')?.classList.remove('hidden');
+                    loadSentEmailHistory();
+                }
 
                 // Load messages (real-time)
                 startRealtimeUpdates();
@@ -1221,6 +1253,92 @@
                     </span>
                 </label>
             `).join('');
+        }
+
+        function renderEmailHistory(items = []) {
+            const container = document.getElementById('email-history');
+            if (!container) return;
+            if (!items.length) {
+                container.innerHTML = '<div class="rounded-lg border border-gray-200 px-3 py-2 text-gray-500">No sent emails yet.</div>';
+                return;
+            }
+            container.innerHTML = items.map((item) => {
+                const sentAt = item.sentAt?.toDate ? item.sentAt.toDate() : null;
+                const sentLabel = sentAt ? sentAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Queued';
+                const delivery = item.delivery || {};
+                const status = delivery.status || item.status || 'queued';
+                const jobCount = delivery.jobCount ?? item.recipientCount ?? 0;
+                return `
+                    <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                            <div class="min-w-0">
+                                <div class="truncate font-semibold text-gray-900">${escapeHtml(item.subject || '(No subject)')}</div>
+                                <div class="text-xs text-gray-500">From ${escapeHtml(item.senderName || item.senderEmail || 'Team admin')} • ${escapeHtml(sentLabel)}</div>
+                            </div>
+                            <div class="text-xs text-gray-500 sm:text-right">
+                                ${Number(item.recipientCount || 0)} recipients • ${escapeHtml(status)} • ${Number(jobCount)} jobs
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function loadSentEmailHistory() {
+            if (!canModerate) return;
+            try {
+                renderEmailHistory(await getSentTeamEmails(teamId, { limit: 25 }));
+            } catch (error) {
+                console.warn('Failed to load sent email history:', error);
+                const container = document.getElementById('email-history');
+                if (container) {
+                    container.innerHTML = '<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">Could not load sent email history.</div>';
+                }
+            }
+        }
+
+        function setEmailStatus(message, tone = 'muted') {
+            const status = document.getElementById('email-status');
+            if (!status) return;
+            status.textContent = message || '';
+            status.className = `text-sm ${tone === 'error' ? 'text-red-600' : tone === 'success' ? 'text-green-700' : 'text-gray-600'}`;
+        }
+
+        async function sendEmailMessage() {
+            const subjectInput = document.getElementById('email-subject');
+            const bodyInput = document.getElementById('email-body');
+            const button = document.getElementById('email-send-btn');
+            const subject = subjectInput.value.trim();
+            const body = bodyInput.value.trim();
+            if (!subject || !body) {
+                setEmailStatus('Subject and message are required.', 'error');
+                return;
+            }
+            const targetMetadata = buildRecipientTargetMetadata();
+            if (targetMetadata.targetType === 'individuals' && targetMetadata.recipientIds.length === 0) {
+                setEmailStatus('Select at least one recipient.', 'error');
+                return;
+            }
+            button.disabled = true;
+            button.textContent = 'Sending...';
+            setEmailStatus('Creating backend mail jobs...');
+            try {
+                const result = await sendTeamEmail(teamId, {
+                    subject,
+                    body,
+                    ...targetMetadata
+                });
+                subjectInput.value = '';
+                bodyInput.value = '';
+                setEmailStatus(`Sent to ${result.recipientCount || 0} recipients. Delivery jobs queued.`, 'success');
+                await loadSentEmailHistory();
+            } catch (error) {
+                console.error('Error sending team email:', error);
+                setEmailStatus(error?.message || 'Email send failed. Nothing was silently dropped.', 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Send email';
+            }
         }
 
         function updateComposerState() {
@@ -2039,6 +2157,14 @@
             document.getElementById('chat-image-input').addEventListener('change', handleImageSelection);
             document.getElementById('media-gallery-btn').addEventListener('click', openMediaGallery);
             document.getElementById('media-gallery-close-btn').addEventListener('click', closeMediaGallery);
+            document.getElementById('email-panel-btn').addEventListener('click', () => {
+                const panel = document.getElementById('email-panel');
+                panel.classList.toggle('hidden');
+                if (!panel.classList.contains('hidden')) {
+                    loadSentEmailHistory();
+                }
+            });
+            document.getElementById('email-send-btn').addEventListener('click', sendEmailMessage);
             document.getElementById('conversations-list').addEventListener('click', (event) => {
                 const button = event.target.closest('[data-conversation-id]');
                 if (!button) return;

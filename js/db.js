@@ -29,7 +29,9 @@ import {
     ref,
     uploadBytes,
     getDownloadURL,
-    deleteObject
+    deleteObject,
+    functions,
+    httpsCallable
 } from './firebase.js?v=13';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=6';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
@@ -4615,6 +4617,29 @@ export function subscribeToChatMessages(teamId, { limit = 50, conversationId = D
         const oldestDoc = snapshot.docs.length ? snapshot.docs[snapshot.docs.length - 1] : null;
         onMessages(docs, oldestDoc);
     });
+}
+
+export async function sendTeamEmail(teamId, {
+    subject,
+    body,
+    targetType = 'full_team',
+    recipientIds = []
+} = {}) {
+    const callable = httpsCallable(functions, 'sendTeamEmail');
+    const result = await callable({
+        teamId,
+        subject,
+        body,
+        targetType,
+        recipientIds
+    });
+    return result.data;
+}
+
+export async function getSentTeamEmails(teamId, { limit = 25 } = {}) {
+    const emailsRef = collection(db, 'teams', teamId, 'teamEmails');
+    const snapshot = await getDocs(query(emailsRef, orderBy('sentAt', 'desc'), limitQuery(limit)));
+    return snapshot.docs.map((d) => ({ id: d.id, ...d.data(), _doc: d }));
 }
 
 /**
