@@ -480,9 +480,13 @@ import { resolveZip } from './utils.js?v=9'; // Import resolveZip
 // Teams
 export async function getTeams(options = {}) {
     const includeInactive = !!options.includeInactive;
+    const includePrivate = options.includePrivate === true || includeInactive;
     const locationFilter = String(options.locationFilter || '').trim().toLowerCase();
 
-    const q = query(collection(db, "teams"), orderBy("name"));
+    const teamsRef = collection(db, "teams");
+    const q = includePrivate
+        ? query(teamsRef, orderBy("name"))
+        : query(teamsRef, where("isPublic", "==", true), orderBy("name"));
     let teams = (await getDocs(q)).docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     // Apply location filter if provided
