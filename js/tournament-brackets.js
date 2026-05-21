@@ -175,6 +175,99 @@ function resolvedStatesEqual(current = {}, next = {}) {
         && current.ready === next.ready;
 }
 
+function resolveTournamentSourcePoolProtection(source = {}, gamesById, poolStandings, memo, context = {}) {
+    const sourceType = normalizeString(source.sourceType) || 'team';
+    if (sourceType === 'pool_seed') {
+        const sourcePoolName = getTournamentPoolLabel(source, context);
+        const teamName = getPoolSeedTeamName(poolStandings, source, context);
+        return {
+            teamName,
+            sourcePoolName,
+            sourceLabel: describeTournamentSource(source, context),
+            ready: !!teamName
+        };
+    }
+    if (sourceType === 'game_result') {
+        const upstreamId = normalizeString(source.gameId);
+        const upstream = upstreamId ? gamesById.get(upstreamId) : null;
+        if (!upstream) {
+            return {
+                teamName: null,
+                sourcePoolName: null,
+                sourceLabel: describeTournamentSource(source, context),
+                ready: false
+            };
+        }
+
+        const upstreamProtection = resolveTournamentGamePoolProtection(upstream, gamesById, poolStandings, memo);
+        const outcome = normalizeString(source.outcome) || 'winner';
+        const side = outcome === 'loser' ? getTournamentLoser(upstream) : getTournamentWinner(upstream);
+        if (!side) {
+            return {
+                teamName: null,
+                sourcePoolName: null,
+                sourceLabel: describeTournamentSource(source, context),
+                ready: false
+            };
+        }
+        return side === 'home' ? upstreamProtection.home : upstreamProtection.away;
+    }
+
+    const teamName = normalizeString(source.teamName);
+    return {
+        teamName,
+        sourcePoolName: null,
+        sourceLabel: describeTournamentSource(source, context),
+        ready: !!teamName
+    };
+}
+
+function resolveTournamentGamePoolProtection(game = {}, gamesById, poolStandings = {}, memo = new Map()) {
+    const gameId = normalizeString(game.id);
+    if (gameId && memo.has(gameId)) return memo.get(gameId);
+
+    const placeholder = {
+        home: { teamName: null, sourcePoolName: null, sourceLabel: 'TBD', ready: false },
+        away: { teamName: null, sourcePoolName: null, sourceLabel: 'TBD', ready: false }
+    };
+    if (gameId) memo.set(gameId, placeholder);
+
+    const tournament = game?.tournament || {};
+    const slotAssignments = tournament.slotAssignments || {};
+    const resolved = {
+        home: resolveTournamentSourcePoolProtection(slotAssignments.home || {}, gamesById, poolStandings, memo, tournament),
+        away: resolveTournamentSourcePoolProtection(slotAssignments.away || {}, gamesById, poolStandings, memo, tournament)
+    };
+
+    if (gameId) memo.set(gameId, resolved);
+    return resolved;
+}
+
+function collectPoolProtectionConflicts(games = [], poolStandings = {}) {
+    const gamesById = new Map((games || []).filter((game) => game?.id).map((game) => [game.id, game]));
+    const memo = new Map();
+
+    return (games || [])
+        .filter((game) => String(game?.competitionType || '').toLowerCase() === 'tournament' && game?.tournament?.slotAssignments)
+        .map((game) => {
+            const protection = resolveTournamentGamePoolProtection(game, gamesById, poolStandings, memo);
+            const homePool = normalizeString(protection.home?.sourcePoolName);
+            const awayPool = normalizeString(protection.away?.sourcePoolName);
+            const homeTeamName = normalizeString(protection.home?.teamName);
+            const awayTeamName = normalizeString(protection.away?.teamName);
+            if (!homePool || homePool !== awayPool || !homeTeamName || !awayTeamName) return null;
+            return {
+                gameId: game.id,
+                poolName: homePool,
+                homeTeamName,
+                awayTeamName,
+                homeSourceLabel: protection.home?.sourceLabel || 'Home slot',
+                awaySourceLabel: protection.away?.sourceLabel || 'Away slot'
+            };
+        })
+        .filter(Boolean);
+}
+
 export function buildPoolStandingsIndex(games = []) {
     const poolStandings = {};
 
@@ -288,7 +381,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: [],
             patches: [],
             previewRows: [],
-            requiresOverwriteConfirmation: false
+            requiresOverwriteConfirmation: false,
+            poolProtectionConflicts: [],
+            requiresPoolProtectionOverride: false
         };
     }
 
@@ -301,7 +396,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: [],
             patches: [],
             previewRows: [],
-            requiresOverwriteConfirmation: false
+            requiresOverwriteConfirmation: false,
+            poolProtectionConflicts: [],
+            requiresPoolProtectionOverride: false
         };
     }
 
@@ -314,7 +411,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds: requiredSeeds,
             patches: [],
             previewRows: [],
-            requiresOverwriteConfirmation: false
+            requiresOverwriteConfirmation: false,
+            poolProtectionConflicts: [],
+            requiresPoolProtectionOverride: false
         };
     }
 
@@ -328,7 +427,9 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
             missingSeeds,
             patches: [],
             previewRows: [],
-            requiresOverwriteConfirmation: false
+            requiresOverwriteConfirmation: false,
+            poolProtectionConflicts: [],
+            requiresPoolProtectionOverride: false
         };
     }
 
@@ -342,6 +443,7 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
     };
     const patches = collectTournamentAdvancementPatches(games, { poolStandings });
     const previewRows = buildTournamentAdvancementPreviewRows(games, patches);
+    const poolProtectionConflicts = collectPoolProtectionConflicts(games, poolStandings);
 
     return {
         skipped: false,
@@ -352,6 +454,8 @@ export function planTournamentPoolAdvancement(games = [], options = {}) {
         patches,
         previewRows,
         requiresOverwriteConfirmation: previewRows.some((row) => row.overwritesExistingTeam),
+        poolProtectionConflicts,
+        requiresPoolProtectionOverride: poolProtectionConflicts.length > 0,
         poolStandings
     };
 }

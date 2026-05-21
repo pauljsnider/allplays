@@ -436,6 +436,77 @@ describe('tournament bracket helpers', () => {
     ]);
   });
 
+  it('flags same-pool bracket advancement conflicts for override audit notes', () => {
+    const games = [
+      {
+        id: 'semi-1',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 2 }
+          }
+        }
+      },
+      {
+        id: 'semi-2',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 3 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool B', seed: 1 }
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: 'Pool A',
+      ranking: ['Tigers', 'Lions', 'Bears'],
+      poolStandings: {
+        'Pool B': [{ teamName: 'Wolves' }]
+      }
+    });
+
+    expect(plan.requiresPoolProtectionOverride).toBe(true);
+    expect(plan.poolProtectionConflicts).toEqual([
+      {
+        gameId: 'semi-1',
+        poolName: 'Pool A',
+        homeTeamName: 'Tigers',
+        awayTeamName: 'Lions',
+        homeSourceLabel: 'Pool A #1',
+        awaySourceLabel: 'Pool A #2'
+      }
+    ]);
+  });
+
+  it('does not require pool-protection override metadata without same-pool conflicts', () => {
+    const games = [
+      {
+        id: 'semi-1',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool B', seed: 1 }
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: 'Pool A',
+      ranking: ['Tigers'],
+      poolStandings: {
+        'Pool B': [{ teamName: 'Wolves' }]
+      }
+    });
+
+    expect(plan.requiresPoolProtectionOverride).toBe(false);
+    expect(plan.poolProtectionConflicts).toEqual([]);
+  });
+
   it('keeps finalized pool-seed slots stable after advancement is saved', () => {
     const games = [
       {
