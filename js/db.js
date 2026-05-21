@@ -4505,6 +4505,84 @@ export async function archiveCertificate(teamId, certificateId) {
     await updateCertificate(teamId, certificateId, { status: 'archived' }, { action: 'archived' });
 }
 
+
+function getTeamEmailDraftsRef(teamId) {
+    return collection(db, 'teams', teamId, 'emailDrafts');
+}
+
+function normalizeEmailDraftRecipient(recipient = {}) {
+    const email = String(recipient.email || '').trim().toLowerCase();
+    return {
+        key: String(recipient.key || `email:${email}`).trim(),
+        email,
+        name: String(recipient.name || email).trim(),
+        detail: String(recipient.detail || '').trim()
+    };
+}
+
+function normalizeTeamEmailDraftPayload(draft = {}) {
+    const subject = String(draft.subject || '').trim();
+    const body = String(draft.body || '').trim();
+    const recipients = Array.isArray(draft.recipients)
+        ? draft.recipients.map(normalizeEmailDraftRecipient).filter((recipient) => (
+            recipient.key && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email)
+        ))
+        : [];
+
+    if (recipients.length === 0) throw new Error('Choose at least one recipient before saving.');
+    if (!subject) throw new Error('Enter a subject before saving.');
+    if (!body) throw new Error('Enter a body before saving.');
+
+    return {
+        subject,
+        body,
+        recipients,
+        recipientEmails: recipients.map((recipient) => recipient.email),
+        authorId: draft.authorId || auth.currentUser?.uid || null,
+        authorEmail: draft.authorEmail || auth.currentUser?.email || null,
+        authorName: draft.authorName || null,
+        status: 'draft'
+    };
+}
+
+export async function getTeamEmailDrafts(teamId) {
+    if (!teamId) return [];
+    const draftsRef = getTeamEmailDraftsRef(teamId);
+    try {
+        const snapshot = await getDocs(query(draftsRef, orderBy('updatedAt', 'desc')));
+        return snapshot.docs.map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(draftsRef);
+        return snapshot.docs
+            .map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }))
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            });
+    }
+}
+
+export async function saveTeamEmailDraft(teamId, draft, { draftId = null } = {}) {
+    const now = Timestamp.now();
+    const payload = {
+        ...normalizeTeamEmailDraftPayload(draft),
+        updatedAt: now
+    };
+
+    if (draftId) {
+        const draftRef = doc(db, 'teams', teamId, 'emailDrafts', draftId);
+        await setDoc(draftRef, payload, { merge: true });
+        return { id: draftId, ...payload };
+    }
+
+    const draftRef = await addDoc(getTeamEmailDraftsRef(teamId), {
+        ...payload,
+        createdAt: now
+    });
+    return { id: draftRef.id, ...payload, createdAt: now };
+}
+
 function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     if (isDefaultTeamConversation(conversationId)) {
         return collection(db, 'teams', teamId, 'chatMessages');
