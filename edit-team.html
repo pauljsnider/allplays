@@ -642,7 +642,7 @@
             const row = document.createElement('div');
             row.className = 'flex gap-2 items-center';
             row.innerHTML = `
-                <input type="text" placeholder="Role (e.g. Snack)" value="${role}" class="default-assignment-role flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                <input type="text" placeholder="Role (e.g. Snack)" value="${escapeHtml(role)}" class="default-assignment-role flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
                 <button type="button" class="text-red-400 hover:text-red-600 text-lg font-bold leading-none" onclick="this.parentElement.remove()">&times;</button>
             `;
             container.appendChild(row);

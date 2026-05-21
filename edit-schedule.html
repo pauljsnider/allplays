@@ -3715,7 +3715,7 @@
 
             try {
                 const now = new Date();
-                const events = Object.values(gamesCache);
+                const events = Object.values(allTeamGamesCache);
                 const upcoming = events.filter(g => {
                     const d = g.date?.toDate ? g.date.toDate() : new Date(g.date);
                     return g.type === 'game' && d >= now && (!g.assignments || g.assignments.length === 0);
