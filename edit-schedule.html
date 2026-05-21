@@ -120,6 +120,17 @@
             <p id="team-reminder-settings-summary" class="mt-3 text-sm text-gray-600"></p>
         </div>
 
+        <div id="bulk-assignments-panel" class="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm hidden">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="font-semibold text-gray-900">Default Game Assignments</h3>
+                    <p id="bulk-assignments-description" class="text-sm text-gray-600"></p>
+                </div>
+                <button id="bulk-apply-assignments-btn" type="button" class="shrink-0 bg-indigo-600 text-white text-sm px-4 py-2 rounded-md hover:bg-indigo-700 transition">Apply to All Upcoming Games</button>
+            </div>
+            <p id="bulk-assignments-result" class="mt-2 text-sm text-green-700 hidden"></p>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Add Game Form -->
             <div class="lg:col-span-1">
@@ -1503,6 +1514,20 @@
             return normalizeScheduleNotificationSettings(currentTeam?.scheduleNotifications || {});
         }
 
+        function renderBulkAssignmentsPanel(team) {
+            const defaults = team?.defaultAssignments || [];
+            const panel = document.getElementById('bulk-assignments-panel');
+            const desc = document.getElementById('bulk-assignments-description');
+            if (!panel || !desc) return;
+            if (defaults.length === 0) {
+                panel.classList.add('hidden');
+                return;
+            }
+            panel.classList.remove('hidden');
+            const roleList = defaults.map(a => a.role).join(', ');
+            desc.textContent = `Configured roles: ${roleList}. Adds these as claimable slots to upcoming games that have no assignments yet.`;
+        }
+
         function renderTeamScheduleNotificationSettings(team) {
             const rawSettings = team?.scheduleNotifications || {};
             const settings = normalizeScheduleNotificationSettings(rawSettings);
@@ -1666,6 +1691,7 @@
 
             currentTeam = team;
             renderTeamScheduleNotificationSettings(team);
+            renderBulkAssignmentsPanel(team);
             renderRegistrationScheduleImport(team);
             setupOpponentSearch();
             document.getElementById('team-name-display').textContent = team.name;
@@ -3096,9 +3122,14 @@
             populateOfficiatingSlots([]);
         }
 
-        // Pre-populate assignments for new games from the latest game
+        // Pre-populate assignments for new games from team defaults or latest game
         async function prefillAssignments() {
-            if (editingGameId) return; // Don't prefill when editing
+            if (editingGameId) return;
+            const defaults = currentTeam?.defaultAssignments;
+            if (defaults && defaults.length > 0) {
+                populateAssignments(defaults.map(a => ({ role: a.role, value: '', claimable: true })));
+                return;
+            }
             try {
                 const latest = await getLatestGameAssignments(currentTeamId);
                 if (latest && latest.length > 0) {
@@ -3667,6 +3698,41 @@
                 alert('Schedule reminder settings saved.');
             } catch (error) {
                 alert('Error saving reminder settings: ' + error.message);
+            }
+        });
+
+        document.getElementById('bulk-apply-assignments-btn').addEventListener('click', async () => {
+            const defaults = currentTeam?.defaultAssignments || [];
+            if (defaults.length === 0) return;
+            const roleList = defaults.map(a => a.role).join(', ');
+            if (!confirm(`Add "${roleList}" as claimable assignment slots to all upcoming games that have no assignments yet?`)) return;
+
+            const btn = document.getElementById('bulk-apply-assignments-btn');
+            const resultEl = document.getElementById('bulk-assignments-result');
+            btn.disabled = true;
+            btn.textContent = 'Applying...';
+            resultEl.classList.add('hidden');
+
+            try {
+                const now = new Date();
+                const events = Object.values(gamesCache);
+                const upcoming = events.filter(g => {
+                    const d = g.date?.toDate ? g.date.toDate() : new Date(g.date);
+                    return g.type === 'game' && d >= now && (!g.assignments || g.assignments.length === 0);
+                });
+
+                await Promise.all(upcoming.map(g =>
+                    updateGame(currentTeamId, g.id, { assignments: defaults.map(a => ({ role: a.role, value: '', claimable: true })) })
+                ));
+
+                resultEl.textContent = `Updated ${upcoming.length} upcoming game${upcoming.length === 1 ? '' : 's'}.`;
+                resultEl.classList.remove('hidden');
+                await loadSchedule();
+            } catch (error) {
+                alert('Error applying assignments: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Apply to All Upcoming Games';
             }
         });
 
