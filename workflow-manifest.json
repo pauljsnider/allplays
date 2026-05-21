@@ -140,6 +140,19 @@
     "searchText": "# Team Operations\n\n## Overview\nOwnership model for team creation, roster, schedule, and configuration.\n\n## In This Article\n- Team creation and core management.\n- Roster and schedule ownership.\n- Config and analytics controls.\n- Administration.\n\n## Who Is This For\n- Parents, members, coaches, and admins who need to understand team operations ownership.\n\n## Key Workflows\n- Coach/Admin: create and manage teams from dashboard.html.\n- Coach/Admin: edit team metadata in edit-team.html.\n- Coach/Admin: manage roster in edit-roster.html.\n- Coach/Admin: plan and update events in edit-schedule.html.\n- Coach/Admin: maintain stat and config controls in edit-config.html.\n- Parent/Member: view team context in team.html and calendar.html.\n- Admin: use global admin workflows in admin.html."
   },
   {
+    "id": "team-media",
+    "title": "Manage Team Media and Albums",
+    "roles": [
+      "Parent",
+      "Coach",
+      "Admin"
+    ],
+    "file": "workflow-team-media.html",
+    "summary": "Organize photos, videos, and highlights into albums, control visibility, and let members contribute uploads.",
+    "readTimeMin": 4,
+    "searchText": "# Manage Team Media and Albums\n\n## Overview\nTeam Media is a structured media library scoped to each team. Coaches and admins create albums organized by event, season, or topic with member-visible or manager-only visibility. Admin and coach users can add YouTube and Vimeo video links and upload photos directly from within the app. Members with admin-approved upload access can also contribute their own photos. Admins have moderation controls including bulk select, move items between albums, reorder within an album, delete, set album covers, and remove individual items. Parents and general members see only member-visible albums.\n\n## Who Is This For\n- Admin: create/manage albums, moderate uploads, bulk operations\n- Coach: add content, manage folders\n- Parent/Member: browse visible albums, view and upload photos\n\n## Choose Your Path\n- Create or organize albums\n- Add video links (YouTube, Vimeo)\n- Upload photos\n- Browse gallery\n- Bulk manage items\n\n## Step-by-Step Workflow\n1. Open Team Media from the team management banner or team view.\n2. Admin creates album with name and visibility.\n3. Add video links by pasting a YouTube or Vimeo URL.\n4. Upload photos with per-file progress and isolated failures.\n5. Admin sets album cover image.\n6. Browse gallery by album and visibility.\n7. Admin bulk operations: select, bulk delete, move, reorder.\n8. Uploaders delete own photos; admins delete any item."
+  },
+  {
     "id": "team-setup",
     "title": "Create Team Foundation and Staff Access",
     "roles": [
