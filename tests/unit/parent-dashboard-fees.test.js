@@ -150,6 +150,46 @@ describe('parent dashboard team fees', () => {
         expect(html).toContain('Due Jun 10, 2026');
     });
 
+    it('renders refund ledger activity without exposing admin-only notes', () => {
+        const html = renderParentTeamFees([
+            {
+                title: 'Refunded invoice',
+                amountCents: 30000,
+                paidAmountCents: 20000,
+                balanceDueCents: 10000,
+                ledgerEntries: [
+                    { type: 'offline_payment', paymentDate: '2026-06-01', amountCents: 30000, receiptNumber: 'Receipt #202', status: 'posted' },
+                    {
+                        type: 'offline_refund',
+                        refundDate: '2026-06-10',
+                        refundAmountCents: 10000,
+                        offlineMethod: 'check',
+                        refundStatus: 'completed',
+                        publicNote: 'Uniform returned',
+                        internalNote: 'Admin-only reconciliation detail',
+                        note: 'Private admin refund note',
+                        recordedBy: 'admin-123'
+                    }
+                ]
+            }
+        ]);
+
+        expect(html).toContain('Receipts & activity');
+        expect(html).toContain('Refund');
+        expect(html).toContain('-$100.00');
+        expect(html).toContain('Jun 10, 2026');
+        expect(html).toContain('check');
+        expect(html).toContain('completed');
+        expect(html).toContain('Uniform returned');
+        expect(html).toContain('Paid');
+        expect(html).toContain('$200.00');
+        expect(html).toContain('Remaining balance');
+        expect(html).toContain('$100.00');
+        expect(html).not.toContain('Admin-only reconciliation detail');
+        expect(html).not.toContain('Private admin refund note');
+        expect(html).not.toContain('admin-123');
+    });
+
     it('only renders a Pay action for unpaid or partially paid fees with a checkout or payment link', () => {
         const manualOnlyHtml = renderParentTeamFees([
             { title: 'Manual collection', amountCents: 1000 }
