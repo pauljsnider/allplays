@@ -172,7 +172,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getFamilyShareToken, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=54';
+    import { getFamilyShareToken, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=55';
     import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
 
     renderFooter(document.getElementById('footer-container'));
@@ -247,7 +247,8 @@
       renderTeams(children);
 
       // Load schedule
-      const events = await buildCombinedSchedule(children);
+      const extraCalendarUrls = Array.isArray(token.extraCalendarUrls) ? token.extraCalendarUrls : [];
+      const events = await buildCombinedSchedule(children, extraCalendarUrls);
       allScheduleEvents = events;
 
       initPlayerFilter(children);
@@ -346,7 +347,7 @@
       `).join('');
     }
 
-    async function buildCombinedSchedule(children) {
+    async function buildCombinedSchedule(children, extraCalendarUrls = []) {
       if (!children || children.length === 0) return [];
 
       const byTeam = new Map();
@@ -485,6 +486,58 @@
       }));
 
       batches.forEach(batch => allEvents.push(...batch));
+
+      // Extra calendar URLs from the share token (not tied to any specific team)
+      if (extraCalendarUrls && extraCalendarUrls.length > 0) {
+        // Collect all existing DB game timestamps for conflict-checking
+        const dbTimestamps = allEvents
+          .filter(ev => ev.isDbGame)
+          .map(ev => new Date(ev.date).getTime());
+
+        const extraResults = await Promise.all(extraCalendarUrls.map(async (calUrl) => {
+          try {
+            const calendarEvents = await fetchAndParseCalendar(calUrl);
+            return calendarEvents;
+          } catch (err) {
+            console.warn('[family] Error fetching extra calendar:', calUrl, err);
+            return [];
+          }
+        }));
+
+        extraResults.forEach(calendarEvents => {
+          calendarEvents.forEach(event => {
+            const isCancelled = event.status?.toUpperCase() === 'CANCELLED' || event.summary?.includes('[CANCELED]');
+            const eventDate = event.dtstart;
+            if (!eventDate) return;
+            // Skip if conflicts with a DB game within 1 minute
+            const hasConflict = dbTimestamps.some(ts => Math.abs(ts - eventDate.getTime()) < 60000);
+            if (hasConflict) return;
+            const isPractice = isPracticeEvent(event.summary);
+            const cleanSummary = event.summary?.replace(/\[CANCELED\]\s*/gi, '') || '';
+            const type = isPractice ? 'practice' : 'game';
+            // Add one entry per unique child (deduped in renderScheduleList)
+            const uniqueChildren = [...new Map(children.map(c => [c.playerId, c])).values()];
+            for (const child of uniqueChildren) {
+              allEvents.push({
+                type,
+                date: eventDate,
+                location: event.location || 'TBD',
+                opponent: extractOpponent(cleanSummary, ''),
+                teamId: child.teamId || '',
+                teamName: child.teamName || '',
+                id: getCalendarEventTrackingId(event) || null,
+                calendarEventUid: event.uid || null,
+                isDbGame: false,
+                childId: child.playerId,
+                childName: child.playerName,
+                title: isPractice ? (cleanSummary || 'Practice') : null,
+                isCancelled
+              });
+            }
+          });
+        });
+      }
+
       allEvents.sort((a, b) => a.date - b.date);
       return allEvents;
     }

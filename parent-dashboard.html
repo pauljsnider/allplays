@@ -100,10 +100,25 @@
                             New Link
                         </button>
                     </div>
-                    <div id="share-link-form" class="hidden px-4 pt-4 pb-2 border-b border-gray-100 space-y-2">
-                        <label class="block text-xs font-medium text-gray-700">Label (optional)</label>
-                        <input type="text" id="share-link-label" placeholder="e.g. Grandma's link" maxlength="60"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-primary-500 focus:border-primary-500">
+                    <div id="share-link-form" class="hidden px-4 pt-4 pb-2 border-b border-gray-100 space-y-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">Label (optional)</label>
+                            <input type="text" id="share-link-label" placeholder="e.g. Grandma's link" maxlength="60"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-primary-500 focus:border-primary-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">Extra Calendars (optional)</label>
+                            <p class="text-[11px] text-gray-500 mb-2">Add .ics calendar URLs (league, travel team, etc.) to include in the family page schedule.</p>
+                            <div id="share-form-calendar-list" class="space-y-1 mb-2"></div>
+                            <div class="flex gap-1">
+                                <input type="url" id="share-form-calendar-input" placeholder="https://…/calendar.ics"
+                                    class="flex-grow px-2 py-1.5 border border-gray-300 rounded-lg text-xs focus:ring-primary-500 focus:border-primary-500">
+                                <button id="share-form-calendar-add-btn" type="button"
+                                    class="px-2.5 py-1.5 text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 rounded-lg hover:bg-primary-100 transition">
+                                    Add
+                                </button>
+                            </div>
+                        </div>
                         <div class="flex gap-2">
                             <button id="create-share-link-btn"
                                 class="flex-1 bg-primary-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-primary-700 transition">
@@ -358,8 +373,9 @@
             inviteCoParentToAthlete,
             createFamilyShareToken,
             listFamilyShareTokens,
-            revokeFamilyShareToken
-        } from './js/db.js?v=54';
+            revokeFamilyShareToken,
+            updateFamilyShareTokenCalendars
+        } from './js/db.js?v=55';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import {
             getIncentiveRules,
@@ -1119,6 +1135,8 @@
 
         // ── Family Share Links ─────────────────────────────────────────────────
         let familyShareChildren = [];
+        // In-progress calendar URLs for the creation form
+        const shareFormCalendarUrls = [];
 
         function getFamilyPageOrigin() {
             return window.location.origin;
@@ -1126,6 +1144,88 @@
 
         function buildFamilyShareUrl(tokenId) {
             return `${getFamilyPageOrigin()}/family.html?token=${tokenId}`;
+        }
+
+        function renderShareFormCalendarList() {
+            const listEl = document.getElementById('share-form-calendar-list');
+            if (!listEl) return;
+            if (!shareFormCalendarUrls.length) {
+                listEl.innerHTML = '';
+                return;
+            }
+            listEl.innerHTML = shareFormCalendarUrls.map((url, idx) => `
+                <div class="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded px-2 py-1">
+                    <span class="flex-grow text-[11px] text-gray-700 truncate">${escapeHtml(url)}</span>
+                    <button type="button" onclick="removeShareFormCalendarUrl(${idx})"
+                        class="flex-shrink-0 text-gray-400 hover:text-red-600 transition text-sm leading-none">×</button>
+                </div>
+            `).join('');
+        }
+
+        window.removeShareFormCalendarUrl = function(idx) {
+            shareFormCalendarUrls.splice(idx, 1);
+            renderShareFormCalendarList();
+        };
+
+        function renderTokenCalendarList(tokenId, urls) {
+            const listEl = document.getElementById(`token-cal-list-${tokenId}`);
+            if (!listEl) return;
+            if (!urls || !urls.length) {
+                listEl.innerHTML = '<div class="text-[11px] text-gray-400">No extra calendars added.</div>';
+                return;
+            }
+            listEl.innerHTML = urls.map((url, idx) => `
+                <div class="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded px-2 py-1">
+                    <span class="flex-grow text-[11px] text-gray-700 truncate">${escapeHtml(url)}</span>
+                    <button type="button" onclick="removeTokenCalendarUrl('${escapeAttr(tokenId)}', ${idx})"
+                        class="flex-shrink-0 text-gray-400 hover:text-red-600 transition text-sm leading-none">×</button>
+                </div>
+            `).join('');
+        }
+
+        window.removeTokenCalendarUrl = async function(tokenId, idx) {
+            const section = document.getElementById(`token-cal-section-${tokenId}`);
+            const currentUrls = Array.from(section?.querySelectorAll('[data-cal-url]') || [])
+                .map(el => el.getAttribute('data-cal-url'));
+            // Rebuild from DOM before mutation
+            const allUrls = getCurrentTokenCalendarUrls(tokenId);
+            allUrls.splice(idx, 1);
+            await saveTokenCalendarUrls(tokenId, allUrls);
+        };
+
+        window.addTokenCalendarUrl = async function(tokenId) {
+            const input = document.getElementById(`token-cal-input-${tokenId}`);
+            const url = input?.value?.trim();
+            if (!url) return;
+            if (!/^https?:\/\/.+/.test(url)) {
+                alert('Please enter a valid URL starting with http:// or https://');
+                return;
+            }
+            const allUrls = getCurrentTokenCalendarUrls(tokenId);
+            if (allUrls.includes(url)) { input.value = ''; return; }
+            allUrls.push(url);
+            input.value = '';
+            await saveTokenCalendarUrls(tokenId, allUrls);
+        };
+
+        function getCurrentTokenCalendarUrls(tokenId) {
+            const section = document.getElementById(`token-cal-section-${tokenId}`);
+            if (!section) return [];
+            return Array.from(section.querySelectorAll('[data-cal-url]'))
+                .map(el => el.getAttribute('data-cal-url'));
+        }
+
+        async function saveTokenCalendarUrls(tokenId, urls) {
+            const saveBtn = document.getElementById(`token-cal-save-${tokenId}`);
+            if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
+            try {
+                await updateFamilyShareTokenCalendars(tokenId, urls);
+                await loadShareLinks();
+            } catch (err) {
+                console.error('[parent-dashboard] Failed to update share link calendars:', err);
+                alert('Could not save: ' + (err?.message || 'Unknown error'));
+                if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+            }
         }
 
         async function loadShareLinks() {
@@ -1142,28 +1242,67 @@
                     const url = buildFamilyShareUrl(token.id);
                     const createdAt = token.createdAt?.toDate ? token.createdAt.toDate() : new Date(token.createdAt);
                     const dateStr = createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                    const extraUrls = Array.isArray(token.extraCalendarUrls) ? token.extraCalendarUrls : [];
+                    const calCount = extraUrls.length;
                     return `
-                        <div class="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-                            <div class="flex items-center justify-between gap-2">
-                                <div class="min-w-0 flex-grow">
-                                    <div class="font-semibold text-gray-900 text-sm truncate">${escapeHtml(token.label || 'Family Page Link')}</div>
-                                    <div class="text-[11px] text-gray-500 mt-0.5">Created ${dateStr}</div>
+                        <div class="rounded-xl border border-gray-200 bg-gray-50">
+                            <div class="px-3 py-2">
+                                <div class="flex items-center justify-between gap-2">
+                                    <div class="min-w-0 flex-grow">
+                                        <div class="font-semibold text-gray-900 text-sm truncate">${escapeHtml(token.label || 'Family Page Link')}</div>
+                                        <div class="text-[11px] text-gray-500 mt-0.5">Created ${dateStr}</div>
+                                    </div>
+                                    <button onclick="revokeShareLink('${escapeAttr(token.id)}')"
+                                        class="text-xs font-semibold text-red-600 hover:text-red-800 px-2 py-1 rounded border border-red-100 bg-white hover:bg-red-50 transition flex-shrink-0">
+                                        Revoke
+                                    </button>
                                 </div>
-                                <button onclick="revokeShareLink('${escapeAttr(token.id)}')"
-                                    class="text-xs font-semibold text-red-600 hover:text-red-800 px-2 py-1 rounded border border-red-100 bg-white hover:bg-red-50 transition flex-shrink-0">
-                                    Revoke
-                                </button>
+                                <div class="mt-2 flex items-center gap-1.5">
+                                    <input readonly value="${escapeHtml(url)}" class="flex-grow text-[11px] text-gray-600 bg-white border border-gray-200 rounded px-2 py-1 truncate">
+                                    <button onclick="copyShareLink('${escapeAttr(url)}', this)"
+                                        class="text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 px-2 py-1 rounded hover:bg-primary-100 transition flex-shrink-0">
+                                        Copy
+                                    </button>
+                                    <a href="${escapeHtml(url)}" target="_blank" rel="noopener"
+                                        class="text-xs font-semibold text-gray-600 bg-white border border-gray-200 px-2 py-1 rounded hover:bg-gray-50 transition flex-shrink-0">
+                                        Open
+                                    </a>
+                                </div>
                             </div>
-                            <div class="mt-2 flex items-center gap-1.5">
-                                <input readonly value="${escapeHtml(url)}" class="flex-grow text-[11px] text-gray-600 bg-white border border-gray-200 rounded px-2 py-1 truncate">
-                                <button onclick="copyShareLink('${escapeAttr(url)}', this)"
-                                    class="text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 px-2 py-1 rounded hover:bg-primary-100 transition flex-shrink-0">
-                                    Copy
+                            <!-- Extra calendars section -->
+                            <div class="border-t border-gray-100 px-3 py-2" id="token-cal-section-${escapeAttr(token.id)}">
+                                <button type="button" onclick="toggleTokenCalSection('${escapeAttr(token.id)}')"
+                                    class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-600 hover:text-primary-700 transition w-full text-left">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                                    </svg>
+                                    Extra Calendars${calCount ? ` (${calCount})` : ''}
+                                    <svg id="token-cal-chevron-${escapeAttr(token.id)}" class="w-3 h-3 ml-auto transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                    </svg>
                                 </button>
-                                <a href="${escapeHtml(url)}" target="_blank" rel="noopener"
-                                    class="text-xs font-semibold text-gray-600 bg-white border border-gray-200 px-2 py-1 rounded hover:bg-gray-50 transition flex-shrink-0">
-                                    Open
-                                </a>
+                                <div id="token-cal-body-${escapeAttr(token.id)}" class="hidden mt-2 space-y-1.5">
+                                    <div id="token-cal-list-${escapeAttr(token.id)}" class="space-y-1">
+                                        ${extraUrls.length
+                                            ? extraUrls.map((u, idx) => `
+                                                <div class="flex items-center gap-1 bg-white border border-gray-200 rounded px-2 py-1" data-cal-url="${escapeAttr(u)}">
+                                                    <span class="flex-grow text-[11px] text-gray-700 truncate">${escapeHtml(u)}</span>
+                                                    <button type="button" onclick="removeTokenCalendarUrl('${escapeAttr(token.id)}', ${idx})"
+                                                        class="flex-shrink-0 text-gray-400 hover:text-red-600 transition text-sm leading-none">×</button>
+                                                </div>`).join('')
+                                            : '<div class="text-[11px] text-gray-400">No extra calendars. Add .ics URLs below.</div>'
+                                        }
+                                    </div>
+                                    <div class="flex gap-1">
+                                        <input type="url" id="token-cal-input-${escapeAttr(token.id)}"
+                                            placeholder="https://…/calendar.ics"
+                                            class="flex-grow px-2 py-1 border border-gray-300 rounded text-[11px] focus:ring-primary-500 focus:border-primary-500">
+                                        <button type="button" onclick="addTokenCalendarUrl('${escapeAttr(token.id)}')"
+                                            class="px-2 py-1 text-[11px] font-semibold text-primary-700 bg-primary-50 border border-primary-200 rounded hover:bg-primary-100 transition flex-shrink-0">
+                                            Add
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     `;
@@ -1173,6 +1312,14 @@
                 if (listEl) listEl.innerHTML = '<div class="text-xs text-red-500">Unable to load share links.</div>';
             }
         }
+
+        window.toggleTokenCalSection = function(tokenId) {
+            const body = document.getElementById(`token-cal-body-${tokenId}`);
+            const chevron = document.getElementById(`token-cal-chevron-${tokenId}`);
+            if (!body) return;
+            const isHidden = body.classList.toggle('hidden');
+            if (chevron) chevron.style.transform = isHidden ? '' : 'rotate(180deg)';
+        };
 
         window.copyShareLink = function(url, btn) {
             navigator.clipboard.writeText(url).then(() => {
@@ -1207,14 +1354,37 @@
             const createBtn = document.getElementById('create-share-link-btn');
             const form = document.getElementById('share-link-form');
             const statusEl = document.getElementById('share-link-create-status');
+            const calAddBtn = document.getElementById('share-form-calendar-add-btn');
+            const calInput = document.getElementById('share-form-calendar-input');
+
+            calAddBtn?.addEventListener('click', () => {
+                const url = calInput?.value?.trim();
+                if (!url) return;
+                if (!/^https?:\/\/.+/.test(url)) {
+                    alert('Please enter a valid URL starting with http:// or https://');
+                    return;
+                }
+                if (!shareFormCalendarUrls.includes(url)) {
+                    shareFormCalendarUrls.push(url);
+                    renderShareFormCalendarList();
+                }
+                calInput.value = '';
+                calInput.focus();
+            });
+
+            calInput?.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); calAddBtn?.click(); }
+            });
 
             newBtn?.addEventListener('click', () => {
                 form?.classList.toggle('hidden');
-                document.getElementById('share-link-label')?.focus();
+                if (!form?.classList.contains('hidden')) document.getElementById('share-link-label')?.focus();
             });
 
             cancelBtn?.addEventListener('click', () => {
                 form?.classList.add('hidden');
+                shareFormCalendarUrls.length = 0;
+                renderShareFormCalendarList();
                 if (statusEl) { statusEl.classList.add('hidden'); statusEl.textContent = ''; }
             });
 
@@ -1226,12 +1396,13 @@
                 createBtn.textContent = 'Creating...';
                 if (statusEl) { statusEl.classList.add('hidden'); statusEl.textContent = ''; }
                 try {
-                    const tokenId = await createFamilyShareToken(currentUserId, familyShareChildren, label);
+                    const tokenId = await createFamilyShareToken(currentUserId, familyShareChildren, label, [...shareFormCalendarUrls]);
                     const url = buildFamilyShareUrl(tokenId);
                     form?.classList.add('hidden');
                     document.getElementById('share-link-label').value = '';
+                    shareFormCalendarUrls.length = 0;
+                    renderShareFormCalendarList();
                     await loadShareLinks();
-                    // Auto-copy the new link
                     try { await navigator.clipboard.writeText(url); } catch (_) {}
                     if (statusEl) {
                         statusEl.className = 'text-xs rounded-lg px-3 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200';

@@ -6638,7 +6638,7 @@ function generateShareToken() {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function createFamilyShareToken(ownerUserId, children, label) {
+export async function createFamilyShareToken(ownerUserId, children, label, extraCalendarUrls = []) {
     const tokenId = generateShareToken();
     const now = Timestamp.now();
     await setDoc(doc(db, 'familyShareTokens', tokenId), {
@@ -6651,11 +6651,19 @@ export async function createFamilyShareToken(ownerUserId, children, label) {
             playerName: c.playerName || '',
             playerPhotoUrl: c.playerPhotoUrl || null
         })),
+        extraCalendarUrls: (extraCalendarUrls || []).filter(u => typeof u === 'string' && u.trim()),
         createdAt: now,
         updatedAt: now,
         active: true
     });
     return tokenId;
+}
+
+export async function updateFamilyShareTokenCalendars(tokenId, urls) {
+    await updateDoc(doc(db, 'familyShareTokens', tokenId), {
+        extraCalendarUrls: (urls || []).filter(u => typeof u === 'string' && u.trim()),
+        updatedAt: Timestamp.now()
+    });
 }
 
 export async function getFamilyShareToken(tokenId) {
