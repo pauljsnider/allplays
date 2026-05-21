@@ -4,7 +4,10 @@ import { describe, expect, it } from 'vitest';
 const require = createRequire(import.meta.url);
 const {
     normalizeTeamFeeCheckoutInput,
+    normalizeTeamFeeRefundInput,
     getTeamFeeBalanceCents,
+    getTeamFeeRefundedCents,
+    getTeamFeeRefundableCents,
     isTeamFeeCheckoutEligible,
     isEligibleTeamFeePayer,
     buildTeamFeeCheckoutUrls,
@@ -13,7 +16,8 @@ const {
     shouldMarkTeamFeePaidFromEvent,
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
     getTeamFeeStripePaidAmountCents,
-    buildTeamFeePaidUpdate
+    buildTeamFeePaidUpdate,
+    buildTeamFeeStripeRefundUpdate
 } = require('../../functions/team-fees-core.cjs');
 
 describe('team fee checkout function helpers', () => {
@@ -168,6 +172,77 @@ describe('team fee checkout function helpers', () => {
         });
         expect(update).not.toHaveProperty('paymentMethod');
         expect(update.receiptMetadata).not.toHaveProperty('card');
+    });
+
+    it('normalizes refund input and computes refundable cents', () => {
+        expect(normalizeTeamFeeRefundInput({
+            teamId: ' team_123 ',
+            batchId: ' batch_456 ',
+            recipientId: ' recipient_789 ',
+            amount: '12.34',
+            reason: ' duplicate '
+        })).toEqual({
+            teamId: 'team_123',
+            batchId: 'batch_456',
+            recipientId: 'recipient_789',
+            amountCents: 1234,
+            reason: 'duplicate'
+        });
+
+        const recipient = {
+            paidAmountCents: 10000,
+            paymentLedger: [
+                { type: 'stripe_refund', refundAmountCents: 2500, status: 'succeeded' },
+                { type: 'stripe_refund', amountCents: 1000, status: 'pending' },
+                { type: 'stripe_refund', refundAmountCents: 500, status: 'failed' }
+            ]
+        };
+        expect(getTeamFeeRefundedCents(recipient)).toBe(3500);
+        expect(getTeamFeeRefundableCents(recipient)).toBe(6500);
+    });
+
+    it('builds Stripe refund ledger updates without over-crediting balances', () => {
+        const update = buildTeamFeeStripeRefundUpdate({
+            recipient: {
+                amountCents: 12500,
+                paidAmountCents: 12500,
+                refundedAmountCents: 2500,
+                stripePaymentIntentId: 'pi_123'
+            },
+            refund: {
+                id: 're_123',
+                status: 'succeeded',
+                payment_intent: 'pi_123'
+            },
+            amountCents: 5000,
+            actorId: 'admin_1',
+            reason: 'Family requested refund',
+            refundedAt: 'now'
+        });
+
+        expect(update).toMatchObject({
+            status: 'partial',
+            paidAmountCents: 7500,
+            amountPaidCents: 7500,
+            balanceDueCents: 5000,
+            refundedAmountCents: 7500,
+            amountRefundedCents: 7500,
+            paymentProvider: 'stripe',
+            stripeLastRefundId: 're_123',
+            stripeLastRefundStatus: 'succeeded'
+        });
+        expect(update.ledgerEntries).toEqual([{
+            type: 'stripe_refund',
+            amountCents: 5000,
+            refundAmountCents: 5000,
+            status: 'succeeded',
+            stripeRefundId: 're_123',
+            stripePaymentIntentId: 'pi_123',
+            stripeChargeId: null,
+            reason: 'Family requested refund',
+            refundedBy: 'admin_1',
+            refundedAt: 'now'
+        }]);
     });
 
     it('does not mark the recipient fully paid when the balance grew after checkout creation', () => {

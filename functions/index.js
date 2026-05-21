@@ -11,7 +11,9 @@ const {
 } = require('./team-pass-core.cjs');
 const {
   normalizeTeamFeeCheckoutInput,
+  normalizeTeamFeeRefundInput,
   getTeamFeeBalanceCents,
+  getTeamFeeRefundableCents,
   isTeamFeeCheckoutEligible,
   isEligibleTeamFeePayer,
   buildTeamFeeCheckoutUrls,
@@ -19,7 +21,8 @@ const {
   canReuseTeamFeeCheckoutSession,
   shouldMarkTeamFeePaidFromEvent,
   shouldRecordTeamFeeCheckoutNotPaidFromEvent,
-  buildTeamFeePaidUpdate
+  buildTeamFeePaidUpdate,
+  buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
 const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
@@ -179,8 +182,9 @@ async function getUserForEligibility(uid) {
   return userSnap.exists ? userSnap.data() || {} : {};
 }
 
-function hasTeamAdminAccess({ team, uid, email }) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+function hasTeamAdminAccess({ team, user = {}, uid, email }) {
+  if (user?.isAdmin === true) return true;
+  const normalizedEmail = String(email || user?.email || user?.profileEmail || '').trim().toLowerCase();
   const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase()) : [];
   return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
@@ -506,6 +510,109 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   }, { merge: true });
 
   return { checkoutUrl: session.url, sessionId: session.id };
+});
+
+exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before refunding a team fee.');
+  }
+
+  let input;
+  try {
+    input = normalizeTeamFeeRefundInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid team fee refund request.');
+  }
+
+  const [teamSnap, recipientSnap, user] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}`).get(),
+    buildTeamFeeRecipientRef(input).get(),
+    getUserForEligibility(context.auth.uid)
+  ]);
+
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  if (!recipientSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+  }
+
+  const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+  const email = context.auth.token?.email || user.email || '';
+  if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team admins can issue team fee refunds.');
+  }
+
+  const recipient = { id: input.recipientId, ...(recipientSnap.data() || {}) };
+  if (recipient.teamId !== input.teamId || recipient.batchId !== input.batchId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+  }
+  if (recipient.paymentProvider !== 'stripe') {
+    throw new functions.https.HttpsError('failed-precondition', 'Only Stripe team fee payments can be refunded online.');
+  }
+
+  const paymentIntentId = String(recipient.stripePaymentIntentId || '').trim();
+  const chargeId = String(recipient.stripeChargeId || recipient.stripeLatestChargeId || '').trim();
+  if (!paymentIntentId && !chargeId) {
+    throw new functions.https.HttpsError('failed-precondition', 'This payment is missing a Stripe payment intent or charge reference.');
+  }
+
+  const refundableCents = getTeamFeeRefundableCents(recipient);
+  if (input.amountCents > refundableCents) {
+    throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount.');
+  }
+
+  const stripe = createStripeClient();
+  let refund;
+  try {
+    refund = await stripe.refunds.create({
+      amount: input.amountCents,
+      ...(paymentIntentId ? { payment_intent: paymentIntentId } : { charge: chargeId }),
+      metadata: {
+        product: 'team_fee',
+        teamId: input.teamId,
+        batchId: input.batchId,
+        recipientId: input.recipientId,
+        refundedBy: context.auth.uid
+      }
+    });
+  } catch (error) {
+    console.warn('Stripe team fee refund failed:', error?.message || error);
+    throw new functions.https.HttpsError('failed-precondition', error?.message || 'Stripe refund failed.');
+  }
+
+  const recipientRef = buildTeamFeeRecipientRef(input);
+  const refundedAt = admin.firestore.FieldValue.serverTimestamp();
+  await firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(recipientRef);
+    if (!latestSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+    }
+
+    const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
+    if (input.amountCents > getTeamFeeRefundableCents(latestRecipient)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount.');
+    }
+
+    const { ledgerEntries = [], ...update } = buildTeamFeeStripeRefundUpdate({
+      recipient: latestRecipient,
+      refund,
+      amountCents: input.amountCents,
+      actorId: context.auth.uid,
+      reason: input.reason,
+      refundedAt
+    });
+    transaction.set(recipientRef, {
+      ...update,
+      paymentLedger: admin.firestore.FieldValue.arrayUnion(...ledgerEntries)
+    }, { merge: true });
+  });
+
+  return {
+    refundId: refund.id || null,
+    status: refund.status || 'pending',
+    amountCents: input.amountCents
+  };
 });
 
 exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) => {

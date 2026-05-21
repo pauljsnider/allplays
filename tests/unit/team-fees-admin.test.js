@@ -1,6 +1,6 @@
 // tests/unit/team-fees-admin.test.js
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('buildManualPaymentUpdate', () => {
     it('should correctly handle missing or invalid currentBalanceCents by defaulting to a high number to prevent premature "paid" status', () => {
@@ -61,5 +61,37 @@ describe('buildManualPaymentUpdate', () => {
         expect(updates.amountPaidCents).toBe(paymentAmountCents); // 500
         expect(updates.remainingBalanceCents).toBe(initialBalanceCents - paymentAmountCents); // 1000 - 500 = 500
         expect(updates.status).toBe('partial');
+    });
+});
+
+describe('online team fee refunds', () => {
+    it('builds callable refund requests in cents', () => {
+        expect(buildOnlineRefundRequest({
+            teamId: ' team_1 ',
+            batchId: ' batch_1 ',
+            recipientId: ' recipient_1 ',
+            amount: '12.34',
+            reason: ' duplicate payment '
+        })).toEqual({
+            teamId: 'team_1',
+            batchId: 'batch_1',
+            recipientId: 'recipient_1',
+            amountCents: 1234,
+            reason: 'duplicate payment'
+        });
+    });
+
+    it('detects eligible Stripe payments and remaining refundable amount', () => {
+        const recipient = {
+            paymentProvider: 'stripe',
+            stripePaymentIntentId: 'pi_123',
+            amountPaidCents: 10000,
+            refundedAmountCents: 2500
+        };
+
+        expect(getRecipientRefundableCents(recipient)).toBe(7500);
+        expect(isOnlineRefundEligible(recipient)).toBe(true);
+        expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', stripeChargeId: '' })).toBe(false);
+        expect(isOnlineRefundEligible({ ...recipient, paymentProvider: 'manual' })).toBe(false);
     });
 });
