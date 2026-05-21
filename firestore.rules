@@ -1242,6 +1242,20 @@ service cloud.firestore {
                              request.resource.data.teamId == resource.data.teamId &&
                              request.resource.data.createdAt == resource.data.createdAt &&
                              request.resource.data.status in ['approved', 'denied']
+                           ) ||
+                           (
+                             resource.data.status == 'denied' &&
+                             resource.data.requesterUserId == request.auth.uid &&
+                             requestId == request.auth.uid + "__" + request.resource.data.playerId &&
+                             request.resource.data.requesterUserId == request.auth.uid &&
+                             request.resource.data.playerId == resource.data.playerId &&
+                             request.resource.data.teamId == resource.data.teamId &&
+                             request.resource.data.createdAt == resource.data.createdAt &&
+                             request.resource.data.status == 'pending' &&
+                             request.resource.data.decidedAt == null &&
+                             request.resource.data.decidedBy == null &&
+                             request.resource.data.decidedByName == null &&
+                             request.resource.data.decisionNote == null
                            )
                          );
 
