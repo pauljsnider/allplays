@@ -57,6 +57,17 @@ service firebase.storage {
       allow update: if false;
     }
 
+    match /team-email-attachments/{teamId}/{draftId}/{userId}/{fileName} {
+      allow get: if isTeamOwnerOrAdmin(teamId);
+      allow list: if false;
+      allow create: if isTeamOwnerOrAdmin(teamId) &&
+        request.auth.uid == userId &&
+        request.resource.size > 0 &&
+        request.resource.size <= 20 * 1024 * 1024;
+      allow delete: if isTeamOwnerOrAdmin(teamId);
+      allow update: if false;
+    }
+
     match /stat-sheets/{fileName=**} {
       allow get, create, delete: if isSignedIn();
       allow list, update: if false;

@@ -294,12 +294,12 @@ describe('live tracker save-and-complete workflow', () => {
     expect(harness.batch.commit).toHaveBeenCalledTimes(1);
     expect(harness.setCalls).toEqual([
       {
-        ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p1' },
-        data: { playerName: 'Alex', stats: { pts: 2 }, timeMs: 1000 }
+        ref: { kind: 'doc', path: 'teams/team-1/games/game-9/events/finish-log-000001' },
+        data: { text: 'Home layup', gameTime: '01:20' }
       },
       {
-        ref: { kind: 'auto-doc', path: 'teams/team-1/games/game-9/events/AUTO_ID' },
-        data: { text: 'Home layup', gameTime: '01:20' }
+        ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p1' },
+        data: { playerName: 'Alex', stats: { pts: 2 }, timeMs: 1000 }
       }
     ]);
     expect(harness.updateCalls).toEqual([

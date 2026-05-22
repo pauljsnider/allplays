@@ -1,6 +1,6 @@
 // tests/unit/team-fees-admin.test.js
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible, buildOfflineRefundUpdate } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('buildManualPaymentUpdate', () => {
     it('should correctly handle missing or invalid currentBalanceCents by defaulting to a high number to prevent premature "paid" status', () => {
@@ -95,5 +95,68 @@ describe('online team fee refunds', () => {
         expect(isOnlineRefundEligible(recipient)).toBe(true);
         expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', stripeChargeId: '' })).toBe(false);
         expect(isOnlineRefundEligible({ ...recipient, paymentProvider: 'manual' })).toBe(false);
+    });
+});
+
+describe('buildOfflineRefundUpdate', () => {
+    it('records a partial offline refund and reopens the remaining balance', () => {
+        const updates = buildOfflineRefundUpdate({
+            refundType: 'partial',
+            amount: '4.00',
+            method: 'cash',
+            note: 'Refunded duplicate cash collection.',
+            actorId: 'admin-1',
+            currentBalanceCents: '1000',
+            currentPaidCents: '1000'
+        });
+
+        expect(updates.status).toBe('partial');
+        expect(updates.amountPaidCents).toBe(600);
+        expect(updates.remainingBalanceCents).toBe(400);
+        expect(updates.paidAt).toBeNull();
+        expect(updates.refunded).toMatchObject({
+            amountCents: 400,
+            refundType: 'partial',
+            refundMethod: 'cash',
+            recordedBy: 'admin-1'
+        });
+        expect(updates.ledgerEntries).toEqual([
+            expect.objectContaining({
+                type: 'offline_refund',
+                amountCents: -400,
+                refundAmountCents: 400,
+                refundMethod: 'cash',
+                note: 'Refunded duplicate cash collection.'
+            })
+        ]);
+    });
+
+    it('records a full offline check refund and resets paid status to unpaid', () => {
+        const updates = buildOfflineRefundUpdate({
+            refundType: 'full',
+            method: 'check',
+            note: 'Check refund issued.',
+            actorId: 'admin-2',
+            currentBalanceCents: '2500',
+            currentPaidCents: '2500'
+        });
+
+        expect(updates.status).toBe('unpaid');
+        expect(updates.amountPaidCents).toBe(0);
+        expect(updates.remainingBalanceCents).toBe(2500);
+        expect(updates.paidAt).toBeNull();
+        expect(updates.ledgerEntries[0]).toMatchObject({
+            type: 'offline_refund',
+            amountCents: -2500,
+            refundAmountCents: 2500,
+            refundType: 'full',
+            refundMethod: 'check'
+        });
+    });
+
+    it('requires a note, offline method, and refund amount no larger than paid', () => {
+        expect(() => buildOfflineRefundUpdate({ refundType: 'partial', amount: '6.00', method: 'cash', note: 'Too much', currentBalanceCents: '1000', currentPaidCents: '500' })).toThrow('Refund amount cannot exceed');
+        expect(() => buildOfflineRefundUpdate({ refundType: 'partial', amount: '1.00', method: 'card', note: 'Bad method', currentBalanceCents: '1000', currentPaidCents: '500' })).toThrow('Select cash or check');
+        expect(() => buildOfflineRefundUpdate({ refundType: 'partial', amount: '1.00', method: 'cash', note: '', currentBalanceCents: '1000', currentPaidCents: '500' })).toThrow('Enter an admin note');
     });
 });

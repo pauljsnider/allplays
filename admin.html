@@ -408,11 +408,23 @@
                             <option value="interaction_submit">Form submits</option>
                             <option value="scroll_depth">Scroll depth</option>
                             <option value="js_error">JS errors</option>
+                            <option value="js_unhandled_rejection">Unhandled rejections</option>
+                            <option value="interaction_rage_click">Rage clicks</option>
                         </select>
                         <button id="telemetry-refresh" class="px-4 py-2 bg-primary-600 text-white rounded-md text-sm font-medium hover:bg-primary-700">Refresh</button>
                     </div>
                 </div>
                 <p id="telemetry-status" class="text-xs text-gray-500 mt-3">Loading telemetry...</p>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm border border-red-100 overflow-hidden">
+                <div class="p-4 border-b border-red-100 bg-red-50/60">
+                    <h3 class="text-lg font-semibold text-gray-900">Needs attention</h3>
+                    <p class="text-sm text-gray-500">JS errors, unhandled rejections, and rage clicks for the selected range.</p>
+                </div>
+                <div id="telemetry-needs-attention" class="p-4 space-y-4">
+                    <p class="text-gray-400 text-sm">Loading...</p>
+                </div>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">

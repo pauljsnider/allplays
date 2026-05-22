@@ -169,21 +169,76 @@ function renderInstallmentSchedule(fee) {
     `;
 }
 
+function isRefundLedgerEntry(entry) {
+    const marker = String(getFirstDefined(entry?.type, entry?.kind, entry?.action, entry?.category, entry?.label, entry?.title, '')).toLowerCase();
+    return marker.includes('refund') || entry?.refund === true || entry?.isRefund === true || entry?.refundAmountCents !== undefined;
+}
+
+function formatLedgerEntryLabel(entry, index) {
+    if (isRefundLedgerEntry(entry)) return getFirstDefined(entry?.label, entry?.title, 'Refund');
+    return getFirstDefined(entry?.label, entry?.title, entry?.type, entry?.kind, `Activity ${index + 1}`);
+}
+
+function getLedgerEntryDate(entry) {
+    return getFirstDefined(
+        entry?.date,
+        entry?.refundDate,
+        entry?.refundedAt,
+        entry?.processedAt,
+        entry?.postedAt,
+        entry?.createdAt,
+        entry?.paidAt,
+        entry?.paymentDate,
+        entry?.adjustedAt
+    );
+}
+
+function getRefundAmountCents(entry) {
+    const rawAmount = getFirstDefined(entry?.refundAmountCents, entry?.amountCents, entry?.paidAmountCents, entry?.totalCents);
+    const amount = Number(rawAmount);
+    if (!Number.isFinite(amount)) return undefined;
+    return amount > 0 ? -amount : amount;
+}
+
+function formatLedgerEntryAmount(entry) {
+    const rawAmount = isRefundLedgerEntry(entry)
+        ? getRefundAmountCents(entry)
+        : getFirstDefined(entry?.amountCents, entry?.paidAmountCents, entry?.adjustmentAmountCents, entry?.totalCents);
+    return formatCents(rawAmount);
+}
+
+function getParentVisibleLedgerNote(entry) {
+    const publicNote = getFirstDefined(
+        entry?.publicNote,
+        entry?.parentNote,
+        entry?.payerNote,
+        entry?.customerNote,
+        entry?.receiptNumber,
+        entry?.reference
+    );
+    if (publicNote || isRefundLedgerEntry(entry)) return publicNote;
+    return getFirstDefined(entry?.note, entry?.memo, entry?.description);
+}
+
 function renderReceiptActivity(fee) {
     const entries = getFeeLedgerEntries(fee);
     if (!entries.length) return '';
 
     const rows = entries.map((entry, index) => {
-        const label = getFirstDefined(entry?.label, entry?.title, entry?.type, entry?.kind, `Activity ${index + 1}`);
-        const dateValue = getFirstDefined(entry?.date, entry?.postedAt, entry?.createdAt, entry?.paidAt, entry?.adjustedAt);
-        const amount = formatCents(getFirstDefined(entry?.amountCents, entry?.paidAmountCents, entry?.adjustmentAmountCents, entry?.totalCents));
-        const note = getFirstDefined(entry?.note, entry?.memo, entry?.description, entry?.receiptNumber, entry?.reference);
-        const status = getFirstDefined(entry?.status, entry?.paymentStatus);
+        const refundEntry = isRefundLedgerEntry(entry);
+        const label = formatLedgerEntryLabel(entry, index);
+        const dateValue = getLedgerEntryDate(entry);
+        const amount = formatLedgerEntryAmount(entry);
+        const note = getParentVisibleLedgerNote(entry);
+        const method = refundEntry ? getFirstDefined(entry?.offlineMethod, entry?.refundMethod, entry?.method, entry?.paymentMethod) : '';
+        const status = getFirstDefined(entry?.refundStatus, entry?.status, entry?.paymentStatus);
         const details = [
             dateValue ? formatParentFeeDueDate(dateValue) : '',
+            method ? String(method) : '',
             status ? String(status) : '',
             note ? String(note) : ''
         ].filter(Boolean).join(' · ');
+        const amountClass = refundEntry ? 'text-emerald-700' : 'text-gray-900';
 
         return `
             <div class="flex items-start justify-between gap-3 py-2 border-t border-gray-100 first:border-t-0">
@@ -191,7 +246,7 @@ function renderReceiptActivity(fee) {
                     <div class="font-medium text-gray-900 capitalize">${escapeHtml(label)}</div>
                     ${details ? `<div class="text-xs text-gray-500 mt-0.5">${escapeHtml(details)}</div>` : ''}
                 </div>
-                <div class="font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(amount || 'Amount not set')}</div>
+                <div class="font-semibold ${amountClass} whitespace-nowrap">${escapeHtml(amount || 'Amount not set')}</div>
             </div>
         `;
     }).join('');
