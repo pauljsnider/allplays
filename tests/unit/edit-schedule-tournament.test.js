@@ -72,6 +72,8 @@ describe('edit schedule tournament wiring', () => {
     expect(source).toContain('class="advance-tournament-pool-btn');
     expect(source).toContain('data-advance-tournament-pool');
     expect(source).toContain('formatTournamentAdvancementPreviewMessage');
+    expect(source).toContain('Pool-protection warnings:');
+    expect(source).toContain('poolProtectionWarnings');
     expect(source).toContain('buildFinalizedTournamentAdvancementPlan');
     expect(source).toContain("document.querySelectorAll('.advance-tournament-pool-btn').forEach(btn => {");
     expect(source).toContain('let allTeamGamesCache = {};');

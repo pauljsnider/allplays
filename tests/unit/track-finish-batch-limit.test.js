@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { commitStandardTrackerFinishData } from '../../js/track-finish.js';
+import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
 function createFirestoreHarness({ commitFailuresByBatchIndex = {} } = {}) {
     const batches = [];
@@ -116,6 +117,44 @@ describe('standard tracker finish batch limits', () => {
             expect(batch.commitCount).toBe(1);
             expect(batch.operations.every((op) => op.type === 'set')).toBe(true);
         });
+    });
+
+    it('writes zero-stat roster players as player profile appearances', async () => {
+        const harness = createFirestoreHarness();
+
+        await commitStandardTrackerFinishData({
+            db: harness.db,
+            writeBatch: harness.writeBatch,
+            doc: harness.doc,
+            collection: harness.collection,
+            teamId: 'team-1',
+            gameId: 'game-1',
+            currentUserUid: 'coach-1',
+            gameLog: [],
+            players: [
+                { id: 'p1', name: 'Ava', number: '3' },
+                { id: 'p2', name: 'Ben', number: '8' }
+            ],
+            playerStatsByPlayerId: { p1: { pts: 6, ast: 1 } },
+            columns: ['PTS', 'AST'],
+            finalHome: 6,
+            finalAway: 4,
+            summary: 'Finished cleanly.',
+            opponentStats: {}
+        });
+
+        const statsBatch = harness.batches[1];
+        const zeroStatWrite = statsBatch.operations.find((op) => op.ref.path === 'teams/team-1/games/game-1/aggregatedStats/p2');
+
+        expect(zeroStatWrite.data).toEqual({
+            playerName: 'Ben',
+            playerNumber: '8',
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'standard-tracker-finish',
+            stats: { pts: 0, ast: 0 }
+        });
+        expect(hasPlayerProfileParticipation(zeroStatWrite.data)).toBe(true);
     });
 
     it('writes private player stats to manager-only docs when finishing a standard tracker game', async () => {

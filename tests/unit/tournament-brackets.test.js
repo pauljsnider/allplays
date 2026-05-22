@@ -314,6 +314,111 @@ describe('tournament bracket helpers', () => {
     ]);
   });
 
+
+  it('warns when advancement creates a same-pool initial matchup', () => {
+    const games = [
+      {
+        id: 'gold-semi',
+        competitionType: 'tournament',
+        tournament: {
+          divisionName: '10U Gold',
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 2 }
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: '10U Gold • Pool A',
+      ranking: ['Tigers', 'Lions']
+    });
+
+    expect(plan.skipped).toBe(false);
+    expect(plan.poolProtectionWarnings).toEqual([
+      {
+        gameId: 'gold-semi',
+        poolName: '10U Gold • Pool A',
+        homeTeamName: 'Tigers',
+        awayTeamName: 'Lions',
+        homeSourceLabel: '10U Gold • Pool A #1',
+        awaySourceLabel: '10U Gold • Pool A #2',
+        warning: 'Tigers and Lions both advanced from 10U Gold • Pool A.'
+      }
+    ]);
+  });
+
+  it('does not warn when advancement creates a cross-pool matchup', () => {
+    const games = [
+      {
+        id: 'gold-semi',
+        competitionType: 'tournament',
+        tournament: {
+          divisionName: '10U Gold',
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool B', seed: 1 }
+          },
+          resolved: {
+            homeLabel: '10U Gold • Pool A #1',
+            awayLabel: '10U Gold • Pool B #1',
+            homeTeamName: null,
+            awayTeamName: null,
+            matchupLabel: '10U Gold • Pool A #1 vs 10U Gold • Pool B #1',
+            ready: false
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: '10U Gold • Pool A',
+      ranking: ['Tigers'],
+      poolStandings: {
+        '10U Gold • Pool B': [{ teamName: 'Bears' }]
+      }
+    });
+
+    expect(plan.skipped).toBe(false);
+    expect(plan.poolProtectionWarnings).toEqual([]);
+  });
+
+  it('does not warn for same-named pools in different divisions', () => {
+    const games = [
+      {
+        id: 'gold-semi',
+        competitionType: 'tournament',
+        tournament: {
+          bracketName: 'Gold',
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', divisionName: '10U Gold', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'pool_seed', divisionName: '12U Gold', poolName: 'Pool A', seed: 1 }
+          },
+          resolved: {
+            homeLabel: '10U Gold • Pool A #1',
+            awayLabel: '12U Gold • Pool A #1',
+            homeTeamName: null,
+            awayTeamName: null,
+            matchupLabel: '10U Gold • Pool A #1 vs 12U Gold • Pool A #1',
+            ready: false
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: '10U Gold • Pool A',
+      ranking: ['Tigers'],
+      poolStandings: {
+        '12U Gold • Pool A': [{ teamName: 'Bears' }]
+      }
+    });
+
+    expect(plan.skipped).toBe(false);
+    expect(plan.poolProtectionWarnings).toEqual([]);
+  });
+
   it('skips pool advancement when a required seed is missing', () => {
     const games = [
       {

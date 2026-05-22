@@ -514,6 +514,15 @@
                     </div>
                 </div>
 
+                <div class="rounded-lg border border-gray-200 p-4 space-y-3">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700">Default Game Assignments</label>
+                        <p class="text-xs text-gray-500 mt-0.5">These roles auto-fill on every new game. Parents can claim open slots from their dashboard.</p>
+                    </div>
+                    <div id="default-assignment-rows" class="space-y-2"></div>
+                    <button type="button" id="add-default-assignment-btn" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add Role</button>
+                </div>
+
                 <div class="flex justify-end space-x-4 pt-4 border-t">
                     <a href="dashboard.html"
                         class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</a>
@@ -627,6 +636,31 @@
                 team.recordedReplayTeamPassRequired
             ].find((value) => typeof value === 'boolean') === true;
         }
+
+        function addDefaultAssignmentRow(role = '') {
+            const container = document.getElementById('default-assignment-rows');
+            const row = document.createElement('div');
+            row.className = 'flex gap-2 items-center';
+            row.innerHTML = `
+                <input type="text" placeholder="Role (e.g. Snack)" value="${escapeHtml(role)}" class="default-assignment-role flex-1 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2 text-sm">
+                <button type="button" class="text-red-400 hover:text-red-600 text-lg font-bold leading-none" onclick="this.parentElement.remove()">&times;</button>
+            `;
+            container.appendChild(row);
+        }
+
+        function getDefaultAssignmentsFromForm() {
+            return Array.from(document.querySelectorAll('#default-assignment-rows .default-assignment-role'))
+                .map(input => input.value.trim())
+                .filter(Boolean)
+                .map(role => ({ role, value: '', claimable: true }));
+        }
+
+        function populateDefaultAssignments(assignments) {
+            document.getElementById('default-assignment-rows').innerHTML = '';
+            (assignments || []).forEach(a => addDefaultAssignmentRow(a.role || ''));
+        }
+
+        document.getElementById('add-default-assignment-btn').addEventListener('click', () => addDefaultAssignmentRow());
 
         async function copyTextToClipboard(value) {
             if (navigator.clipboard?.writeText) {
@@ -1255,6 +1289,7 @@
                 syncStreamVolunteerPanel();
                 updateTeamIdPanel(initialTeamId);
                 populateRegistrationProviderFields(team);
+                populateDefaultAssignments(team.defaultAssignments || []);
 
                 if (team.photoUrl) {
                     currentPhotoUrl = team.photoUrl;
@@ -1717,6 +1752,7 @@
                     teamPermissions: normalizeTeamPermissions(teamPermissions),
                     streamAccessMode: document.getElementById('streamAccessMode').value,
                     streamVolunteerEmails: normalizedStreamVolunteerEmails,
+                    defaultAssignments: getDefaultAssignmentsFromForm(),
                     ...((() => {
                         const sr = parseStreamUrl(document.getElementById('streamUrl').value);
                         return {
