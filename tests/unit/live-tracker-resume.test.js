@@ -197,4 +197,54 @@ describe('live tracker resume game log', () => {
       }
     ]);
   });
+
+  it('excludes undo and remove stat broadcasts from reconstructed log entries', () => {
+    const result = buildResumeLogFromLiveEvents([
+      {
+        type: 'stat',
+        description: '#4 Alex PTS +2',
+        period: 'Q1',
+        gameClockMs: 80000,
+        createdAt: { toMillis: () => 1000 },
+        playerId: 'p1',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: false
+      },
+      {
+        type: 'stat',
+        description: 'UNDO #4 Alex PTS +2',
+        period: 'Q1',
+        gameClockMs: 78000,
+        createdAt: { toMillis: () => 2000 },
+        playerId: 'p1',
+        statKey: 'PTS',
+        value: -2,
+        isOpponent: false
+      },
+      {
+        type: 'stat',
+        description: 'REMOVE Opponent #12 PTS +3',
+        period: 'Q1',
+        gameClockMs: 76000,
+        createdAt: { toMillis: () => 3000 },
+        playerId: 'opp-12',
+        statKey: 'PTS',
+        value: -3,
+        isOpponent: true
+      }
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      text: '#4 Alex PTS +2',
+      undoData: {
+        type: 'stat',
+        playerId: 'p1',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: false
+      }
+    });
+  });
 });

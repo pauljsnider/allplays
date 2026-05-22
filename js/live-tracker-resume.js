@@ -79,6 +79,16 @@ function buildStatUndoDataFromLiveEvent(event) {
     return undoData;
 }
 
+function isReversalStatBroadcast(event) {
+    if (event?.type !== 'stat') return false;
+
+    const value = Number(event?.value || 0);
+    if (!Number.isFinite(value) || value >= 0) return false;
+
+    const text = typeof event?.description === 'string' ? event.description.trim().toUpperCase() : '';
+    return text.startsWith('UNDO ') || text.startsWith('REMOVE ');
+}
+
 export function buildResumeLogFromLiveEvents(liveEvents = [], { now = () => Date.now() } = {}) {
     if (!Array.isArray(liveEvents) || liveEvents.length === 0) return [];
 
@@ -86,6 +96,7 @@ export function buildResumeLogFromLiveEvents(liveEvents = [], { now = () => Date
         .map((event, index) => {
             const type = event?.type;
             if (type !== 'stat' && type !== 'note') return null;
+            if (isReversalStatBroadcast(event)) return null;
 
             const text = typeof event?.description === 'string' ? event.description.trim() : '';
             if (!text) return null;
