@@ -1,0 +1,276 @@
+// @vitest-environment jsdom
+import React, { act } from '../../apps/app/node_modules/react/index.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
+import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
+
+const scheduleMocks = vi.hoisted(() => ({
+    cancelParentScheduleRideRequest: vi.fn(),
+    claimParentScheduleAssignmentSlot: vi.fn(),
+    createParentScheduleRideOffer: vi.fn(),
+    loadParentPracticePacket: vi.fn(),
+    loadParentSchedule: vi.fn(),
+    loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
+    loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
+    markParentPracticePacketComplete: vi.fn(),
+    releaseParentScheduleAssignmentClaim: vi.fn(),
+    requestParentScheduleRideSpot: vi.fn(),
+    setParentScheduleRideOfferStatus: vi.fn(),
+    submitParentScheduleRsvp: vi.fn(),
+    summarizeParentScheduleRideOffers: vi.fn(() => ({
+        offerCount: 0,
+        seatsLeft: 0,
+        requests: 0,
+        pending: 0,
+        confirmed: 0,
+        isFull: false
+    })),
+    updateParentScheduleRideRequestStatus: vi.fn()
+}));
+
+const reportMocks = vi.hoisted(() => ({
+    loadGameReportSections: vi.fn()
+}));
+
+const publicActionMocks = vi.hoisted(() => ({
+    openPublicUrl: vi.fn(),
+    sharePublicUrl: vi.fn()
+}));
+
+vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
+vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+
+import { ScheduleEventDetail } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+const auth = {
+    user: {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent'
+    }
+};
+
+function event(overrides = {}) {
+    return {
+        eventKey: overrides.eventKey || `${overrides.teamId || 'team-1'}::${overrides.id || 'game-1'}::${overrides.childId || 'player-1'}`,
+        id: overrides.id || 'game-1',
+        teamId: overrides.teamId || 'team-1',
+        teamName: overrides.teamName || 'Bears',
+        type: overrides.type || 'game',
+        date: overrides.date || new Date('2026-05-21T18:00:00Z'),
+        location: overrides.location || 'Main Gym',
+        opponent: overrides.opponent || 'Falcons',
+        title: overrides.title || null,
+        childId: overrides.childId || 'player-1',
+        childName: overrides.childName || 'Pat',
+        isDbGame: overrides.isDbGame !== false,
+        isCancelled: overrides.isCancelled === true,
+        myRsvp: overrides.myRsvp || 'not_responded',
+        rsvpSummary: overrides.rsvpSummary || null,
+        rideshareSummary: overrides.rideshareSummary || null,
+        assignments: overrides.assignments || [],
+        ...overrides
+    };
+}
+
+function report(overrides = {}) {
+    return {
+        team: { id: 'team-1', name: 'Bears' },
+        game: { id: 'game-1', status: 'completed', liveStatus: 'completed', homeScore: 4, awayScore: 2 },
+        summary: 'Bears finished strong.',
+        statKeys: [],
+        statLabels: {},
+        playerRows: [],
+        hasPlayingTime: false,
+        plays: [],
+        opponentRows: [],
+        opponentStatKeys: [],
+        opponentStatLabels: {},
+        teamInsights: [],
+        playerInsightRows: [],
+        emptyInsightsMessage: 'No insights yet.',
+        ...overrides
+    };
+}
+
+async function renderDetail(initialEntry) {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+        root.render(React.createElement(
+            MemoryRouter,
+            { initialEntries: [initialEntry] },
+            React.createElement(
+                Routes,
+                null,
+                React.createElement(Route, {
+                    path: '/schedule/:teamId/:eventId',
+                    element: React.createElement(ScheduleEventDetail, { auth })
+                })
+            )
+        ));
+    });
+
+    return { container, root };
+}
+
+async function waitForText(container, text) {
+    for (let index = 0; index < 25; index += 1) {
+        if (container.textContent.includes(text)) return;
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+    }
+    throw new Error(`Timed out waiting for text: ${text}`);
+}
+
+function buttonByText(container, text) {
+    const button = Array.from(container.querySelectorAll('button')).find((candidate) => (
+        candidate.textContent.trim() === text || candidate.getAttribute('aria-label') === text
+    ));
+    if (!button) throw new Error(`Button not found: ${text}`);
+    return button;
+}
+
+async function clickButton(container, text) {
+    await act(async () => {
+        buttonByText(container, text).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+}
+
+beforeEach(() => {
+    vi.clearAllMocks();
+    scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
+    scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
+        id: 'user-1__player-1',
+        parentUserId: 'user-1',
+        parentName: 'Pat Parent',
+        childId: 'player-1',
+        childName: 'Pat',
+        status: 'completed'
+    });
+    reportMocks.loadGameReportSections.mockResolvedValue(report());
+    publicActionMocks.sharePublicUrl.mockResolvedValue('shared');
+    publicActionMocks.openPublicUrl.mockResolvedValue(undefined);
+    window.requestAnimationFrame = (callback) => {
+        callback(0);
+        return 0;
+    };
+    window.scrollTo = vi.fn();
+});
+
+afterEach(() => {
+    document.body.innerHTML = '';
+});
+
+describe('React app ScheduleEventDetail More tab integration', () => {
+    it('renders the practice More tab with text-only sharing wired to the primary top card', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [
+                event({
+                    id: 'practice-1',
+                    type: 'practice',
+                    title: 'Practice',
+                    location: 'North Field',
+                    practiceSessionId: 'session-1',
+                    practiceHomePacket: {
+                        totalMinutes: 20,
+                        blocks: [
+                            { type: 'Drill', duration: 10, drillTitle: 'Ball Mastery', description: 'Touches at home.' },
+                            { type: 'Drill', duration: 10, drillTitle: 'Passing Wall', description: 'Two-touch passing.' }
+                        ]
+                    },
+                    practiceHomePacketSummary: '2 drills · 20 min',
+                    notes: 'Bring water'
+                })
+            ]
+        });
+        scheduleMocks.loadParentPracticePacket.mockResolvedValue({
+            sessionId: 'session-1',
+            teamId: 'team-1',
+            eventId: 'practice-1',
+            title: 'Practice',
+            date: new Date('2026-05-21T18:00:00Z'),
+            location: 'North Field',
+            homePacket: {
+                totalMinutes: 20,
+                blocks: [
+                    { type: 'Drill', duration: 10, drillTitle: 'Ball Mastery', description: 'Touches at home.' },
+                    { type: 'Drill', duration: 10, drillTitle: 'Passing Wall', description: 'Two-touch passing.' }
+                ]
+            },
+            completions: [],
+            children: [{ id: 'player-1', name: 'Pat' }]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/practice-1?childId=player-1');
+        await waitForText(container, 'Practice');
+        expect(container.textContent).toContain('Practice packet ready');
+        await clickButton(container, 'Practice packet ready, review packet');
+        await waitForText(container, 'Practice hub');
+
+        const firstHubCardTitle = container.querySelector('.app-card article h3')?.textContent;
+        const practiceHub = Array.from(container.querySelectorAll('.app-card')).find((card) => card.textContent.includes('Practice hub'));
+        expect(practiceHub.querySelector('article h3')?.textContent).toBe('Share practice');
+        expect(container.textContent).not.toContain('Open packet');
+        expect(container.textContent).toContain('Open team');
+        expect(container.textContent).toContain('Packet ready');
+        expect(container.textContent).toContain('Ball Mastery');
+        expect(container.textContent).toContain('Mark complete: Pat');
+
+        await clickButton(container, 'Share practice');
+
+        const shareCall = publicActionMocks.sharePublicUrl.mock.calls[0]?.[0];
+        expect(shareCall.title).toBe('Bears Practice');
+        expect(shareCall.url).toBeUndefined();
+        expect(shareCall.text).toContain('Bears Practice');
+        expect(shareCall.text).toContain('North Field');
+        expect(shareCall.text).toContain('Packet: 2 drills · 20 min');
+        expect(shareCall.text).not.toContain('allplays.ai');
+        await waitForText(container, 'Practice share sheet opened.');
+
+        await clickButton(container, 'Mark complete: Pat');
+        expect(scheduleMocks.markParentPracticePacketComplete).toHaveBeenCalledWith(
+            expect.objectContaining({ sessionId: 'session-1' }),
+            auth.user,
+            { id: 'player-1', name: 'Pat' }
+        );
+        await waitForText(container, 'Pat marked complete.');
+    });
+
+    it('renders the completed game More tab with replay and report actions wired to public URLs', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [
+                event({
+                    liveStatus: 'completed',
+                    homeScore: 4,
+                    awayScore: 2
+                })
+            ]
+        });
+        reportMocks.loadGameReportSections.mockResolvedValue(report());
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Game hub');
+
+        expect(container.textContent).toContain('Watch replay');
+        expect(container.textContent).toContain('Match report');
+
+        await clickButton(container, 'Watch replay');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+
+        await clickButton(container, 'Share match report');
+        const shareCall = publicActionMocks.sharePublicUrl.mock.calls[0]?.[0];
+        expect(shareCall.title).toBe('Bears vs. Falcons match report');
+        expect(shareCall.url).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+        expect(shareCall.clipboardText).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+    });
+});

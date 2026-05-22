@@ -1,0 +1,880 @@
+import { expect, test } from '@playwright/test';
+
+const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
+test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
+
+function appUrl(baseURL, hashPath) {
+    const url = new URL('/', appBaseUrl || baseURL);
+    url.hash = hashPath;
+    return url.toString();
+}
+
+async function mockScheduleModules(page, options = {}) {
+    const gameDate = options.gameDate || '2026-05-28T18:00:00Z';
+    const practiceDate = options.practiceDate || '2026-05-29T19:00:00Z';
+    const authRoles = options.isAdmin ? ['parent', 'admin'] : options.isCoach ? ['parent', 'coach'] : ['parent'];
+    const scheduleLoadError = options.scheduleLoadError || '';
+    const rideshareLoadError = options.rideshareLoadError || '';
+    const assignmentClaimError = options.assignmentClaimError || '';
+    const gameStatus = options.gameStatus || 'scheduled';
+    const gameLiveStatus = options.gameLiveStatus || null;
+    const gameHomeScore = options.gameHomeScore ?? null;
+    const gameAwayScore = options.gameAwayScore ?? null;
+    const extraUpcomingEvents = Array.from({ length: options.extraUpcomingEvents || 0 }, (_, index) => {
+        const day = String(index + 1).padStart(2, '0');
+        return `baseEvent({ eventKey: 'bulk-upcoming-${index}', id: 'bulk-upcoming-${index}', childId: 'player-1', childName: 'Pat', date: new Date('2026-06-${day}T18:00:00Z'), opponent: 'Team ${index + 1}', location: 'Field ${index + 1}' })`;
+    }).join(',\n                            ');
+    const extraPastEvents = Array.from({ length: options.extraPastEvents || 0 }, (_, index) => {
+        const day = String(index + 1).padStart(2, '0');
+        return `baseEvent({ eventKey: 'bulk-past-${index}', id: 'bulk-past-${index}', childId: 'player-1', childName: 'Pat', date: new Date('2026-01-${day}T18:00:00Z'), opponent: 'Past ${index + 1}', location: 'Old Field ${index + 1}' })`;
+    }).join(',\n                            ');
+
+    await page.addInitScript(() => {
+        window.__scheduleCalls = {
+            loads: 0,
+            rsvps: [],
+            rideshare: [],
+            assignments: [],
+            packets: []
+        };
+        window.__openedPublicUrls = [];
+        window.__sharedPayloads = [];
+        window.__copiedAgenda = '';
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: {
+                writeText: async (text) => {
+                    window.__copiedAgenda = text;
+                }
+            }
+        });
+        Object.defineProperty(navigator, 'share', {
+            configurable: true,
+            value: async (payload) => {
+                window.__sharedPayloads.push(payload);
+            }
+        });
+        window.open = (url) => {
+            window.__openedPublicUrls.push(String(url));
+            return { closed: false };
+        };
+    });
+
+    await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function useAuth() {
+                    const user = {
+                        uid: 'user-1',
+                        email: 'parent@example.com',
+                        displayName: 'Pat Parent',
+                        roles: ${JSON.stringify(authRoles)},
+                        parentOf: [
+                            { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat', teamName: 'Bears' },
+                            { teamId: 'team-1', playerId: 'player-2', playerName: 'Sam', teamName: 'Bears' }
+                        ]
+                    };
+                    return {
+                        user,
+                        profile: { parentOf: user.parentOf },
+                        loading: false,
+                        error: null,
+                        roles: user.roles,
+                        isParent: true,
+                        isCoach: ${JSON.stringify(options.isCoach === true)},
+                        isAdmin: ${JSON.stringify(options.isAdmin === true)},
+                        isPlatformAdmin: ${JSON.stringify(options.isPlatformAdmin === true)},
+                        refresh: async () => {},
+                        signOut: async () => {}
+                    };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/scheduleService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                function baseEvent(overrides) {
+                    return {
+                        eventKey: overrides.eventKey,
+                        id: overrides.id,
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        type: overrides.type || 'game',
+                        date: overrides.date,
+                        endDate: overrides.endDate || new Date(overrides.date.getTime() + 60 * 60 * 1000),
+                        location: overrides.location || 'Main Gym',
+                        opponent: overrides.opponent || 'Falcons',
+                        opponentTeamName: overrides.opponentTeamName || null,
+                        opponentTeamPhoto: null,
+                        title: overrides.title || null,
+                        childId: overrides.childId,
+                        childName: overrides.childName,
+                        isDbGame: overrides.isDbGame !== false,
+                        isCancelled: false,
+                        status: overrides.status || 'scheduled',
+                        liveStatus: overrides.liveStatus || null,
+                        homeScore: overrides.homeScore ?? null,
+                        awayScore: overrides.awayScore ?? null,
+                        isHome: true,
+                        kitColor: 'Blue',
+                        arrivalTime: null,
+                        notes: overrides.notes || null,
+                        seasonLabel: overrides.seasonLabel || 'Spring 2026',
+                        competitionType: overrides.competitionType || 'league',
+                        countsTowardSeasonRecord: true,
+                        sourceType: overrides.sourceType || 'db',
+                        sourceLabel: overrides.sourceLabel || 'ALL PLAYS schedule',
+                        isImported: overrides.isImported === true,
+                        visibility: 'team',
+                        myRsvp: overrides.myRsvp || 'not_responded',
+                        myRsvpNote: overrides.myRsvpNote || '',
+                        rsvpSummary: overrides.rsvpSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1 },
+                        rideshareSummary: overrides.rideshareSummary || { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false },
+                        assignments: overrides.assignments || getAssignments(),
+                        availabilityLocked: false,
+                        availabilityCutoffLabel: 'No cutoff',
+                        availabilityPreferences: { cutoffMinutesBeforeStart: 0, noteVisibility: 'team' },
+                        availabilityNoteVisibility: 'team',
+                        availabilityNotesVisible: true,
+                        availabilityNotes: overrides.availabilityNotes || [
+                            { displayName: 'Dana Parent', response: 'maybe', note: 'May arrive from another field.' }
+                        ],
+                        practiceAttendanceSummary: null,
+                        practiceHomePacketSummary: overrides.practiceHomePacketSummary || null,
+                        practiceSessionId: overrides.practiceSessionId || null,
+                        practiceHomePacket: overrides.practiceHomePacket || null,
+                        practicePacketCompletions: []
+                    };
+                }
+
+                function initialRideOffers() {
+                    return [
+                        {
+                            id: 'offer-away',
+                            sourceGameId: 'game-1',
+                            driverUserId: 'driver-2',
+                            driverName: 'Dana Driver',
+                            seatCapacity: 3,
+                            seatCountConfirmed: 1,
+                            direction: 'to',
+                            note: 'Leaving from the school lot',
+                            status: 'open',
+                            requests: [
+                                { id: 'user-1__player-2', parentUserId: 'user-1', childId: 'player-2', childName: 'Sam', status: 'pending' }
+                            ]
+                        },
+                        {
+                            id: 'offer-own',
+                            sourceGameId: 'game-1',
+                            driverUserId: 'user-1',
+                            driverName: 'Pat Parent',
+                            seatCapacity: 2,
+                            seatCountConfirmed: 0,
+                            direction: 'round-trip',
+                            note: 'Can take two after work',
+                            status: 'open',
+                            requests: [
+                                { id: 'other-parent__player-3', parentUserId: 'other-parent', childId: 'player-3', childName: 'Taylor', status: 'pending' }
+                            ]
+                        }
+                    ];
+                }
+
+                function getRideOffers() {
+                    if (!window.__mockRideOffers) {
+                        window.__mockRideOffers = initialRideOffers();
+                    }
+                    return window.__mockRideOffers;
+                }
+
+                function initialAssignments() {
+                    return [
+                        { role: 'Snacks', value: '', claimable: true, claim: null },
+                        { role: 'Scorebook', value: 'Jamie', claimable: false, claim: null },
+                        { role: 'Drinks', value: '', claimable: true, claim: { id: 'Drinks', claimedByUserId: 'user-1', claimedByName: 'Pat Parent' } },
+                        { role: 'Setup', value: '', claimable: true, claim: { id: 'Setup', claimedByUserId: 'other-parent', claimedByName: 'Taylor' } }
+                    ];
+                }
+
+                function getAssignments() {
+                    if (!window.__mockAssignments) {
+                        window.__mockAssignments = initialAssignments();
+                    }
+                    return window.__mockAssignments;
+                }
+
+                function summarizeRideOffers(offers) {
+                    const openOffers = offers.filter((offer) => offer.status === 'open');
+                    const totals = openOffers.reduce((acc, offer) => {
+                        acc.seatsLeft += Math.max(0, Number(offer.seatCapacity || 0) - Number(offer.seatCountConfirmed || 0));
+                        acc.requests += offer.requests.length;
+                        acc.pending += offer.requests.filter((request) => request.status !== 'confirmed' && request.status !== 'waitlisted' && request.status !== 'declined').length;
+                        acc.confirmed += offer.requests.filter((request) => request.status === 'confirmed').length;
+                        return acc;
+                    }, { seatsLeft: 0, requests: 0, pending: 0, confirmed: 0 });
+                    return {
+                        offerCount: openOffers.length,
+                        seatsLeft: totals.seatsLeft,
+                        requests: totals.requests,
+                        pending: totals.pending,
+                        confirmed: totals.confirmed,
+                        isFull: openOffers.length > 0 && totals.seatsLeft === 0
+                    };
+                }
+
+                export async function loadParentSchedule() {
+                    if (${JSON.stringify(scheduleLoadError)}) {
+                        throw new Error(${JSON.stringify(scheduleLoadError)});
+                    }
+                    window.__scheduleCalls.loads += 1;
+                    const rideshareSummary = summarizeRideOffers(getRideOffers());
+                    return {
+                        children: [
+                            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
+                            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
+                        ],
+                        events: [
+                            baseEvent({ eventKey: 'game-1-player-1', id: 'game-1', childId: 'player-1', childName: 'Pat', date: new Date(${JSON.stringify(gameDate)}), rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)} }),
+                            baseEvent({ eventKey: 'game-1-player-2', id: 'game-1', childId: 'player-2', childName: 'Sam', date: new Date(${JSON.stringify(gameDate)}), myRsvp: 'maybe', rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)} }),
+                            baseEvent({
+                                eventKey: 'practice-1-player-1',
+                                id: 'practice-1',
+                                type: 'practice',
+                                childId: 'player-1',
+                                childName: 'Pat',
+                                date: new Date('${practiceDate}'),
+                                title: 'Practice',
+                                opponent: 'TBD',
+                                practiceSessionId: 'session-1',
+                                practiceHomePacketSummary: '2 drills · 20 min',
+                                practiceHomePacket: {
+                                    totalMinutes: 20,
+                                    blocks: [
+                                        { type: 'Drill', duration: 10, drillTitle: 'Ball Mastery', description: '100 touches at home.' },
+                                        { type: 'Drill', duration: 10, drillTitle: 'Passing Wall', description: 'Two-touch passing.' }
+                                    ]
+                                }
+                            })
+                            ${extraUpcomingEvents ? `,\n                            ${extraUpcomingEvents}` : ''}
+                            ${extraPastEvents ? `,\n                            ${extraPastEvents}` : ''}
+                        ]
+                    };
+                }
+
+                export async function submitParentScheduleRsvp(event, user, response, note = '') {
+                    window.__scheduleCalls.rsvps.push({ eventKey: event.eventKey, childId: event.childId, userId: user.uid, response, note });
+                    return { going: 2, maybe: 0, notGoing: 0, notResponded: 0 };
+                }
+
+                export async function loadParentPracticePacket(event, childEvents) {
+                    window.__scheduleCalls.packets.push({ action: 'load', eventId: event.id, sessionId: event.practiceSessionId });
+                    if (!event.practiceHomePacket) return null;
+                    return {
+                        sessionId: event.practiceSessionId || event.id,
+                        teamId: event.teamId,
+                        eventId: event.id,
+                        title: event.title || 'Practice',
+                        date: event.date,
+                        location: event.location || 'TBD',
+                        homePacket: event.practiceHomePacket,
+                        completions: window.__mockPacketCompletions || [],
+                        children: childEvents.map((childEvent) => ({ id: childEvent.childId, name: childEvent.childName }))
+                    };
+                }
+
+                export async function markParentPracticePacketComplete(packet, user, child) {
+                    const completion = {
+                        id: user.uid + '__' + child.id,
+                        parentUserId: user.uid,
+                        parentName: user.displayName || user.email,
+                        childId: child.id,
+                        childName: child.name,
+                        status: 'completed'
+                    };
+                    window.__mockPacketCompletions = (window.__mockPacketCompletions || []).filter((item) => item.id !== completion.id).concat(completion);
+                    window.__scheduleCalls.packets.push({ action: 'complete', sessionId: packet.sessionId, childId: child.id });
+                    return completion;
+                }
+
+                export async function loadParentScheduleAssignments() {
+                    window.__scheduleCalls.assignments.push({ action: 'load' });
+                    return getAssignments();
+                }
+
+                export async function claimParentScheduleAssignmentSlot(event, user, role) {
+                    if (${JSON.stringify(assignmentClaimError)}) {
+                        throw new Error(${JSON.stringify(assignmentClaimError)});
+                    }
+                    const assignment = getAssignments().find((item) => item.role === role);
+                    if (!assignment) throw new Error('Assignment not found');
+                    if (assignment.claim) throw new Error('This slot has already been claimed.');
+                    assignment.claim = { id: role, claimedByUserId: user.uid, claimedByName: user.displayName || user.email };
+                    window.__scheduleCalls.assignments.push({ action: 'claim', role, userId: user.uid });
+                }
+
+                export async function releaseParentScheduleAssignmentClaim(event, role) {
+                    const assignment = getAssignments().find((item) => item.role === role);
+                    if (assignment) assignment.claim = null;
+                    window.__scheduleCalls.assignments.push({ action: 'release', role });
+                }
+
+                export async function loadParentScheduleRideOffers() {
+                    if (${JSON.stringify(rideshareLoadError)}) {
+                        throw new Error(${JSON.stringify(rideshareLoadError)});
+                    }
+                    window.__scheduleCalls.rideshare.push({ action: 'load' });
+                    return getRideOffers();
+                }
+
+                export async function createParentScheduleRideOffer(event, user, input) {
+                    const offer = {
+                        id: 'offer-created-' + getRideOffers().length,
+                        sourceGameId: event.id,
+                        driverUserId: user.uid,
+                        driverName: user.displayName || user.email,
+                        seatCapacity: input.seatCapacity,
+                        seatCountConfirmed: 0,
+                        direction: input.direction,
+                        note: input.note || null,
+                        status: 'open',
+                        requests: []
+                    };
+                    getRideOffers().unshift(offer);
+                    window.__scheduleCalls.rideshare.push({ action: 'create', eventId: event.id, userId: user.uid, input });
+                    return offer.id;
+                }
+
+                export async function requestParentScheduleRideSpot(event, offer, user, child) {
+                    const found = getRideOffers().find((item) => item.id === offer.id);
+                    if (!found) throw new Error('Offer not found');
+                    const request = {
+                        id: user.uid + '__' + child.childId,
+                        parentUserId: user.uid,
+                        childId: child.childId,
+                        childName: child.childName,
+                        status: 'pending'
+                    };
+                    found.requests = found.requests.filter((item) => item.id !== request.id).concat(request);
+                    window.__scheduleCalls.rideshare.push({ action: 'request', offerId: offer.id, childId: child.childId, childName: child.childName });
+                    return request.id;
+                }
+
+                export async function cancelParentScheduleRideRequest(event, offer, requestId) {
+                    const found = getRideOffers().find((item) => item.id === offer.id);
+                    if (found) {
+                        found.requests = found.requests.filter((request) => request.id !== requestId);
+                    }
+                    window.__scheduleCalls.rideshare.push({ action: 'cancel', offerId: offer.id, requestId });
+                }
+
+                export async function updateParentScheduleRideRequestStatus(event, offer, requestId, status) {
+                    const found = getRideOffers().find((item) => item.id === offer.id);
+                    const request = found?.requests.find((item) => item.id === requestId);
+                    if (request) request.status = status;
+                    if (found) {
+                        found.seatCountConfirmed = found.requests.filter((item) => item.status === 'confirmed').length;
+                    }
+                    window.__scheduleCalls.rideshare.push({ action: 'decision', offerId: offer.id, requestId, status });
+                }
+
+                export async function setParentScheduleRideOfferStatus(event, offer, status) {
+                    const found = getRideOffers().find((item) => item.id === offer.id);
+                    if (found) found.status = status;
+                    window.__scheduleCalls.rideshare.push({ action: 'status', offerId: offer.id, status });
+                }
+
+                export function summarizeParentScheduleRideOffers(offers) {
+                    return summarizeRideOffers(offers);
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/gameReportService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadGameReportSections(teamId, gameId) {
+                    window.__scheduleCalls.gameReport = { teamId, gameId };
+                    return {
+                        team: { id: teamId, name: 'Bears' },
+                        game: {
+                            id: gameId,
+                            opponent: 'Falcons',
+                            status: 'completed',
+                            liveStatus: 'completed',
+                            homeScore: 4,
+                            awayScore: 2,
+                            summary: '**Strong start**\\nPat helped set the tone early and the team finished strong.\\n- Shared the ball well'
+                        },
+                        summary: '**Strong start**\\nPat helped set the tone early and the team finished strong.\\n- Shared the ball well',
+                        statKeys: ['pts', 'reb'],
+                        statLabels: { pts: 'PTS', reb: 'REB' },
+                        hasPlayingTime: true,
+                        playerRows: [
+                            { playerId: 'player-1', playerName: 'Pat', number: '7', stats: { pts: 12, reb: 5 }, timeMs: 1200000, didNotPlay: false },
+                            { playerId: 'player-2', playerName: 'Sam', number: '9', stats: { pts: 4, reb: 2 }, timeMs: 900000, didNotPlay: false }
+                        ],
+                        opponentStatKeys: ['pts', 'fouls'],
+                        opponentStatLabels: { pts: 'PTS', fouls: 'FOULS' },
+                        opponentRows: [
+                            { id: 'opp-1', name: 'Opp Guard', number: '2', stats: { pts: 8, fouls: 1 } }
+                        ],
+                        teamStatKeys: ['turnovers', 'assists'],
+                        teamStatLabels: { turnovers: 'Turnovers', assists: 'Assists' },
+                        teamStats: { turnovers: 6, assists: 11 },
+                        statSheetPhotoUrl: 'https://allplays.ai/mock-statsheet.jpg',
+                        highlightClips: [
+                            { title: 'Fast break', description: 'Pat scores in transition', period: 'Q1', gameTime: '8:12', startMs: 1000, endMs: 5000, url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=1000&clipEnd=5000' }
+                        ],
+                        plays: [
+                            { id: 'play-1', text: 'Pat scored in transition', period: 'Q1', clock: '8:12', timestamp: new Date('2026-05-21T18:05:00Z') },
+                            { id: 'play-2', text: 'Sam grabbed a rebound', period: 'Q2', clock: '4:30', timestamp: new Date('2026-05-21T18:22:00Z') }
+                        ],
+                        teamInsights: [
+                            { title: 'Offensive catalyst', body: 'Pat led the scoring with 12 points.', tone: 'positive' }
+                        ],
+                        playerInsightRows: [
+                            { playerId: 'player-1', playerName: 'Pat', insights: [{ title: 'Closing presence', body: 'Pat stayed involved late.', tone: 'positive' }] }
+                        ],
+                        emptyInsightsMessage: ''
+                    };
+                }
+            `
+        });
+    });
+}
+
+test('app schedule loads agenda filters, player select, calendar, export, and game detail link', async ({ page, baseURL }) => {
+    await mockScheduleModules(page);
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'Games, practices, RSVP' })).toBeVisible();
+    await expect(page.locator('.schedule-header').getByText('RSVP Needed', { exact: true })).toBeVisible();
+    await expect(page.getByText('Family agenda')).toBeVisible();
+    await expect(page.getByText('Parent queue')).toBeVisible();
+    await expect(page.getByText('Next up')).toBeVisible();
+    await expect(page.getByText('For Pat · Bears').first()).toBeVisible();
+    await expect(page.locator('article').getByText('RSVP needed').first()).toBeVisible();
+    await expect(page.getByText('Snacks: Open')).toHaveCount(0);
+    await expect(page.getByText('Rideshare')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__scheduleCalls.loads)).toBeGreaterThanOrEqual(1);
+
+    await page.getByRole('button', { name: 'Upcoming Practices' }).click();
+    await expect(page.getByRole('heading', { name: 'Practice', exact: true })).toBeVisible();
+    await expect(page.getByText('Home packet: 2 drills · 20 min')).toHaveCount(0);
+    await expect(page.getByText('vs. Falcons')).not.toBeVisible();
+
+    await page.getByRole('button', { name: 'All Upcoming' }).click();
+    await page.getByLabel('Player', { exact: true }).selectOption('player-2');
+    await expect(page.getByText('For Sam · Bears')).toBeVisible();
+    await expect(page.getByText('For Pat · Bears')).not.toBeVisible();
+
+    const detailLink = page.getByRole('link', { name: 'Game details' }).first();
+    await expect(detailLink).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-2$/);
+    expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([]);
+
+    await page.getByRole('button', { name: 'Calendar', exact: true }).click();
+    await expect(page.getByText('May 2026')).toBeVisible();
+    await expect(page.getByText('vs. Falcons').first()).toBeVisible();
+
+    await page.getByRole('button', { name: '.ics' }).click();
+    await expect(page.getByText('Calendar export started.')).toBeVisible();
+
+    await page.getByLabel('Player', { exact: true }).selectOption('');
+    await page.getByRole('button', { name: 'Copy agenda' }).click();
+    await expect(page.getByText('Schedule details copied.')).toBeVisible();
+    expect(await page.evaluate(() => window.__copiedAgenda)).toContain('vs. Falcons');
+
+    await page.locator('.schedule-web-sidebar').getByRole('button', { name: 'Packets' }).click();
+    await expect(page.getByText('1 practice packet needs review')).toBeVisible();
+    await expect(page.getByText('2 drills · 20 min')).toBeVisible();
+});
+
+test('calendar day selection opens a visible event picker for multiple events', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, { practiceDate: '2026-05-28T19:00:00Z' });
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await page.getByRole('button', { name: 'Calendar', exact: true }).click();
+    await page.getByRole('button', { name: /May 2026 28, 2 events/ }).click();
+
+    const picker = page.getByRole('dialog', { name: /Thursday, May 28/ });
+    await expect(picker).toBeVisible();
+    await expect(picker.getByText('2 events')).toBeVisible();
+    await expect(picker.getByText('vs. Falcons')).toBeVisible();
+    await expect(picker.getByText('Practice').first()).toBeVisible();
+    await expect(picker.getByText('Open game')).toBeVisible();
+    await expect(picker.getByText('Open practice')).toBeVisible();
+    expect(await picker.evaluate((node) => window.getComputedStyle(node).position)).toBe('fixed');
+
+    await page.keyboard.press('Escape');
+    await expect(picker).toHaveCount(0);
+
+    await page.getByRole('button', { name: /May 2026 28, 2 events/ }).click();
+    const pickerAfterEscape = page.getByRole('dialog', { name: /Thursday, May 28/ });
+    await expect(pickerAfterEscape).toBeVisible();
+    await pickerAfterEscape.getByLabel('Close calendar events').click({ position: { x: 4, y: 4 } });
+    await expect(pickerAfterEscape).toHaveCount(0);
+
+    await page.getByRole('button', { name: /May 2026 28, 2 events/ }).click();
+    const pickerForClose = page.getByRole('dialog', { name: /Thursday, May 28/ });
+    await pickerForClose.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(pickerForClose).toHaveCount(0);
+
+    await page.getByRole('button', { name: /May 2026 28, 2 events/ }).click();
+    const pickerForNavigation = page.getByRole('dialog', { name: /Thursday, May 28/ });
+    await pickerForNavigation.locator('a').filter({ hasText: 'Open practice' }).click();
+    await expect(page).toHaveURL(/#\/schedule\/team-1\/practice-1\?childId=player-1$/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
+test('web schedule desktop layout stays dense and keeps schedule workflows visible', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await mockScheduleModules(page, { extraUpcomingEvents: 4 });
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('.schedule-web-sidebar')).toBeVisible();
+    await expect(page.getByText('Family agenda')).toBeVisible();
+    await expect(page.getByText('Parent queue')).toBeVisible();
+    await expect(page.getByText('Next up')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'All Upcoming' })).toBeVisible();
+    await expect(page.getByLabel('Player', { exact: true })).toBeVisible();
+
+    const headerHeight = await page.locator('.schedule-header').first().evaluate((node) => node.getBoundingClientRect().height);
+    expect(headerHeight).toBeLessThanOrEqual(210);
+
+    const visibleCards = await page.locator('.schedule-event-card').evaluateAll((cards) => cards.filter((card) => {
+        const rect = card.getBoundingClientRect();
+        return rect.top < window.innerHeight && rect.bottom > 0;
+    }).length);
+    expect(visibleCards).toBeGreaterThanOrEqual(4);
+
+    const firstCard = page.locator('.schedule-event-card').first();
+    await expect(firstCard.getByText('Availability needed')).toBeVisible();
+    await expect(firstCard.getByText('1 task open')).toBeVisible();
+    await expect(firstCard.getByText('4 seats open')).toBeVisible();
+    await expect(firstCard.getByRole('link', { name: 'Game details' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
+test('iOS-sized schedule smoke covers list, event nav, and rideshare without overflow', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page);
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByLabel('Schedule filter', { exact: true })).toBeVisible();
+    await expect(page.locator('.schedule-web-sidebar')).toBeHidden();
+    await expect(page.locator('.schedule-list > a')).toHaveCount(3);
+
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('.event-summary-card').getByRole('heading', { name: 'vs. Falcons' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Availability', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Rideshare', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Rideshare', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Rideshare' })).toBeVisible();
+    await expect(page.getByText('Dana Driver')).toBeVisible();
+    await expect(page.getByText('Request spot')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
+test('Android-sized schedule smoke covers practice packet and More workflow without overflow', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 412, height: 915 });
+    await mockScheduleModules(page);
+    await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'Practice' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Practice packet ready/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'More, packet ready' })).toBeVisible();
+
+    await page.getByRole('button', { name: /Practice packet ready/ }).click();
+    await expect(page.getByRole('heading', { name: 'Practice hub' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Packet ready' })).toBeVisible();
+    await expect(page.getByText('Ball Mastery')).toBeVisible();
+    await expect(page.getByText('Passing Wall')).toBeVisible();
+    await page.getByRole('button', { name: 'Mark complete: Pat' }).click();
+    await expect(page.getByText('Pat marked complete.')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
+test('app schedule event detail exposes parent actions and RSVP', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, {
+        gameStatus: 'completed',
+        gameLiveStatus: 'completed',
+        gameHomeScore: 4,
+        gameAwayScore: 2
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible();
+    await expect(page.getByText('Pat · Bears')).toBeVisible();
+    await expect(page.getByText('Availability needed')).toBeVisible();
+    await expect(page.getByText('Is Pat going?')).toBeVisible();
+    await expect(page.getByText('Needs attention', { exact: true })).toBeVisible();
+    await expect(page.getByText('Review assignments')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Availability' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+    const eventSummaryBox = await page.locator('.event-summary-card').boundingBox();
+    const eventNavBox = await page.locator('.event-section-nav').boundingBox();
+    expect(eventSummaryBox?.height || 0).toBeLessThanOrEqual(220);
+    expect(eventNavBox?.y || 0).toBeLessThanOrEqual(360);
+
+    await page.getByRole('button', { name: 'Rideshare', exact: true }).click();
+    const rideshareSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Rideshare' }) });
+    await expect(rideshareSection.getByText('Seats open')).toBeVisible();
+    await expect(rideshareSection.getByText('4', { exact: true }).first()).toBeVisible();
+    await expect(rideshareSection.getByText('Dana Driver')).toBeVisible();
+    await expect(rideshareSection.getByText('Leaving from the school lot')).toBeVisible();
+    await expect(rideshareSection.getByText('Pat Parent')).toBeVisible();
+    await expect(rideshareSection.getByText('Taylor')).toBeVisible();
+    await expect(rideshareSection.locator('article').filter({ hasText: 'Dana Driver' }).getByRole('button', { name: 'Close' })).toHaveCount(0);
+    await expect(rideshareSection.locator('article').filter({ hasText: 'Dana Driver' }).getByRole('button', { name: 'Confirm' })).toHaveCount(0);
+
+    await rideshareSection.locator('article').filter({ hasText: 'Dana Driver' }).getByRole('button', { name: 'Request spot' }).click();
+    await expect(rideshareSection.getByText('Ride requested for Pat.')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.rideshare.some((call) => call.action === 'request' && call.offerId === 'offer-away' && call.childId === 'player-1'))).toBe(true);
+    await expect(rideshareSection.getByText('Your request for Pat: pending')).toBeVisible();
+    await rideshareSection.locator('article').filter({ hasText: 'Dana Driver' }).getByRole('button', { name: 'Cancel' }).click();
+    await expect(rideshareSection.getByText('Ride request cancelled.')).toBeVisible();
+
+    await rideshareSection.locator('article').filter({ hasText: 'Pat Parent' }).getByRole('button', { name: 'Confirm' }).click();
+    await expect(rideshareSection.getByText('Ride request confirmed.')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.rideshare.some((call) => call.action === 'decision' && call.offerId === 'offer-own' && call.status === 'confirmed'))).toBe(true);
+
+    await rideshareSection.getByRole('button', { name: 'Offer Ride' }).click();
+    await rideshareSection.getByLabel('Seats').fill('4');
+    await rideshareSection.getByLabel('Direction').selectOption('round-trip');
+    await rideshareSection.getByLabel('Note').fill('Leaving after the team talk');
+    await rideshareSection.getByRole('button', { name: 'Save' }).click();
+    await expect(rideshareSection.getByText('Ride offer saved.')).toBeVisible();
+    await expect(rideshareSection.getByText('Leaving after the team talk')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.rideshare.some((call) => call.action === 'create' && call.input.seatCapacity === 4 && call.input.direction === 'round-trip'))).toBe(true);
+
+    await page.getByRole('button', { name: 'Assignments', exact: true }).click();
+    const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
+    await expect(assignmentsSection.getByText('4 posted · 1 open')).toBeVisible();
+    await expect(assignmentsSection.getByText('Snacks')).toBeVisible();
+    await expect(assignmentsSection.getByText('Scorebook: Jamie')).toBeVisible();
+    await expect(assignmentsSection.getByText('Drinks')).toBeVisible();
+    await expect(assignmentsSection.getByText('You')).toBeVisible();
+    await expect(assignmentsSection.getByText('Setup')).toBeVisible();
+    await expect(assignmentsSection.getByText('Taylor')).toBeVisible();
+    await assignmentsSection.locator('article').filter({ hasText: 'Snacks' }).getByRole('button', { name: 'Sign up' }).click();
+    await expect(assignmentsSection.getByText('Snacks claimed.')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.assignments.some((call) => call.action === 'claim' && call.role === 'Snacks'))).toBe(true);
+    await expect(assignmentsSection.locator('article').filter({ hasText: 'Snacks' }).getByText('You')).toBeVisible();
+    await assignmentsSection.locator('article').filter({ hasText: 'Snacks' }).getByRole('button', { name: 'Release' }).click();
+    await expect(assignmentsSection.getByText('Snacks released.')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.assignments.some((call) => call.action === 'release' && call.role === 'Snacks'))).toBe(true);
+
+    await page.getByRole('button', { name: 'Game', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Game hub' })).toBeVisible();
+    await expect(page.getByText('Report sections')).toBeVisible();
+    await expect(page.getByText('Pat helped set the tone early and the team finished strong.')).toBeVisible();
+    const reportSections = page.locator('.app-card').filter({ has: page.getByText('Report sections') });
+    await expect(reportSections.locator('strong').filter({ hasText: 'Strong start' })).toBeVisible();
+    await expect(reportSections.getByText('**Strong start**')).toHaveCount(0);
+    await expect(reportSections.locator('li').filter({ hasText: 'Shared the ball well' })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Team chat/ })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Watch replay' }).click();
+    expect(await page.evaluate(() => window.__openedPublicUrls)).toContain('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+    await page.getByRole('button', { name: 'Share replay' }).click();
+    expect(await page.evaluate(() => window.__sharedPayloads[0]?.url)).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+    expect(await page.evaluate(() => window.__sharedPayloads[0]?.text)).toContain('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
+    await expect(page.getByRole('button', { name: 'Open report' })).toBeVisible();
+    await page.getByRole('button', { name: 'Share match report' }).click();
+    expect(await page.evaluate(() => window.__sharedPayloads[1]?.url)).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+    expect(await page.evaluate(() => window.__sharedPayloads[1]?.text)).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+    expect(await page.evaluate(() => window.__scheduleCalls.gameReport)).toEqual({ teamId: 'team-1', gameId: 'game-1' });
+    await page.getByRole('button', { name: 'Players' }).click();
+    await expect(page.getByText('#7 Pat')).toBeVisible();
+    await expect(page.getByText('12')).toBeVisible();
+    await expect(page.getByRole('link', { name: /#7 Pat/ })).toHaveAttribute('href', /https:\/\/allplays\.ai\/player\.html#teamId=team-1&gameId=game-1&playerId=player-1/);
+    await page.getByRole('button', { name: 'Plays' }).click();
+    await expect(page.getByText('Pat scored in transition')).toBeVisible();
+    await page.getByRole('button', { name: 'Opponent' }).click();
+    await expect(page.getByText('Opp Guard')).toBeVisible();
+    await page.getByRole('button', { name: 'Insights' }).click();
+    await expect(page.getByText('Offensive catalyst')).toBeVisible();
+    await page.getByRole('button', { name: 'Media' }).click();
+    await expect(page.getByText('Pat scores in transition')).toBeVisible();
+    await expect(page.getByText('Score sheet photo')).toBeVisible();
+    await expect(page.getByText('Turnovers')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+
+    await page.getByRole('button', { name: 'Availability', exact: true }).click();
+    const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
+    await expect(availabilitySection.getByRole('heading', { name: 'Availability' })).toBeVisible();
+    await expect(availabilitySection.getByText('Dana Parent')).toBeVisible();
+    await availabilitySection.getByLabel('Availability note').fill('Arriving after school pickup.');
+    await availabilitySection.getByRole('button', { name: 'Going' }).click();
+    expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
+        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' }
+    ]);
+    await expect(page.getByText('Pat marked going.')).toBeVisible();
+});
+
+test('app practice more tab uses hub cards and shares event details without a link', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page);
+    await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'Practice' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Practice packet ready/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'More, packet ready' })).toBeVisible();
+    await page.getByRole('button', { name: /Practice packet ready/ }).click();
+    await expect(page.getByRole('heading', { name: 'Practice hub' })).toBeVisible();
+    const practiceHub = page.locator('.app-card').filter({ has: page.getByRole('heading', { name: 'Practice hub' }) });
+    await expect(page.getByText('2 drills · 20 min · Main Gym')).toBeVisible();
+    await expect(practiceHub.locator('article').first().getByRole('heading', { name: 'Share practice' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open packet' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Open team' })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Team chat/ })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Packet ready' })).toBeVisible();
+    await expect(page.getByText('Ball Mastery')).toBeVisible();
+    await expect(page.getByText('Passing Wall')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mark complete: Pat' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Share practice' }).first().click();
+    const payload = await page.evaluate(() => window.__sharedPayloads[0]);
+    expect(payload.url).toBeUndefined();
+    expect(payload.text).toContain('Bears Practice');
+    expect(payload.text).toContain('Main Gym');
+    expect(payload.text).toContain('Packet: 2 drills · 20 min');
+    expect(payload.text).not.toContain('allplays.ai');
+
+    await page.getByRole('button', { name: 'Mark complete: Pat' }).click();
+    await expect(page.getByText('Pat marked complete.')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.packets.some((call) => call.action === 'complete' && call.childId === 'player-1'))).toBe(true);
+});
+
+test('app schedule assignments supports parent sign up and release', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page);
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+
+    await page.getByRole('button', { name: 'Assignments', exact: true }).click();
+    const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
+    const snacksCard = assignmentsSection.locator('article').filter({ hasText: 'Snacks' });
+    const drinksCard = assignmentsSection.locator('article').filter({ hasText: 'Drinks' });
+    const setupCard = assignmentsSection.locator('article').filter({ hasText: 'Setup' });
+
+    await expect(assignmentsSection.getByText('4 posted · 1 open')).toBeVisible();
+    await expect(assignmentsSection.getByText('Scorebook: Jamie')).toBeVisible();
+    await expect(snacksCard.getByRole('button', { name: 'Sign up' })).toBeVisible();
+    await expect(drinksCard.getByText('You')).toBeVisible();
+    await expect(setupCard.getByText('Taylor')).toBeVisible();
+
+    await snacksCard.getByRole('button', { name: 'Sign up' }).click();
+    await expect(assignmentsSection.getByText('Snacks claimed.')).toBeVisible();
+    await expect(assignmentsSection.getByText('4 posted · 0 open')).toBeVisible();
+    await expect(snacksCard.getByText('You')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.assignments.some((call) => call.action === 'claim' && call.role === 'Snacks'))).toBe(true);
+
+    await snacksCard.getByRole('button', { name: 'Release' }).click();
+    await expect(assignmentsSection.getByText('Snacks released.')).toBeVisible();
+    await expect(assignmentsSection.getByText('4 posted · 1 open')).toBeVisible();
+    await expect(snacksCard.getByRole('button', { name: 'Sign up' })).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.assignments.some((call) => call.action === 'release' && call.role === 'Snacks'))).toBe(true);
+});
+
+test('app schedule keeps filters compact on phone', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page);
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByLabel('Schedule filter', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Upcoming Practices' })).toBeHidden();
+    await expect(page.getByRole('link', { name: /Game details/i })).toHaveCount(0);
+
+    const mobileRows = page.locator('.schedule-list > a');
+    await expect(mobileRows).toHaveCount(3);
+    const rowHeights = await mobileRows.evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+    for (const rowHeight of rowHeights) {
+        expect(rowHeight).toBeLessThanOrEqual(86);
+    }
+
+    await page.getByLabel('Schedule filter', { exact: true }).selectOption('upcoming-practices');
+    await expect(page.getByRole('heading', { name: 'Practice', exact: true })).toBeVisible();
+    await expect(page.getByText('Home packet: 2 drills · 20 min')).toHaveCount(0);
+    await expect(page.getByText('vs. Falcons')).not.toBeVisible();
+
+    await expect(page.locator('.schedule-header').getByText('1 event · 1 RSVP · 1 packets')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
+test('app schedule paginates long agenda lists and resets on filter changes', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, { extraUpcomingEvents: 22, extraPastEvents: 12 });
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    const mobileRows = page.locator('.schedule-list > a');
+    await expect(mobileRows).toHaveCount(20);
+    await expect(page.getByText('Showing 20 of 25 events')).toBeVisible();
+    await page.getByRole('button', { name: 'Show 5 more' }).click();
+    await expect(mobileRows).toHaveCount(25);
+    await expect(page.getByRole('button', { name: /Show .* more/ })).toHaveCount(0);
+
+    await page.getByLabel('Schedule filter', { exact: true }).selectOption('past-all');
+    await expect(mobileRows).toHaveCount(10);
+    await expect(page.getByText('Showing 10 of 12 events')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Show 2 more' })).toBeVisible();
+
+    await page.getByLabel('Player filter', { exact: true }).selectOption('player-2');
+    await expect(mobileRows).toHaveCount(0);
+    await expect(page.getByText('No events in this filter')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Show .* more/ })).toHaveCount(0);
+});
+
+test('schedule role permissions let admins manage non-owned rideshare requests', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, { isAdmin: true });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+
+    await page.getByRole('button', { name: 'Rideshare', exact: true }).click();
+    const rideshareSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Rideshare' }) });
+    const danaCard = rideshareSection.locator('article').filter({ hasText: 'Dana Driver' });
+    await expect(danaCard.getByRole('button', { name: 'Close' })).toBeVisible();
+    await expect(danaCard.getByRole('button', { name: 'Confirm' })).toBeVisible();
+    await expect(danaCard.getByRole('button', { name: 'Waitlist' })).toBeVisible();
+    await expect(danaCard.getByRole('button', { name: 'Decline' })).toBeVisible();
+
+    await danaCard.getByRole('button', { name: 'Confirm' }).click();
+    await expect(rideshareSection.getByText('Ride request confirmed.')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.rideshare.some((call) => call.action === 'decision' && call.offerId === 'offer-away' && call.status === 'confirmed'))).toBe(true);
+});
+
+test('schedule failure states show errors without trapping users in spinners', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, { scheduleLoadError: 'Schedule unavailable.' });
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('Schedule unavailable.')).toBeVisible();
+    await expect(page.getByText('Loading schedule')).toHaveCount(0);
+
+    const errorPage = await page.context().newPage();
+    await mockScheduleModules(errorPage, {
+        rideshareLoadError: 'Rideshare unavailable.',
+        assignmentClaimError: 'Slot already taken.'
+    });
+    await errorPage.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+
+    await errorPage.getByRole('button', { name: 'Rideshare', exact: true }).click();
+    await expect(errorPage.getByText('Rideshare unavailable.')).toBeVisible();
+    await expect(errorPage.getByText('Loading rideshare offers')).toHaveCount(0);
+
+    await errorPage.getByRole('button', { name: 'Assignments', exact: true }).click();
+    const assignmentsSection = errorPage.locator('section').filter({ has: errorPage.getByRole('heading', { name: 'Assignments' }) });
+    await assignmentsSection.locator('article').filter({ hasText: 'Snacks' }).getByRole('button', { name: 'Sign up' }).click();
+    await expect(assignmentsSection.getByText('Slot already taken.')).toBeVisible();
+    await errorPage.close();
+});

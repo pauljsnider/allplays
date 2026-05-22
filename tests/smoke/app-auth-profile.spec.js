@@ -1,0 +1,492 @@
+import { expect, test } from '@playwright/test';
+
+const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
+test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
+
+function appUrl(baseURL, hashPath) {
+    const url = new URL('/', appBaseUrl || baseURL);
+    url.hash = hashPath;
+    return url.toString();
+}
+
+async function mockAppModules(page, { user = null, emailLink = false } = {}) {
+    await page.addInitScript(({ mockUser, mockEmailLink }) => {
+        window.__mockAuthState = {
+            user: mockUser,
+            profile: mockUser ? { fullName: mockUser.displayName || 'Pat Parent' } : null
+        };
+        window.__mockEmailLink = mockEmailLink;
+        window.__appAuthCalls = {
+            signInWithEmail: [],
+            signUpWithEmail: [],
+            signInWithGoogleAccount: [],
+            sendResetEmail: [],
+            redeemInviteForUser: [],
+            confirmReset: [],
+            verifyResetCode: [],
+            applyEmailActionCode: [],
+            resendVerificationEmail: 0,
+            reloadCurrentUser: 0,
+            setCurrentUserPassword: [],
+            refresh: 0,
+            signOut: 0
+        };
+        window.__appProfileCalls = {
+            uploads: [],
+            saves: [],
+            notificationSaves: [],
+            push: 0,
+            accessCodes: []
+        };
+    }, { mockUser: user, mockEmailLink: emailLink });
+
+    await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function useAuth() {
+                    const state = window.__mockAuthState || { user: null, profile: null };
+                    const user = state.user || null;
+                    const roles = user?.roles || [];
+                    return {
+                        user,
+                        profile: state.profile,
+                        loading: false,
+                        error: null,
+                        roles,
+                        isParent: roles.includes('parent'),
+                        isCoach: roles.includes('coach'),
+                        isAdmin: roles.includes('admin') || user?.isAdmin === true,
+                        isPlatformAdmin: roles.includes('platformAdmin'),
+                        refresh: async () => { window.__appAuthCalls.refresh += 1; },
+                        signOut: async () => {
+                            window.__appAuthCalls.signOut += 1;
+                            window.__mockAuthState = { user: null, profile: null };
+                        }
+                    };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/authService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                function mockUser() {
+                    return window.__mockAuthState?.user || {
+                        uid: 'user-1',
+                        email: 'parent@example.com',
+                        displayName: 'Pat Parent',
+                        emailVerified: false,
+                        roles: ['parent']
+                    };
+                }
+
+                export async function completeGoogleRedirect() {
+                    return null;
+                }
+
+                export function describeAuthError(error) {
+                    return error?.message || 'Authentication failed.';
+                }
+
+                export function getRouteForUser(user) {
+                    if (!user) return '/auth';
+                    return user.roles?.includes('coach') || user.roles?.includes('admin') ? '/teams' : '/home';
+                }
+
+                export async function hydrateFirebaseUser(user) {
+                    return { user: user || mockUser(), profile: {} };
+                }
+
+                export function rememberPendingInvite(code, type = 'parent') {
+                    window.localStorage.setItem('allplays-app-pending-invite-code', String(code || '').toUpperCase());
+                    window.localStorage.setItem('allplays-app-pending-invite-type', type);
+                }
+
+                export function readPendingInvite() {
+                    return {
+                        code: window.localStorage.getItem('allplays-app-pending-invite-code') || '',
+                        type: window.localStorage.getItem('allplays-app-pending-invite-type') || 'parent'
+                    };
+                }
+
+                export function clearPendingInvite() {
+                    window.localStorage.removeItem('allplays-app-pending-invite-code');
+                    window.localStorage.removeItem('allplays-app-pending-invite-type');
+                }
+
+                export async function signInWithEmail(email, password) {
+                    window.__appAuthCalls.signInWithEmail.push({ email, password });
+                    return { user: mockUser() };
+                }
+
+                export async function signUpWithEmail(email, password, activationCode) {
+                    window.__appAuthCalls.signUpWithEmail.push({ email, password, activationCode });
+                    return { user: mockUser() };
+                }
+
+                export async function signInWithGoogleAccount(activationCode) {
+                    window.__appAuthCalls.signInWithGoogleAccount.push({ activationCode });
+                    return { user: mockUser() };
+                }
+
+                export async function sendResetEmail(email) {
+                    window.__appAuthCalls.sendResetEmail.push(email);
+                }
+
+                export function isEmailLink() {
+                    return window.__mockEmailLink === true;
+                }
+
+                export async function completeEmailLink(email, url) {
+                    return { user: { ...mockUser(), email }, url };
+                }
+
+                export async function redeemInviteForUser(userId, code, authEmail) {
+                    window.__appAuthCalls.redeemInviteForUser.push({ userId, code, authEmail });
+                    return { message: 'Invite accepted.', redirectUrl: 'parent-dashboard.html' };
+                }
+
+                export function mapLegacyRedirectToAppRoute() {
+                    return '/home';
+                }
+
+                export async function applyEmailActionCode(oobCode) {
+                    window.__appAuthCalls.applyEmailActionCode.push(oobCode);
+                }
+
+                export async function verifyResetCode(oobCode) {
+                    window.__appAuthCalls.verifyResetCode.push(oobCode);
+                    if (oobCode !== 'valid-code') {
+                        throw new Error('This link is invalid or expired.');
+                    }
+                    return 'parent@example.com';
+                }
+
+                export async function confirmReset(oobCode, newPassword) {
+                    window.__appAuthCalls.confirmReset.push({ oobCode, newPassword });
+                }
+
+                export async function resendVerificationEmail() {
+                    window.__appAuthCalls.resendVerificationEmail += 1;
+                }
+
+                export async function reloadCurrentUser() {
+                    window.__appAuthCalls.reloadCurrentUser += 1;
+                }
+
+                export async function setCurrentUserPassword(newPassword) {
+                    window.__appAuthCalls.setCurrentUserPassword.push(newPassword);
+                }
+
+                export const firebaseAuth = { app: { options: { projectId: 'demo-allplays' } } };
+
+                export async function getNativeAuthIdToken() {
+                    return 'mock-token';
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/profileService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function normalizeNotificationPreferences(preferences) {
+                    return {
+                        liveChat: preferences?.liveChat !== false,
+                        liveScore: preferences?.liveScore === true,
+                        schedule: preferences?.schedule !== false
+                    };
+                }
+
+                export async function loadProfileDocument() {
+                    return {
+                        fullName: 'Pat Parent',
+                        phone: '555-0100',
+                        photoUrl: '',
+                        signInMethod: 'emailLink',
+                        hasPassword: false,
+                        updatedAt: { seconds: 1717200000 }
+                    };
+                }
+
+                export async function saveProfileDocument(userId, profile) {
+                    window.__appProfileCalls.saves.push({ userId, profile });
+                }
+
+                export async function uploadProfilePhoto(file) {
+                    window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
+                    return 'https://example.test/avatar.png';
+                }
+
+                export async function loadNotificationTeams() {
+                    return [
+                        { id: 'team-1', name: 'Blue Team' },
+                        { id: 'team-2', name: 'Gold Team' }
+                    ];
+                }
+
+                export async function loadNotificationPreferences() {
+                    return { liveChat: true, liveScore: false, schedule: true };
+                }
+
+                export async function saveNotificationPreferences(userId, teamId, preferences) {
+                    window.__appProfileCalls.notificationSaves.push({ userId, teamId, preferences });
+                    return preferences;
+                }
+
+                export async function createProfileAccessCode(userId, email, phone) {
+                    window.__appProfileCalls.accessCodes.push({ userId, email, phone });
+                    return 'NEWMVP42';
+                }
+
+                export async function loadProfileAccessCodes() {
+                    return [
+                        { id: 'code-1', code: 'ABCD1234', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
+                        { id: 'code-2', code: 'EFGH5678', email: '', phone: '555-0101', used: false, createdAt: { seconds: 1717113600 } },
+                        { id: 'code-3', code: 'IJKL9012', email: 'parent@example.com', phone: '', used: true, createdAt: { seconds: 1717027200 }, usedAt: { seconds: 1717113600 } },
+                        { id: 'code-4', code: 'MNOP3456', email: '', phone: '', used: false, createdAt: { seconds: 1716940800 } }
+                    ];
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/pushService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function enablePushNotificationsForUser() {
+                    window.__appProfileCalls.push += 1;
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/scheduleService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadParentSchedule() {
+                    return { children: [], events: [] };
+                }
+
+                export async function loadParentPracticePacket() {
+                    return null;
+                }
+
+                export async function loadParentScheduleAssignments() {
+                    return [];
+                }
+
+                export async function loadParentScheduleRideOffers() {
+                    return [];
+                }
+
+                export async function submitParentScheduleRsvp() {
+                    return { going: 1, maybe: 0, notGoing: 0, notResponded: 0 };
+                }
+
+                export async function createParentScheduleRideOffer() {}
+                export async function requestParentScheduleRideSpot() {}
+                export async function cancelParentScheduleRideRequest() {}
+                export async function setParentScheduleRideOfferStatus() {}
+                export async function updateParentScheduleRideRequestStatus() {}
+                export async function claimParentScheduleAssignmentSlot() {}
+                export async function releaseParentScheduleAssignmentClaim() {}
+                export async function markParentPracticePacketComplete() {}
+
+                export function summarizeParentScheduleRideOffers() {
+                    return { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/gameReportService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadGameReportSections() {
+                    return {
+                        team: {},
+                        game: {},
+                        summary: '',
+                        statKeys: [],
+                        statLabels: {},
+                        hasPlayingTime: false,
+                        playerRows: [],
+                        opponentStatKeys: [],
+                        opponentStatLabels: {},
+                        opponentRows: [],
+                        teamStatKeys: [],
+                        teamStatLabels: {},
+                        teamStats: {},
+                        statSheetPhotoUrl: '',
+                        highlightClips: [],
+                        plays: [],
+                        teamInsights: [],
+                        playerInsightRows: [],
+                        emptyInsightsMessage: 'No insights yet.'
+                    };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/publicActions\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function openPublicUrl() {}
+                export async function sharePublicUrl() {
+                    return 'shared';
+                }
+            `
+        });
+    });
+}
+
+test('app auth screen exposes sign in, sign up, Google, activation code, invite, and reset flows', async ({ page, baseURL }) => {
+    await mockAppModules(page);
+    await page.goto(appUrl(baseURL, '/auth?code=AB12CD34&type=parent'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
+    await expect(page.getByText('Invite code applied:')).toBeVisible();
+    await expect(page.getByLabel('Activation or invite code')).toHaveValue('AB12CD34');
+    await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Enter invite code' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Account action' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Sign in' }).first().click();
+    await page.getByRole('button', { name: 'Forgot password?' }).click();
+    await page.locator('form').filter({ hasText: 'Password reset email' }).locator('input[type="email"]').fill('parent@example.com');
+    await page.getByRole('button', { name: 'Send reset email' }).click();
+    await expect(page.getByText('Password reset email sent. Check your inbox and spam folder.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.sendResetEmail)).toEqual(['parent@example.com']);
+
+    await page.getByRole('button', { name: 'Sign up' }).first().click();
+    await page.getByRole('button', { name: 'Continue with Google' }).click();
+    expect(await page.evaluate(() => window.__appAuthCalls.signInWithGoogleAccount)).toEqual([{ activationCode: 'AB12CD34' }]);
+});
+
+test('signed-out manual invite code redirects through auth with the code preserved', async ({ page, baseURL }) => {
+    await mockAppModules(page);
+    await page.goto(appUrl(baseURL, '/accept-invite'), { waitUntil: 'domcontentloaded' });
+
+    await page.getByLabel('Invite code').fill('zxcv1234');
+    await page.getByRole('button', { name: 'Continue with code' }).click();
+
+    await expect(page).toHaveURL(/#\/auth\?code=ZXCV1234&type=parent&mode=login/);
+    expect(await page.evaluate(() => window.localStorage.getItem('allplays-app-pending-invite-code'))).toBe('ZXCV1234');
+});
+
+test('signed-in invite and account action routes process existing site flows', async ({ page, baseURL }) => {
+    const user = {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: false,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user });
+
+    await page.goto(appUrl(baseURL, '/accept-invite?code=AB12CD34&type=parent'), { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('Invite accepted.')).toBeVisible();
+    expect(await page.evaluate(() => window.__appAuthCalls.redeemInviteForUser)).toEqual([
+        { userId: 'user-1', code: 'AB12CD34', authEmail: 'parent@example.com' }
+    ]);
+
+    await page.goto(appUrl(baseURL, '/reset-password?mode=resetPassword&oobCode=valid-code'), { waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('heading', { name: 'Reset password' })).toBeVisible();
+    await page.locator('input[placeholder="New password"]').fill('better-password');
+    await page.locator('input[placeholder="Confirm password"]').fill('better-password');
+    await page.getByRole('button', { name: 'Reset password' }).click();
+    await expect(page.getByText('Password reset successful. Sign in with your new password.')).toBeVisible();
+
+    await page.goto(appUrl(baseURL, '/verify-pending'), { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('parent@example.com')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Continue to dashboard' })).toBeVisible();
+    await page.getByRole('button', { name: 'Resend verification email' }).click();
+    await page.getByRole('button', { name: 'Refresh status' }).click();
+    expect(await page.evaluate(() => ({
+        resend: window.__appAuthCalls.resendVerificationEmail,
+        refresh: window.__appAuthCalls.reloadCurrentUser
+    }))).toEqual({ resend: 1, refresh: 1 });
+});
+
+test('profile exposes account, notification, invite, verification, password, upload, and logout capabilities', async ({ page, baseURL }) => {
+    const user = {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: false,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user });
+    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'Your Account' })).toBeVisible();
+    await page.locator('input[type="file"]').setInputFiles({
+        name: 'avatar.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from([137, 80, 78, 71])
+    });
+    await page.getByLabel('Full name').fill('Pat Parent Updated');
+    await page.getByRole('button', { name: 'Save profile' }).click();
+    await expect(page.getByText('Profile saved.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Alerts' }).click();
+    await expect(page.getByText('Notification preferences')).toBeVisible();
+    await expect(page.getByLabel('Team')).toHaveValue('team-1');
+    await expect(page.getByLabel('Live Chat')).toBeChecked();
+    await page.getByLabel('Live Score').check();
+    await page.getByRole('button', { name: 'Enable push' }).click();
+    await page.getByRole('button', { name: 'Save preferences' }).click();
+    await expect(page.getByText('Notification preferences saved.')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Invites' }).click();
+    await expect(page.getByText('Invite codes')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Show 1 more' })).toBeVisible();
+    await page.getByPlaceholder('coach@example.com').fill('newcoach@example.com');
+    await page.getByRole('button', { name: 'Generate code' }).click();
+    await expect(page.getByText('NEWMVP42')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Security' }).click();
+    await expect(page.getByText('Email not verified')).toBeVisible();
+    await expect(page.getByText('Set a password')).toBeVisible();
+    await page.locator('input[placeholder="New password"]').fill('new-password');
+    await page.locator('input[placeholder="Confirm password"]').fill('new-password');
+    await page.getByRole('button', { name: 'Set password' }).click();
+    await expect(page.getByText('Password set successfully.')).toBeVisible();
+    await page.getByRole('button', { name: 'Send password reset' }).click();
+    await expect(page.getByText('Password reset email sent.')).toBeVisible();
+    await page.getByRole('button', { name: 'Sign out' }).last().click();
+
+    expect(await page.evaluate(() => ({
+        uploads: window.__appProfileCalls.uploads,
+        saves: window.__appProfileCalls.saves,
+        push: window.__appProfileCalls.push,
+        notificationSaves: window.__appProfileCalls.notificationSaves,
+        accessCodes: window.__appProfileCalls.accessCodes,
+        password: window.__appAuthCalls.setCurrentUserPassword,
+        reset: window.__appAuthCalls.sendResetEmail,
+        signOut: window.__appAuthCalls.signOut
+    }))).toMatchObject({
+        uploads: [{ name: 'avatar.png', type: 'image/png' }],
+        push: 1,
+        password: ['new-password'],
+        reset: ['parent@example.com'],
+        signOut: 1
+    });
+});

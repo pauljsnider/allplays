@@ -1,11 +1,14 @@
 import { initializeApp } from "./vendor/firebase-app.js";
 import {
     getAuth,
+    indexedDBLocalPersistence,
+    initializeAuth,
     onAuthStateChanged,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     signOut,
     GoogleAuthProvider,
+    signInWithCredential,
     signInWithPopup,
     signInWithRedirect,
     getRedirectResult,
@@ -48,12 +51,42 @@ import {
 } from "./vendor/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "./vendor/firebase-storage.js";
 import { getFunctions, httpsCallable } from "./vendor/firebase-functions.js";
-import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=7";
+import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=8";
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
 
 const app = initializeApp(firebaseConfig);
-export const auth = getAuth(app);
+function isCapacitorNativeRuntime() {
+    const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
+    if (protocol === 'capacitor:' || protocol === 'ionic:') {
+        return true;
+    }
+    const capacitor = typeof window !== 'undefined' ? window.Capacitor : null;
+    if (!capacitor) {
+        return false;
+    }
+    if (typeof capacitor.isNativePlatform === 'function') {
+        return capacitor.isNativePlatform();
+    }
+    return capacitor.getPlatform?.() === 'ios' || capacitor.getPlatform?.() === 'android';
+}
+
+function initializeFirebaseAuth(appInstance) {
+    if (!isCapacitorNativeRuntime()) {
+        return getAuth(appInstance);
+    }
+
+    try {
+        return initializeAuth(appInstance, {
+            persistence: indexedDBLocalPersistence
+        });
+    } catch (error) {
+        console.warn('[firebase] Native auth initialization fell back to getAuth:', error);
+        return getAuth(appInstance);
+    }
+}
+
+export const auth = initializeFirebaseAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app);
@@ -91,6 +124,9 @@ export {
     createUserWithEmailAndPassword,
     signOut,
     GoogleAuthProvider,
+    indexedDBLocalPersistence,
+    initializeAuth,
+    signInWithCredential,
     signInWithPopup,
     signInWithRedirect,
     getRedirectResult,
