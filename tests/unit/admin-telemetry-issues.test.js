@@ -18,13 +18,16 @@ describe('admin telemetry issue-first view', () => {
         expect(filterValues).toContain('interaction_rage_click');
     });
 
-    it('renders issue counts, recent examples, and the empty state from telemetryState events', () => {
+    it('renders issue counts from aggregate telemetry and recent examples from raw events', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
 
         expect(adminJs).toContain("{ name: 'js_error', label: 'JS errors' }");
         expect(adminJs).toContain("{ name: 'js_unhandled_rejection', label: 'Unhandled rejections' }");
         expect(adminJs).toContain("{ name: 'interaction_rage_click', label: 'Rage clicks' }");
         expect(adminJs).toContain('function renderTelemetryNeedsAttention()');
+        expect(adminJs).toContain('function getTelemetryIssueCounts()');
+        expect(adminJs).toContain('telemetryState.eventDaily.forEach((row) => {');
+        expect(adminJs).toContain('const totalIssues = Array.from(issueCounts.values()).reduce((sum, count) => sum + count, 0);');
         expect(adminJs).toContain('const issueEvents = telemetryState.events.filter((event) => issueCounts.has(event.name));');
         expect(adminJs).toContain('No errors or rage clicks recorded for this range.');
         expect(adminJs).toContain('renderTelemetryNeedsAttention();');

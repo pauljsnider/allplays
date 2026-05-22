@@ -392,18 +392,22 @@ function renderTopTelemetryEvents() {
     `, 'No event telemetry has been recorded for this range.');
 }
 
+function getTelemetryIssueCounts() {
+    const issueCounts = new Map(telemetryIssueEvents.map(({ name }) => [name, 0]));
+    telemetryState.eventDaily.forEach((row) => {
+        if (!issueCounts.has(row.name)) return;
+        issueCounts.set(row.name, issueCounts.get(row.name) + Number(row.count || 0));
+    });
+    return issueCounts;
+}
+
 function renderTelemetryNeedsAttention() {
     const element = document.getElementById('telemetry-needs-attention');
     if (!element) return;
 
-    const issueCounts = new Map(telemetryIssueEvents.map(({ name }) => [name, 0]));
+    const issueCounts = getTelemetryIssueCounts();
     const issueEvents = telemetryState.events.filter((event) => issueCounts.has(event.name));
-
-    issueEvents.forEach((event) => {
-        issueCounts.set(event.name, issueCounts.get(event.name) + 1);
-    });
-
-    const totalIssues = issueEvents.length;
+    const totalIssues = Array.from(issueCounts.values()).reduce((sum, count) => sum + count, 0);
     const countCards = telemetryIssueEvents.map(({ name, label }) => `
         <div class="rounded-lg border border-gray-200 p-4">
             <p class="text-xs font-semibold text-gray-500 uppercase">${escapeHtml(label)}</p>
@@ -433,7 +437,7 @@ function renderTelemetryNeedsAttention() {
                 </div>
             `;
         })
-        .join('');
+        .join('') || '<p class="text-sm text-gray-500">No recent raw examples loaded for this range.</p>';
 
     element.innerHTML = `
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">${countCards}</div>
