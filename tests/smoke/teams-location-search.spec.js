@@ -62,19 +62,19 @@ test('browse teams location search submits filters and clear restores all teams'
 
     await expect(page.getByText('Alpha Soccer')).toBeVisible();
     await expect(page.getByText('Kansas City Current')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls)).toEqual([{}]);
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls)).toEqual([{ publicOnly: true }]);
 
     await page.locator('#location-search-input').fill('Kansas');
     await page.locator('#search-button').click();
 
     await expect(page.getByText('Kansas City Current')).toBeVisible();
     await expect(page.getByText('Alpha Soccer')).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ locationFilter: 'Kansas' });
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ locationFilter: 'Kansas', publicOnly: true });
     expect(new URL(page.url()).pathname).toMatch(/\/teams\.html$/);
 
     await page.locator('#clear-search-button').click();
 
     await expect(page.getByText('Alpha Soccer')).toBeVisible();
     await expect(page.getByText('Kansas City Current')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({});
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ publicOnly: true });
 });
