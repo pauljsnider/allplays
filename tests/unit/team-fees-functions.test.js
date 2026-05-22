@@ -1,10 +1,14 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
     normalizeTeamFeeCheckoutInput,
+    normalizeTeamFeeRefundInput,
     getTeamFeeBalanceCents,
+    getTeamFeeRefundedCents,
+    getTeamFeeRefundableCents,
     isTeamFeeCheckoutEligible,
     isEligibleTeamFeePayer,
     buildTeamFeeCheckoutUrls,
@@ -13,7 +17,8 @@ const {
     shouldMarkTeamFeePaidFromEvent,
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
     getTeamFeeStripePaidAmountCents,
-    buildTeamFeePaidUpdate
+    buildTeamFeePaidUpdate,
+    buildTeamFeeStripeRefundUpdate
 } = require('../../functions/team-fees-core.cjs');
 
 describe('team fee checkout function helpers', () => {
@@ -168,6 +173,95 @@ describe('team fee checkout function helpers', () => {
         });
         expect(update).not.toHaveProperty('paymentMethod');
         expect(update.receiptMetadata).not.toHaveProperty('card');
+    });
+
+    it('normalizes refund input and computes refundable cents', () => {
+        expect(normalizeTeamFeeRefundInput({
+            teamId: ' team_123 ',
+            batchId: ' batch_456 ',
+            recipientId: ' recipient_789 ',
+            amount: '12.34',
+            reason: ' duplicate ',
+            refundRequestId: ' refund-123 '
+        })).toEqual({
+            teamId: 'team_123',
+            batchId: 'batch_456',
+            recipientId: 'recipient_789',
+            amountCents: 1234,
+            reason: 'duplicate',
+            refundRequestId: 'refund-123'
+        });
+
+        const recipient = {
+            paidAmountCents: 6500,
+            paymentLedger: [
+                { type: 'stripe_refund', refundAmountCents: 2500, status: 'succeeded' },
+                { type: 'stripe_refund', amountCents: 1000, status: 'pending' },
+                { type: 'stripe_refund', refundAmountCents: 500, status: 'failed' }
+            ]
+        };
+        expect(getTeamFeeRefundedCents(recipient)).toBe(3500);
+        expect(getTeamFeeRefundableCents(recipient)).toBe(6500);
+        expect(getTeamFeeRefundableCents({
+            paidAmountCents: 8000,
+            refundedAmountCents: 2000
+        })).toBe(8000);
+    });
+
+    it('builds Stripe refund ledger updates without over-crediting balances', () => {
+        const update = buildTeamFeeStripeRefundUpdate({
+            recipient: {
+                amountCents: 12500,
+                paidAmountCents: 12500,
+                refundedAmountCents: 2500,
+                stripePaymentIntentId: 'pi_123'
+            },
+            refund: {
+                id: 're_123',
+                status: 'succeeded',
+                payment_intent: 'pi_123'
+            },
+            amountCents: 5000,
+            actorId: 'admin_1',
+            reason: 'Family requested refund',
+            refundedAt: 'server-now',
+            ledgerRefundedAt: 'ledger-now'
+        });
+
+        expect(update).toMatchObject({
+            status: 'partial',
+            paidAmountCents: 7500,
+            amountPaidCents: 7500,
+            balanceDueCents: 5000,
+            refundedAmountCents: 7500,
+            amountRefundedCents: 7500,
+            paymentProvider: 'stripe',
+            stripeLastRefundId: 're_123',
+            stripeLastRefundStatus: 'succeeded'
+        });
+        expect(update.ledgerEntries).toEqual([{
+            type: 'stripe_refund',
+            amountCents: 5000,
+            refundAmountCents: 5000,
+            status: 'succeeded',
+            stripeRefundId: 're_123',
+            stripePaymentIntentId: 'pi_123',
+            stripeChargeId: null,
+            reason: 'Family requested refund',
+            refundedBy: 'admin_1',
+            refundedAt: 'ledger-now'
+        }]);
+    });
+
+    it('guards Stripe refund callable idempotency and recording consistency', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+
+        expect(source).toContain("recipientRef.collection('refundIntents').doc(refundRequestId)");
+        expect(source).toContain('idempotencyKey: buildTeamFeeRefundIdempotencyKey(input, refundRequestId)');
+        expect(source).toContain('const actualRefundAmount = Math.round(Number(refund.amount || 0));');
+        expect(source).toContain("stripeRefundStatus !== 'succeeded'");
+        expect(source).toContain('const ledgerRefundedAt = admin.firestore.Timestamp.now();');
+        expect(source).toContain('hasStripeRefundLedgerEntry(latestRecipient, refund.id)');
     });
 
     it('does not mark the recipient fully paid when the balance grew after checkout creation', () => {

@@ -11,7 +11,9 @@ const {
 } = require('./team-pass-core.cjs');
 const {
   normalizeTeamFeeCheckoutInput,
+  normalizeTeamFeeRefundInput,
   getTeamFeeBalanceCents,
+  getTeamFeeRefundableCents,
   isTeamFeeCheckoutEligible,
   isEligibleTeamFeePayer,
   buildTeamFeeCheckoutUrls,
@@ -19,7 +21,8 @@ const {
   canReuseTeamFeeCheckoutSession,
   shouldMarkTeamFeePaidFromEvent,
   shouldRecordTeamFeeCheckoutNotPaidFromEvent,
-  buildTeamFeePaidUpdate
+  buildTeamFeePaidUpdate,
+  buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
 const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
@@ -81,6 +84,29 @@ function buildTeamPassCheckoutUrls(appUrl, teamId) {
 
 function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
   return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
+}
+
+function buildTeamFeeRefundRequestId(input, uid) {
+  const requested = String(input.refundRequestId || '').trim();
+  if (requested) return requested;
+  const suffix = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  return `refund_${uid}_${suffix}`.replace(/[^\w.-]+/g, '_').slice(0, 120);
+}
+
+function buildTeamFeeRefundIdempotencyKey(input, refundRequestId) {
+  const hash = crypto.createHash('sha256')
+    .update([input.teamId, input.batchId, input.recipientId, input.amountCents, refundRequestId].join('|'))
+    .digest('hex');
+  return `team_fee_refund_${hash}`;
+}
+
+function hasStripeRefundLedgerEntry(recipient = {}, refundId = '') {
+  if (!refundId) return false;
+  const ledger = Array.isArray(recipient.paymentLedger) ? recipient.paymentLedger : [];
+  return ledger.some((entry) => (
+    (entry?.type === 'stripe_refund' || entry?.type === 'online_refund') &&
+    String(entry.stripeRefundId || '') === refundId
+  ));
 }
 
 function normalizeFirestoreId(value, label) {
@@ -184,8 +210,9 @@ async function getUserForEligibility(uid) {
   return userSnap.exists ? userSnap.data() || {} : {};
 }
 
-function hasTeamAdminAccess({ team, uid, email }) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+function hasTeamAdminAccess({ team, user = {}, uid, email }) {
+  if (user?.isAdmin === true) return true;
+  const normalizedEmail = String(email || user?.email || user?.profileEmail || '').trim().toLowerCase();
   const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase()) : [];
   return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
@@ -675,6 +702,232 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   }, { merge: true });
 
   return { checkoutUrl: session.url, sessionId: session.id };
+});
+
+exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before refunding a team fee.');
+  }
+
+  let input;
+  try {
+    input = normalizeTeamFeeRefundInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid team fee refund request.');
+  }
+
+  const [teamSnap, recipientSnap, user] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}`).get(),
+    buildTeamFeeRecipientRef(input).get(),
+    getUserForEligibility(context.auth.uid)
+  ]);
+
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  if (!recipientSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+  }
+
+  const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+  const email = context.auth.token?.email || user.email || '';
+  if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team admins can issue team fee refunds.');
+  }
+
+  const recipient = { id: input.recipientId, ...(recipientSnap.data() || {}) };
+  if (recipient.teamId !== input.teamId || recipient.batchId !== input.batchId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+  }
+  if (recipient.paymentProvider !== 'stripe') {
+    throw new functions.https.HttpsError('failed-precondition', 'Only Stripe team fee payments can be refunded online.');
+  }
+
+  const paymentIntentId = String(recipient.stripePaymentIntentId || '').trim();
+  const chargeId = String(recipient.stripeChargeId || recipient.stripeLatestChargeId || '').trim();
+  if (!paymentIntentId && !chargeId) {
+    throw new functions.https.HttpsError('failed-precondition', 'This payment is missing a Stripe payment intent or charge reference.');
+  }
+
+  const refundableCents = getTeamFeeRefundableCents(recipient);
+  if (input.amountCents > refundableCents) {
+    throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount.');
+  }
+
+  const recipientRef = buildTeamFeeRecipientRef(input);
+  const refundRequestId = buildTeamFeeRefundRequestId(input, context.auth.uid);
+  const refundIntentRef = recipientRef.collection('refundIntents').doc(refundRequestId);
+  let existingRefundResult = null;
+  await firestore.runTransaction(async (transaction) => {
+    const latestSnap = await transaction.get(recipientRef);
+    if (!latestSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+    }
+
+    const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
+    if (latestRecipient.teamId !== input.teamId || latestRecipient.batchId !== input.batchId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Fee recipient does not match the requested fee batch.');
+    }
+    if (latestRecipient.paymentProvider !== 'stripe') {
+      throw new functions.https.HttpsError('failed-precondition', 'Only Stripe team fee payments can be refunded online.');
+    }
+
+    const intentSnap = await transaction.get(refundIntentRef);
+    if (intentSnap.exists) {
+      const intent = intentSnap.data() || {};
+      if (intent.status === 'recorded' && intent.stripeRefundId) {
+        existingRefundResult = {
+          refundId: intent.stripeRefundId,
+          status: intent.stripeRefundStatus || 'succeeded',
+          amountCents: Number(intent.amountCents || input.amountCents)
+        };
+        return;
+      }
+      if (Number(intent.amountCents || 0) !== input.amountCents) {
+        throw new functions.https.HttpsError('already-exists', 'Refund request ID already exists for a different amount.');
+      }
+    }
+
+    if (input.amountCents > getTeamFeeRefundableCents(latestRecipient)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount. The recipient state may have changed.');
+    }
+
+    transaction.set(refundIntentRef, {
+      teamId: input.teamId,
+      batchId: input.batchId,
+      recipientId: input.recipientId,
+      amountCents: input.amountCents,
+      reason: input.reason || '',
+      requestedBy: context.auth.uid,
+      status: 'processing',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+
+  if (existingRefundResult) {
+    return existingRefundResult;
+  }
+
+  const stripe = createStripeClient();
+  let refund;
+  try {
+    refund = await stripe.refunds.create({
+      amount: input.amountCents,
+      ...(paymentIntentId ? { payment_intent: paymentIntentId } : { charge: chargeId }),
+      metadata: {
+        product: 'team_fee',
+        teamId: input.teamId,
+        batchId: input.batchId,
+        recipientId: input.recipientId,
+        refundedBy: context.auth.uid
+      }
+    }, {
+      idempotencyKey: buildTeamFeeRefundIdempotencyKey(input, refundRequestId)
+    });
+  } catch (error) {
+    console.warn('Stripe team fee refund failed:', error?.message || error);
+    await refundIntentRef.set({
+      status: 'stripe_failed',
+      errorMessage: error?.message || 'Stripe refund failed.',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => {});
+    throw new functions.https.HttpsError('failed-precondition', error?.message || 'Stripe refund failed.');
+  }
+
+  const actualRefundAmount = Math.round(Number(refund.amount || 0));
+  if (actualRefundAmount !== input.amountCents) {
+    console.error('Stripe team fee refund amount mismatch', {
+      requested: input.amountCents,
+      actual: actualRefundAmount,
+      refundId: refund.id || null
+    });
+    await refundIntentRef.set({
+      status: 'amount_mismatch',
+      stripeRefundId: refund.id || null,
+      stripeRefundAmountCents: actualRefundAmount,
+      stripeRefundStatus: refund.status || null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => {});
+    throw new functions.https.HttpsError('failed-precondition', 'Stripe refund amount mismatch. Contact support.');
+  }
+
+  const stripeRefundStatus = String(refund.status || '').trim().toLowerCase();
+  if (stripeRefundStatus !== 'succeeded') {
+    await refundIntentRef.set({
+      status: `stripe_${stripeRefundStatus || 'pending'}`,
+      stripeRefundId: refund.id || null,
+      stripeRefundAmountCents: actualRefundAmount,
+      stripeRefundStatus: refund.status || null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => {});
+    throw new functions.https.HttpsError('failed-precondition', `Refund status is ${refund.status || 'pending'}. Only succeeded refunds can be recorded immediately.`);
+  }
+
+  const refundedAt = admin.firestore.FieldValue.serverTimestamp();
+  const ledgerRefundedAt = admin.firestore.Timestamp.now();
+  try {
+    await firestore.runTransaction(async (transaction) => {
+      const latestSnap = await transaction.get(recipientRef);
+      if (!latestSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
+      }
+
+      const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
+      if (hasStripeRefundLedgerEntry(latestRecipient, refund.id)) {
+        transaction.set(refundIntentRef, {
+          status: 'recorded',
+          stripeRefundId: refund.id || null,
+          stripeRefundAmountCents: actualRefundAmount,
+          stripeRefundStatus: refund.status || null,
+          recordedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        return;
+      }
+      if (input.amountCents > getTeamFeeRefundableCents(latestRecipient)) {
+        throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount.');
+      }
+
+      const { ledgerEntries = [], ...update } = buildTeamFeeStripeRefundUpdate({
+        recipient: latestRecipient,
+        refund,
+        amountCents: actualRefundAmount,
+        actorId: context.auth.uid,
+        reason: input.reason,
+        refundedAt,
+        ledgerRefundedAt
+      });
+      transaction.set(recipientRef, {
+        ...update,
+        paymentLedger: admin.firestore.FieldValue.arrayUnion(...ledgerEntries)
+      }, { merge: true });
+      transaction.set(refundIntentRef, {
+        status: 'recorded',
+        stripeRefundId: refund.id || null,
+        stripeRefundAmountCents: actualRefundAmount,
+        stripeRefundStatus: refund.status || null,
+        recordedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+  } catch (error) {
+    await refundIntentRef.set({
+      status: 'firestore_record_failed',
+      stripeRefundId: refund.id || null,
+      stripeRefundAmountCents: actualRefundAmount,
+      stripeRefundStatus: refund.status || null,
+      errorMessage: error?.message || 'Firestore refund recording failed.',
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => {});
+    throw error;
+  }
+
+  return {
+    refundId: refund.id || null,
+    status: refund.status || 'pending',
+    amountCents: actualRefundAmount
+  };
 });
 
 exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) => {

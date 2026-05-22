@@ -14,6 +14,27 @@ function normalizeTeamFeeCheckoutInput(data = {}) {
     return { teamId, batchId, recipientId };
 }
 
+function normalizeTeamFeeRefundInput(data = {}) {
+    const input = normalizeTeamFeeCheckoutInput(data);
+    const amountCents = Math.round(Number(data.amountCents ?? Number(data.amount || 0) * 100));
+    const reason = normalizeString(data.reason || data.note);
+    const refundRequestId = normalizeString(data.refundRequestId || data.idempotencyKey);
+
+    if (!Number.isFinite(amountCents) || amountCents <= 0) {
+        throw new Error('Refund amount must be greater than $0.');
+    }
+    if (refundRequestId && refundRequestId.includes('/')) {
+        throw new Error('Refund request ID is invalid.');
+    }
+
+    return {
+        ...input,
+        amountCents,
+        reason,
+        ...(refundRequestId ? { refundRequestId } : {})
+    };
+}
+
 function getTeamFeePaidCents(recipient = {}) {
     const paid = Number(recipient.paidAmountCents ?? recipient.amountPaidCents ?? recipient.totalPaidCents ?? recipient.paidCents ?? 0);
     return Number.isFinite(paid) ? Math.max(0, paid) : 0;
@@ -22,6 +43,26 @@ function getTeamFeePaidCents(recipient = {}) {
 function getTeamFeeTotalCents(recipient = {}) {
     const total = Number(recipient.amountDueCents ?? recipient.balanceDueCents ?? recipient.adjustedAmountCents ?? recipient.amountCents ?? recipient.totalAmountCents ?? 0);
     return Number.isFinite(total) ? Math.max(0, total) : 0;
+}
+
+function getTeamFeeRefundedCents(recipient = {}) {
+    const explicitRefunded = Number(recipient.refundedAmountCents ?? recipient.amountRefundedCents ?? recipient.totalRefundedCents);
+    if (Number.isFinite(explicitRefunded) && explicitRefunded >= 0) {
+        return Math.round(explicitRefunded);
+    }
+
+    const ledger = Array.isArray(recipient.paymentLedger) ? recipient.paymentLedger : Array.isArray(recipient.ledgerEntries) ? recipient.ledgerEntries : [];
+    return ledger.reduce((total, entry) => {
+        if (entry?.type !== 'stripe_refund' && entry?.type !== 'online_refund') return total;
+        const status = normalizeString(entry.status || 'succeeded').toLowerCase();
+        if (status === 'failed' || status === 'canceled' || status === 'cancelled') return total;
+        const amount = Number(entry.refundAmountCents ?? entry.amountCents ?? 0);
+        return total + (Number.isFinite(amount) ? Math.abs(Math.round(amount)) : 0);
+    }, 0);
+}
+
+function getTeamFeeRefundableCents(recipient = {}) {
+    return getTeamFeePaidCents(recipient);
 }
 
 function getTeamFeeBalanceCents(recipient = {}) {
@@ -136,6 +177,44 @@ function getTeamFeeStripePaidAmountCents({ recipient = {}, session = {} } = {}) 
     return 0;
 }
 
+function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
+    const refundAmountCents = Math.round(Number(amountCents || refund.amount || 0));
+    const previousPaidCents = getTeamFeePaidCents(recipient);
+    const previousRefundedCents = getTeamFeeRefundedCents(recipient);
+    const paidAmountCents = Math.max(0, previousPaidCents - refundAmountCents);
+    const refundedAmountCents = previousRefundedCents + refundAmountCents;
+    const balanceDueCents = Math.max(0, getTeamFeeTotalCents(recipient) - paidAmountCents);
+    const status = paidAmountCents <= 0 ? 'unpaid' : balanceDueCents > 0 ? 'partial' : 'paid';
+    const refundStatus = normalizeString(refund.status || 'pending').toLowerCase() || 'pending';
+
+    return {
+        status,
+        paidAmountCents,
+        amountPaidCents: paidAmountCents,
+        balanceDueCents,
+        remainingBalanceCents: balanceDueCents,
+        refundedAmountCents,
+        amountRefundedCents: refundedAmountCents,
+        lastRefundedAt: refundedAt,
+        updatedAt: refundedAt,
+        paymentProvider: 'stripe',
+        stripeLastRefundId: refund.id || null,
+        stripeLastRefundStatus: refundStatus,
+        ledgerEntries: [{
+            type: 'stripe_refund',
+            amountCents: refundAmountCents,
+            refundAmountCents,
+            status: refundStatus,
+            stripeRefundId: refund.id || null,
+            stripePaymentIntentId: typeof refund.payment_intent === 'string' ? refund.payment_intent : (recipient.stripePaymentIntentId || null),
+            stripeChargeId: typeof refund.charge === 'string' ? refund.charge : (recipient.stripeChargeId || null),
+            reason: normalizeString(reason),
+            refundedBy: actorId || null,
+            refundedAt: ledgerRefundedAt
+        }]
+    };
+}
+
 function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receivedAt }) {
     const existingPaidCents = getTeamFeePaidCents(recipient);
     const stripePaidAmountCents = getTeamFeeStripePaidAmountCents({ recipient, session });
@@ -172,9 +251,12 @@ function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receive
 
 module.exports = {
     normalizeTeamFeeCheckoutInput,
+    normalizeTeamFeeRefundInput,
     getTeamFeePaidCents,
     getTeamFeeTotalCents,
     getTeamFeeBalanceCents,
+    getTeamFeeRefundedCents,
+    getTeamFeeRefundableCents,
     isTeamFeeCheckoutEligible,
     isEligibleTeamFeePayer,
     buildTeamFeeCheckoutUrls,
@@ -183,5 +265,6 @@ module.exports = {
     shouldMarkTeamFeePaidFromEvent,
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
     getTeamFeeStripePaidAmountCents,
-    buildTeamFeePaidUpdate
+    buildTeamFeePaidUpdate,
+    buildTeamFeeStripeRefundUpdate
 };
