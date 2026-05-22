@@ -107,6 +107,33 @@
                     </p>
                 </div>
 
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">ZIP Code</label>
+                    <input type="text" id="zip" inputmode="numeric" maxlength="10"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
+                        placeholder="e.g., 66209" title="Enter 5 digits or ZIP+4">
+                    <p class="text-xs text-gray-500 mt-1">Used to group teams by location (city, state).</p>
+                </div>
+
+                <div class="flex items-start">
+                    <div class="flex items-center h-5">
+                        <input id="isPublic" type="checkbox"
+                            class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded" checked>
+                    </div>
+                    <div class="ml-3 text-sm">
+                        <label for="isPublic" class="font-medium text-gray-700">Public Team</label>
+                        <p class="text-gray-500">If unchecked, this team will be hidden from the "Browse Teams" list but
+                            can still be accessed via direct link.</p>
+                    </div>
+                </div>
+
+                <details id="advanced-team-setup" class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <summary class="cursor-pointer select-none text-sm font-semibold text-slate-900 hover:text-indigo-700">
+                        Advanced team setup
+                        <span class="ml-2 font-normal text-slate-500">Colors, standings, streaming, access, registration, photo, and default assignments</span>
+                    </summary>
+                    <div class="mt-4 space-y-6">
+
                 <div class="rounded-lg border border-gray-200 bg-gray-50 p-4">
                     <div class="mb-3">
                         <h3 class="text-sm font-semibold text-gray-900">Team Colors</h3>
@@ -124,14 +151,6 @@
                                 class="mt-1 h-10 w-full cursor-pointer rounded-md border border-gray-300 bg-white p-1">
                         </label>
                     </div>
-                </div>
-
-                <div>
-                    <label class="block text-sm font-medium text-gray-700">ZIP Code</label>
-                    <input type="text" id="zip" inputmode="numeric" maxlength="10"
-                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2"
-                        placeholder="e.g., 66209" title="Enter 5 digits or ZIP+4">
-                    <p class="text-xs text-gray-500 mt-1">Used to group teams by location (city, state).</p>
                 </div>
 
                 <div>
@@ -271,18 +290,6 @@
                             <label for="teamPassRecordedReplayPaywallEnabled" class="font-medium text-amber-900">Require Team Pass for Archived Replays</label>
                             <p class="text-amber-700">When enabled, completed game replay videos are locked unless this team has an active Team Pass for the season.</p>
                         </div>
-                    </div>
-                </div>
-
-                <div class="flex items-start">
-                    <div class="flex items-center h-5">
-                        <input id="isPublic" type="checkbox"
-                            class="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 rounded" checked>
-                    </div>
-                    <div class="ml-3 text-sm">
-                        <label for="isPublic" class="font-medium text-gray-700">Public Team</label>
-                        <p class="text-gray-500">If unchecked, this team will be hidden from the "Browse Teams" list but
-                            can still be accessed via direct link.</p>
                     </div>
                 </div>
 
@@ -523,6 +530,9 @@
                     <button type="button" id="add-default-assignment-btn" class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add Role</button>
                 </div>
 
+                    </div>
+                </details>
+
                 <div class="flex justify-end space-x-4 pt-4 border-t">
                     <a href="dashboard.html"
                         class="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</a>
@@ -557,6 +567,14 @@
         let currentUserProfile = null;
         let adminEmails = [];
         let streamVolunteerEmails = [];
+
+        function syncAdvancedTeamSetupDisclosure() {
+            const advancedSetup = document.getElementById('advanced-team-setup');
+            if (advancedSetup) {
+                advancedSetup.open = !!initialTeamId;
+            }
+        }
+        syncAdvancedTeamSetupDisclosure();
         let pendingAdminInviteEmails = [];
         let confirmedTeamMembers = [];
         let teamPermissions = normalizeTeamPermissions();

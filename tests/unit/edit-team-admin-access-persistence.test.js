@@ -190,6 +190,7 @@ function createEnvironment(initialState, overrides = {}) {
         'registration-empty-state',
         'registration-import-help',
         'team-form',
+        'advanced-team-setup',
         'name',
         'description',
         'sport',
@@ -278,6 +279,13 @@ function createEnvironment(initialState, overrides = {}) {
     elements.get('access-rollover-panel').classList.add('hidden');
     elements.get('rollover-staff-review').classList.add('hidden');
     elements.get('save-btn').textContent = 'Save Team';
+    elements.get('advanced-team-setup').open = false;
+    elements.get('teamColorPrimary').value = '#5ec9c5';
+    elements.get('teamColorSecondary').value = '#d32f3a';
+    elements.get('standingsPointWin').value = '3';
+    elements.get('standingsPointTie').value = '1';
+    elements.get('standingsPointLoss').value = '0';
+    elements.get('isPublic').checked = true;
     elements.get('streamAccessMode').value = 'admins';
     elements.get('photo-upload').files = [];
 
@@ -519,6 +527,119 @@ async function bootEditTeam(initialState, overrides = {}) {
 }
 
 describe('edit team admin access persistence', () => {
+    it('defers advanced setup controls behind a collapsed create-mode disclosure', async () => {
+        const html = readFileSync(new URL('../../edit-team.html', import.meta.url), 'utf8');
+        const advancedIndex = html.indexOf('id="advanced-team-setup"');
+        expect(advancedIndex).toBeGreaterThan(-1);
+        expect(html.indexOf('id="zip"')).toBeLessThan(advancedIndex);
+        expect(html.indexOf('id="isPublic"')).toBeLessThan(advancedIndex);
+        expect(html.indexOf('id="teamColorPrimary"')).toBeGreaterThan(advancedIndex);
+        expect(html.indexOf('id="registrationProviderName"')).toBeGreaterThan(advancedIndex);
+
+        const createEnv = await bootEditTeam({
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        }, { href: 'http://example.com/edit-team.html' });
+        try {
+            expect(createEnv.elements.get('advanced-team-setup').open).toBe(false);
+        } finally {
+            createEnv.cleanup();
+        }
+    });
+
+    it('saves the simple create path with safe advanced defaults', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            createCalls: [],
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, { href: 'http://example.com/edit-team.html' });
+        try {
+            env.elements.get('name').value = 'Spring Sharks';
+            env.elements.get('description').value = 'First season';
+            env.elements.get('sport').value = 'Basketball';
+            env.elements.get('zip').value = '66209';
+            expect(env.elements.get('advanced-team-setup').open).toBe(false);
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.createCalls).toHaveLength(1);
+            expect(env.state.createCalls[0].teamData).toMatchObject({
+                name: 'Spring Sharks',
+                description: 'First season',
+                sport: 'Basketball',
+                zip: '66209',
+                isPublic: true,
+                colors: { primary: '#5ec9c5', secondary: '#d32f3a' },
+                standingsConfig: {
+                    enabled: false,
+                    rankingMode: 'points',
+                    points: { win: 3, tie: 1, loss: 0 },
+                    maxGoalDiff: null
+                },
+                teamPassConfig: { recordedReplayPaywallEnabled: false },
+                teamPermissions: {
+                    scorekeeping: { mode: 'all_confirmed', memberIds: [] },
+                    streaming: { mode: 'all_confirmed', memberIds: [] },
+                    videography: { mode: 'selected', memberIds: [] }
+                },
+                streamAccessMode: 'admins',
+                streamVolunteerEmails: [],
+                defaultAssignments: [],
+                twitchChannel: null,
+                streamEmbedUrl: null,
+                youtubeEmbedUrl: null,
+                ownerId: 'owner-1',
+                ownerEmail: 'owner@example.com'
+            });
+            expect(env.state.createCalls[0].teamData.registrationSource).toBeNull();
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('keeps advanced setup open when editing an existing team', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Soccer',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: 'https://example.com/league',
+                standingsConfig: {
+                    enabled: true,
+                    rankingMode: 'points',
+                    points: { win: 5, tie: 2, loss: 1 },
+                    maxGoalDiff: 3,
+                    twoTeamTiebreakers: ['wins'],
+                    multiTeamTiebreakers: ['goals_for']
+                },
+                colors: { primary: '#111111', secondary: '#eeeeee' },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            expect(env.elements.get('advanced-team-setup').open).toBe(true);
+            expect(env.elements.get('teamColorPrimary').value).toBe('#111111');
+            expect(env.elements.get('notificationEmail').value).toBe('notify@example.com');
+            expect(env.elements.get('leagueUrl').value).toBe('https://example.com/league');
+            expect(env.elements.get('standingsEnabled').checked).toBe(true);
+            expect(env.elements.get('standingsPointWin').value).toBe('5');
+        } finally {
+            env.cleanup();
+        }
+    });
+
     it('persists a normalized admin list after removing an admin and blocks the removed admin on the next load', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
