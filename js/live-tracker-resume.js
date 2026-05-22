@@ -53,6 +53,81 @@ export function buildPersistedResumeClockState(game) {
     };
 }
 
+function formatResumeLogClock(ms) {
+    const safeMs = Math.max(0, Number(ms) || 0);
+    const totalSeconds = Math.floor(safeMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+    return `${minutes}:${seconds}`;
+}
+
+function buildStatUndoDataFromLiveEvent(event) {
+    const undoData = {
+        type: 'stat',
+        playerId: event?.playerId || null,
+        statKey: event?.statKey || null,
+        value: Number(event?.value || 0),
+        isOpponent: Boolean(event?.isOpponent)
+    };
+
+    if (Object.prototype.hasOwnProperty.call(event || {}, 'streamRelativeTimestampMs')) {
+        undoData.videoTimestampCaptureActive = event.videoTimestampCaptureActive;
+        undoData.streamRelativeTimestampMs = event.streamRelativeTimestampMs;
+        undoData.videoTimestampUnavailableReason = event.videoTimestampUnavailableReason;
+    }
+
+    return undoData;
+}
+
+function isReversalStatBroadcast(event) {
+    if (event?.type !== 'stat') return false;
+
+    const value = Number(event?.value || 0);
+    if (!Number.isFinite(value) || value >= 0) return false;
+
+    const text = typeof event?.description === 'string' ? event.description.trim().toUpperCase() : '';
+    return text.startsWith('UNDO ') || text.startsWith('REMOVE ');
+}
+
+export function buildResumeLogFromLiveEvents(liveEvents = [], { now = () => Date.now() } = {}) {
+    if (!Array.isArray(liveEvents) || liveEvents.length === 0) return [];
+
+    return liveEvents
+        .map((event, index) => {
+            const type = event?.type;
+            if (type !== 'stat' && type !== 'note') return null;
+            if (isReversalStatBroadcast(event)) return null;
+
+            const text = typeof event?.description === 'string' ? event.description.trim() : '';
+            if (!text) return null;
+
+            const createdAtMs = toMillis(event.createdAt);
+            const clock = Number(event?.gameClockMs);
+            const entry = {
+                text,
+                ts: createdAtMs ?? now(),
+                period: typeof event?.period === 'string' ? event.period : '',
+                clock: formatResumeLogClock(Number.isFinite(clock) ? clock : 0),
+                __resumeOrder: index,
+                __resumeCreatedAtMs: createdAtMs
+            };
+
+            if (type === 'stat') {
+                entry.undoData = buildStatUndoDataFromLiveEvent(event);
+            }
+
+            return entry;
+        })
+        .filter(Boolean)
+        .sort((a, b) => {
+            const aTime = Number.isFinite(a.__resumeCreatedAtMs) ? a.__resumeCreatedAtMs : null;
+            const bTime = Number.isFinite(b.__resumeCreatedAtMs) ? b.__resumeCreatedAtMs : null;
+            if (aTime !== null && bTime !== null && aTime !== bTime) return bTime - aTime;
+            return b.__resumeOrder - a.__resumeOrder;
+        })
+        .map(({ __resumeOrder, __resumeCreatedAtMs, ...entry }) => entry);
+}
+
 export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', clock: 0 }, persistedClockState = null) {
     const fallbackPeriod = defaults?.period || 'Q1';
     const fallbackClock = Number.isFinite(defaults?.clock) ? defaults.clock : 0;

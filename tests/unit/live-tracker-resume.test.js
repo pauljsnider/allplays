@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildPersistedResumeClockState, deriveResumeClockState } from '../../js/live-tracker-resume.js';
+import { buildPersistedResumeClockState, buildResumeLogFromLiveEvents, deriveResumeClockState } from '../../js/live-tracker-resume.js';
 
 describe('live tracker resume clock state', () => {
   it('restores period and clock from latest persisted live event by createdAt', () => {
@@ -116,5 +116,135 @@ describe('live tracker resume clock state', () => {
     expect(result.restored).toBe(true);
     expect(result.period).toBe('Q4');
     expect(result.clock).toBe(10000);
+  });
+});
+
+describe('live tracker resume game log', () => {
+  it('reconstructs persisted live stat events into final-report log entries', () => {
+    const result = buildResumeLogFromLiveEvents([
+      {
+        type: 'stat',
+        description: '#4 Alex PTS +2',
+        period: 'Q1',
+        gameClockMs: 80000,
+        createdAt: { toMillis: () => 1000 },
+        playerId: 'p1',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: false,
+        streamRelativeTimestampMs: 45000,
+        videoTimestampCaptureActive: true
+      },
+      {
+        type: 'stat',
+        description: 'Opponent #12 PTS +3',
+        period: 'Q1',
+        gameClockMs: 20000,
+        createdAt: { toMillis: () => 2000 },
+        playerId: 'opp-12',
+        statKey: 'PTS',
+        value: 3,
+        isOpponent: true
+      }
+    ]);
+
+    expect(result).toEqual([
+      {
+        text: 'Opponent #12 PTS +3',
+        ts: 2000,
+        period: 'Q1',
+        clock: '00:20',
+        undoData: {
+          type: 'stat',
+          playerId: 'opp-12',
+          statKey: 'PTS',
+          value: 3,
+          isOpponent: true
+        }
+      },
+      {
+        text: '#4 Alex PTS +2',
+        ts: 1000,
+        period: 'Q1',
+        clock: '01:20',
+        undoData: {
+          type: 'stat',
+          playerId: 'p1',
+          statKey: 'PTS',
+          value: 2,
+          isOpponent: false,
+          videoTimestampCaptureActive: true,
+          streamRelativeTimestampMs: 45000,
+          videoTimestampUnavailableReason: undefined
+        }
+      }
+    ]);
+  });
+
+  it('keeps notes but skips non-log live broadcast noise', () => {
+    const result = buildResumeLogFromLiveEvents([
+      { type: 'chat', description: 'Go team', createdAt: { toMillis: () => 1000 } },
+      { type: 'note', description: 'Note: Great defensive possession', period: 'Q2', gameClockMs: 61000, createdAt: { toMillis: () => 2000 } },
+      { type: 'score_reset', description: 'Tracker reset', createdAt: { toMillis: () => 3000 } }
+    ]);
+
+    expect(result).toEqual([
+      {
+        text: 'Note: Great defensive possession',
+        ts: 2000,
+        period: 'Q2',
+        clock: '01:01'
+      }
+    ]);
+  });
+
+  it('excludes undo and remove stat broadcasts from reconstructed log entries', () => {
+    const result = buildResumeLogFromLiveEvents([
+      {
+        type: 'stat',
+        description: '#4 Alex PTS +2',
+        period: 'Q1',
+        gameClockMs: 80000,
+        createdAt: { toMillis: () => 1000 },
+        playerId: 'p1',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: false
+      },
+      {
+        type: 'stat',
+        description: 'UNDO #4 Alex PTS +2',
+        period: 'Q1',
+        gameClockMs: 78000,
+        createdAt: { toMillis: () => 2000 },
+        playerId: 'p1',
+        statKey: 'PTS',
+        value: -2,
+        isOpponent: false
+      },
+      {
+        type: 'stat',
+        description: 'REMOVE Opponent #12 PTS +3',
+        period: 'Q1',
+        gameClockMs: 76000,
+        createdAt: { toMillis: () => 3000 },
+        playerId: 'opp-12',
+        statKey: 'PTS',
+        value: -3,
+        isOpponent: true
+      }
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      text: '#4 Alex PTS +2',
+      undoData: {
+        type: 'stat',
+        playerId: 'p1',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: false
+      }
+    });
   });
 });
