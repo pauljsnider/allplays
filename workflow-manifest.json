@@ -140,6 +140,19 @@
     "searchText": "# Team Operations\n\n## Overview\nOwnership model for team creation, roster, schedule, and configuration.\n\n## In This Article\n- Team creation and core management.\n- Roster and schedule ownership.\n- Config and analytics controls.\n- Administration.\n\n## Who Is This For\n- Parents, members, coaches, and admins who need to understand team operations ownership.\n\n## Key Workflows\n- Coach/Admin: create and manage teams from dashboard.html.\n- Coach/Admin: edit team metadata in edit-team.html.\n- Coach/Admin: manage roster in edit-roster.html.\n- Coach/Admin: plan and update events in edit-schedule.html.\n- Coach/Admin: maintain stat and config controls in edit-config.html.\n- Parent/Member: view team context in team.html and calendar.html.\n- Admin: use global admin workflows in admin.html."
   },
   {
+    "id": "fees-payments",
+    "title": "Manage Team Fees and Payments",
+    "roles": [
+      "Parent",
+      "Coach",
+      "Admin"
+    ],
+    "file": "workflow-fees-payments.html",
+    "summary": "Set up fee records, track payments, and let parents pay online via Stripe or record offline payments and adjustments.",
+    "readTimeMin": 4,
+    "searchText": "# Manage Team Fees and Payments\n\n## Overview\nTeam fees can be created by admins, paid by parents via Stripe Checkout or tracked as offline payments. Admins record adjustments, installments, and cancellations. Parents see invoices with line items, balances, and due dates. fees payments Stripe checkout invoice installment balance adjustment offline parent pay\n\n## Who Is This For\n- Admin: set up fees, record payments, issue adjustments\n- Coach: support team fee visibility when granted admin access\n- Parent: view invoice, pay online\n\n## Choose Your Path\n- Set up a new fee with installment schedule\n- Record offline payment via ledger adjustment\n- Parent pays online via Stripe\n- Adjust or cancel a fee\n\n## Step-by-Step Workflow\n1. Admin creates fee record with recipients, amounts, and optional installment schedule.\n2. Admin generates Stripe Checkout link.\n3. Parent opens fee detail: total, paid, remaining, line items, installment schedule.\n4. Parent selects Pay when checkout URL exists and fee is unpaid or partial.\n5. Stripe processes payment; metadata stored on fee record. Failed or expired sessions do not mark fee as paid.\n6. Admin records offline payment or manual balance adjustment with required reason.\n7. Admin applies cancellation or status change.\n8. Admin reviews per-recipient status: paid, unpaid, partial, or canceled with remaining balances."
+  },
+  {
     "id": "team-media",
     "title": "Manage Team Media and Albums",
     "roles": [
