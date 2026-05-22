@@ -408,6 +408,7 @@
         let authResolved = false;
         let gameLoaded = false;
         let gameLoadedForAuthenticatedUser = false;
+        let gameLoadPromise = null;
 
         const authTimeout = setTimeout(() => {
             if (authResolved || gameLoaded) return;
@@ -1243,6 +1244,15 @@ Write the match report now:`;
         }
 
         async function loadGame({ forceAuthenticatedReload = false } = {}) {
+            if (gameLoadPromise) {
+                await gameLoadPromise;
+                if (forceAuthenticatedReload && !gameLoadedForAuthenticatedUser) {
+                    return loadGame({ forceAuthenticatedReload: true });
+                }
+                return;
+            }
+
+            gameLoadPromise = (async () => {
             if (gameLoaded && (!forceAuthenticatedReload || gameLoadedForAuthenticatedUser)) return;
             gameLoaded = true;
             gameLoadedForAuthenticatedUser = !!currentUser;
@@ -1799,6 +1809,13 @@ Write the match report now:`;
                         </div>
                     `;
                 }
+            }
+            })();
+
+            try {
+                return await gameLoadPromise;
+            } finally {
+                gameLoadPromise = null;
             }
         }
     </script>

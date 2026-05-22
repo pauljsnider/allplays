@@ -18,8 +18,12 @@ describe('game auth reload', () => {
         const source = readGameHtml();
 
         expect(source).toContain('async function loadGame({ forceAuthenticatedReload = false } = {})');
+        expect(source).toContain('let gameLoadPromise = null;');
+        expect(source).toContain('if (gameLoadPromise) {');
+        expect(source).toContain('await gameLoadPromise;');
         expect(source).toContain('if (gameLoaded && (!forceAuthenticatedReload || gameLoadedForAuthenticatedUser)) return;');
         expect(source).toContain('gameLoadedForAuthenticatedUser = !!currentUser;');
+        expect(source).toContain('gameLoadPromise = null;');
     });
 
     it('resets opponent stat headers before an authenticated reload re-renders the report', () => {
