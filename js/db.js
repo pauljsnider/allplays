@@ -6792,3 +6792,65 @@ export async function getAssignmentClaims(teamId, gameId) {
     });
     return claims;
 }
+
+// ── Family Share Tokens ──────────────────────────────────────────────────────
+
+function generateShareToken() {
+    const bytes = new Uint8Array(20);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export async function createFamilyShareToken(ownerUserId, children, label, extraCalendarUrls = []) {
+    const tokenId = generateShareToken();
+    const now = Timestamp.now();
+    await setDoc(doc(db, 'familyShareTokens', tokenId), {
+        ownerUserId,
+        label: label || '',
+        children: (children || []).map(c => ({
+            teamId: c.teamId || '',
+            teamName: c.teamName || '',
+            playerId: c.playerId || '',
+            playerName: c.playerName || '',
+            playerPhotoUrl: c.playerPhotoUrl || null
+        })),
+        extraCalendarUrls: (extraCalendarUrls || []).filter(u => typeof u === 'string' && u.trim()),
+        createdAt: now,
+        updatedAt: now,
+        active: true
+    });
+    return tokenId;
+}
+
+export async function updateFamilyShareTokenCalendars(tokenId, urls) {
+    await updateDoc(doc(db, 'familyShareTokens', tokenId), {
+        extraCalendarUrls: (urls || []).filter(u => typeof u === 'string' && u.trim()),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function getFamilyShareToken(tokenId) {
+    if (!tokenId) return null;
+    const snap = await getDoc(doc(db, 'familyShareTokens', tokenId));
+    if (!snap.exists()) return null;
+    return { id: snap.id, ...snap.data() };
+}
+
+export async function listFamilyShareTokens(ownerUserId) {
+    const q = query(
+        collection(db, 'familyShareTokens'),
+        where('ownerUserId', '==', ownerUserId),
+        where('active', '==', true),
+        orderBy('createdAt', 'desc')
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function revokeFamilyShareToken(tokenId) {
+    await updateDoc(doc(db, 'familyShareTokens', tokenId), {
+        active: false,
+        revokedAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
+    });
+}
