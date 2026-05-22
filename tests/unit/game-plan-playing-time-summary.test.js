@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { buildGamePlanIntervals } from '../../js/game-plan-intervals.js';
 
 function readGamePlanPage() {
     return readFileSync(new URL('../../game-plan.html', import.meta.url), 'utf8');
@@ -82,6 +83,7 @@ function buildHarness(overrides = {}) {
         },
         document,
         gamePlan: null,
+        buildGamePlanIntervals,
         ...overrides
     };
 
@@ -90,6 +92,7 @@ function buildHarness(overrides = {}) {
         let gamePlan = deps.gamePlan;
         const FORMATIONS = deps.FORMATIONS;
         const document = deps.document;
+        const buildGamePlanIntervals = deps.buildGamePlanIntervals;
         let intervalsCache = [];
         const recentAssignments = new Map();
         let draggedPlayerId = null;
@@ -125,7 +128,7 @@ ${renderPlayingTimeSummaryBody}
     return createHarness(deps);
 }
 
-describe('game plan single-sub-time playing time summary', () => {
+describe('game plan timestamp interval playing time summary', () => {
     it('counts basketball default summary minutes from saved quarter-time lineup keys', () => {
         const harness = buildHarness();
         const gamePlan = harness.createDefaultGamePlan('Basketball');
@@ -135,7 +138,7 @@ describe('game plan single-sub-time playing time summary', () => {
         harness.renderPlayingTimeSummary();
 
         const summaryHtml = harness.getDocument().getElementById('playing-time-summary').innerHTML;
-        expect(extractMinutesForPlayer(summaryHtml, 'Jordan')).toBe(8);
+        expect(extractMinutesForPlayer(summaryHtml, 'Jordan')).toBe(4);
         expect(extractMinutesForPlayer(summaryHtml, 'Casey')).toBe(0);
     });
 
@@ -159,6 +162,51 @@ describe('game plan single-sub-time playing time summary', () => {
         const summaryHtml = harness.getDocument().getElementById('playing-time-summary').innerHTML;
 
         expect(matrixHtml).toContain('data-cell-key="2-12-keeper"');
-        expect(extractMinutesForPlayer(summaryHtml, 'Jordan')).toBe(24);
+        expect(matrixHtml).toContain('data-cell-key="2-24-keeper"');
+        expect(extractMinutesForPlayer(summaryHtml, 'Jordan')).toBe(12);
+    });
+
+    it('creates initial and final real-time soccer segments from substitution timestamps', () => {
+        const intervals = buildGamePlanIntervals({
+            numPeriods: 2,
+            periodDuration: 25,
+            subTimes: [7, 14, 21]
+        });
+
+        expect(intervals.filter(interval => interval.period === 1).map(interval => ({
+            key: interval.key,
+            label: interval.label,
+            duration: interval.duration
+        }))).toEqual([
+            { key: '1-7', label: "0-7'", duration: 7 },
+            { key: '1-14', label: "7-14'", duration: 7 },
+            { key: '1-21', label: "14-21'", duration: 7 },
+            { key: '1-25', label: "21-25'", duration: 4 }
+        ]);
+    });
+
+    it('counts default soccer assignment minutes by actual segment length', () => {
+        const harness = buildHarness({
+            gamePlan: {
+                numPeriods: 2,
+                periodDuration: 25,
+                subTimes: [7, 14, 21],
+                formationId: 'soccer-9v9',
+                lineups: {
+                    '1-7-keeper': 'p1',
+                    '1-25-keeper': 'p2'
+                }
+            }
+        });
+
+        harness.renderSubMatrix();
+        harness.renderPlayingTimeSummary();
+
+        const matrixHtml = harness.getDocument().getElementById('sub-matrix-body').innerHTML;
+        const summaryHtml = harness.getDocument().getElementById('playing-time-summary').innerHTML;
+
+        expect(matrixHtml).toContain('data-cell-key="1-25-keeper"');
+        expect(extractMinutesForPlayer(summaryHtml, 'Jordan')).toBe(7);
+        expect(extractMinutesForPlayer(summaryHtml, 'Casey')).toBe(4);
     });
 });

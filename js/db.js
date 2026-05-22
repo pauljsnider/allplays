@@ -26,6 +26,8 @@ import {
     collectionGroup,
     writeBatch,
     runTransaction,
+    functions,
+    httpsCallable,
     ref,
     uploadBytes,
     getDownloadURL,
@@ -3061,6 +3063,12 @@ export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail 
 // Parent Role Functions
 // ============================================
 
+async function autoAcceptParentInviteForExistingUser(accessCodeId) {
+    const autoAcceptParentInvite = httpsCallable(functions, 'autoAcceptParentInviteForExistingUser');
+    const result = await autoAcceptParentInvite({ codeId: accessCodeId });
+    return Boolean(result?.data?.autoLinked);
+}
+
 export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
     const currentUser = auth.currentUser;
     if (!currentUser) {
@@ -3074,6 +3082,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     ]);
     const player = players.find(p => p.id === playerId);
 
+    const normalizedParentEmail = String(parentEmail || '').trim().toLowerCase();
     const code = generateAccessCode();
     const accessCodeData = {
         code,
@@ -3084,7 +3093,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         playerName: player?.name || null,
         teamName: team?.name || null,
         relation,
-        email: parentEmail || null,
+        email: normalizedParentEmail || null,
         generatedBy: currentUser.uid,
         createdAt: Timestamp.now(),
         // 7 days from now
@@ -3097,8 +3106,16 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
 
     // Check if user with this email already exists
     let existingUser = null;
-    if (parentEmail) {
-        existingUser = await getUserByEmail(parentEmail);
+    let autoLinked = false;
+    if (normalizedParentEmail) {
+        existingUser = await getUserByEmail(normalizedParentEmail);
+        if (existingUser) {
+            try {
+                autoLinked = await autoAcceptParentInviteForExistingUser(docRef.id);
+            } catch (error) {
+                console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
+            }
+        }
     }
 
     return {
@@ -3106,7 +3123,8 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         code,
         teamName: team?.name || null,
         playerName: player?.name || null,
-        existingUser: !!existingUser
+        existingUser: !!existingUser,
+        autoLinked
     };
 }
 

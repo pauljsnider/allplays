@@ -367,7 +367,7 @@
 <li>Select <strong>Invite Parent</strong> for an active player.</li>
 <li>Choose relation, enter parent email, then send.</li>
 <li>No email available: Leave email blank to generate a shareable code/link.</li>
-<li>Existing account detected: Share the shown code/link so the parent can connect.</li>
+<li>Existing account detected: The parent is linked automatically; use a generated code/link only if auto-linking cannot complete.</li>
 </ul>
 <p><strong>Invite email enforcement:</strong> When a parent redeems an invite code during signup, the email they use for the new account must match the invite email exactly (case-insensitive, whitespace-normalized). A mismatch is rejected immediately after the activation code validation step — before the Firebase Auth account is created. This prevents parents from accidentally creating accounts under a different email than the one the invite was addressed to. If the parent receives an email mismatch error, they must use the exact email the invite was sent to, or ask the admin to resend the invite to the correct address.</p>
 <p><strong>Invite context preservation:</strong> When a parent follows an invite link and is sent to the signup or login page, the invite code and invite type are carried through automatically in the URL parameters. The activation code field on the signup form is pre-filled with the code from the invite link. The parent does not need to re-enter the invite code manually during signup — the context is preserved through the full authentication flow.</p>

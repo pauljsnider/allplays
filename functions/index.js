@@ -185,6 +185,170 @@ function hasTeamAdminAccess({ team, uid, email }) {
   return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
 
+function normalizeParentInviteEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isParentInviteExpired(expiresAt) {
+  if (!expiresAt) return false;
+  const millis = typeof expiresAt.toMillis === 'function'
+    ? expiresAt.toMillis()
+    : new Date(expiresAt).getTime();
+  return Number.isFinite(millis) && millis < Date.now();
+}
+
+function validateAutoAcceptParentInviteCode(data = {}) {
+  if (!data || data.type !== 'parent_invite') {
+    throw new functions.https.HttpsError('failed-precondition', 'Not a parent invite code.');
+  }
+  if (data.used || data.revoked === true || data.status === 'removed') {
+    throw new functions.https.HttpsError('failed-precondition', 'Parent invite is no longer available.');
+  }
+  if (isParentInviteExpired(data.expiresAt)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Parent invite has expired.');
+  }
+}
+
+function appendUniqueParentLink(parentOf, link) {
+  const links = Array.isArray(parentOf) ? [...parentOf] : [];
+  const exists = links.some((entry) => entry?.teamId === link.teamId && entry?.playerId === link.playerId);
+  if (!exists) links.push(link);
+  return links;
+}
+
+function appendUniqueValue(values, value) {
+  const nextValues = Array.isArray(values) ? [...values] : [];
+  if (!nextValues.includes(value)) nextValues.push(value);
+  return nextValues;
+}
+
+function buildAutoAcceptedParentLink({ codeData, team, player }) {
+  return {
+    teamId: codeData.teamId,
+    playerId: codeData.playerId,
+    teamName: team?.name || codeData.teamName || null,
+    playerName: player?.name || codeData.playerName || null,
+    playerNumber: player?.number ?? codeData.playerNum ?? null,
+    playerPhotoUrl: player?.photoUrl || null,
+    relation: codeData.relation || null
+  };
+}
+
+exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before auto-linking a parent invite.');
+  }
+
+  const codeId = normalizeFirestoreId(data?.codeId, 'codeId');
+  const codeRef = firestore.doc(`accessCodes/${codeId}`);
+  const codeSnap = await codeRef.get();
+  if (!codeSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Parent invite could not be found.');
+  }
+
+  const codeData = codeSnap.data() || {};
+  validateAutoAcceptParentInviteCode(codeData);
+  const inviteEmail = normalizeParentInviteEmail(codeData.email);
+  if (!inviteEmail) {
+    throw new functions.https.HttpsError('failed-precondition', 'Parent invite has no email to auto-link.');
+  }
+
+  const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
+  const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
+  const [teamSnap, playerSnap, actorSnap, userQuerySnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    firestore.doc(`teams/${teamId}/players/${playerId}`).get(),
+    firestore.doc(`users/${context.auth.uid}`).get(),
+    firestore.collection('users').where('email', '==', inviteEmail).limit(1).get()
+  ]);
+
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  if (!playerSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Player not found.');
+  }
+  if (userQuerySnap.empty) {
+    return { autoLinked: false, reason: 'no-existing-user' };
+  }
+
+  const team = teamSnap.data() || {};
+  const actor = actorSnap.exists ? actorSnap.data() || {} : {};
+  const actorEmail = context.auth.token?.email || actor.email || '';
+  if (!hasTeamAdminAccess({ team, uid: context.auth.uid, email: actorEmail })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can auto-link parent invites.');
+  }
+
+  const targetUserDoc = userQuerySnap.docs[0];
+  const userRef = targetUserDoc.ref;
+  const now = admin.firestore.Timestamp.now();
+
+  await firestore.runTransaction(async (transaction) => {
+    const [latestCodeSnap, latestPlayerSnap, latestUserSnap] = await Promise.all([
+      transaction.get(codeRef),
+      transaction.get(firestore.doc(`teams/${teamId}/players/${playerId}`)),
+      transaction.get(userRef)
+    ]);
+
+    if (!latestCodeSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Parent invite could not be found.');
+    }
+    if (!latestPlayerSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Player not found.');
+    }
+    if (!latestUserSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Existing parent user not found.');
+    }
+
+    const latestCodeData = latestCodeSnap.data() || {};
+    validateAutoAcceptParentInviteCode(latestCodeData);
+    if (normalizeParentInviteEmail(latestCodeData.email) !== inviteEmail) {
+      throw new functions.https.HttpsError('failed-precondition', 'Parent invite email changed before auto-linking.');
+    }
+
+    const latestUserData = latestUserSnap.data() || {};
+    if (normalizeParentInviteEmail(latestUserData.email) !== inviteEmail) {
+      throw new functions.https.HttpsError('failed-precondition', 'Existing parent email does not match the invite.');
+    }
+
+    const player = latestPlayerSnap.data() || {};
+    const parentLink = buildAutoAcceptedParentLink({ codeData: latestCodeData, team, player });
+    const playerKey = `${teamId}::${playerId}`;
+    transaction.update(userRef, {
+      parentOf: appendUniqueParentLink(latestUserData.parentOf, parentLink),
+      parentTeamIds: appendUniqueValue(latestUserData.parentTeamIds, teamId),
+      parentPlayerKeys: appendUniqueValue(latestUserData.parentPlayerKeys, playerKey),
+      roles: appendUniqueValue(latestUserData.roles, 'parent')
+    });
+
+    const playerData = latestPlayerSnap.data() || {};
+    const existingParents = Array.isArray(playerData.parents) ? [...playerData.parents] : [];
+    const alreadyLinked = existingParents.some((parent) => parent?.userId === userRef.id);
+    if (!alreadyLinked) {
+      existingParents.push({
+        userId: userRef.id,
+        email: inviteEmail,
+        relation: latestCodeData.relation || null,
+        addedAt: now,
+        status: 'active',
+        source: 'parent_invite'
+      });
+      transaction.update(latestPlayerSnap.ref, { parents: existingParents });
+    }
+
+    transaction.update(codeRef, {
+      used: true,
+      usedBy: userRef.id,
+      usedAt: now,
+      status: 'accepted',
+      autoAccepted: true,
+      autoAcceptedAt: now
+    });
+  });
+
+  return { autoLinked: true, userId: userRef.id };
+});
+
 async function logRsvpTokenRedemptionAttempt({ teamId, payload }) {
   const auditPayload = {
     ...payload,
