@@ -204,6 +204,10 @@ export async function getChatMessages() {
 export async function postChatMessage() {}
 export async function editChatMessage() {}
 export async function deleteChatMessage() {}
+export async function getTeamEmailDrafts() {
+    return [];
+}
+export async function saveTeamEmailDraft() {}
 export function canAccessTeamChat() {
     return true;
 }

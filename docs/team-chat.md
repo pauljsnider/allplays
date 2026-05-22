@@ -17,6 +17,7 @@ Goal: Add persistent team chat for anyone who has access to a team (owner, admin
 - Manual refresh button
 - Coach/admin recipient picker for full team, staff-only, or selected roster/community members
 - Lightweight conversations list for the default team-wide channel plus targeted direct/group conversation records
+- Coach/admin-only team email draft composer with eligible roster recipient picker, saved drafts, and reopen/edit support
 
 ### Deferred Features
 - Real-time updates (Firestore onSnapshot) - using manual refresh instead
@@ -47,6 +48,9 @@ Goal: Add persistent team chat for anyone who has access to a team (owner, admin
   - `updatedAt: Timestamp`
 - Targeted conversation messages: `teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}`
   - Same message shape as the default channel, with `conversationId` populated.
+- Email drafts: `teams/{teamId}/emailDrafts/{draftId}`
+  - `subject`, `body`, `recipients[]`, `recipientEmails[]`, `status: "draft"`, author metadata, `createdAt`, and `updatedAt`.
+  - Drafts are saved only; no external email delivery, attachments, replies, or sent history are created.
 
 ### Message Fields
   - `text: string`
@@ -68,7 +72,7 @@ A user can read/post if they have team access:
 - `isGlobalAdmin` (`users.isAdmin == true`), or
 - parent linked to any player on the team (`user.parentOf` contains teamId)
 
-Moderation (delete others' messages):
+Moderation (delete others' messages) and email draft create/edit:
 - Team owner, team admins, or global admin
 
 ## Entry Points
