@@ -263,7 +263,9 @@ function createEnvironment(initialState, overrides = {}) {
         'manage-schedule-btn',
         'photo-preview',
         'photo-upload',
-        'save-btn'
+        'save-btn',
+        'add-default-assignment-btn',
+        'default-assignment-rows'
     ];
 
     const elements = new Map(ids.map((id) => [id, new MockElement(id)]));
