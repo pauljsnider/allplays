@@ -4737,6 +4737,29 @@ export function subscribeToChatMessages(teamId, { limit = 50, conversationId = D
     });
 }
 
+export async function sendTeamEmail(teamId, {
+    subject,
+    body,
+    targetType = 'full_team',
+    recipientIds = []
+} = {}) {
+    const callable = httpsCallable(functions, 'sendTeamEmail');
+    const result = await callable({
+        teamId,
+        subject,
+        body,
+        targetType,
+        recipientIds
+    });
+    return result.data;
+}
+
+export async function getSentTeamEmails(teamId, { limit = 25 } = {}) {
+    const emailsRef = collection(db, 'teams', teamId, 'teamEmails');
+    const snapshot = await getDocs(query(emailsRef, orderBy('sentAt', 'desc'), limitQuery(limit)));
+    return snapshot.docs.map((d) => ({ id: d.id, ...d.data(), _doc: d }));
+}
+
 /**
  * Post a new chat message.
  */
