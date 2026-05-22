@@ -23,36 +23,36 @@ function assertDeepEquals(actual, expected, label) {
     }
 }
 
-function buildFinishWritePlan(gameLogEntries, aggregatedStatsWrites, maxAggregatedStatsBatchWrites = 450) {
-    const primaryBatchWriteCount = gameLogEntries.length + 1;
-    const canCommitPrimaryBatch = primaryBatchWriteCount <= 500;
-    const aggregatedStatsBatchSizes = [];
+function buildFinishWritePlan(gameLogEntries, aggregatedStatsWrites, maxEventBatchWrites = 500, maxAggregatedStatsBatchWrites = 450) {
+    const eventBatchSizes = [];
+    for (let i = 0; i < gameLogEntries.length; i += maxEventBatchWrites) {
+        eventBatchSizes.push(gameLogEntries.slice(i, i + maxEventBatchWrites).length);
+    }
 
-    if (canCommitPrimaryBatch) {
-        for (let i = 0; i < aggregatedStatsWrites.length; i += maxAggregatedStatsBatchWrites) {
-            aggregatedStatsBatchSizes.push(
-                aggregatedStatsWrites.slice(i, i + maxAggregatedStatsBatchWrites).length
-            );
-        }
+    const aggregatedStatsBatchSizes = [];
+    for (let i = 0; i < aggregatedStatsWrites.length; i += maxAggregatedStatsBatchWrites) {
+        aggregatedStatsBatchSizes.push(
+            aggregatedStatsWrites.slice(i, i + maxAggregatedStatsBatchWrites).length
+        );
     }
 
     return {
-        primaryBatchWriteCount,
-        canCommitPrimaryBatch,
-        aggregatedStatsBatchSizes
+        eventBatchSizes,
+        aggregatedStatsBatchSizes,
+        gameUpdateBatchSize: 1
     };
 }
 
-test('keeps roster-wide aggregated stats writes out of the primary finish batch', () => {
+test('keeps roster-wide aggregated stats writes out of event finish batches', () => {
     const plan = buildFinishWritePlan(
         new Array(490).fill({}),
         new Array(25).fill({})
     );
 
-    assertEquals(
-        plan.primaryBatchWriteCount,
-        491,
-        'Primary finish batch should only contain game-log writes plus the final game update'
+    assertDeepEquals(
+        plan.eventBatchSizes,
+        [490],
+        'Event writes should be committed separately from stats and final game update'
     );
     assertDeepEquals(
         plan.aggregatedStatsBatchSizes,
@@ -67,10 +67,10 @@ test('chunks aggregated stats writes into sub-500 secondary batches', () => {
         new Array(905).fill({})
     );
 
-    assertEquals(
-        plan.canCommitPrimaryBatch,
-        true,
-        'Primary batch should remain commit-safe at 499 event writes plus the game update'
+    assertDeepEquals(
+        plan.eventBatchSizes,
+        [499],
+        'Event batch should remain commit-safe at 499 event writes'
     );
     assertDeepEquals(
         plan.aggregatedStatsBatchSizes,
@@ -84,26 +84,26 @@ test('chunks aggregated stats writes into sub-500 secondary batches', () => {
     });
 });
 
-test('fails cleanly before writing secondary batches when the primary batch would overflow', () => {
+test('chunks event writes when event count exceeds Firestore batch limit', () => {
     const plan = buildFinishWritePlan(
-        new Array(500).fill({}),
+        new Array(1001).fill({}),
         new Array(25).fill({})
     );
 
-    assertEquals(
-        plan.primaryBatchWriteCount,
-        501,
-        '500 event writes plus the final game update should exceed Firestore batch limits'
-    );
-    assertEquals(
-        plan.canCommitPrimaryBatch,
-        false,
-        'Primary batch should be rejected before any secondary aggregated stats batches are committed'
+    assertDeepEquals(
+        plan.eventBatchSizes,
+        [500, 500, 1],
+        'Event writes over 500 should be split across multiple batches'
     );
     assertDeepEquals(
         plan.aggregatedStatsBatchSizes,
-        [],
-        'No secondary aggregated stats batches should be planned when the primary batch is already unsafe'
+        [25],
+        'Aggregated stats should still be planned after event chunking'
+    );
+    assertEquals(
+        plan.gameUpdateBatchSize,
+        1,
+        'Final game completion update should be committed in its own batch'
     );
 });
 

@@ -72,6 +72,9 @@ describe('edit schedule tournament wiring', () => {
     expect(source).toContain('class="advance-tournament-pool-btn');
     expect(source).toContain('data-advance-tournament-pool');
     expect(source).toContain('formatTournamentAdvancementPreviewMessage');
+    expect(source).toContain('formatTournamentPoolProtectionOverrideMessage');
+    expect(source).toContain('plan.requiresPoolProtectionOverride && !confirm(formatTournamentPoolProtectionOverrideMessage(plan))');
+    expect(source).toContain('Pool-protection conflicts require an audit note before saving:');
     expect(source).toContain('Pool-protection warnings:');
     expect(source).toContain('poolProtectionWarnings');
     expect(source).toContain('buildFinalizedTournamentAdvancementPlan');
@@ -83,9 +86,22 @@ describe('edit schedule tournament wiring', () => {
     expect(source).toContain('allTeamGamesCache[event.id] = eventRecord;');
     expect(source).toContain('const games = Object.values(allTeamGamesCache).filter((candidate) => candidate?.id);');
     expect(source).toContain('const plan = planTournamentPoolAdvancement(games, {');
-    expect(source).toContain('await applyTournamentAdvancementPatches(currentTeamId, plan.patches, games);');
-    expect(source).toContain('await applyTournamentAdvancementPatches(currentTeamId, plan.patches, tournamentAdvancementGames);');
+    expect(source).toContain('promptTournamentPoolProtectionOverride(plan);');
+    expect(source).toContain('buildTournamentAdvancementPatchesForSave(plan, poolProtectionOverride)');
+    expect(source).toContain('await applyTournamentAdvancementPatches(currentTeamId, buildTournamentAdvancementPatchesForSave(plan, poolProtectionOverride), games);');
+    expect(source).toContain('await applyTournamentAdvancementPatches(currentTeamId, buildTournamentAdvancementPatchesForSave(plan, poolProtectionOverride), tournamentAdvancementGames);');
     expect(source).toContain('Skipped advancement for ${poolName}. ${plan.reason}');
+  });
+
+  it('requires and displays pool-protection override audit notes', () => {
+    const source = readEditSchedule();
+
+    expect(source).toContain('function promptTournamentPoolProtectionOverride(plan = {})');
+    expect(source).toContain('Same-pool bracket conflicts are being overridden. Enter a short audit note before saving.');
+    expect(source).toContain('timestamp: Timestamp.now()');
+    expect(source).toContain('conflicts');
+    expect(source).toContain('Pool-protection conflict intentionally overridden:');
+    expect(source).toContain('Same-pool conflicts require an override note.');
   });
 
   it('wires persistence helpers for saving and clearing pool ranking overrides', () => {

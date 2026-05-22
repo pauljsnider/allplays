@@ -35,6 +35,11 @@ const {
   validateRsvpTokenRedemption,
   buildRsvpTokenAuditPayload
 } = require('./rsvp-token-core.cjs');
+const {
+  normalizeText,
+  resolveTeamEmailRecipients,
+  buildTeamEmailMailJob
+} = require('./team-email-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -184,6 +189,170 @@ function hasTeamAdminAccess({ team, uid, email }) {
   const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase()) : [];
   return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
+
+function normalizeParentInviteEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isParentInviteExpired(expiresAt) {
+  if (!expiresAt) return false;
+  const millis = typeof expiresAt.toMillis === 'function'
+    ? expiresAt.toMillis()
+    : new Date(expiresAt).getTime();
+  return Number.isFinite(millis) && millis < Date.now();
+}
+
+function validateAutoAcceptParentInviteCode(data = {}) {
+  if (!data || data.type !== 'parent_invite') {
+    throw new functions.https.HttpsError('failed-precondition', 'Not a parent invite code.');
+  }
+  if (data.used || data.revoked === true || data.status === 'removed') {
+    throw new functions.https.HttpsError('failed-precondition', 'Parent invite is no longer available.');
+  }
+  if (isParentInviteExpired(data.expiresAt)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Parent invite has expired.');
+  }
+}
+
+function appendUniqueParentLink(parentOf, link) {
+  const links = Array.isArray(parentOf) ? [...parentOf] : [];
+  const exists = links.some((entry) => entry?.teamId === link.teamId && entry?.playerId === link.playerId);
+  if (!exists) links.push(link);
+  return links;
+}
+
+function appendUniqueValue(values, value) {
+  const nextValues = Array.isArray(values) ? [...values] : [];
+  if (!nextValues.includes(value)) nextValues.push(value);
+  return nextValues;
+}
+
+function buildAutoAcceptedParentLink({ codeData, team, player }) {
+  return {
+    teamId: codeData.teamId,
+    playerId: codeData.playerId,
+    teamName: team?.name || codeData.teamName || null,
+    playerName: player?.name || codeData.playerName || null,
+    playerNumber: player?.number ?? codeData.playerNum ?? null,
+    playerPhotoUrl: player?.photoUrl || null,
+    relation: codeData.relation || null
+  };
+}
+
+exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before auto-linking a parent invite.');
+  }
+
+  const codeId = normalizeFirestoreId(data?.codeId, 'codeId');
+  const codeRef = firestore.doc(`accessCodes/${codeId}`);
+  const codeSnap = await codeRef.get();
+  if (!codeSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Parent invite could not be found.');
+  }
+
+  const codeData = codeSnap.data() || {};
+  validateAutoAcceptParentInviteCode(codeData);
+  const inviteEmail = normalizeParentInviteEmail(codeData.email);
+  if (!inviteEmail) {
+    throw new functions.https.HttpsError('failed-precondition', 'Parent invite has no email to auto-link.');
+  }
+
+  const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
+  const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
+  const [teamSnap, playerSnap, actorSnap, userQuerySnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    firestore.doc(`teams/${teamId}/players/${playerId}`).get(),
+    firestore.doc(`users/${context.auth.uid}`).get(),
+    firestore.collection('users').where('email', '==', inviteEmail).limit(1).get()
+  ]);
+
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  if (!playerSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Player not found.');
+  }
+  if (userQuerySnap.empty) {
+    return { autoLinked: false, reason: 'no-existing-user' };
+  }
+
+  const team = teamSnap.data() || {};
+  const actor = actorSnap.exists ? actorSnap.data() || {} : {};
+  const actorEmail = context.auth.token?.email || actor.email || '';
+  if (!hasTeamAdminAccess({ team, uid: context.auth.uid, email: actorEmail })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can auto-link parent invites.');
+  }
+
+  const targetUserDoc = userQuerySnap.docs[0];
+  const userRef = targetUserDoc.ref;
+  const now = admin.firestore.Timestamp.now();
+
+  await firestore.runTransaction(async (transaction) => {
+    const [latestCodeSnap, latestPlayerSnap, latestUserSnap] = await Promise.all([
+      transaction.get(codeRef),
+      transaction.get(firestore.doc(`teams/${teamId}/players/${playerId}`)),
+      transaction.get(userRef)
+    ]);
+
+    if (!latestCodeSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Parent invite could not be found.');
+    }
+    if (!latestPlayerSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Player not found.');
+    }
+    if (!latestUserSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Existing parent user not found.');
+    }
+
+    const latestCodeData = latestCodeSnap.data() || {};
+    validateAutoAcceptParentInviteCode(latestCodeData);
+    if (normalizeParentInviteEmail(latestCodeData.email) !== inviteEmail) {
+      throw new functions.https.HttpsError('failed-precondition', 'Parent invite email changed before auto-linking.');
+    }
+
+    const latestUserData = latestUserSnap.data() || {};
+    if (normalizeParentInviteEmail(latestUserData.email) !== inviteEmail) {
+      throw new functions.https.HttpsError('failed-precondition', 'Existing parent email does not match the invite.');
+    }
+
+    const player = latestPlayerSnap.data() || {};
+    const parentLink = buildAutoAcceptedParentLink({ codeData: latestCodeData, team, player });
+    const playerKey = `${teamId}::${playerId}`;
+    transaction.update(userRef, {
+      parentOf: appendUniqueParentLink(latestUserData.parentOf, parentLink),
+      parentTeamIds: appendUniqueValue(latestUserData.parentTeamIds, teamId),
+      parentPlayerKeys: appendUniqueValue(latestUserData.parentPlayerKeys, playerKey),
+      roles: appendUniqueValue(latestUserData.roles, 'parent')
+    });
+
+    const playerData = latestPlayerSnap.data() || {};
+    const existingParents = Array.isArray(playerData.parents) ? [...playerData.parents] : [];
+    const alreadyLinked = existingParents.some((parent) => parent?.userId === userRef.id);
+    if (!alreadyLinked) {
+      existingParents.push({
+        userId: userRef.id,
+        email: inviteEmail,
+        relation: latestCodeData.relation || null,
+        addedAt: now,
+        status: 'active',
+        source: 'parent_invite'
+      });
+      transaction.update(latestPlayerSnap.ref, { parents: existingParents });
+    }
+
+    transaction.update(codeRef, {
+      used: true,
+      usedBy: userRef.id,
+      usedAt: now,
+      status: 'accepted',
+      autoAccepted: true,
+      autoAcceptedAt: now
+    });
+  });
+
+  return { autoLinked: true, userId: userRef.id };
+});
 
 async function logRsvpTokenRedemptionAttempt({ teamId, payload }) {
   const auditPayload = {
@@ -1770,6 +1939,162 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       actorUid
     });
   });
+
+async function requireTeamEmailSender(teamId, context) {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to send team email.');
+  }
+  const [teamSnap, userSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    firestore.doc(`users/${context.auth.uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = teamSnap.data() || {};
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  const adminEmails = Array.isArray(team.adminEmails)
+    ? team.adminEmails.map((email) => String(email || '').trim().toLowerCase())
+    : [];
+  const canSend = team.ownerId === context.auth.uid ||
+    adminEmails.includes(callerEmail) ||
+    user.isAdmin === true;
+  if (!canSend) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can send team email.');
+  }
+  return { team, user, callerEmail };
+}
+
+exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
+  const teamId = normalizeText(data?.teamId, 160);
+  const draftId = normalizeText(data?.draftId, 160);
+  let subject = normalizeText(data?.subject, 160);
+  let body = normalizeText(data?.body, 20000);
+  let targetType = ['full_team', 'staff', 'individuals'].includes(data?.targetType) ? data.targetType : 'full_team';
+  let recipientIds = Array.isArray(data?.recipientIds) ? data.recipientIds : [];
+
+  if (!teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Team is required.');
+  }
+
+  const { team, user } = await requireTeamEmailSender(teamId, context);
+  if (draftId) {
+    const draftSnap = await firestore.doc(`teams/${teamId}/teamEmailDrafts/${draftId}`).get();
+    if (!draftSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Email draft not found.');
+    }
+    const draft = draftSnap.data() || {};
+    subject = subject || normalizeText(draft.subject, 160);
+    body = body || normalizeText(draft.body, 20000);
+    targetType = ['full_team', 'staff', 'individuals'].includes(draft.targetType) ? draft.targetType : targetType;
+    recipientIds = Array.isArray(draft.recipientIds) && draft.recipientIds.length > 0 ? draft.recipientIds : recipientIds;
+  }
+
+  if (!subject || !body) {
+    throw new functions.https.HttpsError('invalid-argument', 'Subject and message are required.');
+  }
+  if (targetType === 'individuals' && recipientIds.length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'Select at least one recipient.');
+  }
+
+  const [playersSnap, ownerSnap] = await Promise.all([
+    firestore.collection(`teams/${teamId}/players`).get(),
+    team.ownerId ? firestore.doc(`users/${team.ownerId}`).get() : Promise.resolve(null)
+  ]);
+  const players = playersSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+  const ownerUser = ownerSnap?.exists ? ownerSnap.data() || {} : null;
+  const recipients = resolveTeamEmailRecipients({ targetType, recipientIds, players, team, ownerUser });
+  if (recipients.length === 0) {
+    throw new functions.https.HttpsError('failed-precondition', 'No email-enabled recipients were found for that audience.');
+  }
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const messageRef = firestore.collection(`teams/${teamId}/teamEmails`).doc();
+  const mailJobs = recipients.map((recipient) => ({
+    ref: firestore.collection('mail').doc(),
+    recipient,
+    payload: buildTeamEmailMailJob({
+      email: recipient.email,
+      subject,
+      body,
+      teamId,
+      messageId: messageRef.id,
+      senderUid: context.auth.uid
+    })
+  }));
+  const messagePayload = {
+    subject,
+    body,
+    status: 'sent',
+    immutable: true,
+    targetType,
+    draftId: draftId || null,
+    recipientCount: recipients.length,
+    recipientSummary: recipients.map((recipient) => ({
+      playerIds: recipient.playerIds,
+      userIds: recipient.userIds,
+      roles: recipient.roles
+    })),
+    senderId: context.auth.uid,
+    senderName: user.fullName || context.auth.token?.name || null,
+    senderEmail: context.auth.token?.email || null,
+    sentAt: now,
+    createdAt: now,
+    delivery: {
+      provider: 'firestore-mail',
+      status: 'queued',
+      jobCount: mailJobs.length,
+      jobIds: mailJobs.map((job) => job.ref.id)
+    }
+  };
+
+  const chunks = [];
+  for (let i = 0; i < mailJobs.length; i += 400) {
+    chunks.push(mailJobs.slice(i, i + 400));
+  }
+  const firstBatch = firestore.batch();
+  firstBatch.set(messageRef, messagePayload);
+  if (draftId) {
+    firstBatch.set(firestore.doc(`teams/${teamId}/teamEmailDrafts/${draftId}`), {
+      status: 'sent',
+      sentMessageId: messageRef.id,
+      sentAt: now,
+      updatedAt: now
+    }, { merge: true });
+  }
+  chunks.shift().forEach((job) => {
+    firstBatch.set(job.ref, {
+      ...job.payload,
+      createdAt: now
+    });
+  });
+  await firstBatch.commit();
+  try {
+    for (const chunk of chunks) {
+      const batch = firestore.batch();
+      chunk.forEach((job) => batch.set(job.ref, { ...job.payload, createdAt: now }));
+      await batch.commit();
+    }
+  } catch (error) {
+    await messageRef.set({
+      status: 'partial_failed',
+      delivery: {
+        ...messagePayload.delivery,
+        status: 'partial_failed',
+        errorMessage: String(error?.message || 'Some mail jobs could not be queued.')
+      }
+    }, { merge: true });
+    throw new functions.https.HttpsError('internal', 'Some email delivery jobs could not be queued. Check sent history for partial failure details.');
+  }
+
+  return {
+    messageId: messageRef.id,
+    status: 'sent',
+    recipientCount: recipients.length,
+    delivery: messagePayload.delivery
+  };
+});
 
 exports.notifyGameUpdated = functions.firestore
   .document('teams/{teamId}/games/{gameId}')
