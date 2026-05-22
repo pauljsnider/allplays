@@ -11,6 +11,11 @@ const STATUS_LABELS = {
     canceled: 'Canceled'
 };
 
+const REFUND_METHOD_LABELS = {
+    cash: 'Cash',
+    check: 'Check'
+};
+
 function normalizeString(value) {
     return String(value || '').trim();
 }
@@ -164,6 +169,30 @@ export function getRecipientPaidCents(recipient) {
     return Number.isFinite(paid) ? Math.max(0, paid) : 0;
 }
 
+export function getRecipientRefundedCents(recipient) {
+    const explicitRefunded = Number(recipient?.refundedAmountCents ?? recipient?.amountRefundedCents ?? recipient?.totalRefundedCents);
+    if (Number.isFinite(explicitRefunded) && explicitRefunded >= 0) return Math.round(explicitRefunded);
+
+    const ledger = Array.isArray(recipient?.paymentLedger) ? recipient.paymentLedger : Array.isArray(recipient?.ledgerEntries) ? recipient.ledgerEntries : [];
+    return ledger.reduce((total, entry) => {
+        if (entry?.type !== 'stripe_refund' && entry?.type !== 'online_refund') return total;
+        const status = normalizeString(entry.status || 'succeeded').toLowerCase();
+        if (status === 'failed' || status === 'canceled' || status === 'cancelled') return total;
+        const amount = Number(entry.refundAmountCents ?? entry.amountCents ?? 0);
+        return total + (Number.isFinite(amount) ? Math.abs(Math.round(amount)) : 0);
+    }, 0);
+}
+
+export function getRecipientRefundableCents(recipient) {
+    return getRecipientPaidCents(recipient);
+}
+
+export function isOnlineRefundEligible(recipient) {
+    return recipient?.paymentProvider === 'stripe'
+        && Boolean(recipient?.stripePaymentIntentId || recipient?.stripeChargeId || recipient?.stripeLatestChargeId)
+        && getRecipientRefundableCents(recipient) > 0;
+}
+
 export function summarizeFeeRecipients(recipients = []) {
     const summary = {
         totalAssignedCents: 0,
@@ -291,6 +320,62 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
     };
 }
 
+export function buildOfflineRefundUpdate({ refundType = 'full', amount, method, note, actorId, currentBalanceCents, currentPaidCents }) {
+    const priorPaid = Number(currentPaidCents);
+    const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
+    if (priorPaidCents <= 0) {
+        throw new Error('Only recipients with recorded payments can be refunded.');
+    }
+
+    const normalizedType = normalizeString(refundType).toLowerCase() === 'partial' ? 'partial' : 'full';
+    const refundAmountCents = normalizedType === 'full' ? priorPaidCents : toFeeCents(amount);
+    if (refundAmountCents === null || refundAmountCents <= 0) {
+        throw new Error('Enter a refund amount greater than $0.');
+    }
+    if (refundAmountCents > priorPaidCents) {
+        throw new Error('Refund amount cannot exceed the recorded paid amount.');
+    }
+
+    const refundMethod = normalizeString(method).toLowerCase();
+    if (!Object.prototype.hasOwnProperty.call(REFUND_METHOD_LABELS, refundMethod)) {
+        throw new Error('Select cash or check as the refund method.');
+    }
+
+    const adminNote = normalizeString(note);
+    if (!adminNote) throw new Error('Enter an admin note for the refund.');
+
+    const currentBalance = Number(currentBalanceCents);
+    const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : 0;
+    const amountPaidCents = Math.max(0, priorPaidCents - refundAmountCents);
+    const remainingBalanceCents = Math.max(0, balanceCents - amountPaidCents);
+    const status = normalizeLedgerStatus(balanceCents, amountPaidCents);
+    const ledgerEntry = {
+        type: 'offline_refund',
+        amountCents: -refundAmountCents,
+        refundAmountCents,
+        refundType: normalizedType,
+        refundMethod,
+        methodLabel: REFUND_METHOD_LABELS[refundMethod],
+        note: adminNote,
+        recordedBy: actorId || null
+    };
+
+    return {
+        status,
+        amountPaidCents,
+        remainingBalanceCents,
+        ...(status === 'paid' ? {} : { paidAt: null }),
+        refunded: {
+            amountCents: refundAmountCents,
+            refundType: normalizedType,
+            refundMethod,
+            note: adminNote,
+            recordedBy: actorId || null
+        },
+        ledgerEntries: [ledgerEntry]
+    };
+}
+
 export function buildCancelRecipientUpdate({ note, actorId }) {
     const reason = normalizeString(note);
     const ledgerEntry = {
@@ -310,6 +395,33 @@ export function buildCancelRecipientUpdate({ note, actorId }) {
         },
         ledgerEntries: [ledgerEntry]
     };
+}
+
+export function buildOnlineRefundRequest({ amount, reason, teamId, batchId, recipientId }) {
+    const amountCents = toFeeCents(amount);
+    if (amountCents === null || amountCents <= 0) {
+        throw new Error('Enter a refund amount greater than $0.');
+    }
+    const refundRequestId = globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID()
+        : `refund_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+    return {
+        teamId: normalizeString(teamId),
+        batchId: normalizeString(batchId),
+        recipientId: normalizeString(recipientId),
+        amountCents,
+        reason: normalizeString(reason),
+        refundRequestId
+    };
+}
+
+export async function submitOnlineTeamFeeRefund(request) {
+    const { getFunctions, httpsCallable } = await import('./firebase.js?v=15');
+    const functions = getFunctions();
+    const refundTeamFee = httpsCallable(functions, 'refundStripeTeamFeePayment');
+    const result = await refundTeamFee(request);
+    return result?.data || {};
 }
 
 export function getRecipientDisplayName(recipient) {
@@ -463,6 +575,56 @@ function renderSummary(container, recipients) {
     `).join('');
 }
 
+function renderRefundModal() {
+    return `
+        <div id="refund-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-labelledby="refund-modal-title">
+            <form id="refund-form" class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
+                <div class="flex items-start justify-between gap-4">
+                    <div>
+                        <h2 id="refund-modal-title" class="text-xl font-bold text-gray-900">Record offline refund</h2>
+                        <p id="refund-modal-subtitle" class="mt-1 text-sm text-gray-600">Choose the offline refund details to record in the ledger.</p>
+                    </div>
+                    <button type="button" data-refund-close class="rounded-lg px-2 py-1 text-sm font-semibold text-gray-500 hover:bg-gray-100">Close</button>
+                </div>
+
+                <div class="mt-5 space-y-4">
+                    <fieldset>
+                        <legend class="text-sm font-semibold text-gray-700">Refund amount</legend>
+                        <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                            <label class="rounded-xl border border-gray-200 p-3 text-sm font-semibold text-gray-700">
+                                <input type="radio" name="refundType" value="full" checked class="mr-2"> Full refund
+                            </label>
+                            <label class="rounded-xl border border-gray-200 p-3 text-sm font-semibold text-gray-700">
+                                <input type="radio" name="refundType" value="partial" class="mr-2"> Partial refund
+                            </label>
+                        </div>
+                    </fieldset>
+                    <label class="block">
+                        <span class="text-sm font-semibold text-gray-700">Partial amount</span>
+                        <input name="amount" type="number" min="0.01" step="0.01" class="mt-1 w-full rounded-lg border-gray-300 text-sm" aria-label="Refund amount">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-semibold text-gray-700">Refund method</span>
+                        <select name="method" required class="mt-1 w-full rounded-lg border-gray-300 text-sm">
+                            <option value="cash">Offline cash</option>
+                            <option value="check">Offline check</option>
+                        </select>
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-semibold text-gray-700">Admin note</span>
+                        <textarea name="note" required rows="3" placeholder="Required refund note" class="mt-1 w-full rounded-lg border-gray-300 text-sm"></textarea>
+                    </label>
+                </div>
+
+                <div class="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                    <button type="button" data-refund-close class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+                    <button type="submit" class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Record refund</button>
+                </div>
+            </form>
+        </div>
+    `;
+}
+
 function renderRecipients(container, countEl, recipients) {
     countEl.textContent = `${recipients.length} assigned recipient${recipients.length === 1 ? '' : 's'}`;
     if (recipients.length === 0) {
@@ -480,6 +642,8 @@ function renderRecipients(container, countEl, recipients) {
         const balance = formatFeeCurrency(balanceCents);
         const paid = formatFeeCurrency(paidCents);
         const outstanding = formatFeeCurrency(outstandingCents);
+        const refundableCents = getRecipientRefundableCents(recipient);
+        const canRefundOnline = isOnlineRefundEligible(recipient);
         const note = recipient.manualPayment?.note || recipient.adjustment?.note || recipient.canceled?.note || recipient.notes || '';
         return `
             <article class="p-5" data-recipient-id="${escapeHtml(recipient.id)}" data-balance-cents="${balanceCents}" data-paid-cents="${paidCents}" data-status="${escapeHtml(normalizeFeeStatus(recipient.status))}">
@@ -492,7 +656,7 @@ function renderRecipients(container, countEl, recipients) {
                         <div class="mt-1 text-sm text-gray-500">Assigned ${assigned} · Balance ${balance} · Paid ${paid} · Outstanding ${outstanding}</div>
                         ${note ? `<p class="mt-2 text-sm text-gray-600">${escapeHtml(note)}</p>` : ''}
                     </div>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 w-full lg:max-w-4xl">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 w-full lg:max-w-7xl">
                         <form data-action="paid" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
                             <div class="text-xs font-bold uppercase tracking-wide text-gray-500">Manual payment</div>
                             <input name="amount" type="number" min="0" step="0.01" value="${(outstandingCents / 100).toFixed(2)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment amount">
@@ -506,6 +670,19 @@ function renderRecipients(container, countEl, recipients) {
                             <input name="note" type="text" required placeholder="Required reason" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Adjustment reason">
                             <button class="w-full rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700">Save adjustment</button>
                         </form>
+                        ${canRefundOnline ? `
+                            <form data-action="refund" class="rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-2">
+                                <div class="text-xs font-bold uppercase tracking-wide text-blue-700">Online refund</div>
+                                <input name="amount" type="number" min="0" max="${(refundableCents / 100).toFixed(2)}" step="0.01" value="${(refundableCents / 100).toFixed(2)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Refund amount">
+                                <input name="reason" type="text" placeholder="Optional reason" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Refund reason">
+                                <button class="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">Issue refund</button>
+                            </form>
+                        ` : ''}
+                        <div class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                            <div class="text-xs font-bold uppercase tracking-wide text-gray-500">Refund</div>
+                            <p class="text-xs text-gray-500">Record offline cash/check refunds only.</p>
+                            <button type="button" data-refund-action class="w-full rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300" ${paidCents > 0 && recipient.status !== 'canceled' ? '' : 'disabled'}>Refund</button>
+                        </div>
                         <form data-action="cancel" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
                             <div class="text-xs font-bold uppercase tracking-wide text-gray-500">Cancel recipient</div>
                             <input name="note" type="text" placeholder="Reason" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Cancellation note">
@@ -659,6 +836,7 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
         </div>
 
         <div id="fee-message" class="mb-4 hidden rounded-xl border px-4 py-3 text-sm"></div>
+        ${renderRefundModal()}
         <section id="summary-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6"></section>
         <section class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
             <div class="px-5 py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -678,6 +856,9 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
     const summary = document.getElementById('summary-cards');
     const count = document.getElementById('recipient-count');
     const list = document.getElementById('recipients-list');
+    const refundModal = document.getElementById('refund-modal');
+    const refundForm = document.getElementById('refund-form');
+    const refundSubtitle = document.getElementById('refund-modal-subtitle');
 
     async function loadBatch() {
         const batch = await getTeamFeeBatch(teamId, batchId);
@@ -688,6 +869,59 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
         renderSummary(summary, recipients);
         renderRecipients(list, count, recipients);
     }
+
+    function closeRefundModal() {
+        refundModal?.classList.add('hidden');
+        refundModal?.classList.remove('flex');
+        refundForm?.reset();
+    }
+
+    list.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-refund-action]');
+        if (!button) return;
+        const article = button.closest('[data-recipient-id]');
+        if (!article || !refundModal || !refundForm) return;
+        refundForm.dataset.recipientId = article.dataset.recipientId || '';
+        refundForm.dataset.balanceCents = article.dataset.balanceCents || '0';
+        refundForm.dataset.paidCents = article.dataset.paidCents || '0';
+        if (refundSubtitle) {
+            const paidAmount = formatFeeCurrency(article.dataset.paidCents || 0);
+            refundSubtitle.textContent = `Record an offline refund up to ${paidAmount}. This does not contact Stripe or move money.`;
+        }
+        refundModal.classList.remove('hidden');
+        refundModal.classList.add('flex');
+    });
+
+    refundModal?.addEventListener('click', (event) => {
+        if (event.target === refundModal || event.target.closest('[data-refund-close]')) {
+            closeRefundModal();
+        }
+    });
+
+    refundForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const data = Object.fromEntries(new FormData(refundForm).entries());
+        const button = refundForm.querySelector('button[type="submit"]');
+        button.disabled = true;
+        button.textContent = 'Recording...';
+        try {
+            const updates = buildOfflineRefundUpdate({
+                ...data,
+                actorId: user.uid,
+                currentBalanceCents: refundForm.dataset.balanceCents,
+                currentPaidCents: refundForm.dataset.paidCents
+            });
+            await updateTeamFeeRecipient(teamId, batchId, refundForm.dataset.recipientId, updates);
+            closeRefundModal();
+            showMessage('Offline refund recorded.', 'success');
+            await loadBatch();
+        } catch (error) {
+            showMessage(error?.message || 'Unable to record refund.', 'error');
+        } finally {
+            button.disabled = false;
+            button.textContent = 'Record refund';
+        }
+    });
 
     list.addEventListener('submit', async (event) => {
         const form = event.target.closest('form[data-action]');
@@ -702,13 +936,17 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
         try {
             if (form.dataset.action === 'paid') {
                 updates = buildManualPaymentUpdate({ ...data, actorId: user.uid, currentBalanceCents: article?.dataset?.balanceCents, currentPaidCents: article?.dataset?.paidCents, currentStatus: article?.dataset?.status });
+                await updateTeamFeeRecipient(teamId, batchId, recipientId, updates);
             } else if (form.dataset.action === 'adjust') {
                 updates = buildBalanceAdjustmentUpdate({ ...data, actorId: user.uid, currentBalanceCents: article?.dataset?.balanceCents, currentPaidCents: article?.dataset?.paidCents });
+                await updateTeamFeeRecipient(teamId, batchId, recipientId, updates);
+            } else if (form.dataset.action === 'refund') {
+                await submitOnlineTeamFeeRefund(buildOnlineRefundRequest({ ...data, teamId, batchId, recipientId }));
             } else {
                 updates = buildCancelRecipientUpdate({ ...data, actorId: user.uid });
+                await updateTeamFeeRecipient(teamId, batchId, recipientId, updates);
             }
-            await updateTeamFeeRecipient(teamId, batchId, recipientId, updates);
-            showMessage('Fee recipient updated.', 'success');
+            showMessage(form.dataset.action === 'refund' ? 'Stripe refund submitted.' : 'Fee recipient updated.', 'success');
             await loadBatch();
         } catch (error) {
             showMessage(error?.message || 'Unable to update fee recipient.', 'error');

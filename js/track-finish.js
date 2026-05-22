@@ -1,7 +1,12 @@
 import { splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 
 export const STANDARD_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
+export const STANDARD_TRACKER_MAX_EVENT_BATCH_WRITES = 500;
 export const STANDARD_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
+
+export function buildFinishEventDocumentId(index) {
+    return `finish-log-${String(Number(index || 0) + 1).padStart(6, '0')}`;
+}
 
 export function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
     const playerStatsByLowerKey = {};
@@ -28,10 +33,6 @@ export function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
     return normalizedStats;
 }
 
-export function buildFinishBatchLimitError(gameLogLength, maxPrimaryBatchWrites = STANDARD_TRACKER_MAX_PRIMARY_BATCH_WRITES) {
-    return new Error(`Game has ${gameLogLength} logged events. Finish requires chunked event persistence before it can safely exceed Firestore's ${maxPrimaryBatchWrites}-write batch limit.`);
-}
-
 export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId = {}, columns = [], statTrackerConfig = {} } = {}) {
     const safePlayers = Array.isArray(players) ? players : [];
     const safeStatsByPlayerId = playerStatsByPlayerId && typeof playerStatsByPlayerId === 'object'
@@ -49,11 +50,17 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
             publicData: {
                 playerName: player.name,
                 playerNumber: player.number,
+                participated: true,
+                participationStatus: 'appeared',
+                participationSource: 'standard-tracker-finish',
                 stats: publicStats
             },
             privateData: Object.keys(privateStats).length > 0 ? {
                 playerName: player.name,
                 playerNumber: player.number,
+                participated: true,
+                participationStatus: 'appeared',
+                participationSource: 'standard-tracker-finish',
                 stats: privateStats
             } : null
         };
@@ -78,16 +85,11 @@ export async function commitStandardTrackerFinishData({
     summary = '',
     opponentStats = {},
     maxPrimaryBatchWrites = STANDARD_TRACKER_MAX_PRIMARY_BATCH_WRITES,
+    maxEventBatchWrites = STANDARD_TRACKER_MAX_EVENT_BATCH_WRITES,
     maxAggregatedStatsBatchWrites = STANDARD_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES
 } = {}) {
     const safeGameLog = Array.isArray(gameLog) ? gameLog : [];
-    const primaryBatchWriteCount = safeGameLog.length + 1;
-
-    if (primaryBatchWriteCount > maxPrimaryBatchWrites) {
-        throw buildFinishBatchLimitError(safeGameLog.length, maxPrimaryBatchWrites);
-    }
-
-    const primaryBatch = writeBatch(db);
+    const legacyPrimaryBatchWriteCount = safeGameLog.length + 1;
     const aggregatedStatsWrites = buildAggregatedStatsWrites({
         players,
         playerStatsByPlayerId,
@@ -95,9 +97,31 @@ export async function commitStandardTrackerFinishData({
         statTrackerConfig
     });
 
-    safeGameLog.forEach((entry) => {
-        const eventRef = doc(collection(db, `teams/${teamId}/games/${gameId}/events`));
-        primaryBatch.set(eventRef, {
+    const eventBatchSizes = [];
+    let eventBatch = null;
+    let eventBatchWriteCount = 0;
+
+    function ensureEventBatch() {
+        if (!eventBatch) {
+            eventBatch = writeBatch(db);
+        }
+    }
+
+    async function commitEventBatch() {
+        if (!eventBatch || eventBatchWriteCount === 0) return;
+        eventBatchSizes.push(eventBatchWriteCount);
+        await eventBatch.commit();
+        eventBatch = null;
+        eventBatchWriteCount = 0;
+    }
+
+    for (const [eventIndex, entry] of safeGameLog.entries()) {
+        if (eventBatchWriteCount >= maxEventBatchWrites) {
+            await commitEventBatch();
+        }
+        ensureEventBatch();
+        const eventRef = doc(db, `teams/${teamId}/games/${gameId}/events`, buildFinishEventDocumentId(eventIndex));
+        eventBatch.set(eventRef, {
             text: entry.text,
             gameTime: entry.time,
             period: entry.period,
@@ -109,18 +133,9 @@ export async function commitStandardTrackerFinishData({
             isOpponent: entry.undoData?.isOpponent || false,
             createdBy: currentUserUid
         });
-    });
-
-    const gameRef = doc(db, `teams/${teamId}/games`, gameId);
-    primaryBatch.update(gameRef, {
-        homeScore: finalHome,
-        awayScore: finalAway,
-        summary,
-        status: 'completed',
-        opponentStats
-    });
-
-    await primaryBatch.commit();
+        eventBatchWriteCount += 1;
+    }
+    await commitEventBatch();
 
     const aggregatedStatsBatchSizes = [];
     let statsBatch = null;
@@ -159,8 +174,21 @@ export async function commitStandardTrackerFinishData({
     }
     await commitStatsBatch();
 
+    const gameUpdateBatch = writeBatch(db);
+    const gameRef = doc(db, `teams/${teamId}/games`, gameId);
+    gameUpdateBatch.update(gameRef, {
+        homeScore: finalHome,
+        awayScore: finalAway,
+        summary,
+        status: 'completed',
+        opponentStats
+    });
+    await gameUpdateBatch.commit();
+
     return {
-        primaryBatchWriteCount,
+        primaryBatchWriteCount: legacyPrimaryBatchWriteCount,
+        eventBatchSizes,
+        gameUpdateBatchSize: 1,
         aggregatedStatsBatchSizes,
         aggregatedStatsWriteCount: aggregatedStatsBatchSizes.reduce((total, size) => total + size, 0)
     };

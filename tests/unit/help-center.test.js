@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
     normalizeHelpRole,
     getHelpGuidesForRole,
@@ -8,6 +9,10 @@ import {
     resolveGuideLinks,
     getHelpCategoriesForRole
 } from '../../js/help-center.js';
+
+function readRepoFile(relativePath) {
+    return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
+}
 
 describe('help center deep workflow coverage', () => {
     it('normalizes role aliases and defaults unknown to member', () => {
@@ -60,5 +65,24 @@ describe('help center deep workflow coverage', () => {
         const parentCategories = getHelpCategoriesForRole('parent').map((category) => category.id);
         expect(parentCategories.includes('team-setup')).toBe(false);
         expect(parentCategories.includes('watch-chat')).toBe(true);
+    });
+
+    it('keeps team chat mention help aligned with supported assistant mentions', () => {
+        const guide = getGuideById('coach', 'team-chat-tagging');
+        const helpPage = readRepoFile('help-watch-chat.html');
+        const guideText = [
+            guide.title,
+            guide.summary,
+            ...guide.steps,
+            ...guide.commonErrors
+        ].join(' ');
+
+        expect(guideText).toContain('@ALL PLAYS');
+        expect(guideText).toContain('recipient picker');
+        expect(guideText).toContain('person and group @ mentions are not supported');
+        expect(guideText).not.toMatch(/Tag people in chat|Tag only the people|targeted mentions/i);
+        expect(helpPage).toContain('@ALL PLAYS');
+        expect(helpPage).toContain('Use the recipient picker, not @ mentions');
+        expect(helpPage).not.toContain('Use targeted mentions');
     });
 });

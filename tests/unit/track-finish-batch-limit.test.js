@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { commitStandardTrackerFinishData } from '../../js/track-finish.js';
+import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
 function createFirestoreHarness({ commitFailuresByBatchIndex = {} } = {}) {
     const batches = [];
@@ -95,27 +96,69 @@ async function runFinishSave({ eventCount, rosterCount }) {
 }
 
 describe('standard tracker finish batch limits', () => {
-    it('commits 499 game logs plus final update and chunks 905 aggregated stat writes', async () => {
+    it('chunks game logs and aggregated stat writes before final game update', async () => {
         const { harness, result } = await runFinishSave({
             eventCount: 499,
             rosterCount: 905
         });
 
-        expect(result.primaryBatchWriteCount).toBe(500);
+        expect(result.eventBatchSizes).toEqual([499]);
         expect(result.aggregatedStatsBatchSizes).toEqual([450, 450, 5]);
-        expect(harness.batches).toHaveLength(4);
+        expect(result.gameUpdateBatchSize).toBe(1);
+        expect(harness.batches).toHaveLength(5);
 
-        const [primaryBatch, ...secondaryBatches] = harness.batches;
-        expect(primaryBatch.commitCount).toBe(1);
-        expect(primaryBatch.operations).toHaveLength(500);
-        expect(primaryBatch.operations.filter((op) => op.type === 'set')).toHaveLength(499);
-        expect(primaryBatch.operations.filter((op) => op.type === 'update')).toHaveLength(1);
+        const [eventBatch, ...secondaryBatches] = harness.batches;
+        const gameUpdateBatch = secondaryBatches.pop();
+        expect(eventBatch.commitCount).toBe(1);
+        expect(eventBatch.operations).toHaveLength(499);
+        expect(eventBatch.operations.every((op) => op.type === 'set')).toBe(true);
 
         expect(secondaryBatches.map((batch) => batch.operations.length)).toEqual([450, 450, 5]);
         secondaryBatches.forEach((batch) => {
             expect(batch.commitCount).toBe(1);
             expect(batch.operations.every((op) => op.type === 'set')).toBe(true);
         });
+        expect(gameUpdateBatch.operations).toEqual([
+            expect.objectContaining({ type: 'update', ref: { path: 'teams/team-1/games/game-1' } })
+        ]);
+    });
+
+    it('writes zero-stat roster players as player profile appearances', async () => {
+        const harness = createFirestoreHarness();
+
+        await commitStandardTrackerFinishData({
+            db: harness.db,
+            writeBatch: harness.writeBatch,
+            doc: harness.doc,
+            collection: harness.collection,
+            teamId: 'team-1',
+            gameId: 'game-1',
+            currentUserUid: 'coach-1',
+            gameLog: [],
+            players: [
+                { id: 'p1', name: 'Ava', number: '3' },
+                { id: 'p2', name: 'Ben', number: '8' }
+            ],
+            playerStatsByPlayerId: { p1: { pts: 6, ast: 1 } },
+            columns: ['PTS', 'AST'],
+            finalHome: 6,
+            finalAway: 4,
+            summary: 'Finished cleanly.',
+            opponentStats: {}
+        });
+
+        const statsBatch = harness.batches[0];
+        const zeroStatWrite = statsBatch.operations.find((op) => op.ref.path === 'teams/team-1/games/game-1/aggregatedStats/p2');
+
+        expect(zeroStatWrite.data).toEqual({
+            playerName: 'Ben',
+            playerNumber: '8',
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'standard-tracker-finish',
+            stats: { pts: 0, ast: 0 }
+        });
+        expect(hasPlayerProfileParticipation(zeroStatWrite.data)).toBe(true);
     });
 
     it('writes private player stats to manager-only docs when finishing a standard tracker game', async () => {
@@ -146,7 +189,7 @@ describe('standard tracker finish batch limits', () => {
             opponentStats: {}
         });
 
-        const statsBatch = harness.batches[1];
+        const statsBatch = harness.batches[0];
         expect(statsBatch.operations).toEqual([
             expect.objectContaining({
                 ref: { path: 'teams/team-1/games/game-1/aggregatedStats/p1' },
@@ -159,28 +202,22 @@ describe('standard tracker finish batch limits', () => {
         ]);
     });
 
-    it('rejects 500 game logs plus final update before any batch commit', async () => {
-        const harness = createFirestoreHarness();
+    it('chunks more than 500 game logs instead of rejecting the finish', async () => {
+        const { harness, result } = await runFinishSave({
+            eventCount: 1001,
+            rosterCount: 12
+        });
 
-        await expect(commitStandardTrackerFinishData({
-            db: harness.db,
-            writeBatch: harness.writeBatch,
-            doc: harness.doc,
-            collection: harness.collection,
-            teamId: 'team-1',
-            gameId: 'game-1',
-            currentUserUid: 'coach-1',
-            gameLog: buildGameLog(500),
-            players: buildRoster(905),
-            playerStatsByPlayerId: {},
-            columns: ['PTS'],
-            finalHome: 12,
-            finalAway: 10,
-            summary: 'Should not save.',
-            opponentStats: {}
-        })).rejects.toThrow("Game has 500 logged events. Finish requires chunked event persistence before it can safely exceed Firestore's 500-write batch limit.");
-
-        expect(harness.batches).toHaveLength(0);
+        expect(result.eventBatchSizes).toEqual([500, 500, 1]);
+        expect(result.aggregatedStatsBatchSizes).toEqual([12]);
+        expect(harness.batches.map((batch) => batch.operations.length)).toEqual([500, 500, 1, 12, 1]);
+        expect(harness.batches[0].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000001');
+        expect(harness.batches[0].operations[499].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000500');
+        expect(harness.batches[1].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000501');
+        expect(harness.batches[2].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-001001');
+        expect(harness.batches.at(-1).operations).toEqual([
+            expect.objectContaining({ type: 'update', data: expect.objectContaining({ status: 'completed' }) })
+        ]);
     });
 
     it('rejects when a secondary aggregated stats batch fails after primary commit', async () => {
@@ -213,10 +250,10 @@ describe('standard tracker finish batch limits', () => {
         expect(harness.batches[0].commitCount).toBe(1);
         expect(harness.batches[1].commitCount).toBe(1);
         expect(harness.batches[2].commitCount).toBe(1);
-        expect(harness.batches[0].operations).toHaveLength(500);
+        expect(harness.batches[0].operations).toHaveLength(499);
         expect(harness.batches[1].operations).toHaveLength(450);
         expect(harness.batches[2].operations).toHaveLength(450);
-        expect(harness.batches[3]).toBeUndefined();
+        expect(harness.batches.some((batch) => batch.operations.some((op) => op.type === 'update'))).toBe(false);
     });
 
     it('wires the production track.html submit path through the tested finish helper before success-only side effects', () => {

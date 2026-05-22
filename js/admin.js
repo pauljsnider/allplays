@@ -44,6 +44,12 @@ let telemetryState = {
     sessions: []
 };
 
+const telemetryIssueEvents = [
+    { name: 'js_error', label: 'JS errors' },
+    { name: 'js_unhandled_rejection', label: 'Unhandled rejections' },
+    { name: 'interaction_rage_click', label: 'Rage clicks' }
+];
+
 function isTeamActive(team) {
     return team?.active !== false;
 }
@@ -386,6 +392,62 @@ function renderTopTelemetryEvents() {
     `, 'No event telemetry has been recorded for this range.');
 }
 
+function getTelemetryIssueCounts() {
+    const issueCounts = new Map(telemetryIssueEvents.map(({ name }) => [name, 0]));
+    telemetryState.eventDaily.forEach((row) => {
+        if (!issueCounts.has(row.name)) return;
+        issueCounts.set(row.name, issueCounts.get(row.name) + Number(row.count || 0));
+    });
+    return issueCounts;
+}
+
+function renderTelemetryNeedsAttention() {
+    const element = document.getElementById('telemetry-needs-attention');
+    if (!element) return;
+
+    const issueCounts = getTelemetryIssueCounts();
+    const issueEvents = telemetryState.events.filter((event) => issueCounts.has(event.name));
+    const totalIssues = Array.from(issueCounts.values()).reduce((sum, count) => sum + count, 0);
+    const countCards = telemetryIssueEvents.map(({ name, label }) => `
+        <div class="rounded-lg border border-gray-200 p-4">
+            <p class="text-xs font-semibold text-gray-500 uppercase">${escapeHtml(label)}</p>
+            <p class="text-2xl font-bold text-gray-900 mt-1">${telemetryNumber(issueCounts.get(name))}</p>
+        </div>
+    `).join('');
+
+    if (!totalIssues) {
+        element.innerHTML = `
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">${countCards}</div>
+            <p class="text-sm text-gray-500">No errors or rage clicks recorded for this range.</p>
+        `;
+        return;
+    }
+
+    const recentRows = issueEvents
+        .slice(0, 5)
+        .map((event) => {
+            const createdAt = telemetryDate(event.createdAt) || telemetryDate(event.clientTimestamp);
+            return `
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-1 border-b border-gray-100 pb-2 last:border-0">
+                    <div class="min-w-0">
+                        <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(event.name || '-')} · ${escapeHtml(event.pagePath || '-')}</p>
+                        <p class="text-xs text-gray-500 truncate">Target: ${escapeHtml(getTelemetryTarget(event))}</p>
+                    </div>
+                    <span class="text-xs text-gray-500 whitespace-nowrap">${createdAt ? createdAt.toLocaleString() : '-'}</span>
+                </div>
+            `;
+        })
+        .join('') || '<p class="text-sm text-gray-500">No recent raw examples loaded for this range.</p>';
+
+    element.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">${countCards}</div>
+        <div>
+            <p class="text-xs font-semibold text-gray-500 uppercase mb-2">Recent examples</p>
+            <div class="space-y-2">${recentRows}</div>
+        </div>
+    `;
+}
+
 function renderRecentTelemetrySessions() {
     const cutoff = Date.now() - telemetryState.days * 24 * 60 * 60 * 1000;
     const sessions = telemetryState.sessions
@@ -451,6 +513,7 @@ function updateTelemetryDashboard() {
         renderMetric('telemetry-known-users', 0);
         renderMetric('telemetry-errors', 0);
         renderEmptyTelemetry('telemetry-daily-trend', errorMessage);
+        renderEmptyTelemetry('telemetry-needs-attention', errorMessage);
         renderEmptyTelemetry('telemetry-top-pages', errorMessage);
         renderEmptyTelemetry('telemetry-top-events', errorMessage);
         renderEmptyTelemetry('telemetry-recent-sessions', errorMessage);
@@ -475,6 +538,7 @@ function updateTelemetryDashboard() {
     renderMetric('telemetry-known-users', knownUsers.size);
     renderMetric('telemetry-errors', sumBy(telemetryState.daily, 'errors'));
 
+    renderTelemetryNeedsAttention();
     renderTelemetryTrend();
     renderTopTelemetryPages();
     renderTopTelemetryEvents();

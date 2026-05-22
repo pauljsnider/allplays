@@ -204,6 +204,10 @@ export async function getChatMessages() {
 export async function postChatMessage() {}
 export async function editChatMessage() {}
 export async function deleteChatMessage() {}
+export async function getTeamEmailDrafts() {
+    return [];
+}
+export async function saveTeamEmailDraft() {}
 export function canAccessTeamChat() {
     return true;
 }
@@ -211,6 +215,12 @@ export function canModerateChat() {
     return false;
 }
 export async function updateChatLastRead() {}
+export async function sendTeamEmail() {
+    return { id: 'email-1', recipientCount: 1 };
+}
+export async function getSentTeamEmails() {
+    return [];
+}
 export function subscribeToChatMessages(teamId, options, onMessages) {
     setTimeout(() => {
         onMessages([

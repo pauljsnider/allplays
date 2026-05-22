@@ -190,7 +190,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
   rewritten = replaceImport(
     rewritten,
     /import\s*\{(?=[\s\S]*\bdb\b)[\s\S]*?\}\s*from\s*['"]\.\/firebase\.js(?:\?v=[^'"]+)?['"];?\s*/,
-    'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot } = deps.firebase;'
+    'const { db, writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } = deps.firebase;'
   );
   rewritten = replaceNamedImportByModulePath(
     rewritten,
@@ -400,7 +400,8 @@ async function bootLiveTracker({ game, snapshots }) {
       doc: (...parts) => ({ path: parts.join('/') }),
       setDoc: async () => {},
       addDoc: async () => {},
-      onSnapshot: () => () => {}
+      onSnapshot: () => () => {},
+      serverTimestamp: () => ({ _methodName: 'serverTimestamp' })
     },
     utils: {
       getUrlParams: () => ({ teamId: 'team-1', gameId: 'game-1' }),
@@ -609,7 +610,7 @@ describe('live tracker start over reset flow', () => {
         opponentTeamName: 'Lions Academy',
         opponentTeamPhoto: 'https://example.com/lions.png'
       });
-      expect(resetUpdate.liveResetAt).toEqual(expect.any(Number));
+      expect(resetUpdate.liveResetAt?._methodName).toBe('serverTimestamp');
       expect(resetUpdate.liveClockUpdatedAt).toEqual(expect.any(Number));
 
       expect(page.els.scoreLine.textContent).toBe('0 — 0');

@@ -75,6 +75,14 @@
                         Photos &amp; Videos
                         <span id="media-gallery-count" class="hidden rounded-full bg-primary-100 px-2 py-0.5 text-xs font-semibold text-primary-700"></span>
                     </button>
+                    <button id="email-panel-btn"
+                        class="hidden flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
+                        Team Email
+                    </button>
+                    <button id="email-drafts-btn"
+                        class="hidden flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
+                        Email Drafts
+                    </button>
                     <button id="refresh-btn"
                         class="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -90,6 +98,30 @@
                 <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Conversations</div>
                 <div id="conversations-list" class="flex gap-2 overflow-x-auto pb-1">
                     <button type="button" class="rounded-full bg-primary-600 px-3 py-1.5 text-sm font-medium text-white">Team-wide</button>
+                </div>
+            </div>
+
+            <div id="email-panel" class="hidden border-b border-gray-100 bg-white p-4 space-y-4">
+                <div class="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
+                    Send a backend email to roster contacts with email enabled. Sent messages are immutable and recipient email addresses are not shown here.
+                </div>
+                <div class="grid gap-3">
+                    <label class="block">
+                        <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Subject</span>
+                        <input id="email-subject" type="text" maxlength="160" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Practice update">
+                    </label>
+                    <label class="block">
+                        <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Message</span>
+                        <textarea id="email-body" rows="5" maxlength="20000" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Write the email message..."></textarea>
+                    </label>
+                    <div class="flex items-center justify-between gap-3">
+                        <div id="email-status" class="text-sm text-gray-600"></div>
+                        <button id="email-send-btn" type="button" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-50">Send email</button>
+                    </div>
+                </div>
+                <div>
+                    <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Sent email history</div>
+                    <div id="email-history" class="space-y-2 text-sm text-gray-600">No sent emails yet.</div>
                 </div>
             </div>
 
@@ -207,6 +239,49 @@
         </div>
     </div>
 
+    <div id="email-draft-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-5xl w-full max-h-full overflow-hidden flex flex-col">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-900">Team Email Drafts</h3>
+                    <p class="text-sm text-gray-500">Compose and save roster email drafts. Email delivery is not enabled yet.</p>
+                </div>
+                <button id="email-draft-close-btn" type="button" class="px-3 py-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg">Close</button>
+            </div>
+            <div class="grid gap-0 md:grid-cols-[280px_1fr] overflow-y-auto">
+                <aside class="border-b md:border-b-0 md:border-r border-gray-200 p-4 bg-gray-50">
+                    <button id="email-draft-new-btn" type="button" class="w-full rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">New draft</button>
+                    <div class="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Saved Drafts</div>
+                    <div id="email-drafts-list" class="mt-2 space-y-2 text-sm text-gray-600">No drafts yet.</div>
+                </aside>
+                <section class="p-5 space-y-4">
+                    <div id="email-draft-error" class="hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"></div>
+                    <div>
+                        <label for="email-draft-subject" class="block text-sm font-semibold text-gray-700">Subject</label>
+                        <input id="email-draft-subject" type="text" maxlength="200" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Practice update for Friday">
+                    </div>
+                    <div>
+                        <label for="email-draft-body" class="block text-sm font-semibold text-gray-700">Body</label>
+                        <textarea id="email-draft-body" rows="8" maxlength="12000" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Write the email body..."></textarea>
+                    </div>
+                    <div>
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <div class="text-sm font-semibold text-gray-700">Recipients</div>
+                                <div id="email-recipient-summary" class="text-xs text-gray-500">Select at least one eligible roster contact.</div>
+                            </div>
+                            <button id="email-recipient-select-all-btn" type="button" class="text-sm font-medium text-primary-600 hover:text-primary-700">Select all</button>
+                        </div>
+                        <div id="email-recipient-list" class="mt-2 max-h-52 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100"></div>
+                    </div>
+                    <div class="flex justify-end gap-2">
+                        <button id="email-draft-save-btn" type="button" class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed">Save draft</button>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
     <div id="media-gallery-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 z-50 p-4">
         <div class="max-w-5xl mx-auto h-full flex items-center justify-center">
             <div class="bg-white rounded-2xl shadow-xl w-full max-h-full overflow-hidden flex flex-col">
@@ -229,7 +304,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=14';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=31';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=32';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=1';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -401,6 +476,10 @@
         let recipientOptions = [];
         let selectedRecipientTarget = 'full_team';
         let selectedRecipientIds = new Set();
+        let emailDrafts = [];
+        let selectedEmailDraftId = null;
+        let emailRecipientOptions = [];
+        let selectedEmailRecipientKeys = new Set();
         const reactionLongPress = {
             timer: null,
             key: null,
@@ -463,6 +542,8 @@
                 canModerate = canModerateChat(userWithProfile, currentTeam);
                 if (canModerate) {
                     await loadRecipientOptions();
+                    await loadEmailDrafts();
+                    document.getElementById('email-drafts-btn')?.classList.remove('hidden');
                 }
 
                 // Render team navigation banner with appropriate access level
@@ -476,6 +557,10 @@
                     exitUrl
                 });
                 await loadConversations();
+                if (canModerate) {
+                    document.getElementById('email-panel-btn')?.classList.remove('hidden');
+                    loadSentEmailHistory();
+                }
 
                 // Load messages (real-time)
                 startRealtimeUpdates();
@@ -1023,7 +1108,11 @@
         }
 
         function getRecipientOptionId(kind, value) {
-            return `${kind}:${String(value || '').trim()}`;
+            const normalizedKind = String(kind || '').trim().toLowerCase();
+            const normalizedValue = normalizedKind === 'email'
+                ? String(value || '').trim().toLowerCase()
+                : String(value || '').trim();
+            return `${normalizedKind}:${normalizedValue}`;
         }
 
         function getRecipientOptionLabel(option) {
@@ -1062,6 +1151,201 @@
             } catch (error) {
                 console.warn('Failed to load chat recipient options:', error);
                 recipientOptions = [];
+            }
+        }
+
+        function normalizeEmailAddress(value) {
+            return String(value || '').trim().toLowerCase();
+        }
+
+        function isUsableEmail(value) {
+            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmailAddress(value));
+        }
+
+        function isEmailMessagingEnabled(contact = {}) {
+            return contact.emailMessagingEnabled !== false &&
+                contact.messagingEnabled !== false &&
+                contact.emailEnabled !== false &&
+                contact.optOutEmail !== true &&
+                contact.emailOptOut !== true;
+        }
+
+        function buildEligibleEmailRecipientsFromPlayers(players = []) {
+            const recipients = new Map();
+            players.forEach((player) => {
+                const playerName = player?.name || 'Roster player';
+                const contacts = [
+                    ...(Array.isArray(player?.parents) ? player.parents : []),
+                    ...(Array.isArray(player?.contacts) ? player.contacts : []),
+                    ...(Array.isArray(player?.guardians) ? player.guardians : [])
+                ];
+                contacts.forEach((contact) => {
+                    const email = normalizeEmailAddress(contact?.email);
+                    if (!isUsableEmail(email) || !isEmailMessagingEnabled(contact)) return;
+                    const key = `email:${email}`;
+                    if (!recipients.has(key)) {
+                        recipients.set(key, {
+                            key,
+                            email,
+                            name: contact.name || contact.fullName || contact.parentName || email,
+                            detail: playerName ? `Guardian for ${playerName}` : 'Roster contact'
+                        });
+                    }
+                });
+            });
+            return Array.from(recipients.values()).sort((a, b) => a.name.localeCompare(b.name));
+        }
+
+        async function loadEmailRecipientOptions() {
+            const players = await getPlayers(teamId);
+            emailRecipientOptions = buildEligibleEmailRecipientsFromPlayers(players);
+        }
+
+        async function loadEmailDrafts() {
+            if (!canModerate) return;
+            try {
+                emailDrafts = await getTeamEmailDrafts(teamId);
+            } catch (error) {
+                console.warn('Failed to load email drafts:', error);
+                emailDrafts = [];
+            }
+            renderEmailDraftsList();
+        }
+
+        function openEmailDraftModal(draftId = null) {
+            if (!canModerate) return;
+            document.getElementById('email-draft-modal').classList.remove('hidden');
+            if (emailRecipientOptions.length === 0) {
+                loadEmailRecipientOptions().then(() => {
+                    selectEmailDraft(draftId);
+                }).catch((error) => {
+                    console.warn('Failed to load email recipients:', error);
+                    emailRecipientOptions = [];
+                    selectEmailDraft(draftId);
+                });
+                return;
+            }
+            selectEmailDraft(draftId);
+        }
+
+        function closeEmailDraftModal() {
+            document.getElementById('email-draft-modal').classList.add('hidden');
+            hideEmailDraftError();
+        }
+
+        function selectEmailDraft(draftId = null) {
+            const draft = emailDrafts.find((item) => item.id === draftId) || null;
+            selectedEmailDraftId = draft?.id || null;
+            document.getElementById('email-draft-subject').value = draft?.subject || '';
+            document.getElementById('email-draft-body').value = draft?.body || '';
+            selectedEmailRecipientKeys = new Set((Array.isArray(draft?.recipients) ? draft.recipients : []).map((recipient) => recipient.key || `email:${normalizeEmailAddress(recipient.email)}`));
+            renderEmailDraftsList();
+            renderEmailRecipientPicker();
+            updateEmailDraftSaveState();
+        }
+
+        function renderEmailDraftsList() {
+            const list = document.getElementById('email-drafts-list');
+            if (!list) return;
+            if (emailDrafts.length === 0) {
+                list.innerHTML = '<div class="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-center text-sm text-gray-500">No drafts yet.</div>';
+                return;
+            }
+            list.innerHTML = emailDrafts.map((draft) => `
+                <button type="button" data-email-draft-id="${escapeHtml(draft.id)}"
+                    class="w-full rounded-lg px-3 py-2 text-left ${draft.id === selectedEmailDraftId ? 'bg-primary-50 text-primary-700' : 'bg-white text-gray-700 hover:bg-gray-100'}">
+                    <span class="block truncate font-semibold">${escapeHtml(draft.subject || 'Untitled draft')}</span>
+                    <span class="block text-xs text-gray-500">${(draft.recipients || []).length} recipient${(draft.recipients || []).length === 1 ? '' : 's'}</span>
+                </button>
+            `).join('');
+        }
+
+        function renderEmailRecipientPicker() {
+            const list = document.getElementById('email-recipient-list');
+            const summary = document.getElementById('email-recipient-summary');
+            if (!list || !summary) return;
+            const selectedCount = selectedEmailRecipientKeys.size;
+            summary.textContent = selectedCount > 0
+                ? `${selectedCount} eligible roster contact${selectedCount === 1 ? '' : 's'} selected.`
+                : 'Select at least one eligible roster contact.';
+            if (emailRecipientOptions.length === 0) {
+                list.innerHTML = '<div class="px-3 py-4 text-sm text-gray-500">No roster contacts have usable email addresses with email messaging enabled.</div>';
+                return;
+            }
+            list.innerHTML = emailRecipientOptions.map((recipient) => `
+                <label class="flex cursor-pointer items-center gap-3 px-3 py-2 hover:bg-gray-50">
+                    <input type="checkbox" data-email-recipient-key="${escapeHtml(recipient.key)}" ${selectedEmailRecipientKeys.has(recipient.key) ? 'checked' : ''}
+                        class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
+                    <span class="min-w-0 flex-1">
+                        <span class="block truncate text-sm font-medium text-gray-800">${escapeHtml(recipient.name)}</span>
+                        <span class="block truncate text-xs text-gray-500">${escapeHtml(recipient.email)} • ${escapeHtml(recipient.detail)}</span>
+                    </span>
+                </label>
+            `).join('');
+        }
+
+        function getSelectedEmailRecipients() {
+            return emailRecipientOptions
+                .filter((recipient) => selectedEmailRecipientKeys.has(recipient.key))
+                .map((recipient) => ({
+                    key: recipient.key,
+                    email: recipient.email,
+                    name: recipient.name,
+                    detail: recipient.detail
+                }));
+        }
+
+        function showEmailDraftError(message) {
+            const error = document.getElementById('email-draft-error');
+            if (!error) return;
+            error.textContent = message;
+            error.classList.remove('hidden');
+        }
+
+        function hideEmailDraftError() {
+            document.getElementById('email-draft-error')?.classList.add('hidden');
+        }
+
+        function updateEmailDraftSaveState() {
+            const saveBtn = document.getElementById('email-draft-save-btn');
+            if (!saveBtn) return;
+            const hasSubject = document.getElementById('email-draft-subject').value.trim().length > 0;
+            const hasBody = document.getElementById('email-draft-body').value.trim().length > 0;
+            saveBtn.disabled = selectedEmailRecipientKeys.size === 0 || !hasSubject || !hasBody;
+        }
+
+        async function saveEmailDraftFromForm() {
+            hideEmailDraftError();
+            const subject = document.getElementById('email-draft-subject').value.trim();
+            const body = document.getElementById('email-draft-body').value.trim();
+            const recipients = getSelectedEmailRecipients();
+            if (recipients.length === 0 || !subject || !body) {
+                showEmailDraftError('Choose at least one recipient, a subject, and a body before saving.');
+                updateEmailDraftSaveState();
+                return;
+            }
+            const saveBtn = document.getElementById('email-draft-save-btn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+            try {
+                const saved = await saveTeamEmailDraft(teamId, {
+                    subject,
+                    body,
+                    recipients,
+                    authorId: currentUser.uid,
+                    authorEmail: currentUser.email || null,
+                    authorName: currentUserProfile?.fullName || null,
+                    status: 'draft'
+                }, { draftId: selectedEmailDraftId });
+                selectedEmailDraftId = saved.id;
+                await loadEmailDrafts();
+                selectEmailDraft(saved.id);
+            } catch (error) {
+                console.error('Error saving email draft:', error);
+                showEmailDraftError(error?.message || 'Failed to save draft. Please try again.');
+            } finally {
+                saveBtn.textContent = 'Save draft';
+                updateEmailDraftSaveState();
             }
         }
 
@@ -1165,6 +1449,44 @@
             };
         }
 
+        function getConversationEmailRecipientIds(conversation = {}) {
+            const optionIds = new Set(recipientOptions.map((option) => option.id));
+            const ids = Array.isArray(conversation.participantIds) ? conversation.participantIds : [];
+            return Array.from(new Set(ids.flatMap((id) => {
+                const raw = String(id || '').trim();
+                if (!raw) return [];
+                if (raw.toLowerCase().startsWith('email:')) {
+                    return [getRecipientOptionId('email', raw.slice(6))];
+                }
+                if (raw.toLowerCase().startsWith('user:')) {
+                    return [getRecipientOptionId('user', raw.slice(5))];
+                }
+                return [raw, getRecipientOptionId('user', raw)];
+            }).filter((id) => optionIds.has(id))));
+        }
+
+        function buildEmailTargetMetadata() {
+            const activeConversation = getSelectedConversation();
+            if (activeConversation && !isDefaultTeamConversation(selectedConversationId)) {
+                const participantRoles = Array.isArray(activeConversation.participantRoles)
+                    ? activeConversation.participantRoles.map((role) => String(role || '').trim().toLowerCase())
+                    : [];
+                if (participantRoles.includes('staff')) {
+                    return {
+                        targetType: 'staff',
+                        recipientIds: [],
+                        targetRole: 'staff'
+                    };
+                }
+                return {
+                    targetType: 'individuals',
+                    recipientIds: getConversationEmailRecipientIds(activeConversation),
+                    targetRole: null
+                };
+            }
+            return buildRecipientTargetMetadata();
+        }
+
         function getRecipientSummaryText() {
             const target = buildRecipientTargetMetadata();
             if (target.targetType === 'staff') {
@@ -1221,6 +1543,92 @@
                     </span>
                 </label>
             `).join('');
+        }
+
+        function renderEmailHistory(items = []) {
+            const container = document.getElementById('email-history');
+            if (!container) return;
+            if (!items.length) {
+                container.innerHTML = '<div class="rounded-lg border border-gray-200 px-3 py-2 text-gray-500">No sent emails yet.</div>';
+                return;
+            }
+            container.innerHTML = items.map((item) => {
+                const sentAt = item.sentAt?.toDate ? item.sentAt.toDate() : null;
+                const sentLabel = sentAt ? sentAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'Queued';
+                const delivery = item.delivery || {};
+                const status = delivery.status || item.status || 'queued';
+                const jobCount = delivery.jobCount ?? item.recipientCount ?? 0;
+                return `
+                    <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                            <div class="min-w-0">
+                                <div class="truncate font-semibold text-gray-900">${escapeHtml(item.subject || '(No subject)')}</div>
+                                <div class="text-xs text-gray-500">From ${escapeHtml(item.senderName || item.senderEmail || 'Team admin')} • ${escapeHtml(sentLabel)}</div>
+                            </div>
+                            <div class="text-xs text-gray-500 sm:text-right">
+                                ${Number(item.recipientCount || 0)} recipients • ${escapeHtml(status)} • ${Number(jobCount)} jobs
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function loadSentEmailHistory() {
+            if (!canModerate) return;
+            try {
+                renderEmailHistory(await getSentTeamEmails(teamId, { limit: 25 }));
+            } catch (error) {
+                console.warn('Failed to load sent email history:', error);
+                const container = document.getElementById('email-history');
+                if (container) {
+                    container.innerHTML = '<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">Could not load sent email history.</div>';
+                }
+            }
+        }
+
+        function setEmailStatus(message, tone = 'muted') {
+            const status = document.getElementById('email-status');
+            if (!status) return;
+            status.textContent = message || '';
+            status.className = `text-sm ${tone === 'error' ? 'text-red-600' : tone === 'success' ? 'text-green-700' : 'text-gray-600'}`;
+        }
+
+        async function sendEmailMessage() {
+            const subjectInput = document.getElementById('email-subject');
+            const bodyInput = document.getElementById('email-body');
+            const button = document.getElementById('email-send-btn');
+            const subject = subjectInput.value.trim();
+            const body = bodyInput.value.trim();
+            if (!subject || !body) {
+                setEmailStatus('Subject and message are required.', 'error');
+                return;
+            }
+            const targetMetadata = buildEmailTargetMetadata();
+            if (targetMetadata.targetType === 'individuals' && targetMetadata.recipientIds.length === 0) {
+                setEmailStatus('Select at least one recipient.', 'error');
+                return;
+            }
+            button.disabled = true;
+            button.textContent = 'Sending...';
+            setEmailStatus('Creating backend mail jobs...');
+            try {
+                const result = await sendTeamEmail(teamId, {
+                    subject,
+                    body,
+                    ...targetMetadata
+                });
+                subjectInput.value = '';
+                bodyInput.value = '';
+                setEmailStatus(`Sent to ${result.recipientCount || 0} recipients. Delivery jobs queued.`, 'success');
+                await loadSentEmailHistory();
+            } catch (error) {
+                console.error('Error sending team email:', error);
+                setEmailStatus(error?.message || 'Email send failed. Nothing was silently dropped.', 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Send email';
+            }
         }
 
         function updateComposerState() {
@@ -2039,6 +2447,42 @@
             document.getElementById('chat-image-input').addEventListener('change', handleImageSelection);
             document.getElementById('media-gallery-btn').addEventListener('click', openMediaGallery);
             document.getElementById('media-gallery-close-btn').addEventListener('click', closeMediaGallery);
+            document.getElementById('email-panel-btn').addEventListener('click', () => {
+                const panel = document.getElementById('email-panel');
+                panel.classList.toggle('hidden');
+                if (!panel.classList.contains('hidden')) {
+                    loadSentEmailHistory();
+                }
+            });
+            document.getElementById('email-send-btn').addEventListener('click', sendEmailMessage);
+            document.getElementById('email-drafts-btn').addEventListener('click', () => openEmailDraftModal());
+            document.getElementById('email-draft-close-btn').addEventListener('click', closeEmailDraftModal);
+            document.getElementById('email-draft-new-btn').addEventListener('click', () => selectEmailDraft(null));
+            document.getElementById('email-draft-save-btn').addEventListener('click', saveEmailDraftFromForm);
+            document.getElementById('email-drafts-list').addEventListener('click', (event) => {
+                const button = event.target.closest('[data-email-draft-id]');
+                if (!button) return;
+                selectEmailDraft(button.dataset.emailDraftId);
+            });
+            document.getElementById('email-recipient-list').addEventListener('change', (event) => {
+                const key = event.target?.dataset?.emailRecipientKey;
+                if (!key) return;
+                if (event.target.checked) {
+                    selectedEmailRecipientKeys.add(key);
+                } else {
+                    selectedEmailRecipientKeys.delete(key);
+                }
+                renderEmailRecipientPicker();
+                updateEmailDraftSaveState();
+            });
+            document.getElementById('email-recipient-select-all-btn').addEventListener('click', () => {
+                const allSelected = emailRecipientOptions.length > 0 && selectedEmailRecipientKeys.size === emailRecipientOptions.length;
+                selectedEmailRecipientKeys = allSelected ? new Set() : new Set(emailRecipientOptions.map((recipient) => recipient.key));
+                renderEmailRecipientPicker();
+                updateEmailDraftSaveState();
+            });
+            document.getElementById('email-draft-subject').addEventListener('input', updateEmailDraftSaveState);
+            document.getElementById('email-draft-body').addEventListener('input', updateEmailDraftSaveState);
             document.getElementById('conversations-list').addEventListener('click', (event) => {
                 const button = event.target.closest('[data-conversation-id]');
                 if (!button) return;
