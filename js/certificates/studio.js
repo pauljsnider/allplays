@@ -20,7 +20,7 @@ import {
     getCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=33';
+} from '../db.js?v=32';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=8';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=4';
 import { TEMPLATES } from './templates.js?v=2';
