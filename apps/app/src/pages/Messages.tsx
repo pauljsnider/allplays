@@ -1,5 +1,6 @@
 import { Link, useParams } from 'react-router-dom';
-import { Bot, ChevronLeft, ChevronRight, Edit3, MessageCircle, Paperclip, Send, ShieldCheck, Smile, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Bot, ChevronLeft, ChevronRight, Edit3, MessageCircle, MoreHorizontal, Paperclip, Send, ShieldCheck, Smile, Trash2 } from 'lucide-react';
 import { mockMessages, mockTeams } from '../data/mockData';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
@@ -53,7 +54,7 @@ function MessagesHeader() {
       <div className="app-label">Messages</div>
       <h1 className="mt-1 text-2xl font-black text-gray-950">Team chats</h1>
       <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
-        Keeps the current chat model in view: conversations, unread state, attachments, reactions, AI mention, edit/delete, and moderation.
+        Opens directly to team conversations, unread state, and a simple reply path. Advanced tools stay attached to the message they affect.
       </p>
     </section>
   );
@@ -98,6 +99,7 @@ function MessageList({ activeTeamId = '', compact = false }: { activeTeamId?: st
 }
 
 function ChatWindow({ auth, teamId, teamName, embedded = false }: { auth: AuthState; teamId: string; teamName: string; embedded?: boolean }) {
+  const [activeMessageActionsId, setActiveMessageActionsId] = useState<string | null>(null);
   const preview = mockMessages.find((message) => message.teamId === teamId);
   const messages = [
     { id: '1', sender: 'Coach Jamie', body: preview?.lastMessage || 'Welcome to the team chat.', time: '8:12 AM', mine: false },
@@ -126,20 +128,32 @@ function ChatWindow({ auth, teamId, teamName, embedded = false }: { auth: AuthSt
       </section>
 
       <section className="app-card p-4">
-        <div className="mb-3 flex flex-wrap gap-2">
-          <ToolbarButton icon={Bot} label="AI" />
-          <ToolbarButton icon={Paperclip} label="Attach" />
-          <ToolbarButton icon={Smile} label="React" />
-          <ToolbarButton icon={Edit3} label="Edit" />
-          <ToolbarButton icon={Trash2} label="Delete" />
-        </div>
         <div className="space-y-3">
           {messages.map((message) => (
             <div key={message.id} className={`flex ${message.mine ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[82%] rounded-2xl px-4 py-3 ${message.mine ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
                 <div className={`text-[11px] font-extrabold uppercase tracking-[0.04em] ${message.mine ? 'text-primary-100' : 'text-gray-500'}`}>{message.sender}</div>
                 <div className="mt-1 text-sm font-semibold leading-6">{message.body}</div>
-                <div className={`mt-1 text-[11px] font-bold ${message.mine ? 'text-primary-100' : 'text-gray-500'}`}>{message.time}</div>
+                <div className={`mt-1 flex items-center justify-between gap-3 text-[11px] font-bold ${message.mine ? 'text-primary-100' : 'text-gray-500'}`}>
+                  <span>{message.time}</span>
+                  <button
+                    type="button"
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-full ${message.mine ? 'text-white/90 hover:bg-white/15' : 'text-gray-600 hover:bg-gray-200'}`}
+                    aria-expanded={activeMessageActionsId === message.id}
+                    aria-label={`Message actions for ${message.sender}`}
+                    onClick={() => setActiveMessageActionsId((currentId) => currentId === message.id ? null : message.id)}
+                  >
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+                {activeMessageActionsId === message.id ? (
+                  <div className={`mt-2 flex flex-wrap gap-2 ${message.mine ? 'justify-end' : 'justify-start'}`} aria-label={`Advanced actions for ${message.sender}`}>
+                    <MessageActionButton icon={Bot} label="AI" mine={message.mine} />
+                    <MessageActionButton icon={Smile} label="React" mine={message.mine} />
+                    <MessageActionButton icon={Edit3} label="Edit" mine={message.mine} />
+                    <MessageActionButton icon={Trash2} label="Delete" mine={message.mine} />
+                  </div>
+                ) : null}
               </div>
             </div>
           ))}
@@ -159,9 +173,9 @@ function ChatWindow({ auth, teamId, teamName, embedded = false }: { auth: AuthSt
   );
 }
 
-function ToolbarButton({ icon: Icon, label }: { icon: typeof Bot; label: string }) {
+function MessageActionButton({ icon: Icon, label, mine }: { icon: typeof Bot; label: string; mine: boolean }) {
   return (
-    <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5 text-xs">
+    <button type="button" className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-3 py-1 text-xs font-black ${mine ? 'border-white/20 bg-white/10 text-white hover:bg-white/20' : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200 hover:text-primary-700'}`}>
       <Icon className="h-4 w-4" aria-hidden="true" />
       {label}
     </button>
