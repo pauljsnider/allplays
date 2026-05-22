@@ -541,6 +541,167 @@ describe('tournament bracket helpers', () => {
     ]);
   });
 
+  it('requires pool-protection override when advancement creates same-pool matchup', () => {
+    const games = [
+      {
+        id: 'semi-1',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 2 }
+          },
+          resolved: {
+            homeLabel: 'Pool A #1',
+            awayLabel: 'Pool A #2',
+            homeTeamName: null,
+            awayTeamName: null,
+            matchupLabel: 'Pool A #1 vs Pool A #2',
+            ready: false
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: 'Pool A',
+      ranking: ['Tigers', 'Lions']
+    });
+
+    expect(plan.skipped).toBe(false);
+    expect(plan.requiresPoolProtectionOverride).toBe(true);
+    expect(plan.poolProtectionConflicts).toEqual([
+      {
+        gameId: 'semi-1',
+        poolName: 'Pool A',
+        homeTeamName: 'Tigers',
+        awayTeamName: 'Lions',
+        homeSourceLabel: 'Pool A #1',
+        awaySourceLabel: 'Pool A #2',
+        matchupLabel: 'Tigers vs Lions'
+      }
+    ]);
+  });
+
+  it('does not require pool-protection override for cross-pool matchups', () => {
+    const games = [
+      {
+        id: 'semi-1',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool B', seed: 1 }
+          },
+          resolved: {
+            homeLabel: 'Pool A #1',
+            awayLabel: 'Bears',
+            homeTeamName: null,
+            awayTeamName: 'Bears',
+            matchupLabel: 'Pool A #1 vs Bears',
+            ready: false
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: 'Pool A',
+      ranking: ['Tigers']
+    });
+
+    expect(plan.skipped).toBe(false);
+    expect(plan.requiresPoolProtectionOverride).toBe(false);
+    expect(plan.poolProtectionConflicts).toEqual([]);
+  });
+
+  it('does not require pool-protection override for existing same-pool games outside advancement patches', () => {
+    const games = [
+      {
+        id: 'semi-1',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'team', teamName: 'Bears' }
+          }
+        }
+      },
+      {
+        id: 'unrelated-final',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool C', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool C', seed: 2 }
+          },
+          resolved: {
+            homeLabel: 'Wolves',
+            awayLabel: 'Hawks',
+            homeTeamName: 'Wolves',
+            awayTeamName: 'Hawks',
+            matchupLabel: 'Wolves vs Hawks',
+            ready: true
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: 'Pool A',
+      ranking: ['Tigers']
+    });
+
+    expect(plan.skipped).toBe(false);
+    expect(plan.patches.map((patch) => patch.gameId)).toEqual(['semi-1']);
+    expect(plan.requiresPoolProtectionOverride).toBe(false);
+    expect(plan.poolProtectionConflicts).toEqual([]);
+  });
+
+  it('carries source pools through game-result slots for pool-protection conflicts', () => {
+    const games = [
+      {
+        id: 'semi-1',
+        competitionType: 'tournament',
+        status: 'completed',
+        homeScore: 2,
+        awayScore: 1,
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool B', seed: 1 }
+          }
+        }
+      },
+      {
+        id: 'final-1',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'game_result', gameId: 'semi-1', outcome: 'winner' },
+            away: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 2 }
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: 'Pool A',
+      ranking: ['Tigers', 'Lions'],
+      poolStandings: {
+        'Pool B': [{ teamName: 'Bears' }]
+      }
+    });
+
+    expect(plan.requiresPoolProtectionOverride).toBe(true);
+    expect(plan.poolProtectionConflicts).toEqual([
+      expect.objectContaining({
+        gameId: 'final-1',
+        poolName: 'Pool A',
+        matchupLabel: 'Tigers vs Lions'
+      })
+    ]);
+  });
   it('keeps finalized pool-seed slots stable after advancement is saved', () => {
     const games = [
       {

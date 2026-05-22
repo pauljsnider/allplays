@@ -3,17 +3,18 @@ import { resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=3';
 
 export const LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
+export const LIVE_TRACKER_MAX_EVENT_BATCH_WRITES = 500;
 export const LIVE_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
+
+export function buildLiveTrackerFinishEventDocumentId(index) {
+  return `finish-log-${String(Number(index || 0) + 1).padStart(6, '0')}`;
+}
 
 function defaultFormatClock(ms) {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60).toString().padStart(2, '0');
   const sec = (s % 60).toString().padStart(2, '0');
   return `${m}:${sec}`;
-}
-
-export function buildLiveTrackerFinishBatchLimitError(eventWriteCount, maxPrimaryBatchWrites = LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES) {
-  return new Error(`Game has ${eventWriteCount} live log entries. Finish requires chunked event persistence before it can safely exceed Firestore's ${maxPrimaryBatchWrites}-write batch limit.`);
 }
 
 export function addFinishPlanWritesToBatch({
@@ -25,13 +26,37 @@ export function addFinishPlanWritesToBatch({
   createCollectionRef,
   createDocRef
 } = {}) {
-  (finishPlan?.eventWrites || []).forEach(({ data }) => {
-    const eventRef = createDocRef(createCollectionRef(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+  (finishPlan?.eventWrites || []).forEach(({ data }, index) => {
+    const eventRef = createDocRef(
+      db,
+      `teams/${currentTeamId}/games/${currentGameId}/events`,
+      buildLiveTrackerFinishEventDocumentId(index)
+    );
     batch.set(eventRef, data);
   });
 
   const gameRef = createDocRef(db, `teams/${currentTeamId}/games`, currentGameId);
   batch.update(gameRef, finishPlan.gameUpdate);
+}
+
+export function addEventWritesToBatch({
+  eventWrites = [],
+  batch,
+  db,
+  currentTeamId,
+  currentGameId,
+  createCollectionRef,
+  createDocRef,
+  startIndex = 0
+} = {}) {
+  eventWrites.forEach(({ data }, index) => {
+    const eventRef = createDocRef(
+      db,
+      `teams/${currentTeamId}/games/${currentGameId}/events`,
+      buildLiveTrackerFinishEventDocumentId(startIndex + index)
+    );
+    batch.set(eventRef, data);
+  });
 }
 
 export function addAggregatedStatsWritesToBatch({
@@ -61,19 +86,34 @@ export async function commitFinishPlan({
   createCollectionRef,
   createDocRef,
   maxPrimaryBatchWrites = LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES,
+  maxEventBatchWrites = LIVE_TRACKER_MAX_EVENT_BATCH_WRITES,
   maxAggregatedStatsBatchWrites = LIVE_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES,
   beforePrimaryCommit = null
 } = {}) {
   const eventWrites = finishPlan?.eventWrites || [];
   const aggregatedStatsWrites = finishPlan?.aggregatedStatsWrites || [];
-  const primaryBatchWriteCount = eventWrites.length + 1;
-
-  if (primaryBatchWriteCount > maxPrimaryBatchWrites) {
-    throw buildLiveTrackerFinishBatchLimitError(eventWrites.length, maxPrimaryBatchWrites);
-  }
+  const legacyPrimaryBatchWriteCount = eventWrites.length + 1;
 
   if (typeof beforePrimaryCommit === 'function') {
     await beforePrimaryCommit({ finishPlan });
+  }
+
+  const eventBatchSizes = [];
+  for (let i = 0; i < eventWrites.length; i += maxEventBatchWrites) {
+    const eventBatch = createBatch(db);
+    const eventChunk = eventWrites.slice(i, i + maxEventBatchWrites);
+    addEventWritesToBatch({
+      eventWrites: eventChunk,
+      batch: eventBatch,
+      db,
+      currentTeamId,
+      currentGameId,
+      createCollectionRef,
+      createDocRef,
+      startIndex: i
+    });
+    eventBatchSizes.push(eventChunk.length);
+    await eventBatch.commit();
   }
 
   const aggregatedStatsBatchSizes = [];
@@ -92,20 +132,15 @@ export async function commitFinishPlan({
     await statsBatch.commit();
   }
 
-  const primaryBatch = createBatch(db);
-  addFinishPlanWritesToBatch({
-    finishPlan,
-    batch: primaryBatch,
-    db,
-    currentTeamId,
-    currentGameId,
-    createCollectionRef,
-    createDocRef
-  });
-  await primaryBatch.commit();
+  const gameUpdateBatch = createBatch(db);
+  const gameRef = createDocRef(db, `teams/${currentTeamId}/games`, currentGameId);
+  gameUpdateBatch.update(gameRef, finishPlan.gameUpdate);
+  await gameUpdateBatch.commit();
 
   return {
-    primaryBatchWriteCount,
+    primaryBatchWriteCount: legacyPrimaryBatchWriteCount,
+    eventBatchSizes,
+    gameUpdateBatchSize: 1,
     aggregatedStatsBatchSizes,
     aggregatedStatsWriteCount: aggregatedStatsWrites.length
   };
