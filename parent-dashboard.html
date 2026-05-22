@@ -513,6 +513,10 @@
                 .replace(/>/g, '&gt;');
         }
 
+        function escapeJsArgAttr(value) {
+            return escapeAttr(JSON.stringify(String(value ?? '')));
+        }
+
         function setParentMembershipRequestStatus(message, tone = 'neutral') {
             const el = document.getElementById('parent-membership-request-status');
             if (!el) return;
@@ -879,7 +883,7 @@
                                                 </select>
                                             ` : ''}
                                             ${canRequest ? `
-                                                <button onclick="requestRideSpotForChild('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(selectedChildId)}','${escapeAttr(selectedChildName)}','${escapeAttr(childSelectorId)}')" class="px-2 py-1 text-xs rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Request Spot</button>
+                                                <button onclick="requestRideSpotForChild(${escapeJsArgAttr(event.teamId)},${escapeJsArgAttr(event.id)},${escapeJsArgAttr(legacyRideEventId)},${escapeJsArgAttr(offerGameId)},${escapeJsArgAttr(offer.id)},${escapeJsArgAttr(selectedChildId)},${escapeJsArgAttr(selectedChildName)},${escapeJsArgAttr(childSelectorId)})" class="px-2 py-1 text-xs rounded border border-emerald-300 bg-emerald-50 text-emerald-700 font-semibold hover:bg-emerald-100">Request Spot</button>
                                             ` : ''}
                                             ${myRequest ? `
                                                 <button onclick="cancelMyRideRequest('${escapeAttr(event.teamId)}','${escapeAttr(event.id)}','${escapeAttr(legacyRideEventId)}','${escapeAttr(offerGameId)}','${escapeAttr(offer.id)}','${escapeAttr(myRequest.id)}')" class="px-2 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 font-semibold hover:bg-gray-50">Cancel</button>
