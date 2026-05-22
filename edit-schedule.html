@@ -120,6 +120,17 @@
             <p id="team-reminder-settings-summary" class="mt-3 text-sm text-gray-600"></p>
         </div>
 
+        <div id="bulk-assignments-panel" class="mb-6 bg-white border border-gray-200 rounded-lg p-4 shadow-sm hidden">
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="font-semibold text-gray-900">Default Game Assignments</h3>
+                    <p id="bulk-assignments-description" class="text-sm text-gray-600"></p>
+                </div>
+                <button id="bulk-apply-assignments-btn" type="button" class="shrink-0 bg-indigo-600 text-white text-sm px-4 py-2 rounded-md hover:bg-indigo-700 transition">Apply to All Upcoming Games</button>
+            </div>
+            <p id="bulk-assignments-result" class="mt-2 text-sm text-green-700 hidden"></p>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <!-- Add Game Form -->
             <div class="lg:col-span-1">
@@ -926,7 +937,7 @@
         import { Timestamp, deleteField, auth } from "./js/firebase.js?v=14";
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
-        import { buildPoolStandingsIndex, collectTournamentAdvancementPatches, collectTournamentPoolSeeds, describeTournamentSource, planTournamentPoolAdvancement } from './js/tournament-brackets.js?v=1';
+        import { buildPoolStandingsIndex, collectTournamentAdvancementPatches, collectTournamentPoolSeeds, describeTournamentSource, planTournamentPoolAdvancement } from './js/tournament-brackets.js?v=2';
         import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage, sendPublicRsvpReminderEmails, buildAvailabilityReminderRecipients, buildAvailabilityReminderEmailPreview } from './js/schedule-notifications.js?v=5';
         import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
@@ -1125,8 +1136,12 @@
             }
 
             if (!confirm(formatTournamentAdvancementPreviewMessage({ poolName }, plan))) return;
+            if (plan.requiresPoolProtectionOverride && !confirm(formatTournamentPoolProtectionOverrideMessage(plan))) return;
 
-            await applyTournamentAdvancementPatches(currentTeamId, plan.patches, games);
+            const poolProtectionOverride = promptTournamentPoolProtectionOverride(plan);
+            if (plan.requiresPoolProtectionOverride && !poolProtectionOverride) return;
+
+            await applyTournamentAdvancementPatches(currentTeamId, buildTournamentAdvancementPatchesForSave(plan, poolProtectionOverride), games);
             await loadSchedule();
             alert(`Advanced ${poolName} into ${plan.patches.length} tournament game${plan.patches.length === 1 ? '' : 's'}.`);
         }
@@ -1139,10 +1154,12 @@
             const awaySource = tournament.slotAssignments?.away || {};
             const matchupLabel = resolved.matchupLabel || `${describeTournamentSource(homeSource)} vs ${describeTournamentSource(awaySource)}`;
             const bracketBits = [tournament.bracketName, tournament.roundName, tournament.poolName].filter(Boolean).join(' • ');
+            const poolProtectionOverride = tournament.poolProtectionOverride || null;
             return `
                 <div class="mt-2 rounded-md border border-indigo-100 bg-indigo-50 px-3 py-2 text-xs text-indigo-900">
                     ${bracketBits ? `<div class="font-semibold">${escapeHtml(bracketBits)}</div>` : ''}
                     <div>${escapeHtml(matchupLabel)}</div>
+                    ${poolProtectionOverride ? `<div class="mt-1 text-amber-700">Pool-protection conflict intentionally overridden: ${escapeHtml(poolProtectionOverride.note || 'audit note saved')}</div>` : ''}
                 </div>
             `;
         }
@@ -1248,7 +1265,8 @@
             const warningCount = plan.poolProtectionWarnings?.length || 0;
             const warningText = warningCount ? ` ${warningCount} pool-protection warning${warningCount === 1 ? '' : 's'} will be shown.` : '';
             const overwriteText = plan.requiresOverwriteConfirmation ? ' Existing assignments will require confirmation.' : '';
-            return `${slotCount} bracket slot update${slotCount === 1 ? '' : 's'} ready for preview.${warningText}${overwriteText}`;
+            const poolProtectionText = plan.requiresPoolProtectionOverride ? ' Same-pool conflicts require an override note.' : '';
+            return `${slotCount} bracket slot update${slotCount === 1 ? '' : 's'} ready for preview.${warningText}${overwriteText}${poolProtectionText}`;
         }
 
         function formatTournamentAdvancementPreviewMessage(pool = {}, plan = {}) {
@@ -1266,10 +1284,68 @@
             const fallbackLines = !previewLines.length
                 ? (plan.patches || []).map((patch) => `• ${patch.gameId}`)
                 : [];
-            const warning = plan.requiresOverwriteConfirmation
+            const poolProtectionConflicts = Array.isArray(plan.poolProtectionConflicts) ? plan.poolProtectionConflicts : [];
+            const poolProtectionLines = poolProtectionConflicts.slice(0, 10).map((conflict) => `• ${conflict.gameId}: ${conflict.homeTeamName || 'TBD'} vs ${conflict.awayTeamName || 'TBD'} both from ${conflict.poolName || 'the same pool'}`);
+            const poolProtectionWarning = poolProtectionLines.length
+                ? `Pool-protection conflicts require an audit note before saving:\n${poolProtectionLines.join('\n')}\n\n`
+                : '';
+            const overwriteWarning = plan.requiresOverwriteConfirmation
                 ? 'Existing bracket assignments will be overwritten.\n\n'
                 : '';
-            return `${warning}Preview bracket advancement for ${pool.poolName || plan.poolName}:\n\n${[...previewLines, ...fallbackLines].join('\n')}${overflowText}${warningBlock}\n\nSave ${plan.patches?.length || 0} tournament game update${(plan.patches?.length || 0) === 1 ? '' : 's'}?`;
+            return `${overwriteWarning}${poolProtectionWarning}Preview bracket advancement for ${pool.poolName || plan.poolName}:\n\n${[...previewLines, ...fallbackLines].join('\n')}${overflowText}${warningBlock}\n\nSave ${plan.patches?.length || 0} tournament game update${(plan.patches?.length || 0) === 1 ? '' : 's'}?`;
+        }
+
+        function promptTournamentPoolProtectionOverride(plan = {}) {
+            const conflicts = Array.isArray(plan.poolProtectionConflicts) ? plan.poolProtectionConflicts : [];
+            if (!conflicts.length) return null;
+
+            const conflictSummary = conflicts.slice(0, 5).map((conflict) => `• ${conflict.gameId}: ${conflict.homeTeamName || 'TBD'} vs ${conflict.awayTeamName || 'TBD'} from ${conflict.poolName || 'the same pool'}`).join('\n');
+            while (true) {
+                const noteInput = prompt(`Same-pool bracket conflicts are being overridden. Enter a short audit note before saving.\n\n${conflictSummary}`, 'Approved by tournament director');
+                if (noteInput === null) return null;
+                const note = String(noteInput || '').trim();
+                if (note) {
+                    return {
+                        note,
+                        timestamp: Timestamp.now(),
+                        overriddenBy: {
+                            userId: currentUser?.uid || null,
+                            name: currentUser?.displayName || null,
+                            email: currentUser?.email || null
+                        },
+                        conflicts
+                    };
+                }
+                alert('Enter an audit note to override same-pool bracket conflicts.');
+            }
+        }
+
+        function buildTournamentAdvancementPatchesForSave(plan = {}, poolProtectionOverride = null) {
+            const patches = Array.isArray(plan.patches) ? plan.patches : [];
+            if (!poolProtectionOverride) return patches;
+            const conflictGameIds = new Set((poolProtectionOverride.conflicts || []).map((conflict) => conflict.gameId).filter(Boolean));
+            return patches.map((patch) => {
+                if (!conflictGameIds.has(patch.gameId)) return patch;
+                return {
+                    ...patch,
+                    tournament: {
+                        ...(patch.tournament || {}),
+                        poolProtectionOverride
+                    }
+                };
+            });
+        }
+
+        function formatTournamentPoolProtectionOverrideMessage(plan = {}) {
+            const conflicts = Array.isArray(plan.poolProtectionConflicts) ? plan.poolProtectionConflicts : [];
+            const conflictLines = conflicts.slice(0, 20).map((conflict) => {
+                const matchup = conflict.matchupLabel || `${conflict.homeTeamName || 'TBD'} vs ${conflict.awayTeamName || 'TBD'}`;
+                return `• ${conflict.gameId}: ${matchup} from ${conflict.poolName || 'the same pool'}`;
+            });
+            const overflowText = conflicts.length > conflictLines.length
+                ? `\n• ${conflicts.length - conflictLines.length} more same-pool matchup${conflicts.length - conflictLines.length === 1 ? '' : 's'}`
+                : '';
+            return `Pool-protection conflict detected. These same-pool matchup${conflicts.length === 1 ? '' : 's'} will be saved only if you intentionally override the protection warning:\n\n${conflictLines.join('\n')}${overflowText}\n\nOverride pool protection and continue saving?`;
         }
 
         function closeTournamentStandingsModal() {
@@ -1410,8 +1486,12 @@
             }
 
             if (!confirm(formatTournamentAdvancementPreviewMessage(pool, plan))) return;
+            if (plan.requiresPoolProtectionOverride && !confirm(formatTournamentPoolProtectionOverrideMessage(plan))) return;
 
-            await applyTournamentAdvancementPatches(currentTeamId, plan.patches, tournamentAdvancementGames);
+            const poolProtectionOverride = promptTournamentPoolProtectionOverride(plan);
+            if (plan.requiresPoolProtectionOverride && !poolProtectionOverride) return;
+
+            await applyTournamentAdvancementPatches(currentTeamId, buildTournamentAdvancementPatchesForSave(plan, poolProtectionOverride), tournamentAdvancementGames);
             await loadSchedule();
             alert(`Advanced ${pool.poolName} into ${plan.patches.length} tournament game${plan.patches.length === 1 ? '' : 's'}.`);
         }
@@ -1448,7 +1528,7 @@
                                             <div class="text-sm font-semibold text-gray-900">${escapeHtml(pool.poolName)}</div>
                                             <div class="text-xs text-gray-500">${pool.gameCount} completed pool game${pool.gameCount === 1 ? '' : 's'}</div>
                                             ${pool.isOverridden && pool.override ? `<div class="text-xs text-amber-700 mt-1">${escapeHtml(formatTournamentOverrideAudit(pool.override))}</div>` : '<div class="text-xs text-gray-500 mt-1">Using computed standings</div>'}
-                                            <div class="text-xs ${advancementPlan.skipped ? 'text-slate-500' : (advancementPlan.requiresOverwriteConfirmation ? 'text-amber-700' : 'text-emerald-700')} mt-1">${escapeHtml(formatTournamentAdvancementStatus(advancementPlan))}</div>
+                                            <div class="text-xs ${advancementPlan.skipped ? 'text-slate-500' : ((advancementPlan.requiresOverwriteConfirmation || advancementPlan.requiresPoolProtectionOverride) ? 'text-amber-700' : 'text-emerald-700')} mt-1">${escapeHtml(formatTournamentAdvancementStatus(advancementPlan))}</div>
                                         </div>
                                         <div class="flex flex-col gap-2">
                                             <button type="button" data-edit-tournament-pool="${escapeHtml(poolKey)}" class="px-3 py-1.5 rounded bg-indigo-100 text-indigo-700 text-sm font-medium hover:bg-indigo-200">Edit final ranking</button>
@@ -1501,6 +1581,20 @@
 
         function getTeamScheduleNotificationSettings() {
             return normalizeScheduleNotificationSettings(currentTeam?.scheduleNotifications || {});
+        }
+
+        function renderBulkAssignmentsPanel(team) {
+            const defaults = team?.defaultAssignments || [];
+            const panel = document.getElementById('bulk-assignments-panel');
+            const desc = document.getElementById('bulk-assignments-description');
+            if (!panel || !desc) return;
+            if (defaults.length === 0) {
+                panel.classList.add('hidden');
+                return;
+            }
+            panel.classList.remove('hidden');
+            const roleList = defaults.map(a => a.role).join(', ');
+            desc.textContent = `Configured roles: ${roleList}. Adds these as claimable slots to upcoming games that have no assignments yet.`;
         }
 
         function renderTeamScheduleNotificationSettings(team) {
@@ -1666,6 +1760,7 @@
 
             currentTeam = team;
             renderTeamScheduleNotificationSettings(team);
+            renderBulkAssignmentsPanel(team);
             renderRegistrationScheduleImport(team);
             setupOpponentSearch();
             document.getElementById('team-name-display').textContent = team.name;
@@ -3096,9 +3191,14 @@
             populateOfficiatingSlots([]);
         }
 
-        // Pre-populate assignments for new games from the latest game
+        // Pre-populate assignments for new games from team defaults or latest game
         async function prefillAssignments() {
-            if (editingGameId) return; // Don't prefill when editing
+            if (editingGameId) return;
+            const defaults = currentTeam?.defaultAssignments;
+            if (defaults && defaults.length > 0) {
+                populateAssignments(defaults.map(a => ({ role: a.role, value: '', claimable: true })));
+                return;
+            }
             try {
                 const latest = await getLatestGameAssignments(currentTeamId);
                 if (latest && latest.length > 0) {
@@ -3667,6 +3767,41 @@
                 alert('Schedule reminder settings saved.');
             } catch (error) {
                 alert('Error saving reminder settings: ' + error.message);
+            }
+        });
+
+        document.getElementById('bulk-apply-assignments-btn').addEventListener('click', async () => {
+            const defaults = currentTeam?.defaultAssignments || [];
+            if (defaults.length === 0) return;
+            const roleList = defaults.map(a => a.role).join(', ');
+            if (!confirm(`Add "${roleList}" as claimable assignment slots to all upcoming games that have no assignments yet?`)) return;
+
+            const btn = document.getElementById('bulk-apply-assignments-btn');
+            const resultEl = document.getElementById('bulk-assignments-result');
+            btn.disabled = true;
+            btn.textContent = 'Applying...';
+            resultEl.classList.add('hidden');
+
+            try {
+                const now = new Date();
+                const events = Object.values(allTeamGamesCache);
+                const upcoming = events.filter(g => {
+                    const d = g.date?.toDate ? g.date.toDate() : new Date(g.date);
+                    return g.type === 'game' && d >= now && (!g.assignments || g.assignments.length === 0);
+                });
+
+                await Promise.all(upcoming.map(g =>
+                    updateGame(currentTeamId, g.id, { assignments: defaults.map(a => ({ role: a.role, value: '', claimable: true })) })
+                ));
+
+                resultEl.textContent = `Updated ${upcoming.length} upcoming game${upcoming.length === 1 ? '' : 's'}.`;
+                resultEl.classList.remove('hidden');
+                await loadSchedule();
+            } catch (error) {
+                alert('Error applying assignments: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Apply to All Upcoming Games';
             }
         });
 

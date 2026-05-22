@@ -925,7 +925,7 @@
             }
 
             accessibleTeams = currentUser.isAdmin === true
-                ? await getTeams()
+                ? await getTeams({ includePrivate: true })
                 : await getUserTeamsWithAccess(currentUser.uid, currentUser.email);
             organizationTeams = getOrganizationTeams({
                 accessibleTeams,

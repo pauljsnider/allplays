@@ -46,7 +46,9 @@ describe('team email attachments', () => {
 
         expect(firestoreRules).toContain('match /emailDrafts/{draftId}');
         expect(firestoreRules).toContain('match /emailSends/{sendId}');
-        expect(firestoreRules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(firestoreRules).toContain("'authorName', 'status', 'createdAt', 'updatedAt', 'attachments', 'attachmentTotalBytes'");
+        expect(firestoreRules).toContain("request.resource.data.attachments is list");
+        expect(firestoreRules).toContain("request.resource.data.attachmentTotalBytes is number");
         expect(firestoreRules).toContain('request.resource.data.teamId == teamId');
         expect(firestoreRules).toContain('request.resource.data.createdBy == request.auth.uid');
         expect(storageRules).toContain('match /team-email-attachments/{teamId}/{draftId}/{userId}/{fileName}');

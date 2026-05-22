@@ -179,14 +179,22 @@ export async function saveTeamEmailDraft(teamId, draft = {}, { user = auth.curre
 
     const now = Timestamp.now();
     const attachments = normalizeTeamEmailAttachments(draft.attachments || []);
+    const recipients = Array.isArray(draft.recipients) ? draft.recipients : [];
+    const recipientEmails = recipients
+        .map((recipient) => normalizeEmail(recipient?.email))
+        .filter(Boolean);
     const payload = {
-        recipients: Array.isArray(draft.recipients) ? draft.recipients : [],
+        recipients,
+        recipientEmails,
         subject: cleanString(draft.subject),
         body: cleanString(draft.body),
         attachments,
         attachmentTotalBytes: getTeamEmailAttachmentTotalBytes(attachments),
-        updatedAt: now,
-        updatedBy: user.uid
+        authorId: draft.authorId || user.uid,
+        authorEmail: draft.authorEmail || user.email || null,
+        authorName: draft.authorName || user.displayName || null,
+        status: 'draft',
+        updatedAt: now
     };
 
     if (draft.id) {
@@ -196,8 +204,7 @@ export async function saveTeamEmailDraft(teamId, draft = {}, { user = auth.curre
 
     const docRef = await addDoc(collection(db, 'teams', cleanTeamId, 'emailDrafts'), {
         ...payload,
-        createdAt: now,
-        createdBy: user.uid
+        createdAt: now
     });
     return docRef.id;
 }

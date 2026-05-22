@@ -30,7 +30,7 @@ describe('teams page HTML escaping', () => {
         expect(source).toContain("searchForm.addEventListener('submit'");
         expect(source).toContain('event.preventDefault();');
         expect(source).toContain('await loadTeams(getLocationSearchValue());');
-        expect(source).toContain('getTeams(locationFilter ? { locationFilter } : {})');
+        expect(source).toContain('getTeams(locationFilter ? { locationFilter, publicOnly: true } : { publicOnly: true })');
         expect(source).toContain("clearSearchButton.addEventListener('click'");
         expect(source).toContain("locationSearchInput.value = '';");
     });

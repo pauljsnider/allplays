@@ -41,6 +41,17 @@ describe('parent membership request wiring', () => {
         expect(rules).toContain('isTeamOwnerOrAdmin(teamId)');
     });
 
+    it('allows requesters to resubmit denied membership requests safely', () => {
+        const rules = readRepoFile('firestore.rules');
+
+        expect(rules).toContain("resource.data.status == 'denied'");
+        expect(rules).toContain('resource.data.requesterUserId == request.auth.uid');
+        expect(rules).toContain('requestId == request.auth.uid + "__" + request.resource.data.playerId');
+        expect(rules).toContain('request.resource.data.createdAt == resource.data.createdAt');
+        expect(rules).toContain('request.resource.data.decidedAt == null');
+        expect(rules).toContain('request.resource.data.decisionNote == null');
+    });
+
     it('defines the parent membership request collection-group index', () => {
         const indexes = readRepoFile('firestore.indexes.json');
 

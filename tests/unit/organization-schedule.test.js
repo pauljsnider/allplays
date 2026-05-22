@@ -349,7 +349,7 @@ describe('organization schedule helpers', () => {
 
         expect(source).toContain('getTeam, getTeams, getUserTeamsWithAccess, listOrganizationScheduleControls');
         expect(source).toContain('accessibleTeams = currentUser.isAdmin === true');
-        expect(source).toContain('? await getTeams()');
+        expect(source).toContain('? await getTeams({ includePrivate: true })');
         expect(source).toContain(': await getUserTeamsWithAccess(currentUser.uid, currentUser.email);');
     });
 
