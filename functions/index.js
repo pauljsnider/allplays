@@ -35,6 +35,11 @@ const {
   validateRsvpTokenRedemption,
   buildRsvpTokenAuditPayload
 } = require('./rsvp-token-core.cjs');
+const {
+  normalizeText,
+  resolveTeamEmailRecipients,
+  buildTeamEmailMailJob
+} = require('./team-email-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -1935,6 +1940,162 @@ exports.notifyTeamChatMessageCreated = functions.firestore
     });
   });
 
+async function requireTeamEmailSender(teamId, context) {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to send team email.');
+  }
+  const [teamSnap, userSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    firestore.doc(`users/${context.auth.uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+  const team = teamSnap.data() || {};
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  const adminEmails = Array.isArray(team.adminEmails)
+    ? team.adminEmails.map((email) => String(email || '').trim().toLowerCase())
+    : [];
+  const canSend = team.ownerId === context.auth.uid ||
+    adminEmails.includes(callerEmail) ||
+    user.isAdmin === true;
+  if (!canSend) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can send team email.');
+  }
+  return { team, user, callerEmail };
+}
+
+exports.sendTeamEmail = functions.https.onCall(async (data, context) => {
+  const teamId = normalizeText(data?.teamId, 160);
+  const draftId = normalizeText(data?.draftId, 160);
+  let subject = normalizeText(data?.subject, 160);
+  let body = normalizeText(data?.body, 20000);
+  let targetType = ['full_team', 'staff', 'individuals'].includes(data?.targetType) ? data.targetType : 'full_team';
+  let recipientIds = Array.isArray(data?.recipientIds) ? data.recipientIds : [];
+
+  if (!teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Team is required.');
+  }
+
+  const { team, user } = await requireTeamEmailSender(teamId, context);
+  if (draftId) {
+    const draftSnap = await firestore.doc(`teams/${teamId}/teamEmailDrafts/${draftId}`).get();
+    if (!draftSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Email draft not found.');
+    }
+    const draft = draftSnap.data() || {};
+    subject = subject || normalizeText(draft.subject, 160);
+    body = body || normalizeText(draft.body, 20000);
+    targetType = ['full_team', 'staff', 'individuals'].includes(draft.targetType) ? draft.targetType : targetType;
+    recipientIds = Array.isArray(draft.recipientIds) && draft.recipientIds.length > 0 ? draft.recipientIds : recipientIds;
+  }
+
+  if (!subject || !body) {
+    throw new functions.https.HttpsError('invalid-argument', 'Subject and message are required.');
+  }
+  if (targetType === 'individuals' && recipientIds.length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'Select at least one recipient.');
+  }
+
+  const [playersSnap, ownerSnap] = await Promise.all([
+    firestore.collection(`teams/${teamId}/players`).get(),
+    team.ownerId ? firestore.doc(`users/${team.ownerId}`).get() : Promise.resolve(null)
+  ]);
+  const players = playersSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+  const ownerUser = ownerSnap?.exists ? ownerSnap.data() || {} : null;
+  const recipients = resolveTeamEmailRecipients({ targetType, recipientIds, players, team, ownerUser });
+  if (recipients.length === 0) {
+    throw new functions.https.HttpsError('failed-precondition', 'No email-enabled recipients were found for that audience.');
+  }
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const messageRef = firestore.collection(`teams/${teamId}/teamEmails`).doc();
+  const mailJobs = recipients.map((recipient) => ({
+    ref: firestore.collection('mail').doc(),
+    recipient,
+    payload: buildTeamEmailMailJob({
+      email: recipient.email,
+      subject,
+      body,
+      teamId,
+      messageId: messageRef.id,
+      senderUid: context.auth.uid
+    })
+  }));
+  const messagePayload = {
+    subject,
+    body,
+    status: 'sent',
+    immutable: true,
+    targetType,
+    draftId: draftId || null,
+    recipientCount: recipients.length,
+    recipientSummary: recipients.map((recipient) => ({
+      playerIds: recipient.playerIds,
+      userIds: recipient.userIds,
+      roles: recipient.roles
+    })),
+    senderId: context.auth.uid,
+    senderName: user.fullName || context.auth.token?.name || null,
+    senderEmail: context.auth.token?.email || null,
+    sentAt: now,
+    createdAt: now,
+    delivery: {
+      provider: 'firestore-mail',
+      status: 'queued',
+      jobCount: mailJobs.length,
+      jobIds: mailJobs.map((job) => job.ref.id)
+    }
+  };
+
+  const chunks = [];
+  for (let i = 0; i < mailJobs.length; i += 400) {
+    chunks.push(mailJobs.slice(i, i + 400));
+  }
+  const firstBatch = firestore.batch();
+  firstBatch.set(messageRef, messagePayload);
+  if (draftId) {
+    firstBatch.set(firestore.doc(`teams/${teamId}/teamEmailDrafts/${draftId}`), {
+      status: 'sent',
+      sentMessageId: messageRef.id,
+      sentAt: now,
+      updatedAt: now
+    }, { merge: true });
+  }
+  chunks.shift().forEach((job) => {
+    firstBatch.set(job.ref, {
+      ...job.payload,
+      createdAt: now
+    });
+  });
+  await firstBatch.commit();
+  try {
+    for (const chunk of chunks) {
+      const batch = firestore.batch();
+      chunk.forEach((job) => batch.set(job.ref, { ...job.payload, createdAt: now }));
+      await batch.commit();
+    }
+  } catch (error) {
+    await messageRef.set({
+      status: 'partial_failed',
+      delivery: {
+        ...messagePayload.delivery,
+        status: 'partial_failed',
+        errorMessage: String(error?.message || 'Some mail jobs could not be queued.')
+      }
+    }, { merge: true });
+    throw new functions.https.HttpsError('internal', 'Some email delivery jobs could not be queued. Check sent history for partial failure details.');
+  }
+
+  return {
+    messageId: messageRef.id,
+    status: 'sent',
+    recipientCount: recipients.length,
+    delivery: messagePayload.delivery
+  };
+});
+
 exports.notifyGameUpdated = functions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onUpdate(async (change, context) => {
@@ -2451,4 +2612,105 @@ exports.collectTelemetry = functions
         error: error?.message || 'Telemetry collection failed'
       });
     }
+  });
+
+const TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES = 20 * 1024 * 1024;
+
+function normalizeTeamEmailAttachmentRecord(attachment) {
+  const name = String(attachment?.name || attachment?.fileName || '').trim();
+  const storagePath = String(attachment?.storagePath || attachment?.path || '').trim();
+  const contentType = String(attachment?.contentType || attachment?.type || 'application/octet-stream').trim();
+  const size = Number(attachment?.size || attachment?.bytes || 0);
+  if (!name || !storagePath || !Number.isFinite(size) || size <= 0) return null;
+  return { name, storagePath, contentType, size };
+}
+
+function isTeamEmailAttachmentPathForTeam(teamId, storagePath) {
+  const cleanTeamId = String(teamId || '').trim();
+  const parts = String(storagePath || '').trim().split('/');
+  return parts.length >= 5 &&
+    parts[0] === 'team-email-attachments' &&
+    parts[1] === cleanTeamId &&
+    parts.slice(2).every(Boolean);
+}
+
+function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
+  const rawAttachments = Array.isArray(attachments) ? attachments : [];
+  const normalized = rawAttachments.map(normalizeTeamEmailAttachmentRecord).filter(Boolean);
+  if (normalized.length !== rawAttachments.length ||
+      normalized.some((attachment) => !isTeamEmailAttachmentPathForTeam(teamId, attachment.storagePath))) {
+    throw new Error('Team email attachments must reference files for the same team.');
+  }
+  const totalBytes = normalized.reduce((sum, attachment) => sum + attachment.size, 0);
+  if (totalBytes > TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES) {
+    throw new Error('Team email attachments exceed the 20 MB limit.');
+  }
+  return { attachments: normalized, totalBytes };
+}
+
+function buildTeamEmailMailDocId(teamId, sendId) {
+  const safeTeamId = String(teamId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
+  const safeSendId = String(sendId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
+  return `teamEmail_${safeTeamId}_${safeSendId}`;
+}
+
+exports.queueTeamEmailDelivery = functions.firestore
+  .document('teams/{teamId}/emailSends/{sendId}')
+  .onCreate(async (snap, context) => {
+    const { teamId, sendId } = context.params;
+    const send = snap.data() || {};
+    const recipients = Array.isArray(send.recipients)
+      ? send.recipients.map((email) => String(email || '').trim()).filter(Boolean)
+      : [];
+    const subject = String(send.subject || '').trim();
+    const body = String(send.body || '').trim();
+    let attachmentSummary;
+    try {
+      attachmentSummary = normalizeTeamEmailAttachmentsForDelivery(teamId, send.attachments);
+    } catch (error) {
+      await snap.ref.set({
+        status: 'failed',
+        failureReason: error?.message || 'Invalid team email attachments.',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return;
+    }
+    const { attachments, totalBytes } = attachmentSummary;
+
+    if (!recipients.length || !subject || !body) {
+      await snap.ref.set({
+        status: 'failed',
+        failureReason: 'Missing recipients, subject, or body.',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return;
+    }
+
+    const mailRef = firestore.collection('mail').doc(buildTeamEmailMailDocId(teamId, sendId));
+    await mailRef.set({
+      to: recipients,
+      message: {
+        subject,
+        text: body
+      },
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      metadata: {
+        type: 'team_email',
+        teamId,
+        sendId,
+        draftId: send.draftId || null,
+        attachments,
+        attachmentTotalBytes: totalBytes,
+        createdBy: send.createdBy || null,
+        createdByEmail: send.createdByEmail || null
+      }
+    });
+
+    await snap.ref.set({
+      status: 'queued',
+      attachmentTotalBytes: totalBytes,
+      mailJobId: mailRef.id,
+      queuedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
   });
