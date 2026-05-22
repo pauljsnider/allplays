@@ -18,12 +18,21 @@ function normalizeTeamFeeRefundInput(data = {}) {
     const input = normalizeTeamFeeCheckoutInput(data);
     const amountCents = Math.round(Number(data.amountCents ?? Number(data.amount || 0) * 100));
     const reason = normalizeString(data.reason || data.note);
+    const refundRequestId = normalizeString(data.refundRequestId || data.idempotencyKey);
 
     if (!Number.isFinite(amountCents) || amountCents <= 0) {
         throw new Error('Refund amount must be greater than $0.');
     }
+    if (refundRequestId && refundRequestId.includes('/')) {
+        throw new Error('Refund request ID is invalid.');
+    }
 
-    return { ...input, amountCents, reason };
+    return {
+        ...input,
+        amountCents,
+        reason,
+        ...(refundRequestId ? { refundRequestId } : {})
+    };
 }
 
 function getTeamFeePaidCents(recipient = {}) {
@@ -53,7 +62,7 @@ function getTeamFeeRefundedCents(recipient = {}) {
 }
 
 function getTeamFeeRefundableCents(recipient = {}) {
-    return Math.max(0, getTeamFeePaidCents(recipient) - getTeamFeeRefundedCents(recipient));
+    return getTeamFeePaidCents(recipient);
 }
 
 function getTeamFeeBalanceCents(recipient = {}) {
@@ -168,7 +177,7 @@ function getTeamFeeStripePaidAmountCents({ recipient = {}, session = {} } = {}) 
     return 0;
 }
 
-function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt }) {
+function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
     const refundAmountCents = Math.round(Number(amountCents || refund.amount || 0));
     const previousPaidCents = getTeamFeePaidCents(recipient);
     const previousRefundedCents = getTeamFeeRefundedCents(recipient);
@@ -201,7 +210,7 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
             stripeChargeId: typeof refund.charge === 'string' ? refund.charge : (recipient.stripeChargeId || null),
             reason: normalizeString(reason),
             refundedBy: actorId || null,
-            refundedAt
+            refundedAt: ledgerRefundedAt
         }]
     };
 }

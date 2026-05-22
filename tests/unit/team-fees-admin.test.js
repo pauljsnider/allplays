@@ -66,19 +66,21 @@ describe('buildManualPaymentUpdate', () => {
 
 describe('online team fee refunds', () => {
     it('builds callable refund requests in cents', () => {
-        expect(buildOnlineRefundRequest({
+        const request = buildOnlineRefundRequest({
             teamId: ' team_1 ',
             batchId: ' batch_1 ',
             recipientId: ' recipient_1 ',
             amount: '12.34',
             reason: ' duplicate payment '
-        })).toEqual({
+        });
+        expect(request).toMatchObject({
             teamId: 'team_1',
             batchId: 'batch_1',
             recipientId: 'recipient_1',
             amountCents: 1234,
             reason: 'duplicate payment'
         });
+        expect(request.refundRequestId).toEqual(expect.any(String));
     });
 
     it('detects eligible Stripe payments and remaining refundable amount', () => {
@@ -89,7 +91,7 @@ describe('online team fee refunds', () => {
             refundedAmountCents: 2500
         };
 
-        expect(getRecipientRefundableCents(recipient)).toBe(7500);
+        expect(getRecipientRefundableCents(recipient)).toBe(10000);
         expect(isOnlineRefundEligible(recipient)).toBe(true);
         expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', stripeChargeId: '' })).toBe(false);
         expect(isOnlineRefundEligible({ ...recipient, paymentProvider: 'manual' })).toBe(false);

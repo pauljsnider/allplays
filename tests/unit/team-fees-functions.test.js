@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
@@ -180,17 +181,19 @@ describe('team fee checkout function helpers', () => {
             batchId: ' batch_456 ',
             recipientId: ' recipient_789 ',
             amount: '12.34',
-            reason: ' duplicate '
+            reason: ' duplicate ',
+            refundRequestId: ' refund-123 '
         })).toEqual({
             teamId: 'team_123',
             batchId: 'batch_456',
             recipientId: 'recipient_789',
             amountCents: 1234,
-            reason: 'duplicate'
+            reason: 'duplicate',
+            refundRequestId: 'refund-123'
         });
 
         const recipient = {
-            paidAmountCents: 10000,
+            paidAmountCents: 6500,
             paymentLedger: [
                 { type: 'stripe_refund', refundAmountCents: 2500, status: 'succeeded' },
                 { type: 'stripe_refund', amountCents: 1000, status: 'pending' },
@@ -199,6 +202,10 @@ describe('team fee checkout function helpers', () => {
         };
         expect(getTeamFeeRefundedCents(recipient)).toBe(3500);
         expect(getTeamFeeRefundableCents(recipient)).toBe(6500);
+        expect(getTeamFeeRefundableCents({
+            paidAmountCents: 8000,
+            refundedAmountCents: 2000
+        })).toBe(8000);
     });
 
     it('builds Stripe refund ledger updates without over-crediting balances', () => {
@@ -217,7 +224,8 @@ describe('team fee checkout function helpers', () => {
             amountCents: 5000,
             actorId: 'admin_1',
             reason: 'Family requested refund',
-            refundedAt: 'now'
+            refundedAt: 'server-now',
+            ledgerRefundedAt: 'ledger-now'
         });
 
         expect(update).toMatchObject({
@@ -241,8 +249,19 @@ describe('team fee checkout function helpers', () => {
             stripeChargeId: null,
             reason: 'Family requested refund',
             refundedBy: 'admin_1',
-            refundedAt: 'now'
+            refundedAt: 'ledger-now'
         }]);
+    });
+
+    it('guards Stripe refund callable idempotency and recording consistency', () => {
+        const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+
+        expect(source).toContain("recipientRef.collection('refundIntents').doc(refundRequestId)");
+        expect(source).toContain('idempotencyKey: buildTeamFeeRefundIdempotencyKey(input, refundRequestId)');
+        expect(source).toContain('const actualRefundAmount = Math.round(Number(refund.amount || 0));');
+        expect(source).toContain("stripeRefundStatus !== 'succeeded'");
+        expect(source).toContain('const ledgerRefundedAt = admin.firestore.Timestamp.now();');
+        expect(source).toContain('hasStripeRefundLedgerEntry(latestRecipient, refund.id)');
     });
 
     it('does not mark the recipient fully paid when the balance grew after checkout creation', () => {

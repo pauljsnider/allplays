@@ -179,7 +179,7 @@ export function getRecipientRefundedCents(recipient) {
 }
 
 export function getRecipientRefundableCents(recipient) {
-    return Math.max(0, getRecipientPaidCents(recipient) - getRecipientRefundedCents(recipient));
+    return getRecipientPaidCents(recipient);
 }
 
 export function isOnlineRefundEligible(recipient) {
@@ -341,13 +341,17 @@ export function buildOnlineRefundRequest({ amount, reason, teamId, batchId, reci
     if (amountCents === null || amountCents <= 0) {
         throw new Error('Enter a refund amount greater than $0.');
     }
+    const refundRequestId = globalThis.crypto?.randomUUID
+        ? globalThis.crypto.randomUUID()
+        : `refund_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
     return {
         teamId: normalizeString(teamId),
         batchId: normalizeString(batchId),
         recipientId: normalizeString(recipientId),
         amountCents,
-        reason: normalizeString(reason)
+        reason: normalizeString(reason),
+        refundRequestId
     };
 }
 
