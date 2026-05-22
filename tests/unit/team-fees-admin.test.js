@@ -79,6 +79,7 @@ describe('buildOfflineRefundUpdate', () => {
         expect(updates.status).toBe('partial');
         expect(updates.amountPaidCents).toBe(600);
         expect(updates.remainingBalanceCents).toBe(400);
+        expect(updates.paidAt).toBeNull();
         expect(updates.refunded).toMatchObject({
             amountCents: 400,
             refundType: 'partial',
@@ -109,6 +110,7 @@ describe('buildOfflineRefundUpdate', () => {
         expect(updates.status).toBe('unpaid');
         expect(updates.amountPaidCents).toBe(0);
         expect(updates.remainingBalanceCents).toBe(2500);
+        expect(updates.paidAt).toBeNull();
         expect(updates.ledgerEntries[0]).toMatchObject({
             type: 'offline_refund',
             amountCents: -2500,

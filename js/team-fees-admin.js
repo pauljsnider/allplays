@@ -340,6 +340,7 @@ export function buildOfflineRefundUpdate({ refundType = 'full', amount, method, 
         status,
         amountPaidCents,
         remainingBalanceCents,
+        ...(status === 'paid' ? {} : { paidAt: null }),
         refunded: {
             amountCents: refundAmountCents,
             refundType: normalizedType,
