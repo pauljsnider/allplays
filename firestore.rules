@@ -1655,8 +1655,8 @@ service cloud.firestore {
       allow get: if resource.data.get('active', false) == true ||
                     (isSignedIn() && resource.data.ownerUserId == request.auth.uid) ||
                     isGlobalAdmin();
-      // Only the owner can list their tokens.
-      allow list: if isSignedIn() && request.auth.uid != null;
+      // Only the owner can list their own tokens (rule applied per-document).
+      allow list: if isSignedIn() && resource.data.ownerUserId == request.auth.uid;
       // Owner can create tokens on their own behalf.
       allow create: if isSignedIn() &&
                        request.resource.data.ownerUserId == request.auth.uid &&
