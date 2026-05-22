@@ -6,11 +6,15 @@ function readRepoFile(path) {
 }
 
 describe('public teams visibility', () => {
-    it('requests only explicit public teams by default from the teams helper', () => {
+    it('keeps public team browsing opt-in and preserves accessible private teams by default', () => {
         const source = readRepoFile('js/db.js');
 
+        expect(source).toContain('const publicOnly = options.publicOnly === true;');
         expect(source).toContain('const includePrivate = options.includePrivate === true || includeInactive;');
-        expect(source).toContain('where("isPublic", "==", true), orderBy("name")');
+        expect(source).toContain('} else if (publicOnly) {');
+        expect(source).toContain('getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))');
+        expect(source).toContain('getDocs(query(teamsRef, where("adminEmails", "array-contains", currentUserEmail)))');
+        expect(source).not.toContain('const q = includePrivate');
     });
 
     it('wires Browse Teams to the public-only helper path and keeps a defensive client filter', () => {
@@ -26,7 +30,7 @@ describe('public teams visibility', () => {
         const rules = readRepoFile('firestore.rules');
 
         expect(rules).toContain('function canReadTeamDocument(data)');
-        expect(rules).toContain('return data.isPublic == true ||');
+        expect(rules).toContain('return (data.isPublic is bool && data.isPublic == true) ||');
         expect(rules).toContain('allow read: if canReadTeamDocument(resource.data);');
         expect(rules).not.toContain('allow read: if true;  // Public teams for browsing');
     });

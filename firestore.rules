@@ -29,7 +29,7 @@ service cloud.firestore {
     }
 
     function canReadTeamDocument(data) {
-      return data.isPublic == true ||
+      return (data.isPublic is bool && data.isPublic == true) ||
              (isSignedIn() &&
               (data.ownerId == request.auth.uid ||
                (request.auth.token.email != null &&
