@@ -102,7 +102,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeams } from './js/db.js?v=32';
+    import { getTeams } from './js/db.js?v=33';
     import { renderHeader, renderFooter, escapeHtml, getSafeImageUrl, resolveZip } from './js/utils.js?v=9';
     import { checkAuth } from './js/auth.js?v=15';
 
@@ -133,10 +133,10 @@
       const container = document.getElementById('teams-list');
       setSearchPending(true);
       try {
-        const allTeams = await getTeams(locationFilter ? { locationFilter } : {});
-        // Filter out private teams (isPublic === false)
-        // Default isPublic to true if undefined
-        const teams = allTeams.filter(t => t.isPublic !== false);
+        const allTeams = await getTeams(locationFilter ? { locationFilter, publicOnly: true } : { publicOnly: true });
+        // Defense in depth: the query only requests public teams, and this keeps
+        // private teams hidden if a stale helper or local test double returns one.
+        const teams = allTeams.filter(t => t.isPublic === true);
 
         if (teams.length === 0) {
           const emptyMessage = locationFilter

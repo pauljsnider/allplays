@@ -3234,12 +3234,23 @@ Write the match report now:`;
             const sendEmail = document.getElementById('sendEmailCheckbox').checked;
 
             try {
-                // Create a batch write for all data
-                const batch = writeBatch(db);
+                const maxBatchWrites = 500;
+                let batch = writeBatch(db);
+                let batchWriteCount = 0;
 
-                // 1. Write all game log events
-                gameState.gameLog.forEach(entry => {
-                    const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                const commitBatchIfNeeded = async (force = false) => {
+                    if (batchWriteCount === 0) return;
+                    if (!force && batchWriteCount < maxBatchWrites) return;
+                    await batch.commit();
+                    batch = writeBatch(db);
+                    batchWriteCount = 0;
+                };
+
+                // 1. Write all game log events in chunks under Firestore's batch limit
+                for (const [eventIndex, entry] of gameState.gameLog.entries()) {
+                    await commitBatchIfNeeded();
+                    const eventId = `finish-log-${String(eventIndex + 1).padStart(6, '0')}`;
+                    const eventRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/events`, eventId);
                     batch.set(eventRef, {
                         text: entry.text,
                         gameTime: entry.time,
@@ -3252,12 +3263,15 @@ Write the match report now:`;
                         isOpponent: entry.undoData?.isOpponent || false,
                         createdBy: currentUser.uid
                     });
-                });
+                    batchWriteCount += 1;
+                }
+                await commitBatchIfNeeded(true);
 
-                // 2. Write aggregated stats for each player
-                Object.entries(gameState.playerStats).forEach(([playerId, stats]) => {
+                // 2. Write aggregated stats for each player in chunks
+                for (const [playerId, stats] of Object.entries(gameState.playerStats)) {
                     const player = players.find(p => p.id === playerId);
                     if (player) {
+                        await commitBatchIfNeeded();
                         const timeMs = getPlayerFieldElapsedMs(
                             gameState.playerFieldStatus,
                             playerId,
@@ -3270,11 +3284,14 @@ Write the match report now:`;
                             stats: stats,
                             timeMs
                         });
+                        batchWriteCount += 1;
                     }
-                });
+                }
+                await commitBatchIfNeeded(true);
 
-                // 3. Update game document with final data
+                // 3. Update game document with final data after detail writes finish
                 const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
+                batch = writeBatch(db);
                 batch.update(gameRef, {
                     homeScore: finalHome,
                     awayScore: finalAway,
@@ -3284,8 +3301,6 @@ Write the match report now:`;
                     ...(gameState.isBaseballScorekeeping ? { liveBaseballState: gameState.baseballState } : {}),
                     ...(isFootballTrackingConfig() ? { liveFootballState: gameState.footballState } : {})
                 });
-
-                // Commit all writes in a single batch
                 await batch.commit();
                 console.log('Game data saved successfully');
 
