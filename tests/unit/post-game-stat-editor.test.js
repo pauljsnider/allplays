@@ -155,4 +155,17 @@ describe('post-game stat editor helpers', () => {
         expect(pageSource).toContain('setCompletedGameTeamStats');
         expect(pageSource).toContain('getTeamStatsForGame');
     });
+
+    it('keeps completed-game player save updates scoped to injected stat maps', () => {
+        const pageSource = readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
+        const setupStart = pageSource.indexOf('function setupPostGameStatEditor({');
+        const setupEnd = pageSource.indexOf('function setupStatSheetControls', setupStart);
+        const setupSource = pageSource.slice(setupStart, setupEnd);
+
+        expect(setupSource).toContain('tableStatsMap = statsMap');
+        expect(setupSource).toContain('tableStatsMap[player.id] = publicStats;');
+        expect(setupSource).toContain('statsMap[player.id] = { ...(payload.stats || {}) };');
+        expect(setupSource).not.toContain('editorStatsMap[player.id]');
+        expect(pageSource).toContain('tableStatsMap: statsMap');
+    });
 });

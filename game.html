@@ -1078,6 +1078,7 @@ Write the match report now:`;
             game,
             players,
             statsMap,
+            tableStatsMap = statsMap,
             didNotPlayMap,
             timeMap,
             resolvedConfig,
@@ -1193,8 +1194,8 @@ Write the match report now:`;
                         statTrackerConfig: resolvedConfig
                     });
                     const { publicStats } = splitPlayerStatsByVisibility(resolvedConfig || {}, payload.stats || {});
-                    statsMap[player.id] = publicStats;
-                    editorStatsMap[player.id] = { ...(payload.stats || {}) };
+                    tableStatsMap[player.id] = publicStats;
+                    statsMap[player.id] = { ...(payload.stats || {}) };
                     didNotPlayMap[player.id] = payload.didNotPlay === true;
                     pendingDidNotPlayMap[player.id] = payload.didNotPlay === true;
                     timeMap[player.id] = payload.timeMs || 0;
@@ -1575,6 +1576,7 @@ Write the match report now:`;
                     game,
                     players,
                     statsMap: editorStatsMap,
+                    tableStatsMap: statsMap,
                     didNotPlayMap,
                     timeMap,
                     resolvedConfig,
