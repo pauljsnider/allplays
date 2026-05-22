@@ -39,7 +39,7 @@ test('resolveTeamEmailRecipients deduplicates enabled roster contacts without le
 test('resolveTeamEmailRecipients limits individual sends to selected recipients', () => {
   const recipients = resolveTeamEmailRecipients({
     targetType: 'individuals',
-    recipientIds: ['player:p2', 'email:extra@example.com'],
+    recipientIds: ['player:p2', ' email:Extra@Example.com '],
     players: [
       { id: 'p1', parents: [{ email: 'one@example.com' }] },
       { id: 'p2', parents: [{ email: 'two@example.com' }] },

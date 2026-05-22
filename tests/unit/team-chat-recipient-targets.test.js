@@ -27,6 +27,9 @@ describe('team chat recipient targets', () => {
         expect(html).toContain("targetType: 'staff'");
         expect(html).toContain("targetType: 'full_team'");
         expect(html).toContain('recipientIds: Array.from(selectedRecipientIds).sort()');
+        expect(html).toContain('function buildEmailTargetMetadata()');
+        expect(html).toContain("participantRoles.includes('staff')");
+        expect(html).toContain('const targetMetadata = buildEmailTargetMetadata();');
     });
 
     it('persists normalized target metadata from postChatMessage', () => {

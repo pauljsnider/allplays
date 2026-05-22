@@ -1055,7 +1055,11 @@
         }
 
         function getRecipientOptionId(kind, value) {
-            return `${kind}:${String(value || '').trim()}`;
+            const normalizedKind = String(kind || '').trim().toLowerCase();
+            const normalizedValue = normalizedKind === 'email'
+                ? String(value || '').trim().toLowerCase()
+                : String(value || '').trim();
+            return `${normalizedKind}:${normalizedValue}`;
         }
 
         function getRecipientOptionLabel(option) {
@@ -1197,6 +1201,44 @@
             };
         }
 
+        function getConversationEmailRecipientIds(conversation = {}) {
+            const optionIds = new Set(recipientOptions.map((option) => option.id));
+            const ids = Array.isArray(conversation.participantIds) ? conversation.participantIds : [];
+            return Array.from(new Set(ids.flatMap((id) => {
+                const raw = String(id || '').trim();
+                if (!raw) return [];
+                if (raw.toLowerCase().startsWith('email:')) {
+                    return [getRecipientOptionId('email', raw.slice(6))];
+                }
+                if (raw.toLowerCase().startsWith('user:')) {
+                    return [getRecipientOptionId('user', raw.slice(5))];
+                }
+                return [raw, getRecipientOptionId('user', raw)];
+            }).filter((id) => optionIds.has(id))));
+        }
+
+        function buildEmailTargetMetadata() {
+            const activeConversation = getSelectedConversation();
+            if (activeConversation && !isDefaultTeamConversation(selectedConversationId)) {
+                const participantRoles = Array.isArray(activeConversation.participantRoles)
+                    ? activeConversation.participantRoles.map((role) => String(role || '').trim().toLowerCase())
+                    : [];
+                if (participantRoles.includes('staff')) {
+                    return {
+                        targetType: 'staff',
+                        recipientIds: [],
+                        targetRole: 'staff'
+                    };
+                }
+                return {
+                    targetType: 'individuals',
+                    recipientIds: getConversationEmailRecipientIds(activeConversation),
+                    targetRole: null
+                };
+            }
+            return buildRecipientTargetMetadata();
+        }
+
         function getRecipientSummaryText() {
             const target = buildRecipientTargetMetadata();
             if (target.targetType === 'staff') {
@@ -1314,7 +1356,7 @@
                 setEmailStatus('Subject and message are required.', 'error');
                 return;
             }
-            const targetMetadata = buildRecipientTargetMetadata();
+            const targetMetadata = buildEmailTargetMetadata();
             if (targetMetadata.targetType === 'individuals' && targetMetadata.recipientIds.length === 0) {
                 setEmailStatus('Select at least one recipient.', 'error');
                 return;

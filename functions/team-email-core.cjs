@@ -8,6 +8,24 @@ function normalizeEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
 }
 
+function normalizeRecipientSelector(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const separatorIndex = raw.indexOf(':');
+  if (separatorIndex < 0) return raw;
+  const kind = raw.slice(0, separatorIndex).trim().toLowerCase();
+  const id = raw.slice(separatorIndex + 1).trim();
+  if (!id) return '';
+  if (kind === 'email') {
+    const email = normalizeEmail(id);
+    return email ? `email:${email}` : '';
+  }
+  if (kind === 'player' || kind === 'user') {
+    return `${kind}:${id}`;
+  }
+  return raw;
+}
+
 function isEmailEnabledContact(contact = {}) {
   return contact.emailEnabled !== false &&
     contact.receiveEmail !== false &&
@@ -62,7 +80,7 @@ function serializeRecipients(recipientsByEmail) {
 function resolveTeamEmailRecipients({ targetType = 'full_team', recipientIds = [], players = [], team = {}, ownerUser = null } = {}) {
   const recipientsByEmail = new Map();
   const selectedIds = new Set((Array.isArray(recipientIds) ? recipientIds : [])
-    .map((id) => String(id || '').trim())
+    .map(normalizeRecipientSelector)
     .filter(Boolean));
   const activePlayers = players.filter((player) => player && player.active !== false);
 
@@ -79,7 +97,8 @@ function resolveTeamEmailRecipients({ targetType = 'full_team', recipientIds = [
   if (targetType === 'individuals' && selectedIds.size > 0) {
     activePlayers.forEach((player) => {
       const playerId = String(player.id || player.playerId || '');
-      const playerSelected = selectedIds.has(`player:${playerId}`) || selectedIds.has(playerId);
+      const playerSelector = normalizeRecipientSelector(`player:${playerId}`);
+      const playerSelected = selectedIds.has(playerSelector) || selectedIds.has(playerId);
       const matchingContacts = [];
       const contacts = [
         ...(Array.isArray(player.parents) ? player.parents : []),
@@ -87,8 +106,8 @@ function resolveTeamEmailRecipients({ targetType = 'full_team', recipientIds = [
         ...(Array.isArray(player.familyContacts) ? player.familyContacts : [])
       ];
       contacts.forEach((contact) => {
-        const userId = contact?.userId ? `user:${contact.userId}` : '';
-        const email = contact?.email ? `email:${normalizeEmail(contact.email)}` : '';
+        const userId = contact?.userId ? normalizeRecipientSelector(`user:${contact.userId}`) : '';
+        const email = contact?.email ? normalizeRecipientSelector(`email:${contact.email}`) : '';
         if (playerSelected || selectedIds.has(userId) || selectedIds.has(email)) {
           matchingContacts.push(contact);
         }
