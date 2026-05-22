@@ -85,7 +85,7 @@ import {
     filterTeamsByActive,
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
-} from './team-visibility.js?v=1';
+} from './team-visibility.js?v=2';
 import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
