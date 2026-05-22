@@ -541,7 +541,6 @@ describe('tournament bracket helpers', () => {
     ]);
   });
 
-
   it('requires pool-protection override when advancement creates same-pool matchup', () => {
     const games = [
       {
@@ -616,6 +615,49 @@ describe('tournament bracket helpers', () => {
     expect(plan.poolProtectionConflicts).toEqual([]);
   });
 
+  it('does not require pool-protection override for existing same-pool games outside advancement patches', () => {
+    const games = [
+      {
+        id: 'semi-1',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'team', teamName: 'Bears' }
+          }
+        }
+      },
+      {
+        id: 'unrelated-final',
+        competitionType: 'tournament',
+        tournament: {
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool C', seed: 1 },
+            away: { sourceType: 'pool_seed', poolName: 'Pool C', seed: 2 }
+          },
+          resolved: {
+            homeLabel: 'Wolves',
+            awayLabel: 'Hawks',
+            homeTeamName: 'Wolves',
+            awayTeamName: 'Hawks',
+            matchupLabel: 'Wolves vs Hawks',
+            ready: true
+          }
+        }
+      }
+    ];
+
+    const plan = planTournamentPoolAdvancement(games, {
+      poolName: 'Pool A',
+      ranking: ['Tigers']
+    });
+
+    expect(plan.skipped).toBe(false);
+    expect(plan.patches.map((patch) => patch.gameId)).toEqual(['semi-1']);
+    expect(plan.requiresPoolProtectionOverride).toBe(false);
+    expect(plan.poolProtectionConflicts).toEqual([]);
+  });
+
   it('carries source pools through game-result slots for pool-protection conflicts', () => {
     const games = [
       {
@@ -660,7 +702,6 @@ describe('tournament bracket helpers', () => {
       })
     ]);
   });
-
   it('keeps finalized pool-seed slots stable after advancement is saved', () => {
     const games = [
       {
