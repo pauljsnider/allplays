@@ -4,6 +4,10 @@ export const STANDARD_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
 export const STANDARD_TRACKER_MAX_EVENT_BATCH_WRITES = 500;
 export const STANDARD_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
 
+export function buildFinishEventDocumentId(index) {
+    return `finish-log-${String(Number(index || 0) + 1).padStart(6, '0')}`;
+}
+
 export function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
     const playerStatsByLowerKey = {};
     const normalizedStats = {};
@@ -111,12 +115,12 @@ export async function commitStandardTrackerFinishData({
         eventBatchWriteCount = 0;
     }
 
-    for (const entry of safeGameLog) {
+    for (const [eventIndex, entry] of safeGameLog.entries()) {
         if (eventBatchWriteCount >= maxEventBatchWrites) {
             await commitEventBatch();
         }
         ensureEventBatch();
-        const eventRef = doc(collection(db, `teams/${teamId}/games/${gameId}/events`));
+        const eventRef = doc(db, `teams/${teamId}/games/${gameId}/events`, buildFinishEventDocumentId(eventIndex));
         eventBatch.set(eventRef, {
             text: entry.text,
             gameTime: entry.time,

@@ -211,6 +211,10 @@ describe('standard tracker finish batch limits', () => {
         expect(result.eventBatchSizes).toEqual([500, 500, 1]);
         expect(result.aggregatedStatsBatchSizes).toEqual([12]);
         expect(harness.batches.map((batch) => batch.operations.length)).toEqual([500, 500, 1, 12, 1]);
+        expect(harness.batches[0].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000001');
+        expect(harness.batches[0].operations[499].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000500');
+        expect(harness.batches[1].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000501');
+        expect(harness.batches[2].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-001001');
         expect(harness.batches.at(-1).operations).toEqual([
             expect.objectContaining({ type: 'update', data: expect.objectContaining({ status: 'completed' }) })
         ]);

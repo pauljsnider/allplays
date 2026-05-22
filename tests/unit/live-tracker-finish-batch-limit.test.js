@@ -133,6 +133,10 @@ describe('live broadcast tracker finish batch limits', () => {
         expect(result.eventBatchSizes).toEqual([500, 500, 1]);
         expect(result.aggregatedStatsBatchSizes).toEqual([25]);
         expect(harness.batches.map((batch) => batch.operations.length)).toEqual([500, 500, 1, 25, 1]);
+        expect(harness.batches[0].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000001');
+        expect(harness.batches[0].operations[499].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000500');
+        expect(harness.batches[1].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000501');
+        expect(harness.batches[2].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-001001');
         expect(harness.batches.at(-1).operations).toEqual([
             expect.objectContaining({ type: 'update', data: expect.objectContaining({ status: 'completed' }) })
         ]);
@@ -165,11 +169,12 @@ describe('live broadcast tracker finish batch limits', () => {
     it('chunks the legacy track-live.html finish writes before completing the game', () => {
         const source = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
         const finishSubmitIndex = source.indexOf("finishForm.addEventListener('submit'");
-        const eventLoopIndex = source.indexOf('for (const entry of gameState.gameLog)', finishSubmitIndex);
+        const eventLoopIndex = source.indexOf('for (const [eventIndex, entry] of gameState.gameLog.entries())', finishSubmitIndex);
         const statsLoopIndex = source.indexOf('for (const [playerId, stats] of Object.entries(gameState.playerStats))', eventLoopIndex);
         const finalUpdateIndex = source.indexOf("status: 'completed'", statsLoopIndex);
 
         expect(source).toContain('const maxBatchWrites = 500;');
+        expect(source).toContain("const eventId = `finish-log-${String(eventIndex + 1).padStart(6, '0')}`;");
         expect(source).toContain('await commitBatchIfNeeded(true);');
         expect(eventLoopIndex).toBeGreaterThan(finishSubmitIndex);
         expect(statsLoopIndex).toBeGreaterThan(eventLoopIndex);

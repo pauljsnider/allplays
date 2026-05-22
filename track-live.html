@@ -3247,9 +3247,10 @@ Write the match report now:`;
                 };
 
                 // 1. Write all game log events in chunks under Firestore's batch limit
-                for (const entry of gameState.gameLog) {
+                for (const [eventIndex, entry] of gameState.gameLog.entries()) {
                     await commitBatchIfNeeded();
-                    const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+                    const eventId = `finish-log-${String(eventIndex + 1).padStart(6, '0')}`;
+                    const eventRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/events`, eventId);
                     batch.set(eventRef, {
                         text: entry.text,
                         gameTime: entry.time,

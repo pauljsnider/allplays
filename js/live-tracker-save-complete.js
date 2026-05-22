@@ -6,6 +6,10 @@ export const LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
 export const LIVE_TRACKER_MAX_EVENT_BATCH_WRITES = 500;
 export const LIVE_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
 
+export function buildLiveTrackerFinishEventDocumentId(index) {
+  return `finish-log-${String(Number(index || 0) + 1).padStart(6, '0')}`;
+}
+
 function defaultFormatClock(ms) {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60).toString().padStart(2, '0');
@@ -22,8 +26,12 @@ export function addFinishPlanWritesToBatch({
   createCollectionRef,
   createDocRef
 } = {}) {
-  (finishPlan?.eventWrites || []).forEach(({ data }) => {
-    const eventRef = createDocRef(createCollectionRef(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+  (finishPlan?.eventWrites || []).forEach(({ data }, index) => {
+    const eventRef = createDocRef(
+      db,
+      `teams/${currentTeamId}/games/${currentGameId}/events`,
+      buildLiveTrackerFinishEventDocumentId(index)
+    );
     batch.set(eventRef, data);
   });
 
@@ -38,10 +46,15 @@ export function addEventWritesToBatch({
   currentTeamId,
   currentGameId,
   createCollectionRef,
-  createDocRef
+  createDocRef,
+  startIndex = 0
 } = {}) {
-  eventWrites.forEach(({ data }) => {
-    const eventRef = createDocRef(createCollectionRef(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
+  eventWrites.forEach(({ data }, index) => {
+    const eventRef = createDocRef(
+      db,
+      `teams/${currentTeamId}/games/${currentGameId}/events`,
+      buildLiveTrackerFinishEventDocumentId(startIndex + index)
+    );
     batch.set(eventRef, data);
   });
 }
@@ -96,7 +109,8 @@ export async function commitFinishPlan({
       currentTeamId,
       currentGameId,
       createCollectionRef,
-      createDocRef
+      createDocRef,
+      startIndex: i
     });
     eventBatchSizes.push(eventChunk.length);
     await eventBatch.commit();

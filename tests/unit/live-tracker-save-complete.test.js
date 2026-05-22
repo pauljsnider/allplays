@@ -294,7 +294,7 @@ describe('live tracker save-and-complete workflow', () => {
     expect(harness.batch.commit).toHaveBeenCalledTimes(1);
     expect(harness.setCalls).toEqual([
       {
-        ref: { kind: 'auto-doc', path: 'teams/team-1/games/game-9/events/AUTO_ID' },
+        ref: { kind: 'doc', path: 'teams/team-1/games/game-9/events/finish-log-000001' },
         data: { text: 'Home layup', gameTime: '01:20' }
       },
       {
