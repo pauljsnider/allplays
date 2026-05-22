@@ -51,7 +51,7 @@ import {
 } from "./vendor/firebase-firestore.js";
 import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "./vendor/firebase-storage.js";
 import { getFunctions, httpsCallable } from "./vendor/firebase-functions.js";
-import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=7";
+import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=8";
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
 

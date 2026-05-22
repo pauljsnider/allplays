@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
 
+const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
+test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
+
 function appUrl(baseURL, hashPath) {
-    const url = new URL('/', baseURL);
+    const url = new URL('/', appBaseUrl || baseURL);
     url.hash = hashPath;
     return url.toString();
 }
@@ -179,6 +182,12 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export async function setCurrentUserPassword(newPassword) {
                     window.__appAuthCalls.setCurrentUserPassword.push(newPassword);
                 }
+
+                export const firebaseAuth = { app: { options: { projectId: 'demo-allplays' } } };
+
+                export async function getNativeAuthIdToken() {
+                    return 'mock-token';
+                }
             `
         });
     });
@@ -256,6 +265,92 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             body: `
                 export async function enablePushNotificationsForUser() {
                     window.__appProfileCalls.push += 1;
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/scheduleService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadParentSchedule() {
+                    return { children: [], events: [] };
+                }
+
+                export async function loadParentPracticePacket() {
+                    return null;
+                }
+
+                export async function loadParentScheduleAssignments() {
+                    return [];
+                }
+
+                export async function loadParentScheduleRideOffers() {
+                    return [];
+                }
+
+                export async function submitParentScheduleRsvp() {
+                    return { going: 1, maybe: 0, notGoing: 0, notResponded: 0 };
+                }
+
+                export async function createParentScheduleRideOffer() {}
+                export async function requestParentScheduleRideSpot() {}
+                export async function cancelParentScheduleRideRequest() {}
+                export async function setParentScheduleRideOfferStatus() {}
+                export async function updateParentScheduleRideRequestStatus() {}
+                export async function claimParentScheduleAssignmentSlot() {}
+                export async function releaseParentScheduleAssignmentClaim() {}
+                export async function markParentPracticePacketComplete() {}
+
+                export function summarizeParentScheduleRideOffers() {
+                    return { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/gameReportService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadGameReportSections() {
+                    return {
+                        team: {},
+                        game: {},
+                        summary: '',
+                        statKeys: [],
+                        statLabels: {},
+                        hasPlayingTime: false,
+                        playerRows: [],
+                        opponentStatKeys: [],
+                        opponentStatLabels: {},
+                        opponentRows: [],
+                        teamStatKeys: [],
+                        teamStatLabels: {},
+                        teamStats: {},
+                        statSheetPhotoUrl: '',
+                        highlightClips: [],
+                        plays: [],
+                        teamInsights: [],
+                        playerInsightRows: [],
+                        emptyInsightsMessage: 'No insights yet.'
+                    };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/publicActions\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function openPublicUrl() {}
+                export async function sharePublicUrl() {
+                    return 'shared';
                 }
             `
         });

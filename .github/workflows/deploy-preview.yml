@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install app dependencies
+        run: npm ci --prefix apps/app
+
       - name: Run unit tests
         run: npm run test:unit:ci
 
@@ -91,6 +94,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install app dependencies
+        run: npm ci --prefix apps/app
 
       - name: Configure Firebase service account
         run: |

@@ -39,7 +39,7 @@ let firebaseAuthModulePromise = null;
 
 function loadFirebaseAuthModule() {
     if (!firebaseAuthModulePromise) {
-        firebaseAuthModulePromise = import('./firebase.js?v=13')
+        firebaseAuthModulePromise = import('./firebase.js?v=15')
             .then((module) => ({
                 auth: module.auth,
                 onAuthStateChanged: module.onAuthStateChanged
