@@ -1,0 +1,35 @@
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+function readGameHtml() {
+    return readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
+}
+
+describe('game auth reload', () => {
+    it('forces one authenticated reload after the public auth timeout fallback loads the report', () => {
+        const source = readGameHtml();
+
+        expect(source).toContain('let gameLoadedForAuthenticatedUser = false;');
+        expect(source).toContain('const shouldRefreshPermissions = gameLoaded && !gameLoadedForAuthenticatedUser && !!user;');
+        expect(source).toContain('loadGame({ forceAuthenticatedReload: shouldRefreshPermissions });');
+    });
+
+    it('keeps the normal single-load guard after authenticated state has rendered', () => {
+        const source = readGameHtml();
+
+        expect(source).toContain('async function loadGame({ forceAuthenticatedReload = false } = {})');
+        expect(source).toContain('if (gameLoaded && (!forceAuthenticatedReload || gameLoadedForAuthenticatedUser)) return;');
+        expect(source).toContain('gameLoadedForAuthenticatedUser = !!currentUser;');
+    });
+
+    it('resets opponent stat headers before an authenticated reload re-renders the report', () => {
+        const source = readGameHtml();
+        const opponentStatsStart = source.indexOf('if (game.opponentStats && Object.keys(game.opponentStats).length > 0)');
+        const opponentHeaderReset = source.indexOf('opponentHeaderRow.innerHTML = `', opponentStatsStart);
+        const opponentHeaderAppend = source.indexOf('oppKeys.forEach(key => {', opponentStatsStart);
+
+        expect(opponentStatsStart).toBeGreaterThan(-1);
+        expect(opponentHeaderReset).toBeGreaterThan(opponentStatsStart);
+        expect(opponentHeaderReset).toBeLessThan(opponentHeaderAppend);
+    });
+});

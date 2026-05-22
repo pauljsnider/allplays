@@ -407,6 +407,7 @@
         let canEditStats = false;
         let authResolved = false;
         let gameLoaded = false;
+        let gameLoadedForAuthenticatedUser = false;
 
         const authTimeout = setTimeout(() => {
             if (authResolved || gameLoaded) return;
@@ -418,9 +419,10 @@
             authResolved = true;
             clearTimeout(authTimeout);
             // Allow viewing without login - user can be null
+            const shouldRefreshPermissions = gameLoaded && !gameLoadedForAuthenticatedUser && !!user;
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
-            loadGame();
+            loadGame({ forceAuthenticatedReload: shouldRefreshPermissions });
         });
 
         renderFooter(document.getElementById('footer-container'));
@@ -1240,9 +1242,13 @@ Write the match report now:`;
             saveNextBtn?.addEventListener('click', () => saveCurrent('next'));
         }
 
-        async function loadGame() {
-            if (gameLoaded) return;
+        async function loadGame({ forceAuthenticatedReload = false } = {}) {
+            if (gameLoaded && (!forceAuthenticatedReload || gameLoadedForAuthenticatedUser)) return;
             gameLoaded = true;
+            gameLoadedForAuthenticatedUser = !!currentUser;
+            canManageStatSheet = false;
+            canEditSummary = false;
+            canEditStats = false;
             const { teamId, gameId } = getUrlParams();
             if (!teamId || !gameId) {
                 window.location.href = 'index.html';
@@ -1675,6 +1681,10 @@ Write the match report now:`;
                     });
 
                     // Render header
+                    opponentHeaderRow.innerHTML = `
+                        <th class="px-4 py-4 text-left">#</th>
+                        <th class="px-4 py-4 text-left">Player</th>
+                    `;
                     oppKeys.forEach(key => {
                         const th = document.createElement('th');
                         th.className = "px-4 py-4 text-center";
