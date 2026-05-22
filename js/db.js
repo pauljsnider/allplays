@@ -26,6 +26,8 @@ import {
     collectionGroup,
     writeBatch,
     runTransaction,
+    functions,
+    httpsCallable,
     ref,
     uploadBytes,
     getDownloadURL,
@@ -106,6 +108,21 @@ import {
     updateOfficiatingSlotResponse
 } from './officiating-utils.js?v=3';
 import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=2';
+import {
+    getTeamEmailAttachmentTotalBytes,
+    normalizeTeamEmailAttachments
+} from './team-email-attachments.js?v=1';
+export {
+    TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES,
+    assertTeamEmailAttachmentLimit,
+    buildTeamEmailDeliveryPayload,
+    deleteTeamEmailAttachment,
+    getTeamEmailAttachmentTotalBytes,
+    getTeamEmailDraft,
+    normalizeTeamEmailAttachments,
+    queueTeamEmailSend,
+    uploadTeamEmailAttachment
+} from './team-email-attachments.js?v=1';
 // import { getAI, getGenerativeModel, GoogleAIBackend } from 'https://www.gstatic.com/firebasejs/12.6.0/firebase-vertexai.js';
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
@@ -480,10 +497,34 @@ import { resolveZip } from './utils.js?v=9'; // Import resolveZip
 // Teams
 export async function getTeams(options = {}) {
     const includeInactive = !!options.includeInactive;
+    const publicOnly = options.publicOnly === true;
+    const includePrivate = options.includePrivate === true || includeInactive;
     const locationFilter = String(options.locationFilter || '').trim().toLowerCase();
 
-    const q = query(collection(db, "teams"), orderBy("name"));
-    let teams = (await getDocs(q)).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const teamsRef = collection(db, "teams");
+    let teams = [];
+    if (includePrivate) {
+        teams = (await getDocs(query(teamsRef, orderBy("name")))).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } else if (publicOnly) {
+        teams = (await getDocs(query(teamsRef, where("isPublic", "==", true), orderBy("name")))).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } else {
+        const currentUser = auth.currentUser;
+        const currentUserEmail = String(currentUser?.email || '').trim().toLowerCase();
+        const teamSnapshots = await Promise.all([
+            getDocs(query(teamsRef, where("isPublic", "==", true), orderBy("name"))),
+            currentUser?.uid
+                ? getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))
+                : Promise.resolve({ docs: [] }),
+            currentUserEmail
+                ? getDocs(query(teamsRef, where("adminEmails", "array-contains", currentUserEmail)))
+                : Promise.resolve({ docs: [] })
+        ]);
+        const teamsById = new Map();
+        teamSnapshots.forEach((snapshot) => {
+            snapshot.docs.forEach(doc => teamsById.set(doc.id, { id: doc.id, ...doc.data() }));
+        });
+        teams = Array.from(teamsById.values()).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    }
 
     // Apply location filter if provided
     if (locationFilter) {
@@ -3057,6 +3098,12 @@ export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail 
 // Parent Role Functions
 // ============================================
 
+async function autoAcceptParentInviteForExistingUser(accessCodeId) {
+    const autoAcceptParentInvite = httpsCallable(functions, 'autoAcceptParentInviteForExistingUser');
+    const result = await autoAcceptParentInvite({ codeId: accessCodeId });
+    return Boolean(result?.data?.autoLinked);
+}
+
 export async function inviteParent(teamId, playerId, playerNum, parentEmail, relation) {
     const currentUser = auth.currentUser;
     if (!currentUser) {
@@ -3070,6 +3117,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     ]);
     const player = players.find(p => p.id === playerId);
 
+    const normalizedParentEmail = String(parentEmail || '').trim().toLowerCase();
     const code = generateAccessCode();
     const accessCodeData = {
         code,
@@ -3080,7 +3128,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         playerName: player?.name || null,
         teamName: team?.name || null,
         relation,
-        email: parentEmail || null,
+        email: normalizedParentEmail || null,
         generatedBy: currentUser.uid,
         createdAt: Timestamp.now(),
         // 7 days from now
@@ -3093,8 +3141,16 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
 
     // Check if user with this email already exists
     let existingUser = null;
-    if (parentEmail) {
-        existingUser = await getUserByEmail(parentEmail);
+    let autoLinked = false;
+    if (normalizedParentEmail) {
+        existingUser = await getUserByEmail(normalizedParentEmail);
+        if (existingUser) {
+            try {
+                autoLinked = await autoAcceptParentInviteForExistingUser(docRef.id);
+            } catch (error) {
+                console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
+            }
+        }
     }
 
     return {
@@ -3102,7 +3158,8 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         code,
         teamName: team?.name || null,
         playerName: player?.name || null,
-        existingUser: !!existingUser
+        existingUser: !!existingUser,
+        autoLinked
     };
 }
 
@@ -4505,6 +4562,89 @@ export async function archiveCertificate(teamId, certificateId) {
     await updateCertificate(teamId, certificateId, { status: 'archived' }, { action: 'archived' });
 }
 
+
+function getTeamEmailDraftsRef(teamId) {
+    return collection(db, 'teams', teamId, 'emailDrafts');
+}
+
+function normalizeEmailDraftRecipient(recipient = {}) {
+    const email = String(recipient.email || '').trim().toLowerCase();
+    return {
+        key: String(recipient.key || `email:${email}`).trim(),
+        email,
+        name: String(recipient.name || email).trim(),
+        detail: String(recipient.detail || '').trim()
+    };
+}
+
+function normalizeTeamEmailDraftPayload(draft = {}) {
+    const subject = String(draft.subject || '').trim();
+    const body = String(draft.body || '').trim();
+    const recipients = Array.isArray(draft.recipients)
+        ? draft.recipients.map(normalizeEmailDraftRecipient).filter((recipient) => (
+            recipient.key && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email)
+        ))
+        : [];
+
+    if (recipients.length === 0) throw new Error('Choose at least one recipient before saving.');
+    if (!subject) throw new Error('Enter a subject before saving.');
+    if (!body) throw new Error('Enter a body before saving.');
+
+    return {
+        subject,
+        body,
+        recipients,
+        recipientEmails: recipients.map((recipient) => recipient.email),
+        authorId: draft.authorId || auth.currentUser?.uid || null,
+        authorEmail: draft.authorEmail || auth.currentUser?.email || null,
+        authorName: draft.authorName || null,
+        status: 'draft'
+    };
+}
+
+export async function getTeamEmailDrafts(teamId) {
+    if (!teamId) return [];
+    const draftsRef = getTeamEmailDraftsRef(teamId);
+    try {
+        const snapshot = await getDocs(query(draftsRef, orderBy('updatedAt', 'desc')));
+        return snapshot.docs.map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(draftsRef);
+        return snapshot.docs
+            .map((draftDoc) => ({ id: draftDoc.id, ...draftDoc.data() }))
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            });
+    }
+}
+
+export async function saveTeamEmailDraft(teamId, draft, { draftId = null } = {}) {
+    const now = Timestamp.now();
+    const payload = {
+        ...normalizeTeamEmailDraftPayload(draft),
+        updatedAt: now
+    };
+    if (Array.isArray(draft?.attachments)) {
+        const attachments = normalizeTeamEmailAttachments(draft.attachments);
+        payload.attachments = attachments;
+        payload.attachmentTotalBytes = getTeamEmailAttachmentTotalBytes(attachments);
+    }
+
+    if (draftId) {
+        const draftRef = doc(db, 'teams', teamId, 'emailDrafts', draftId);
+        await setDoc(draftRef, payload, { merge: true });
+        return { id: draftId, ...payload };
+    }
+
+    const draftRef = await addDoc(getTeamEmailDraftsRef(teamId), {
+        ...payload,
+        createdAt: now
+    });
+    return { id: draftRef.id, ...payload, createdAt: now };
+}
+
 function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     if (isDefaultTeamConversation(conversationId)) {
         return collection(db, 'teams', teamId, 'chatMessages');
@@ -4615,6 +4755,29 @@ export function subscribeToChatMessages(teamId, { limit = 50, conversationId = D
         const oldestDoc = snapshot.docs.length ? snapshot.docs[snapshot.docs.length - 1] : null;
         onMessages(docs, oldestDoc);
     });
+}
+
+export async function sendTeamEmail(teamId, {
+    subject,
+    body,
+    targetType = 'full_team',
+    recipientIds = []
+} = {}) {
+    const callable = httpsCallable(functions, 'sendTeamEmail');
+    const result = await callable({
+        teamId,
+        subject,
+        body,
+        targetType,
+        recipientIds
+    });
+    return result.data;
+}
+
+export async function getSentTeamEmails(teamId, { limit = 25 } = {}) {
+    const emailsRef = collection(db, 'teams', teamId, 'teamEmails');
+    const snapshot = await getDocs(query(emailsRef, orderBy('sentAt', 'desc'), limitQuery(limit)));
+    return snapshot.docs.map((d) => ({ id: d.id, ...d.data(), _doc: d }));
 }
 
 /**

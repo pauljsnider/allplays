@@ -28,6 +28,15 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function canReadTeamDocument(data) {
+      return (data.isPublic is bool && data.isPublic == true) ||
+             (isSignedIn() &&
+              (data.ownerId == request.auth.uid ||
+               (request.auth.token.email != null &&
+                request.auth.token.email.lower() in data.get('adminEmails', [])) ||
+               isGlobalAdmin()));
+    }
+
     function isSafeDocumentId(documentId) {
       return documentId is string &&
              documentId.size() > 0 &&
@@ -1050,9 +1059,9 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Teams - only owner or admins can modify
+    // Teams - only public teams are readable by anonymous browse/listing paths.
     match /teams/{teamId} {
-      allow read: if true;  // Public teams for browsing
+      allow read: if canReadTeamDocument(resource.data);
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update: if isTeamOwnerOrAdmin(teamId);
       allow delete: if isGlobalAdmin();
@@ -1537,6 +1546,39 @@ service cloud.firestore {
         }
       }
 
+      // Team email drafts are coach/admin-only and never trigger delivery.
+      match /emailDrafts/{draftId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update: if isTeamOwnerOrAdmin(teamId) &&
+          request.resource.data.keys().hasAll(['subject', 'body', 'recipients', 'recipientEmails', 'status', 'updatedAt']) &&
+          request.resource.data.keys().hasOnly([
+            'subject', 'body', 'recipients', 'recipientEmails', 'authorId', 'authorEmail',
+            'authorName', 'status', 'createdAt', 'updatedAt', 'attachments', 'attachmentTotalBytes'
+          ]) &&
+          request.resource.data.subject is string &&
+          request.resource.data.subject.size() > 0 &&
+          request.resource.data.body is string &&
+          request.resource.data.body.size() > 0 &&
+          request.resource.data.recipients is list &&
+          request.resource.data.recipients.size() > 0 &&
+          request.resource.data.recipientEmails is list &&
+          request.resource.data.recipientEmails.size() > 0 &&
+          (!request.resource.data.keys().hasAny(['attachments']) ||
+            request.resource.data.attachments is list) &&
+          (!request.resource.data.keys().hasAny(['attachmentTotalBytes']) ||
+            request.resource.data.attachmentTotalBytes is number) &&
+          request.resource.data.status == 'draft';
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /emailSends/{sendId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                        request.resource.data.teamId == teamId &&
+                        request.resource.data.createdBy == request.auth.uid;
+        allow update, delete: if false;
+      }
+
       // Chat messages subcollection
       match /chatMessages/{messageId} {
         // List queries are unfiltered by target metadata in existing clients.
@@ -1589,6 +1631,11 @@ service cloud.firestore {
                              ])
                            )
                          );
+      }
+
+      match /teamEmails/{messageId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update, delete: if false;
       }
 
       // First-class team messaging conversations. The default team-wide channel

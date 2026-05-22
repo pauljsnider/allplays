@@ -597,7 +597,7 @@
         }
 
         async function loadRequestAccessOptions() {
-            publicRequestTeams = (await getTeams()).filter((team) => team?.isPublic !== false);
+            publicRequestTeams = (await getTeams({ publicOnly: true })).filter((team) => team?.isPublic === true);
             populateRequestTeamOptions();
             await handleRequestTeamSelection();
         }
