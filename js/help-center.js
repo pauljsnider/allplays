@@ -372,30 +372,30 @@ const HELP_GUIDES = [
     },
     {
         id: 'team-chat-tagging',
-        title: 'Tag people in chat',
+        title: 'Use chat recipients and @ALL PLAYS',
         category: 'watch-chat',
         roles: ['parent', 'coach', 'administrator'],
-        tags: ['tag', 'mention', 'chat', 'notifications', '@'],
-        summary: 'Mention the right people in chat without over-notifying the entire team.',
+        tags: ['recipient', 'mention', 'chat', 'notifications', '@ALL PLAYS'],
+        summary: 'Use the recipient picker for targeted chat delivery and @ALL PLAYS only for assistant help.',
         prerequisites: [
             'Team chat is enabled and you can send messages.',
-            'You know who should be notified for the message context.'
+            'You know who should receive the message or whether you need assistant help.'
         ],
         steps: [
             'Open `team-chat.html#teamId={teamId}`.',
-            'Start typing your message and include a mention format supported by chat UI.',
-            'Tag only the people or groups that need action.',
-            'Send the message and confirm mention formatting renders correctly.',
-            'Watch for replies/acknowledgments from tagged recipients.',
+            'Use the recipient picker to choose Full team, Staff only, or Selected members before sending targeted operational messages.',
+            'Type `@` and select `@ALL PLAYS` only when you want the assistant to answer a question in chat.',
+            'Send the message and confirm the selected recipient audience or @ALL PLAYS assistant mention renders correctly.',
+            'Watch for replies/acknowledgments from the selected recipients.',
             'If message is urgent, follow up with a clear action + deadline in same thread.'
         ],
         commonErrors: [
-            'Tag does not link/notify: check exact mention formatting expected by current chat implementation.',
-            'Too many people notified: narrow tags to responsible individuals.',
-            'No response from tagged users: verify they have notification permissions enabled.'
+            '@Name does not link/notify: person and group @ mentions are not supported in team chat; use the recipient picker instead.',
+            'Too many people notified: narrow the recipient picker to staff or selected members.',
+            'No response from selected recipients: verify they have notification permissions enabled.'
         ],
         edgeCases: [
-            'In mixed parent/coach chats, avoid tagging minors directly where policy requires parent-only comms.',
+            'In mixed parent/coach chats, avoid targeting minors directly where policy requires parent-only comms.',
             'For repeated announcements, use one canonical message and reference it instead of retagging everyone.'
         ],
         relatedGuideIds: ['team-chat-basics', 'plan-game'],
