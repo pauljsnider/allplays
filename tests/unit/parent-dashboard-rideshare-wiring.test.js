@@ -37,4 +37,14 @@ describe('parent dashboard rideshare wiring', () => {
         expect(html).toContain('createRideRequestHandlers({');
         expect(html).toContain('selectedRideChildByOffer');
     });
+
+    it('serializes Request Spot inline arguments as JavaScript strings before HTML escaping', () => {
+        const html = readRepoFile('parent-dashboard.html');
+
+        expect(html).toContain('function escapeJsArgAttr(value)');
+        expect(html).toContain("return escapeAttr(JSON.stringify(String(value ?? '')));");
+        expect(html).toContain('requestRideSpotForChild(${escapeJsArgAttr(event.teamId)},${escapeJsArgAttr(event.id)}');
+        expect(html).toContain('${escapeJsArgAttr(selectedChildName)}');
+        expect(html).not.toContain("'${escapeAttr(selectedChildName)}'");
+    });
 });
