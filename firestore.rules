@@ -1553,7 +1553,7 @@ service cloud.firestore {
           request.resource.data.keys().hasAll(['subject', 'body', 'recipients', 'recipientEmails', 'status', 'updatedAt']) &&
           request.resource.data.keys().hasOnly([
             'subject', 'body', 'recipients', 'recipientEmails', 'authorId', 'authorEmail',
-            'authorName', 'status', 'createdAt', 'updatedAt'
+            'authorName', 'status', 'createdAt', 'updatedAt', 'attachments', 'attachmentTotalBytes'
           ]) &&
           request.resource.data.subject is string &&
           request.resource.data.subject.size() > 0 &&
@@ -1563,8 +1563,20 @@ service cloud.firestore {
           request.resource.data.recipients.size() > 0 &&
           request.resource.data.recipientEmails is list &&
           request.resource.data.recipientEmails.size() > 0 &&
+          (!request.resource.data.keys().hasAny(['attachments']) ||
+            request.resource.data.attachments is list) &&
+          (!request.resource.data.keys().hasAny(['attachmentTotalBytes']) ||
+            request.resource.data.attachmentTotalBytes is number) &&
           request.resource.data.status == 'draft';
         allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
+      match /emailSends/{sendId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                        request.resource.data.teamId == teamId &&
+                        request.resource.data.createdBy == request.auth.uid;
+        allow update, delete: if false;
       }
 
       // Chat messages subcollection

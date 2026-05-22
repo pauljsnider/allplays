@@ -2613,3 +2613,104 @@ exports.collectTelemetry = functions
       });
     }
   });
+
+const TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES = 20 * 1024 * 1024;
+
+function normalizeTeamEmailAttachmentRecord(attachment) {
+  const name = String(attachment?.name || attachment?.fileName || '').trim();
+  const storagePath = String(attachment?.storagePath || attachment?.path || '').trim();
+  const contentType = String(attachment?.contentType || attachment?.type || 'application/octet-stream').trim();
+  const size = Number(attachment?.size || attachment?.bytes || 0);
+  if (!name || !storagePath || !Number.isFinite(size) || size <= 0) return null;
+  return { name, storagePath, contentType, size };
+}
+
+function isTeamEmailAttachmentPathForTeam(teamId, storagePath) {
+  const cleanTeamId = String(teamId || '').trim();
+  const parts = String(storagePath || '').trim().split('/');
+  return parts.length >= 5 &&
+    parts[0] === 'team-email-attachments' &&
+    parts[1] === cleanTeamId &&
+    parts.slice(2).every(Boolean);
+}
+
+function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
+  const rawAttachments = Array.isArray(attachments) ? attachments : [];
+  const normalized = rawAttachments.map(normalizeTeamEmailAttachmentRecord).filter(Boolean);
+  if (normalized.length !== rawAttachments.length ||
+      normalized.some((attachment) => !isTeamEmailAttachmentPathForTeam(teamId, attachment.storagePath))) {
+    throw new Error('Team email attachments must reference files for the same team.');
+  }
+  const totalBytes = normalized.reduce((sum, attachment) => sum + attachment.size, 0);
+  if (totalBytes > TEAM_EMAIL_ATTACHMENT_LIMIT_BYTES) {
+    throw new Error('Team email attachments exceed the 20 MB limit.');
+  }
+  return { attachments: normalized, totalBytes };
+}
+
+function buildTeamEmailMailDocId(teamId, sendId) {
+  const safeTeamId = String(teamId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
+  const safeSendId = String(sendId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
+  return `teamEmail_${safeTeamId}_${safeSendId}`;
+}
+
+exports.queueTeamEmailDelivery = functions.firestore
+  .document('teams/{teamId}/emailSends/{sendId}')
+  .onCreate(async (snap, context) => {
+    const { teamId, sendId } = context.params;
+    const send = snap.data() || {};
+    const recipients = Array.isArray(send.recipients)
+      ? send.recipients.map((email) => String(email || '').trim()).filter(Boolean)
+      : [];
+    const subject = String(send.subject || '').trim();
+    const body = String(send.body || '').trim();
+    let attachmentSummary;
+    try {
+      attachmentSummary = normalizeTeamEmailAttachmentsForDelivery(teamId, send.attachments);
+    } catch (error) {
+      await snap.ref.set({
+        status: 'failed',
+        failureReason: error?.message || 'Invalid team email attachments.',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return;
+    }
+    const { attachments, totalBytes } = attachmentSummary;
+
+    if (!recipients.length || !subject || !body) {
+      await snap.ref.set({
+        status: 'failed',
+        failureReason: 'Missing recipients, subject, or body.',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+      return;
+    }
+
+    const mailRef = firestore.collection('mail').doc(buildTeamEmailMailDocId(teamId, sendId));
+    await mailRef.set({
+      to: recipients,
+      message: {
+        subject,
+        text: body
+      },
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      metadata: {
+        type: 'team_email',
+        teamId,
+        sendId,
+        draftId: send.draftId || null,
+        attachments,
+        attachmentTotalBytes: totalBytes,
+        createdBy: send.createdBy || null,
+        createdByEmail: send.createdByEmail || null
+      }
+    });
+
+    await snap.ref.set({
+      status: 'queued',
+      attachmentTotalBytes: totalBytes,
+      mailJobId: mailRef.id,
+      queuedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
