@@ -1694,6 +1694,27 @@ service cloud.firestore {
       }
     }
 
+    // Family share tokens — parent-created read-only share links for grandparents/friends.
+    // The tokenId is a 40-char hex string that serves as a bearer credential.
+    match /familyShareTokens/{tokenId} {
+      // Anyone who has the token ID can read it (to validate and load the family page).
+      // Owner can always read their own tokens (including revoked ones).
+      allow get: if resource.data.get('active', false) == true ||
+                    (isSignedIn() && resource.data.ownerUserId == request.auth.uid) ||
+                    isGlobalAdmin();
+      // Only the owner can list their own tokens (rule applied per-document).
+      allow list: if isSignedIn() && resource.data.ownerUserId == request.auth.uid;
+      // Owner can create tokens on their own behalf.
+      allow create: if isSignedIn() &&
+                       request.resource.data.ownerUserId == request.auth.uid &&
+                       request.resource.data.active == true &&
+                       isSafeDocumentId(tokenId);
+      // Owner can update (e.g., revoke) their own tokens.
+      allow update: if isSignedIn() && resource.data.ownerUserId == request.auth.uid;
+      allow delete: if isSignedIn() &&
+                       (resource.data.ownerUserId == request.auth.uid || isGlobalAdmin());
+    }
+
     // Deny all other paths
     match /{document=**} {
       allow read, write: if false;

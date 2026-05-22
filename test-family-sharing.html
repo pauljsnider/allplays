@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Family Sharing Test Suite</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .test-section { background: white; margin: 20px 0; padding: 20px; border-radius: 8px; }
+        .test-case { margin: 10px 0; padding: 10px; border-left: 4px solid #ccc; }
+        .pass { border-left-color: #22c55e; background: #f0fdf4; }
+        .fail { border-left-color: #ef4444; background: #fef2f2; }
+        .test-name { font-weight: bold; margin-bottom: 5px; }
+        .test-result { font-size: 0.9em; color: #666; }
+        h2 { color: #4338ca; }
+        .summary { background: #e0e7ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .summary h3 { margin-top: 0; color: #4338ca; }
+        pre { background: #f8f8f8; padding: 10px; overflow-x: auto; }
+    </style>
+    <script type="module" src="/js/telemetry.js?v=1"></script>
+</head>
+<body>
+    <h1>🧪 Family Sharing Test Suite</h1>
+    <p>Testing: token generation, share URL construction, calendar URL management, schedule filtering, ICS export, deduplication, conflict detection, token validation.</p>
+
+    <div id="test-summary" class="summary">
+        <h3>Test Summary</h3>
+        <p id="summary-text">Running tests...</p>
+    </div>
+
+    <div id="test-results"></div>
+
+    <script>
+        const results = [];
+        const sections = {};
+
+        function test(section, name, fn) {
+            if (!sections[section]) sections[section] = [];
+            try {
+                fn();
+                const r = { name, pass: true, error: null };
+                results.push(r);
+                sections[section].push(r);
+            } catch (e) {
+                const r = { name, pass: false, error: e.message };
+                results.push(r);
+                sections[section].push(r);
+            }
+        }
+
+        function assertEquals(actual, expected, message) {
+            if (actual !== expected) {
+                throw new Error(`${message}\n  Expected: ${JSON.stringify(expected)}\n  Actual:   ${JSON.stringify(actual)}`);
+            }
+        }
+
+        function assertDeepEquals(actual, expected, message) {
+            if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+                throw new Error(`${message}\n  Expected: ${JSON.stringify(expected)}\n  Actual:   ${JSON.stringify(actual)}`);
+            }
+        }
+
+        function assertTrue(value, message) {
+            if (!value) throw new Error(message);
+        }
+
+        function assertFalse(value, message) {
+            if (value) throw new Error(message);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Inline copies of pure logic under test (no Firebase dependency)
+        // ─────────────────────────────────────────────────────────────────────
+
+        // From js/db.js
+        function generateShareToken() {
+            const bytes = new Uint8Array(20);
+            crypto.getRandomValues(bytes);
+            return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function normalizeShareTokenChildren(children) {
+            return (children || []).map(c => ({
+                teamId: c.teamId || '',
+                teamName: c.teamName || '',
+                playerId: c.playerId || '',
+                playerName: c.playerName || '',
+                playerPhotoUrl: c.playerPhotoUrl || null
+            }));
+        }
+
+        function normalizeExtraCalendarUrls(urls) {
+            return (urls || []).filter(u => typeof u === 'string' && u.trim());
+        }
+
+        // From parent-dashboard.html
+        function buildFamilyShareUrl(origin, tokenId) {
+            return `${origin}/family.html?token=${tokenId}`;
+        }
+
+        // Share-form calendar list management (mirrors shareFormCalendarUrls array operations)
+        function addCalendarUrlToList(list, url) {
+            const trimmed = url.trim();
+            if (!trimmed) return false;
+            if (!/^https?:\/\/.+/.test(trimmed)) return false;
+            if (list.includes(trimmed)) return false;
+            list.push(trimmed);
+            return true;
+        }
+
+        function removeCalendarUrlFromList(list, idx) {
+            if (idx < 0 || idx >= list.length) return false;
+            list.splice(idx, 1);
+            return true;
+        }
+
+        // From family.html — schedule filtering
+        function getFilteredScheduleEvents(events, scheduleViewFilter, selectedPlayerId = '') {
+            const now = new Date();
+            const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+            let evs = selectedPlayerId
+                ? events.filter(ev => ev.childId === selectedPlayerId)
+                : [...events];
+            if (scheduleViewFilter === 'upcoming-all') {
+                evs = evs.filter(ev => new Date(ev.date) >= cutoff);
+                evs.sort((a, b) => new Date(a.date) - new Date(b.date));
+            } else if (scheduleViewFilter === 'upcoming-games') {
+                evs = evs.filter(ev => ev.type === 'game' && new Date(ev.date) >= cutoff);
+                evs.sort((a, b) => new Date(a.date) - new Date(b.date));
+            } else if (scheduleViewFilter === 'upcoming-practices') {
+                evs = evs.filter(ev => ev.type === 'practice' && new Date(ev.date) >= cutoff);
+                evs.sort((a, b) => new Date(a.date) - new Date(b.date));
+            } else if (scheduleViewFilter === 'past-all') {
+                evs = evs.filter(ev => new Date(ev.date) < cutoff);
+                evs.sort((a, b) => new Date(b.date) - new Date(a.date));
+            }
+            return evs;
+        }
+
+        // From family.html — calendar grid deduplication
+        function getCalendarEntries(events) {
+            const byKey = new Map();
+            (events || []).forEach(event => {
+                const d = new Date(event.date);
+                if (!d || isNaN(d.getTime())) return;
+                const key = `${event.teamId || ''}::${event.id || ''}::${d.toISOString()}::${event.type || ''}`;
+                if (!byKey.has(key)) {
+                    byKey.set(key, { ...event, date: d, childNames: [], childIds: [] });
+                }
+                const item = byKey.get(key);
+                if (event.childName && !item.childNames.includes(event.childName)) item.childNames.push(event.childName);
+                if (event.childId && !item.childIds.includes(event.childId)) item.childIds.push(event.childId);
+            });
+            return Array.from(byKey.values()).map(item => ({
+                ...item,
+                childNames: [...new Set(item.childNames)],
+                childIds: [...new Set(item.childIds)]
+            }));
+        }
+
+        // From family.html — ICS export
+        function formatIcsDate(date) {
+            const pad = n => String(n).padStart(2, '0');
+            return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}T${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`;
+        }
+
+        function buildIcs(events) {
+            const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
+            const escapeIcs = value => String(value || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+            const seen = new Set();
+            events.forEach(event => {
+                const eventKey = `${event.teamId}-${event.id}-${new Date(event.date).getTime()}`;
+                if (seen.has(eventKey)) return;
+                seen.add(eventKey);
+                const date = event.date instanceof Date ? event.date : new Date(event.date);
+                const start = formatIcsDate(date);
+                const end = formatIcsDate(new Date(date.getTime() + 60 * 60 * 1000));
+                const summary = event.type === 'practice' ? `${event.childName} - Practice` : `${event.childName} vs ${event.opponent || 'TBD'}`;
+                lines.push(
+                    'BEGIN:VEVENT',
+                    `UID:${event.id || eventKey}@allplays`,
+                    `DTSTAMP:${formatIcsDate(new Date())}`,
+                    `DTSTART:${start}`,
+                    `DTEND:${end}`,
+                    `SUMMARY:${escapeIcs(summary)}`,
+                    `LOCATION:${escapeIcs(event.location || 'TBD')}`,
+                    `DESCRIPTION:${escapeIcs(`For ${event.childName}`)}`,
+                    'END:VEVENT'
+                );
+            });
+            lines.push('END:VCALENDAR');
+            return lines.join('\r\n');
+        }
+
+        // From family.html — extra calendar conflict detection
+        function isExtraCalEventConflicting(eventDateMs, dbTimestamps) {
+            return dbTimestamps.some(ts => Math.abs(ts - eventDateMs) < 60000);
+        }
+
+        // Token validation logic from family.html init()
+        function isTokenValid(token) {
+            if (!token) return false;
+            if (token.active === false) return false;
+            return true;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 1: Token generation
+        // ─────────────────────────────────────────────────────────────────────
+
+        test('Token generation', 'generateShareToken returns a 40-char string', () => {
+            const token = generateShareToken();
+            assertEquals(token.length, 40, 'Token should be 40 hex characters (20 bytes)');
+        });
+
+        test('Token generation', 'generateShareToken returns only hex characters', () => {
+            const token = generateShareToken();
+            assertTrue(/^[0-9a-f]+$/.test(token), 'Token should only contain lowercase hex characters');
+        });
+
+        test('Token generation', 'generateShareToken produces unique values', () => {
+            const t1 = generateShareToken();
+            const t2 = generateShareToken();
+            assertTrue(t1 !== t2, 'Two tokens should not be identical');
+        });
+
+        test('Token generation', 'generateShareToken produces different values across 10 calls', () => {
+            const tokens = new Set(Array.from({ length: 10 }, () => generateShareToken()));
+            assertEquals(tokens.size, 10, 'All 10 tokens should be unique');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 2: Token data normalization
+        // ─────────────────────────────────────────────────────────────────────
+
+        test('Token data normalization', 'Children are normalized with all required fields', () => {
+            const normalized = normalizeShareTokenChildren([
+                { teamId: 't1', teamName: 'Eagles', playerId: 'p1', playerName: 'Alex', playerPhotoUrl: 'http://img.png' }
+            ]);
+            assertEquals(normalized.length, 1, 'Should have one child');
+            assertEquals(normalized[0].teamId, 't1', 'teamId should be preserved');
+            assertEquals(normalized[0].teamName, 'Eagles', 'teamName should be preserved');
+            assertEquals(normalized[0].playerId, 'p1', 'playerId should be preserved');
+            assertEquals(normalized[0].playerName, 'Alex', 'playerName should be preserved');
+            assertEquals(normalized[0].playerPhotoUrl, 'http://img.png', 'playerPhotoUrl should be preserved');
+        });
+
+        test('Token data normalization', 'Missing child fields default to empty string', () => {
+            const normalized = normalizeShareTokenChildren([{}]);
+            assertEquals(normalized[0].teamId, '', 'Missing teamId defaults to empty string');
+            assertEquals(normalized[0].teamName, '', 'Missing teamName defaults to empty string');
+            assertEquals(normalized[0].playerId, '', 'Missing playerId defaults to empty string');
+            assertEquals(normalized[0].playerName, '', 'Missing playerName defaults to empty string');
+        });
+
+        test('Token data normalization', 'Missing playerPhotoUrl defaults to null', () => {
+            const normalized = normalizeShareTokenChildren([{ teamId: 't1' }]);
+            assertEquals(normalized[0].playerPhotoUrl, null, 'Missing playerPhotoUrl should default to null');
+        });
+
+        test('Token data normalization', 'null children arg produces empty array', () => {
+            assertDeepEquals(normalizeShareTokenChildren(null), [], 'null children should produce []');
+        });
+
+        test('Token data normalization', 'Multiple children all normalized', () => {
+            const normalized = normalizeShareTokenChildren([
+                { teamId: 't1', playerId: 'p1', playerName: 'Alex' },
+                { teamId: 't2', playerId: 'p2', playerName: 'Jordan' }
+            ]);
+            assertEquals(normalized.length, 2, 'Both children should be in result');
+            assertEquals(normalized[1].playerName, 'Jordan', 'Second child name preserved');
+        });
+
+        test('Token data normalization', 'extraCalendarUrls filters out empty strings', () => {
+            const result = normalizeExtraCalendarUrls(['https://a.com/cal.ics', '', '  ', 'https://b.com/cal.ics']);
+            assertEquals(result.length, 2, 'Empty strings should be filtered out');
+            assertEquals(result[0], 'https://a.com/cal.ics', 'First valid URL preserved');
+            assertEquals(result[1], 'https://b.com/cal.ics', 'Second valid URL preserved');
+        });
+
+        test('Token data normalization', 'null extraCalendarUrls produces empty array', () => {
+            assertDeepEquals(normalizeExtraCalendarUrls(null), [], 'null should produce []');
+        });
+
+        test('Token data normalization', 'non-string values in extraCalendarUrls are filtered out', () => {
+            const result = normalizeExtraCalendarUrls([123, null, 'https://valid.com/cal.ics', undefined]);
+            assertEquals(result.length, 1, 'Only string URLs should survive');
+            assertEquals(result[0], 'https://valid.com/cal.ics', 'Valid URL preserved');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 3: Share URL construction
+        // ─────────────────────────────────────────────────────────────────────
+
+        test('Share URL construction', 'buildFamilyShareUrl produces correct URL', () => {
+            const url = buildFamilyShareUrl('https://allplays.app', 'abc123');
+            assertEquals(url, 'https://allplays.app/family.html?token=abc123', 'URL should include origin, path, and token param');
+        });
+
+        test('Share URL construction', 'token appears in URL query string', () => {
+            const token = generateShareToken();
+            const url = buildFamilyShareUrl('https://allplays.app', token);
+            const parsed = new URL(url);
+            assertEquals(parsed.searchParams.get('token'), token, 'Token should be recoverable from URL');
+        });
+
+        test('Share URL construction', 'path is always /family.html', () => {
+            const url = buildFamilyShareUrl('https://allplays.app', 'tok');
+            assertTrue(new URL(url).pathname === '/family.html', 'Pathname should be /family.html');
+        });
+
+        test('Share URL construction', 'different tokens produce different URLs', () => {
+            const url1 = buildFamilyShareUrl('https://allplays.app', 'token-aaa');
+            const url2 = buildFamilyShareUrl('https://allplays.app', 'token-bbb');
+            assertTrue(url1 !== url2, 'Different tokens produce different URLs');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 4: Calendar URL list management (share form)
+        // ─────────────────────────────────────────────────────────────────────
+
+        test('Calendar URL management', 'addCalendarUrlToList adds a valid URL', () => {
+            const list = [];
+            const added = addCalendarUrlToList(list, 'https://cal.example.com/feed.ics');
+            assertTrue(added, 'Should return true for valid URL');
+            assertEquals(list.length, 1, 'List should have one URL');
+            assertEquals(list[0], 'https://cal.example.com/feed.ics', 'URL should match');
+        });
+
+        test('Calendar URL management', 'addCalendarUrlToList rejects empty string', () => {
+            const list = [];
+            assertFalse(addCalendarUrlToList(list, ''), 'Empty string should be rejected');
+            assertEquals(list.length, 0, 'List should remain empty');
+        });
+
+        test('Calendar URL management', 'addCalendarUrlToList rejects whitespace-only string', () => {
+            const list = [];
+            assertFalse(addCalendarUrlToList(list, '   '), 'Whitespace should be rejected');
+        });
+
+        test('Calendar URL management', 'addCalendarUrlToList rejects non-http URL', () => {
+            const list = [];
+            assertFalse(addCalendarUrlToList(list, 'ftp://bad.com/feed.ics'), 'ftp:// should be rejected');
+            assertFalse(addCalendarUrlToList(list, 'just-a-string'), 'Plain string should be rejected');
+        });
+
+        test('Calendar URL management', 'addCalendarUrlToList rejects duplicate URL', () => {
+            const list = ['https://cal.example.com/feed.ics'];
+            const added = addCalendarUrlToList(list, 'https://cal.example.com/feed.ics');
+            assertFalse(added, 'Duplicate URL should be rejected');
+            assertEquals(list.length, 1, 'List should still have one URL');
+        });
+
+        test('Calendar URL management', 'addCalendarUrlToList trims whitespace from URL', () => {
+            const list = [];
+            addCalendarUrlToList(list, '  https://cal.example.com/feed.ics  ');
+            assertEquals(list[0], 'https://cal.example.com/feed.ics', 'URL should be trimmed');
+        });
+
+        test('Calendar URL management', 'addCalendarUrlToList accepts http:// URLs', () => {
+            const list = [];
+            assertTrue(addCalendarUrlToList(list, 'http://cal.example.com/feed.ics'), 'http:// should be accepted');
+        });
+
+        test('Calendar URL management', 'multiple URLs can be added', () => {
+            const list = [];
+            addCalendarUrlToList(list, 'https://a.com/cal.ics');
+            addCalendarUrlToList(list, 'https://b.com/cal.ics');
+            addCalendarUrlToList(list, 'https://c.com/cal.ics');
+            assertEquals(list.length, 3, 'All three URLs should be in list');
+        });
+
+        test('Calendar URL management', 'removeCalendarUrlFromList removes by index', () => {
+            const list = ['https://a.com', 'https://b.com', 'https://c.com'];
+            removeCalendarUrlFromList(list, 1);
+            assertEquals(list.length, 2, 'List should have two items after removal');
+            assertEquals(list[0], 'https://a.com', 'First item unchanged');
+            assertEquals(list[1], 'https://c.com', 'Second item is now what was third');
+        });
+
+        test('Calendar URL management', 'removeCalendarUrlFromList removes first item', () => {
+            const list = ['https://a.com', 'https://b.com'];
+            removeCalendarUrlFromList(list, 0);
+            assertEquals(list[0], 'https://b.com', 'First item should now be https://b.com');
+        });
+
+        test('Calendar URL management', 'removeCalendarUrlFromList removes last item', () => {
+            const list = ['https://a.com', 'https://b.com'];
+            removeCalendarUrlFromList(list, 1);
+            assertEquals(list.length, 1, 'List should have one item');
+        });
+
+        test('Calendar URL management', 'removeCalendarUrlFromList rejects out-of-bounds index', () => {
+            const list = ['https://a.com'];
+            assertFalse(removeCalendarUrlFromList(list, 5), 'Out-of-bounds index should be rejected');
+            assertEquals(list.length, 1, 'List should be unchanged');
+        });
+
+        test('Calendar URL management', 'removing all items leaves empty list', () => {
+            const list = ['https://a.com'];
+            removeCalendarUrlFromList(list, 0);
+            assertEquals(list.length, 0, 'List should be empty after removing sole item');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 5: Schedule filtering
+        // ─────────────────────────────────────────────────────────────────────
+
+        const HOUR = 60 * 60 * 1000;
+        const now = new Date();
+        const future1 = new Date(now.getTime() + 24 * HOUR);
+        const future2 = new Date(now.getTime() + 48 * HOUR);
+        const past1   = new Date(now.getTime() - 24 * HOUR);
+        const past2   = new Date(now.getTime() - 48 * HOUR);
+
+        const mockEvents = [
+            { id: 'g1', type: 'game',     date: future1, childId: 'p1', childName: 'Alex', teamId: 't1' },
+            { id: 'g2', type: 'game',     date: future2, childId: 'p2', childName: 'Jordan', teamId: 't1' },
+            { id: 'g3', type: 'practice', date: future1, childId: 'p1', childName: 'Alex', teamId: 't1' },
+            { id: 'g4', type: 'practice', date: past1,   childId: 'p1', childName: 'Alex', teamId: 't1' },
+            { id: 'g5', type: 'game',     date: past2,   childId: 'p2', childName: 'Jordan', teamId: 't1' },
+        ];
+
+        test('Schedule filtering', 'upcoming-all shows only future events', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'upcoming-all');
+            assertTrue(result.every(ev => new Date(ev.date) >= new Date(now.getTime() - 3 * HOUR)), 'All events should be upcoming');
+            assertEquals(result.length, 3, 'Should have 3 upcoming events (2 games + 1 practice)');
+        });
+
+        test('Schedule filtering', 'upcoming-all is sorted ascending by date', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'upcoming-all');
+            for (let i = 1; i < result.length; i++) {
+                assertTrue(new Date(result[i].date) >= new Date(result[i - 1].date), 'Events should be in ascending date order');
+            }
+        });
+
+        test('Schedule filtering', 'upcoming-games shows only future games', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'upcoming-games');
+            assertTrue(result.every(ev => ev.type === 'game'), 'All results should be games');
+            assertTrue(result.every(ev => new Date(ev.date) >= new Date(now.getTime() - 3 * HOUR)), 'All games should be upcoming');
+            assertEquals(result.length, 2, 'Should have 2 upcoming games');
+        });
+
+        test('Schedule filtering', 'upcoming-practices shows only future practices', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'upcoming-practices');
+            assertTrue(result.every(ev => ev.type === 'practice'), 'All results should be practices');
+            assertEquals(result.length, 1, 'Should have 1 upcoming practice');
+        });
+
+        test('Schedule filtering', 'past-all shows only past events', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'past-all');
+            assertTrue(result.every(ev => new Date(ev.date) < new Date(now.getTime() - 3 * HOUR)), 'All events should be in the past');
+            assertEquals(result.length, 2, 'Should have 2 past events');
+        });
+
+        test('Schedule filtering', 'past-all is sorted descending by date (most recent first)', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'past-all');
+            for (let i = 1; i < result.length; i++) {
+                assertTrue(new Date(result[i].date) <= new Date(result[i - 1].date), 'Past events should be in descending date order');
+            }
+        });
+
+        test('Schedule filtering', 'player filter narrows to specific child', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'upcoming-all', 'p1');
+            assertTrue(result.every(ev => ev.childId === 'p1'), 'All events should belong to player p1');
+        });
+
+        test('Schedule filtering', 'player filter returns empty when no match', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'upcoming-all', 'p99');
+            assertEquals(result.length, 0, 'No events for unknown player');
+        });
+
+        test('Schedule filtering', 'player filter combines with type filter', () => {
+            const result = getFilteredScheduleEvents(mockEvents, 'upcoming-games', 'p1');
+            assertTrue(result.every(ev => ev.childId === 'p1' && ev.type === 'game'), 'Should only have upcoming games for p1');
+        });
+
+        test('Schedule filtering', 'empty event list returns empty array', () => {
+            assertEquals(getFilteredScheduleEvents([], 'upcoming-all').length, 0, 'Empty input produces empty output');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 6: Calendar entry deduplication (getCalendarEntries)
+        // ─────────────────────────────────────────────────────────────────────
+
+        const GAME_DATE = new Date('2025-06-15T14:00:00Z');
+
+        test('Calendar deduplication', 'same game for two children merged into one entry', () => {
+            const events = [
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't1', childId: 'p1', childName: 'Alex', opponent: 'Tigers' },
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't1', childId: 'p2', childName: 'Jordan', opponent: 'Tigers' }
+            ];
+            const entries = getCalendarEntries(events);
+            assertEquals(entries.length, 1, 'Two children on same game should produce one entry');
+            assertEquals(entries[0].childNames.length, 2, 'Entry should list both child names');
+            assertTrue(entries[0].childNames.includes('Alex'), 'Alex should be in childNames');
+            assertTrue(entries[0].childNames.includes('Jordan'), 'Jordan should be in childNames');
+        });
+
+        test('Calendar deduplication', 'childIds are correctly merged', () => {
+            const events = [
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't1', childId: 'p1', childName: 'Alex' },
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't1', childId: 'p2', childName: 'Jordan' }
+            ];
+            const entries = getCalendarEntries(events);
+            assertTrue(entries[0].childIds.includes('p1'), 'p1 should be in childIds');
+            assertTrue(entries[0].childIds.includes('p2'), 'p2 should be in childIds');
+        });
+
+        test('Calendar deduplication', 'different games are not merged', () => {
+            const date2 = new Date('2025-06-16T14:00:00Z');
+            const events = [
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't1', childId: 'p1', childName: 'Alex' },
+                { id: 'g2', type: 'game', date: date2,     teamId: 't1', childId: 'p1', childName: 'Alex' }
+            ];
+            const entries = getCalendarEntries(events);
+            assertEquals(entries.length, 2, 'Different game IDs produce separate entries');
+        });
+
+        test('Calendar deduplication', 'same event for same child not duplicated', () => {
+            const events = [
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't1', childId: 'p1', childName: 'Alex' },
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't1', childId: 'p1', childName: 'Alex' }
+            ];
+            const entries = getCalendarEntries(events);
+            assertEquals(entries.length, 1, 'Same event for same child should not be duplicated');
+            assertEquals(entries[0].childNames.length, 1, 'childNames should not have duplicates');
+        });
+
+        test('Calendar deduplication', 'game and practice at same time are not merged', () => {
+            const events = [
+                { id: 'e1', type: 'game',     date: GAME_DATE, teamId: 't1', childId: 'p1', childName: 'Alex' },
+                { id: 'e1', type: 'practice', date: GAME_DATE, teamId: 't1', childId: 'p1', childName: 'Alex' }
+            ];
+            const entries = getCalendarEntries(events);
+            assertEquals(entries.length, 2, 'Different types with same ID should not merge');
+        });
+
+        test('Calendar deduplication', 'events on different teams are not merged', () => {
+            const events = [
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't1', childId: 'p1', childName: 'Alex' },
+                { id: 'g1', type: 'game', date: GAME_DATE, teamId: 't2', childId: 'p1', childName: 'Alex' }
+            ];
+            const entries = getCalendarEntries(events);
+            assertEquals(entries.length, 2, 'Same game ID on different teams should not merge');
+        });
+
+        test('Calendar deduplication', 'empty event list returns empty array', () => {
+            assertEquals(getCalendarEntries([]).length, 0, 'Empty input produces empty output');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 7: ICS export
+        // ─────────────────────────────────────────────────────────────────────
+
+        test('ICS export', 'output has valid VCALENDAR wrapper', () => {
+            const ics = buildIcs([]);
+            assertTrue(ics.includes('BEGIN:VCALENDAR'), 'Should start with BEGIN:VCALENDAR');
+            assertTrue(ics.includes('END:VCALENDAR'), 'Should end with END:VCALENDAR');
+            assertTrue(ics.includes('VERSION:2.0'), 'Should include VERSION:2.0');
+        });
+
+        test('ICS export', 'game event produces VEVENT block', () => {
+            const events = [{ id: 'g1', type: 'game', date: new Date('2025-06-15T14:00:00Z'), teamId: 't1', childId: 'p1', childName: 'Alex', opponent: 'Tigers', location: 'North Field' }];
+            const ics = buildIcs(events);
+            assertTrue(ics.includes('BEGIN:VEVENT'), 'Should contain VEVENT');
+            assertTrue(ics.includes('END:VEVENT'), 'Should close VEVENT');
+            assertTrue(ics.includes('Alex vs Tigers'), 'Summary should include child name and opponent');
+            assertTrue(ics.includes('North Field'), 'Location should be included');
+        });
+
+        test('ICS export', 'practice event uses correct summary format', () => {
+            const events = [{ id: 'p1', type: 'practice', date: new Date('2025-06-15T14:00:00Z'), teamId: 't1', childId: 'c1', childName: 'Alex', location: 'Gym' }];
+            const ics = buildIcs(events);
+            assertTrue(ics.includes('Alex - Practice'), 'Practice summary should say "<Name> - Practice"');
+        });
+
+        test('ICS export', 'UID includes event id', () => {
+            const events = [{ id: 'game-abc', type: 'game', date: new Date(), teamId: 't1', childId: 'p1', childName: 'Alex', opponent: 'Lions', location: 'Park' }];
+            const ics = buildIcs(events);
+            assertTrue(ics.includes('UID:game-abc@allplays'), 'UID should use event id');
+        });
+
+        test('ICS export', 'same event for two children deduplicated', () => {
+            const date = new Date('2025-06-15T14:00:00Z');
+            const events = [
+                { id: 'g1', type: 'game', date, teamId: 't1', childId: 'p1', childName: 'Alex', opponent: 'Tigers', location: 'Park' },
+                { id: 'g1', type: 'game', date, teamId: 't1', childId: 'p2', childName: 'Jordan', opponent: 'Tigers', location: 'Park' }
+            ];
+            const ics = buildIcs(events);
+            const veventCount = (ics.match(/BEGIN:VEVENT/g) || []).length;
+            assertEquals(veventCount, 1, 'Duplicate events should produce only one VEVENT');
+        });
+
+        test('ICS export', 'multiple distinct events produce multiple VEVENTs', () => {
+            const events = [
+                { id: 'g1', type: 'game',     date: new Date('2025-06-15T14:00:00Z'), teamId: 't1', childId: 'p1', childName: 'Alex', opponent: 'Tigers', location: 'A' },
+                { id: 'g2', type: 'practice', date: new Date('2025-06-16T14:00:00Z'), teamId: 't1', childId: 'p1', childName: 'Alex', opponent: '',        location: 'B' }
+            ];
+            const ics = buildIcs(events);
+            const veventCount = (ics.match(/BEGIN:VEVENT/g) || []).length;
+            assertEquals(veventCount, 2, 'Two distinct events should produce two VEVENTs');
+        });
+
+        test('ICS export', 'semicolons and commas in location are escaped', () => {
+            const events = [{ id: 'g1', type: 'game', date: new Date(), teamId: 't1', childId: 'p1', childName: 'Alex', opponent: 'Lions', location: 'Smith;Park, West' }];
+            const ics = buildIcs(events);
+            assertTrue(ics.includes('Smith\\;Park\\, West'), 'Semicolons and commas should be escaped');
+        });
+
+        test('ICS export', 'empty event list produces calendar wrapper only', () => {
+            const ics = buildIcs([]);
+            assertFalse(ics.includes('BEGIN:VEVENT'), 'No events should mean no VEVENT blocks');
+            assertTrue(ics.includes('END:VCALENDAR'), 'VCALENDAR should still be closed');
+        });
+
+        test('ICS export', 'DTSTART and DTEND are both present', () => {
+            const events = [{ id: 'g1', type: 'game', date: new Date('2025-06-15T14:00:00Z'), teamId: 't1', childId: 'p1', childName: 'Alex', opponent: 'Lions', location: 'Park' }];
+            const ics = buildIcs(events);
+            assertTrue(ics.includes('DTSTART:'), 'DTSTART should be present');
+            assertTrue(ics.includes('DTEND:'), 'DTEND should be present');
+        });
+
+        test('ICS export', 'DTEND is one hour after DTSTART', () => {
+            const date = new Date('2025-06-15T14:00:00Z');
+            const events = [{ id: 'g1', type: 'game', date, teamId: 't1', childId: 'p1', childName: 'Alex', opponent: 'Lions', location: 'Park' }];
+            const ics = buildIcs(events);
+            assertTrue(ics.includes('DTSTART:20250615T140000Z'), 'DTSTART should match game time');
+            assertTrue(ics.includes('DTEND:20250615T150000Z'), 'DTEND should be 1 hour later');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 8: Extra calendar conflict detection
+        // ─────────────────────────────────────────────────────────────────────
+
+        test('Extra calendar conflict detection', 'event within 1 minute of DB game is a conflict', () => {
+            const dbTime = new Date('2025-06-15T14:00:00Z').getTime();
+            const extraTime = new Date('2025-06-15T14:00:30Z').getTime(); // 30 seconds later
+            assertTrue(isExtraCalEventConflicting(extraTime, [dbTime]), 'Event 30s apart should conflict');
+        });
+
+        test('Extra calendar conflict detection', 'event exactly 1 minute apart is still a conflict', () => {
+            const dbTime = new Date('2025-06-15T14:00:00Z').getTime();
+            const extraTime = dbTime + 59999; // just under 1 minute
+            assertTrue(isExtraCalEventConflicting(extraTime, [dbTime]), 'Event < 1 min apart should conflict');
+        });
+
+        test('Extra calendar conflict detection', 'event more than 1 minute apart is not a conflict', () => {
+            const dbTime = new Date('2025-06-15T14:00:00Z').getTime();
+            const extraTime = dbTime + 61000; // 61 seconds later
+            assertFalse(isExtraCalEventConflicting(extraTime, [dbTime]), 'Event 61s apart should not conflict');
+        });
+
+        test('Extra calendar conflict detection', 'event before DB game within 1 minute is a conflict', () => {
+            const dbTime = new Date('2025-06-15T14:00:00Z').getTime();
+            const extraTime = dbTime - 30000; // 30 seconds before
+            assertTrue(isExtraCalEventConflicting(extraTime, [dbTime]), 'Event 30s before should conflict');
+        });
+
+        test('Extra calendar conflict detection', 'no conflict when DB timestamp list is empty', () => {
+            const extraTime = new Date('2025-06-15T14:00:00Z').getTime();
+            assertFalse(isExtraCalEventConflicting(extraTime, []), 'No DB timestamps means no conflict');
+        });
+
+        test('Extra calendar conflict detection', 'conflict detected against any DB timestamp in list', () => {
+            const dbTimes = [
+                new Date('2025-06-15T10:00:00Z').getTime(),
+                new Date('2025-06-15T14:00:00Z').getTime(),
+                new Date('2025-06-15T18:00:00Z').getTime()
+            ];
+            const extraTime = new Date('2025-06-15T14:00:20Z').getTime();
+            assertTrue(isExtraCalEventConflicting(extraTime, dbTimes), 'Should find conflict against second timestamp');
+        });
+
+        test('Extra calendar conflict detection', 'event on different day never conflicts', () => {
+            const dbTime = new Date('2025-06-15T14:00:00Z').getTime();
+            const extraTime = new Date('2025-06-16T14:00:00Z').getTime();
+            assertFalse(isExtraCalEventConflicting(extraTime, [dbTime]), 'Different day should not conflict');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // SUITE 9: Token validation
+        // ─────────────────────────────────────────────────────────────────────
+
+        test('Token validation', 'null token is invalid', () => {
+            assertFalse(isTokenValid(null), 'null token should be invalid');
+        });
+
+        test('Token validation', 'undefined token is invalid', () => {
+            assertFalse(isTokenValid(undefined), 'undefined token should be invalid');
+        });
+
+        test('Token validation', 'token with active=false is invalid', () => {
+            assertFalse(isTokenValid({ id: 'tok1', active: false, ownerUserId: 'u1' }), 'Revoked token should be invalid');
+        });
+
+        test('Token validation', 'token with active=true is valid', () => {
+            assertTrue(isTokenValid({ id: 'tok1', active: true, ownerUserId: 'u1' }), 'Active token should be valid');
+        });
+
+        test('Token validation', 'token without active field is valid (legacy/new)', () => {
+            assertTrue(isTokenValid({ id: 'tok1', ownerUserId: 'u1' }), 'Token without explicit active field should be valid (not false)');
+        });
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Render results
+        // ─────────────────────────────────────────────────────────────────────
+
+        const passCount = results.filter(r => r.pass).length;
+        const failCount = results.filter(r => !r.pass).length;
+
+        document.getElementById('summary-text').innerHTML =
+            `✅ Passed: <strong>${passCount}</strong> &nbsp;|&nbsp; ❌ Failed: <strong>${failCount}</strong> &nbsp;|&nbsp; Total: <strong>${results.length}</strong>`;
+
+        const container = document.getElementById('test-results');
+        let html = '';
+        Object.entries(sections).forEach(([section, tests]) => {
+            const sPass = tests.filter(r => r.pass).length;
+            const sFail = tests.filter(r => !r.pass).length;
+            html += `<div class="test-section">
+                <h2>${section} &nbsp;<span style="font-size:0.8em;font-weight:normal;color:#666">(${sPass}/${tests.length})</span></h2>`;
+            tests.forEach(result => {
+                const cls = result.pass ? 'pass' : 'fail';
+                const icon = result.pass ? '✅' : '❌';
+                html += `<div class="test-case ${cls}">
+                    <div class="test-name">${icon} ${result.name}</div>
+                    ${result.error ? `<div class="test-result"><pre>${result.error}</pre></div>` : ''}
+                </div>`;
+            });
+            html += '</div>';
+        });
+        container.innerHTML = html;
+    </script>
+</body>
+</html>
