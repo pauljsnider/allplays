@@ -2300,11 +2300,20 @@ function normalizeTeamEmailAttachmentRecord(attachment) {
   return { name, storagePath, contentType, size };
 }
 
+function isTeamEmailAttachmentPathForTeam(teamId, storagePath) {
+  const cleanTeamId = String(teamId || '').trim();
+  const parts = String(storagePath || '').trim().split('/');
+  return parts.length >= 5 &&
+    parts[0] === 'team-email-attachments' &&
+    parts[1] === cleanTeamId &&
+    parts.slice(2).every(Boolean);
+}
+
 function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
   const rawAttachments = Array.isArray(attachments) ? attachments : [];
   const normalized = rawAttachments.map(normalizeTeamEmailAttachmentRecord).filter(Boolean);
   if (normalized.length !== rawAttachments.length ||
-      normalized.some((attachment) => !attachment.storagePath.startsWith(`team-email-attachments/${teamId}/`))) {
+      normalized.some((attachment) => !isTeamEmailAttachmentPathForTeam(teamId, attachment.storagePath))) {
     throw new Error('Team email attachments must reference files for the same team.');
   }
   const totalBytes = normalized.reduce((sum, attachment) => sum + attachment.size, 0);
@@ -2312,6 +2321,12 @@ function normalizeTeamEmailAttachmentsForDelivery(teamId, attachments) {
     throw new Error('Team email attachments exceed the 20 MB limit.');
   }
   return { attachments: normalized, totalBytes };
+}
+
+function buildTeamEmailMailDocId(teamId, sendId) {
+  const safeTeamId = String(teamId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
+  const safeSendId = String(sendId || '').replace(/[^\w.-]+/g, '_').slice(0, 240);
+  return `teamEmail_${safeTeamId}_${safeSendId}`;
 }
 
 exports.queueTeamEmailDelivery = functions.firestore
@@ -2346,7 +2361,8 @@ exports.queueTeamEmailDelivery = functions.firestore
       return;
     }
 
-    await firestore.collection('mail').add({
+    const mailRef = firestore.collection('mail').doc(buildTeamEmailMailDocId(teamId, sendId));
+    await mailRef.set({
       to: recipients,
       message: {
         subject,
@@ -2368,6 +2384,7 @@ exports.queueTeamEmailDelivery = functions.firestore
     await snap.ref.set({
       status: 'queued',
       attachmentTotalBytes: totalBytes,
+      mailJobId: mailRef.id,
       queuedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
