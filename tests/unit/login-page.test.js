@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode } from '../../js/login-page.js';
+import { createLoginRedirectCoordinator, createLoginAuthStateManager, shouldInitializeSignupMode, getGoogleAuthModeForLoginPage } from '../../js/login-page.js';
 
 function createCoordinator({
     search = '?code=ab12cd34&type=parent',
@@ -57,6 +57,20 @@ describe('login page initial mode', () => {
     });
 });
 
+describe('login page Google mode selection', () => {
+    it('stores invite mode for invite links that initialize signup UI', () => {
+        expect(getGoogleAuthModeForLoginPage({ isLogin: false, urlCodeParam: 'ab12cd34' })).toBe('invite');
+    });
+
+    it('stores signup mode for ordinary signup Google auth', () => {
+        expect(getGoogleAuthModeForLoginPage({ isLogin: false })).toBe('signup');
+    });
+
+    it('stores login mode when the user is in login UI', () => {
+        expect(getGoogleAuthModeForLoginPage({ isLogin: true, urlCodeParam: 'ab12cd34' })).toBe('login');
+    });
+});
+
 describe('login page redirect coordination', () => {
     it('treats invite type values case-insensitively when code is present', () => {
         const { coordinator } = createCoordinator({
@@ -98,7 +112,16 @@ describe('login page redirect coordination', () => {
         expect(windowObject.sessionStorage.removeItem).toHaveBeenCalledWith('postGoogleAuthMode');
     });
 
-    it('does not let auth auto-redirect redeem the invite after a Google signup return', () => {
+    it('redeems the invite after Google auth from an invite-prefilled signup page', () => {
+        const { coordinator, windowObject } = createCoordinator({ postGoogleAuthMode: 'invite' });
+        const user = { parentOf: [{ teamId: 'team-1' }] };
+
+        expect(coordinator.getGoogleRedirectUrl(user)).toBe('accept-invite.html?code=AB12CD34&type=parent');
+        expect(coordinator.getAutoRedirectUrl(user)).toBe('accept-invite.html?code=AB12CD34&type=parent');
+        expect(windowObject.sessionStorage.removeItem).toHaveBeenCalledWith('postGoogleAuthMode');
+    });
+
+    it('does not let auth auto-redirect redeem the invite after an ordinary Google signup return', () => {
         const { coordinator } = createCoordinator({ postGoogleAuthMode: 'signup' });
         const user = { parentOf: [{ teamId: 'team-1' }] };
 
