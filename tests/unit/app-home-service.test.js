@@ -1,0 +1,190 @@
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const scheduleMocks = vi.hoisted(() => ({
+    loadParentSchedule: vi.fn()
+}));
+
+const chatMocks = vi.hoisted(() => ({
+    loadChatInbox: vi.fn()
+}));
+
+const dbMocks = vi.hoisted(() => ({
+    listParentTeamFeeRecipients: vi.fn()
+}));
+
+const feeMocks = vi.hoisted(() => ({
+    normalizeParentFeeRecord: vi.fn((fee) => ({
+        id: fee.id,
+        teamId: fee.teamId,
+        teamName: fee.teamName,
+        playerId: fee.playerId,
+        playerName: fee.playerName,
+        title: fee.title,
+        status: fee.status,
+        balanceDueCents: fee.balanceDueCents,
+        dueDate: fee.dueDate
+    }))
+}));
+
+vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
+vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
+
+const user = {
+    uid: 'user-1',
+    email: 'parent@example.com',
+    displayName: 'Pat Parent'
+};
+
+function event(overrides = {}) {
+    return {
+        eventKey: overrides.eventKey || 'team-1::game-1::player-1',
+        id: overrides.id || 'game-1',
+        teamId: overrides.teamId || 'team-1',
+        teamName: overrides.teamName || 'Bears',
+        type: overrides.type || 'game',
+        date: overrides.date || new Date('2100-06-01T18:00:00Z'),
+        location: 'Main Gym',
+        opponent: 'Falcons',
+        title: null,
+        childId: overrides.childId || 'player-1',
+        childName: overrides.childName || 'Pat Star',
+        isDbGame: overrides.isDbGame !== false,
+        isCancelled: false,
+        myRsvp: overrides.myRsvp || 'not_responded',
+        assignments: overrides.assignments || [],
+        ...overrides
+    };
+}
+
+beforeEach(() => {
+    vi.clearAllMocks();
+    scheduleMocks.loadParentSchedule.mockResolvedValue({
+        children: [
+            {
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Pat Star'
+            }
+        ],
+        events: [event()]
+    });
+    chatMocks.loadChatInbox.mockResolvedValue({
+        teams: [
+            {
+                id: 'team-1',
+                name: 'Bears',
+                role: 'Parent',
+                sport: 'Basketball',
+                unreadCount: 2
+            },
+            {
+                id: 'team-staff',
+                name: 'Staff Wolves',
+                role: 'Coach',
+                sport: 'Soccer',
+                unreadCount: 3
+            }
+        ]
+    });
+    dbMocks.listParentTeamFeeRecipients.mockResolvedValue([
+        {
+            id: 'fee-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Pat Star',
+            title: 'Tournament fee',
+            status: 'unpaid',
+            balanceDueCents: 2500
+        }
+    ]);
+});
+
+describe('React app Home service', () => {
+    it('composes schedule, chat, and fee data into the parent Home model', async () => {
+        const { loadParentHome } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentHome(user);
+
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user);
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user);
+        expect(dbMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith(user.uid, [
+            expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })
+        ]);
+        expect(feeMocks.normalizeParentFeeRecord).toHaveBeenCalledWith(expect.objectContaining({ id: 'fee-1' }));
+        expect(home.players).toHaveLength(1);
+        expect(home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                teamId: 'team-1',
+                teamName: 'Bears',
+                unreadCount: 2,
+                players: [expect.objectContaining({ playerId: 'player-1' })]
+            }),
+            expect.objectContaining({
+                teamId: 'team-staff',
+                teamName: 'Staff Wolves',
+                role: 'Coach',
+                sport: 'Soccer',
+                unreadCount: 3,
+                players: []
+            })
+        ]));
+        expect(home.metrics).toEqual(expect.objectContaining({
+            players: 1,
+            teams: 2,
+            rsvpNeeded: 1,
+            unreadMessages: 5
+        }));
+        expect(home.fees).toEqual([
+            expect.objectContaining({
+                id: 'fee-1',
+                title: 'Tournament fee',
+                balanceDueCents: 2500
+            })
+        ]);
+        expect(home.actionItems.map((item) => item.kind)).toEqual(expect.arrayContaining(['rsvp', 'fee', 'message']));
+    });
+
+    it('keeps Home usable when optional chat or fee loads fail', async () => {
+        chatMocks.loadChatInbox.mockRejectedValueOnce(new Error('Chat offline'));
+        dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('Fees offline'));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const { loadParentHome } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentHome(user);
+
+        expect(home.players).toHaveLength(1);
+        expect(home.teams).toEqual([
+            expect.objectContaining({
+                teamId: 'team-1',
+                unreadCount: 0
+            })
+        ]);
+        expect(home.fees).toEqual([]);
+        expect(home.metrics.unreadMessages).toBe(0);
+        expect(warn).toHaveBeenCalledWith('[home-service] Unable to load chat inbox:', expect.any(Error));
+        expect(warn).toHaveBeenCalledWith('[home-service] Unable to load parent team fees:', expect.any(Error));
+        warn.mockRestore();
+    });
+
+    it('returns an empty model without touching Firebase when signed out', async () => {
+        const { loadParentHome } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentHome(null);
+
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
+        expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
+        expect(dbMocks.listParentTeamFeeRecipients).not.toHaveBeenCalled();
+        expect(home).toEqual(expect.objectContaining({
+            players: [],
+            teams: [],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: []
+        }));
+    });
+});

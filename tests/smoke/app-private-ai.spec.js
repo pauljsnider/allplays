@@ -144,8 +144,12 @@ test.describe('private AI chat', () => {
         await expect(page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Home' })).toBeVisible();
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
+        const topbarBox = await page.locator('.chat-topbar').boundingBox();
+        expect(topbarBox.y).toBeGreaterThanOrEqual(8);
+
         const textarea = page.getByPlaceholder('Ask about schedules, teams, players, messages...');
         await expect(textarea).toBeVisible();
         await expect.poll(() => textarea.evaluate((element) => window.getComputedStyle(element).fontSize)).toBe('16px');
+        await expect(page.getByRole('button', { name: 'Start dictation' })).toBeVisible();
     });
 });

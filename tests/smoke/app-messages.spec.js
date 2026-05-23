@@ -1,0 +1,378 @@
+import { expect, test } from '@playwright/test';
+
+test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
+
+function appUrl(baseURL, hashPath) {
+    const url = new URL('/', baseURL);
+    url.hash = hashPath;
+    return url.toString();
+}
+
+async function mockMessagesModules(page) {
+    await page.addInitScript(() => {
+        window.__chatCalls = {
+            sends: [],
+            reactions: [],
+            edits: [],
+            deletes: [],
+            reads: [],
+            ai: []
+        };
+    });
+
+    await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function useAuth() {
+                    const user = {
+                        uid: 'user-1',
+                        email: 'parent@example.com',
+                        displayName: 'Pat Parent',
+                        roles: ['parent', 'admin']
+                    };
+                    return {
+                        user,
+                        profile: { fullName: 'Pat Parent' },
+                        loading: false,
+                        error: null,
+                        roles: user.roles,
+                        isParent: true,
+                        isCoach: false,
+                        isAdmin: true,
+                        isPlatformAdmin: false,
+                        refresh: async () => {},
+                        signOut: async () => {}
+                    };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/chatService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                function msg(overrides = {}) {
+                    return {
+                        id: overrides.id || 'msg-1',
+                        text: overrides.text || 'Bring both jerseys.',
+                        senderId: overrides.senderId || 'coach-1',
+                        senderName: overrides.senderName || 'Coach Jamie',
+                        senderEmail: 'coach@example.com',
+                        createdAt: overrides.createdAt || new Date('2026-05-21T14:00:00Z'),
+                        reactions: overrides.reactions || {},
+                        deleted: false,
+                        ...overrides
+                    };
+                }
+
+                export function getChatInboxPreview(message) {
+                    return message ? (message.senderName || 'Unknown') + ': ' + (message.text || 'Attachment') : 'No messages yet';
+                }
+
+                export async function loadChatInbox() {
+                    return {
+                        teams: [
+                            {
+                                id: 'team-1',
+                                name: 'Bears',
+                                sport: 'Basketball',
+                                role: 'Admin',
+                                canModerate: true,
+                                unreadCount: 4,
+                                lastMessage: msg({ id: 'last-1', text: 'Practice packet is posted.' })
+                            },
+                            {
+                                id: 'team-2',
+                                name: 'Thunder',
+                                sport: 'Soccer',
+                                role: 'Parent',
+                                canModerate: false,
+                                unreadCount: 0,
+                                lastMessage: msg({ id: 'last-2', text: 'Tournament schedule changed.', senderName: 'Morgan' })
+                            }
+                        ]
+                    };
+                }
+
+                export async function loadChatTeamContext() {
+                    return {
+                        team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+                        profile: { fullName: 'Pat Parent', photoUrl: '' },
+                        canModerate: true
+                    };
+                }
+
+                export async function loadChatConversations() {
+                    return [
+                        { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
+                    ];
+                }
+
+                export async function ensureStaffChatConversation() {
+                    return { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] };
+                }
+
+                export async function loadChatRecipientOptions() {
+                    return [
+                        { id: 'user:coach-1', name: 'Coach Jamie', detail: 'Staff' },
+                        { id: 'player:player-1', name: 'Pat', detail: '#9' }
+                    ];
+                }
+
+                export function subscribeToTeamChatMessages(teamId, conversationId, onMessages) {
+                    const filler = Array.from({ length: 28 }, (_, index) => msg({
+                        id: 'filler-' + index,
+                        senderId: index % 2 ? 'user-1' : 'coach-1',
+                        senderName: index % 2 ? 'Pat Parent' : 'Coach Jamie',
+                        text: 'Schedule update ' + (index + 1),
+                        createdAt: new Date(Date.UTC(2026, 4, 21, 14, index + 3))
+                    }));
+                    onMessages([
+                        msg({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+                        ...filler,
+                        msg({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:40:00Z') }),
+                        msg({ id: 'msg-3', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Latest ride update.', createdAt: new Date('2026-05-21T14:45:00Z') })
+                    ], { id: 'cursor' });
+                    return { unsubscribe: () => {} };
+                }
+
+                export async function loadOlderTeamChatMessages() {
+                    return [];
+                }
+
+                export async function sendTeamChatMessage(input) {
+                    window.__chatCalls.sends.push({
+                        text: input.text,
+                        selectedConversationId: input.selectedConversationId,
+                        selectedConversationRoles: input.selectedConversation?.participantRoles || [],
+                        selectedRecipientTarget: input.selectedRecipientTarget,
+                        selectedRecipientIds: input.selectedRecipientIds,
+                        fileCount: input.files?.length || 0
+                    });
+                    return { conversationId: 'team', createdConversation: null, wantsAi: input.text.includes('@ALL PLAYS') };
+                }
+
+                export async function sendAllPlaysChatAnswer(input) {
+                    window.__chatCalls.ai.push(input.question);
+                }
+
+                export async function toggleTeamChatReaction(teamId, messageId, reactionKey, userId, conversationId) {
+                    window.__chatCalls.reactions.push({ teamId, messageId, reactionKey, userId, conversationId });
+                    return true;
+                }
+
+                export async function editTeamChatMessage(teamId, messageId, text, conversationId) {
+                    window.__chatCalls.edits.push({ teamId, messageId, text, conversationId });
+                }
+
+                export async function deleteTeamChatMessage(teamId, messageId, conversationId) {
+                    window.__chatCalls.deletes.push({ teamId, messageId, conversationId });
+                }
+
+                export async function markTeamChatRead(userId, teamId) {
+                    window.__chatCalls.reads.push({ userId, teamId });
+                }
+            `
+        });
+    });
+}
+
+test('messages inbox and team chat exercise real migrated chat UX', async ({ page, baseURL }) => {
+    await mockMessagesModules(page);
+    await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('heading', { name: 'Team chats' })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
+    await expect(page.getByText('Coach Jamie: Practice packet is posted.')).toBeVisible();
+    const searchInput = page.getByPlaceholder('Search team chats');
+    await expect(searchInput).toBeVisible();
+    await expect.poll(() => searchInput.evaluate((element) => window.getComputedStyle(element).fontSize)).toBe('16px');
+    await searchInput.click();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+
+    await page.getByRole('link', { name: /Bears/ }).first().click();
+    const thread = page.locator('.chat-messages-scroll');
+    const bottomNav = page.getByRole('navigation', { name: 'Primary navigation' });
+    await expect(thread).toContainText('Bring both jerseys.');
+    await expect(thread).toContainText('We can bring snacks.');
+    await expect(page.getByText('Latest ride update.')).toBeVisible();
+    await expect(bottomNav.getByRole('link', { name: 'Home' })).toBeVisible();
+    await expect(bottomNav.getByRole('link', { name: 'Schedule' })).toBeVisible();
+    await expect(bottomNav.getByRole('link', { name: 'Messages' })).toBeVisible();
+    await expect.poll(() => thread.evaluate((element) => (
+        element.scrollHeight - element.scrollTop - element.clientHeight <= 4
+    ))).toBe(true);
+    await expect(page.getByRole('button', { name: /Audience: Full team/ })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Add attachment' }).click();
+    await expect(page.getByRole('dialog', { name: 'Add to message' })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Photo/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Video/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Link/ })).toBeVisible();
+
+    const photoChooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: /Photo/ }).click();
+    const photoChooser = await photoChooserPromise;
+    await photoChooser.setFiles({
+        name: 'chat-photo.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('photo')
+    });
+    await expect(page.getByText('1 attachment ready')).toBeVisible();
+    await page.getByRole('button', { name: 'Remove attachment' }).click();
+
+    await page.getByRole('button', { name: 'Add attachment' }).click();
+    const videoChooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: /Video/ }).click();
+    const videoChooser = await videoChooserPromise;
+    await videoChooser.setFiles({
+        name: 'clip.mp4',
+        mimeType: 'video/mp4',
+        buffer: Buffer.from('video')
+    });
+    await expect(page.getByText('1 attachment ready')).toBeVisible();
+    await page.getByRole('button', { name: 'Remove attachment' }).click();
+
+    await page.getByRole('button', { name: 'Add attachment' }).click();
+    await page.getByRole('button', { name: /Link/ }).click();
+    await page.getByPlaceholder('https://example.com').fill('www.allplays.ai/game.html');
+    await page.getByRole('button', { name: 'Add link', exact: true }).click();
+    await expect(page.getByPlaceholder('Message Bears')).toHaveValue('https://www.allplays.ai/game.html');
+    await page.getByPlaceholder('Message Bears').fill('');
+
+    await page.getByRole('button', { name: /Audience: Full team/ }).click();
+    await page.getByRole('button', { name: 'Staff only' }).click();
+
+    await page.getByPlaceholder('Message Bears').fill('@ALL PLAYS who needs RSVP help?');
+    await page.getByRole('button', { name: 'Send message' }).click();
+
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.sends)).toEqual([
+        {
+            text: '@ALL PLAYS who needs RSVP help?',
+            selectedConversationId: 'staff-conversation',
+            selectedConversationRoles: ['staff'],
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: [],
+            fileCount: 0
+        }
+    ]);
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.ai)).toEqual(['who needs RSVP help?']);
+
+    await page.getByRole('button', { name: 'Add reaction' }).last().click();
+    await page.getByRole('button', { name: 'Like' }).click();
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.reactions[0])).toMatchObject({
+        teamId: 'team-1',
+        messageId: 'msg-3',
+        reactionKey: 'thumbs_up',
+        userId: 'user-1',
+        conversationId: 'team'
+    });
+});
+
+test('messages selected-member and validation flows stay usable on mobile', async ({ page, baseURL }) => {
+    await mockMessagesModules(page);
+    await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('Latest ride update.')).toBeVisible();
+    await page.getByRole('button', { name: /Audience: Full team/ }).click();
+    await page.getByRole('button', { name: /Selected members/ }).click();
+    await page.locator('label').filter({ hasText: 'Coach Jamie' }).click();
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(page.getByRole('button', { name: /Audience: Coach Jamie/ })).toBeVisible();
+
+    await page.getByPlaceholder('Message Bears').fill('Can you confirm arrival time?');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.sends[0])).toMatchObject({
+        text: 'Can you confirm arrival time?',
+        selectedConversationId: 'team',
+        selectedRecipientTarget: 'individuals',
+        selectedRecipientIds: ['user:coach-1'],
+        fileCount: 0
+    });
+
+    await page.getByRole('button', { name: 'Add attachment' }).click();
+    await page.getByRole('button', { name: /Link/ }).click();
+    await page.getByPlaceholder('https://example.com').fill('javascript:alert(1)');
+    await page.getByRole('button', { name: 'Add link', exact: true }).click();
+    await expect(page.getByText('Use a valid http or https link.')).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    await page.getByRole('button', { name: 'Add attachment' }).click();
+    const photoChooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: /Photo/ }).click();
+    const photoChooser = await photoChooserPromise;
+    await photoChooser.setFiles({
+        name: 'notes.pdf',
+        mimeType: 'application/pdf',
+        buffer: Buffer.from('not media')
+    });
+    await expect(page.getByText('Choose image or video files only.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test.describe('desktop messages workspace', () => {
+    test.use({ viewport: { width: 1440, height: 900 }, hasTouch: false });
+
+    test('keeps inbox, thread, and composer inside the browser workspace', async ({ page, baseURL }) => {
+        await mockMessagesModules(page);
+        await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
+
+        await expect(page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Messages' })).toBeVisible();
+        await expect(page.locator('.messages-list-pane')).toBeVisible();
+        await expect(page.locator('.chat-window-embedded')).toBeVisible();
+        await expect(page.getByText('Latest ride update.')).toBeVisible();
+
+        const metrics = await page.evaluate(() => {
+            const pageRoot = document.querySelector('.desktop-app-page-messages');
+            const main = document.querySelector('.desktop-main-messages');
+            const shellGrid = document.querySelector('.desktop-shell-grid-messages');
+            const chatPane = document.querySelector('.messages-chat-pane');
+            const topbar = document.querySelector('.chat-topbar');
+            const thread = document.querySelector('.chat-messages-scroll');
+            const composer = document.querySelector('.chat-composer');
+            const body = document.querySelector('.chat-body');
+
+            const rect = (element) => {
+                const box = element.getBoundingClientRect();
+                return {
+                    top: box.top,
+                    bottom: box.bottom,
+                    left: box.left,
+                    right: box.right,
+                    height: box.height,
+                    width: box.width
+                };
+            };
+
+            return {
+                documentFitsViewport: document.documentElement.scrollHeight <= window.innerHeight + 2,
+                pageOverflowHidden: window.getComputedStyle(pageRoot).overflow === 'hidden',
+                mainOverflowHidden: window.getComputedStyle(main).overflow === 'hidden',
+                shellHeight: rect(shellGrid).height,
+                chatPane: rect(chatPane),
+                topbar: rect(topbar),
+                body: rect(body),
+                thread: rect(thread),
+                composer: rect(composer),
+                threadHasInternalScroll: thread.scrollHeight > thread.clientHeight,
+                threadPinnedToLatest: thread.scrollHeight - thread.scrollTop - thread.clientHeight <= 4
+            };
+        });
+
+        expect(metrics.documentFitsViewport).toBe(true);
+        expect(metrics.pageOverflowHidden).toBe(true);
+        expect(metrics.mainOverflowHidden).toBe(true);
+        expect(metrics.shellHeight).toBeGreaterThan(700);
+        expect(metrics.chatPane.bottom).toBeLessThanOrEqual(900);
+        expect(metrics.topbar.top).toBeGreaterThanOrEqual(metrics.chatPane.top);
+        expect(metrics.body.top).toBeGreaterThanOrEqual(metrics.topbar.bottom - 1);
+        expect(metrics.thread.bottom).toBeLessThanOrEqual(metrics.composer.top + 1);
+        expect(metrics.composer.bottom).toBeLessThanOrEqual(metrics.chatPane.bottom + 1);
+        expect(metrics.threadHasInternalScroll).toBe(true);
+        expect(metrics.threadPinnedToLatest).toBe(true);
+    });
+});

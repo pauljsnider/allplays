@@ -600,6 +600,45 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
         </div>
       </div>
 
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <Segment active={view === 'list'} onClick={() => onViewChange('list')} icon={ListChecks} label="List" />
+        <Segment active={view === 'calendar'} onClick={() => onViewChange('calendar')} icon={CalendarDays} label="Calendar" />
+        <Segment active={view === 'packets'} onClick={() => onViewChange('packets')} icon={ClipboardCheck} label="Packets" />
+      </div>
+
+      <div className="mt-4 space-y-2" aria-label="Primary schedule filters">
+        {filterOptions.map((option) => (
+          <ScheduleFilterButton
+            key={option.value}
+            option={option}
+            active={filter === option.value}
+            onClick={() => onFilterChange(option.value)}
+            fullWidth
+          />
+        ))}
+      </div>
+
+      <label className="mt-4 block">
+        <span className="app-label">Player</span>
+        <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
+          <option value="">All Players</option>
+          {children.map((child) => (
+            <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
+          ))}
+        </select>
+      </label>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button type="button" className="secondary-button w-full" onClick={onExport}>
+          <Download className="h-4 w-4" aria-hidden="true" />
+          .ics
+        </button>
+        <button type="button" className="secondary-button w-full" onClick={onCopyAgenda}>
+          <Copy className="h-4 w-4" aria-hidden="true" />
+          Copy agenda
+        </button>
+      </div>
+
       {advancedControlsOpen ? (
         <>
       <div className="mt-4 grid grid-cols-2 gap-2">

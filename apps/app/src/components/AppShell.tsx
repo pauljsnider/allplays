@@ -1,10 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bot,
   CalendarDays,
-  ChevronRight,
   Home,
   MessageCircle,
   Plus,
@@ -14,10 +13,10 @@ import {
   Users,
   X
 } from 'lucide-react';
-import { capabilities } from '../data/capabilities';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState, NavItem } from '../lib/types';
-import { CategoryBadge, RoleBadge, StatusBadge } from './Badges';
+import { RoleBadge } from './Badges';
+import { AppSearchDialog } from './AppSearchDialog';
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -35,7 +34,6 @@ interface AppShellProps {
 export function AppShell({ auth, children }: AppShellProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [addTeamOpen, setAddTeamOpen] = useState(false);
-  const [query, setQuery] = useState('');
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
@@ -43,30 +41,20 @@ export function AppShell({ auth, children }: AppShellProps) {
   const isMobileChatDetail = !isDesktopWeb && ((location.pathname.startsWith('/messages/') && location.pathname !== '/messages') || isAiRoute);
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
 
-  const filteredCapabilities = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return capabilities.slice(0, 10);
-    }
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isModK = (event.key || '').toLowerCase() === 'k' && (event.metaKey || event.ctrlKey);
+      if (!isModK || isTypingTarget(event.target)) return;
+      event.preventDefault();
+      setSearchOpen(true);
+    };
 
-    return capabilities
-      .filter((capability) => {
-        const searchable = [
-          capability.title,
-          capability.summary,
-          capability.legacyPath,
-          capability.category,
-          capability.features.join(' ')
-        ].join(' ').toLowerCase();
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
-        return searchable.includes(normalizedQuery);
-      })
-      .slice(0, 20);
-  }, [query]);
-
-  const goToCapability = (route: string) => {
-    setSearchOpen(false);
-    setQuery('');
+  const goToRoute = (route: string) => {
+    setAddTeamOpen(false);
     navigate(route);
   };
 
@@ -104,6 +92,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   type="button"
                   className="ghost-button !h-10 !min-h-10"
                   onClick={() => setSearchOpen(true)}
+                  title="Search (Ctrl+K / Cmd+K)"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
                   Search
@@ -164,7 +153,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               >
                 <img src="./logo_small.png" alt="" className="h-10 w-10 flex-none rounded-xl shadow-sm" />
                 <span className="min-w-0">
-                  <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS APP</span>
+                  <span className="block truncate text-base font-black leading-tight text-gray-950">ALL PLAYS</span>
                   <span className="block truncate text-xs font-bold text-gray-500">
                     {auth.roles.length ? auth.roles.join(' + ') : 'Signed out preview'}
                   </span>
@@ -185,7 +174,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
                   onClick={() => setSearchOpen(true)}
                   aria-label="Search"
-                  title="Search"
+                  title="Search (Ctrl+K / Cmd+K)"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
                 </button>
@@ -205,7 +194,10 @@ export function AppShell({ auth, children }: AppShellProps) {
 
           <main className={isMobileChatDetail ? 'mx-auto w-full max-w-5xl px-0 py-0' : 'mx-auto w-full max-w-5xl px-4 py-4 sm:py-6'}>{children}</main>
 
-          <nav className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`} aria-label="Primary navigation">
+          <nav
+            className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`}
+            aria-label="Primary navigation"
+          >
             <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
@@ -229,57 +221,7 @@ export function AppShell({ auth, children }: AppShellProps) {
         </>
       )}
 
-      {searchOpen ? (
-        <div className="fixed inset-0 z-50 bg-gray-950/40 px-3 py-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Search features">
-          <div className="mx-auto flex max-h-[92vh] max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-app-lg">
-            <div className="flex items-center gap-2 border-b border-gray-200 p-3">
-              <Search className="h-5 w-5 flex-none text-gray-400" aria-hidden="true" />
-              <input
-                autoFocus
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                className="min-h-11 min-w-0 flex-1 rounded-lg border border-gray-200 px-3 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-                placeholder="Search pages, teams, schedule, chat..."
-              />
-              <button
-                type="button"
-                className="ghost-button !h-11 !min-h-11 !w-11 !p-0"
-                onClick={() => setSearchOpen(false)}
-                aria-label="Close search"
-              >
-                <X className="h-5 w-5" aria-hidden="true" />
-              </button>
-            </div>
-            <div className="overflow-y-auto p-3">
-              <div className="mb-2 px-1 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">
-                Current site capability map
-              </div>
-              <div className="space-y-2">
-                {filteredCapabilities.map((capability) => (
-                  <button
-                    key={capability.id}
-                    type="button"
-                    className="w-full rounded-xl border border-gray-200 bg-white p-3 text-left transition hover:border-primary-200 hover:bg-primary-50/50"
-                    onClick={() => goToCapability(capability.route)}
-                  >
-                    <span className="flex items-start gap-3">
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-black text-gray-950">{capability.title}</span>
-                        <span className="mt-1 block line-clamp-2 text-xs font-semibold leading-5 text-gray-600">{capability.summary}</span>
-                        <span className="mt-2 flex flex-wrap gap-1.5">
-                          <CategoryBadge category={capability.category} />
-                          <StatusBadge status={capability.status} />
-                        </span>
-                      </span>
-                      <ChevronRight className="mt-1 h-5 w-5 flex-none text-gray-400" aria-hidden="true" />
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
 
       {addTeamOpen ? (
         <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add team">
@@ -310,7 +252,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
                 {['Create team', 'Join with code', 'Import roster'].map((label) => (
-                  <button key={label} type="button" className="secondary-button justify-center" onClick={() => goToCapability('/capabilities/dashboard')}>
+                  <button key={label} type="button" className="secondary-button justify-center" onClick={() => goToRoute('/capabilities/dashboard')}>
                     {label}
                   </button>
                 ))}
@@ -326,4 +268,10 @@ export function AppShell({ auth, children }: AppShellProps) {
       ) : null}
     </div>
   );
+}
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable;
 }

@@ -19,7 +19,7 @@ export function AuthFrame({
         <Link to="/auth" className="mb-5 flex items-center gap-3">
           <img src="./logo_small.png" alt="" className="h-11 w-11 rounded-xl shadow-sm" />
           <span>
-            <span className="block text-lg font-black leading-tight text-gray-950">ALL PLAYS APP</span>
+            <span className="block text-lg font-black leading-tight text-gray-950">ALL PLAYS</span>
             <span className="block text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">{eyebrow}</span>
           </span>
         </Link>

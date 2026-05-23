@@ -7,6 +7,7 @@ import { CapabilityPage } from './pages/CapabilityPage';
 import { GameDetail } from './pages/GameDetail';
 import { Home } from './pages/Home';
 import { Messages } from './pages/Messages';
+import { ParentTools } from './pages/ParentTools';
 import { PlayerDetail } from './pages/PlayerDetail';
 import { PrivateAiChat } from './pages/PrivateAiChat';
 import { Profile } from './pages/Profile';
@@ -14,6 +15,7 @@ import { ResetPassword } from './pages/ResetPassword';
 import { Schedule } from './pages/Schedule';
 import { ScheduleEventDetail } from './pages/ScheduleEventDetail';
 import { TeamDetail } from './pages/TeamDetail';
+import { TeamMedia } from './pages/TeamMedia';
 import { Teams } from './pages/Teams';
 import { VerifyPending } from './pages/VerifyPending';
 import { useAuth } from './lib/useAuth';
@@ -37,6 +39,10 @@ export default function App() {
       <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
       <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
       <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
+      <Route path="/teams/:teamId/media" element={<Protected auth={auth}><TeamMedia auth={auth} /></Protected>} />
+      <Route path="/parent-tools" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
+      <Route path="/parent-tools/:toolId" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
+      <Route path="/players/:teamId/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
       <Route path="/players/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
       <Route path="/games/:gameId" element={<Protected auth={auth}><GameDetail auth={auth} /></Protected>} />
       <Route path="/profile" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
