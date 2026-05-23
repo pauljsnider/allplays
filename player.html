@@ -236,7 +236,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=32';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=33';
         import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { hasPlayerProfileParticipation, collectPlayerVideoClips } from './js/player-profile-stats.js?v=3';
@@ -1262,8 +1262,19 @@
                     privateProfileLoadFailed,
                     privateFieldsDirty
                 });
+                const { emergencyContact, medicalInfo, ...publicData } = data;
+                const privateData = {};
+                if (Object.prototype.hasOwnProperty.call(data, 'emergencyContact')) {
+                    privateData.emergencyContact = emergencyContact;
+                }
+                if (Object.prototype.hasOwnProperty.call(data, 'medicalInfo')) {
+                    privateData.medicalInfo = medicalInfo;
+                }
 
-                await updatePlayerProfile(currentTeamId, currentPlayer.id, data);
+                await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);
+                if (Object.keys(privateData).length > 0) {
+                    await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);
+                }
                 
                 alert('Profile updated!');
                 location.reload();
