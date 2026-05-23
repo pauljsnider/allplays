@@ -1099,10 +1099,10 @@
 <script>
 // ── Sticky search: sit just below the app header ─────────────────────────────
 (function positionSearch() {
-  const appHeader  = document.querySelector('header');
   const searchWrap = document.getElementById('cl-search-wrap');
   const sidebar    = document.querySelector('aside');
   function update() {
+    const appHeader = document.querySelector('header');
     const h = appHeader ? appHeader.getBoundingClientRect().height : 0;
     searchWrap.style.top = h + 'px';
     if (sidebar) sidebar.style.top = (h + searchWrap.getBoundingClientRect().height + 8) + 'px';

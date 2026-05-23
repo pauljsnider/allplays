@@ -171,8 +171,15 @@ describe('changelog page — search and filter UI elements', () => {
 describe('changelog page — JavaScript behaviors', () => {
     it('positions search bar below sticky header via positionSearch()', () => {
         expect(html).toContain('positionSearch');
-        expect(html).toContain('appHeader.getBoundingClientRect().height');
         expect(html).toContain('searchWrap.style.top');
+    });
+
+    it('re-queries header inside update() so async renderHeader injection is reflected', () => {
+        // appHeader must be looked up inside update(), not captured once in the outer scope
+        // before renderHeader() has run — otherwise it would always be null.
+        expect(html).toContain("const appHeader = document.querySelector('header')");
+        // The captured-once (buggy) pattern must not be present
+        expect(html).not.toMatch(/const appHeader\s*=\s*document\.querySelector[\s\S]{0,20}const searchWrap/);
     });
 
     it('adjusts sidebar top offset alongside the search bar', () => {
