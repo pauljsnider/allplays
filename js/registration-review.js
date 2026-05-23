@@ -239,3 +239,94 @@ export function summarizeRegistration(registration = {}) {
         submittedAt: registration.submittedAt || registration.createdAt || null
     };
 }
+
+function formatCsvDate(value) {
+    const date = value?.toDate ? value.toDate() : (value ? new Date(value) : null);
+    return date && !Number.isNaN(date.getTime()) ? date.toISOString() : '';
+}
+
+function formatMoneyCents(value, currency = '') {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return '';
+    const formatted = (amount / 100).toFixed(2);
+    return currency ? `${formatted} ${String(currency).toUpperCase()}` : formatted;
+}
+
+function findRegistrationOption(form = {}, optionId = '') {
+    const options = Array.isArray(form.registrationOptions) ? form.registrationOptions : [];
+    return options.find((option) => option?.id === optionId || option?.countKey === optionId) || {};
+}
+
+function resolveFeeAmount(registration = {}) {
+    const snapshot = asObject(registration.feeSnapshot);
+    const selectedOption = asObject(registration.selectedOption);
+    const cents = snapshot.finalAmountDueCents ?? snapshot.amountDueCents ?? snapshot.feeAmountCents ?? selectedOption.feeAmountCents ?? registration.feeAmountCents;
+    return formatMoneyCents(cents, snapshot.currency || registration.currency || '');
+}
+
+function resolvePaymentPlanLabel(registration = {}) {
+    const plan = asObject(registration.paymentPlan);
+    return firstNonEmpty(plan.label, plan.name, plan.id, registration.selectedPaymentPlanId);
+}
+
+export function escapeRegistrationCsvValue(value) {
+    const text = value === null || value === undefined ? '' : String(value);
+    const safeText = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+    return /[",\n\r]/.test(safeText) ? `"${safeText.replace(/"/g, '""')}"` : safeText;
+}
+
+export function flattenRegistrationReviewForCsv(registration = {}, form = {}) {
+    const summary = registration.reviewSummary || summarizeRegistration(registration);
+    const guardians = getRegistrationGuardianDrafts(registration);
+    const primaryGuardian = guardians[0] || {};
+    const selectedOption = asObject(registration.selectedOption);
+    const selectedOptionId = firstNonEmpty(selectedOption.id, registration.selectedOptionId);
+    const formOption = findRegistrationOption(form, selectedOptionId);
+    return {
+        registrationId: registration.id || '',
+        playerName: summary.playerName || '',
+        playerNumber: summary.playerNumber || '',
+        guardianName: primaryGuardian.name || '',
+        guardianEmail: primaryGuardian.email || '',
+        status: normalizeRegistrationStatus(registration.status),
+        selectedOptionLabel: firstNonEmpty(selectedOption.title, selectedOption.label, formOption.title, formOption.label),
+        selectedOptionId,
+        submittedDate: formatCsvDate(summary.submittedAt || registration.submittedAt || registration.createdAt),
+        feeAmount: resolveFeeAmount(registration),
+        paymentPlan: resolvePaymentPlanLabel(registration),
+        linkedPlayerId: registration.linkedPlayerId || registration.rosterDestination?.playerId || '',
+        decisionNote: registration.decisionNote || ''
+    };
+}
+
+export function buildRegistrationReviewCsv(registrations = [], form = {}) {
+    const headers = [
+        'registration id',
+        'player name',
+        'player number',
+        'guardian name',
+        'guardian email',
+        'status',
+        'selected option label',
+        'selected option id',
+        'submitted date',
+        'fee amount',
+        'payment plan',
+        'linked player id',
+        'decision note'
+    ];
+    const rows = registrations.map((registration) => flattenRegistrationReviewForCsv(registration, form));
+    const keys = Object.keys(flattenRegistrationReviewForCsv());
+    return [headers, ...rows.map((row) => keys.map((key) => row[key] || ''))]
+        .map((row) => row.map(escapeRegistrationCsvValue).join(','))
+        .join('\n');
+}
+
+export function buildRegistrationReviewCsvFilename({ teamId = '', formId = '', status = 'all', now = new Date() } = {}) {
+    const date = now instanceof Date && !Number.isNaN(now.getTime()) ? now.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+    const safePart = (value, fallback) => cleanString(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || fallback;
+    return `registration-review-${safePart(teamId, 'team')}-${safePart(formId, 'form')}-${safePart(status, 'all')}-${date}.csv`;
+}
