@@ -99,6 +99,7 @@ import {
     normalizeRegistrationStatus,
     summarizeRegistration
 } from './registration-review.js?v=2';
+import { assertVolunteerScreeningCleared } from './volunteer-screening-access.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=2';
 import { getApp } from './vendor/firebase-app.js';
@@ -1153,10 +1154,50 @@ export async function createVenueBlackout(teamId, blackoutData = {}) {
     return docRef.id;
 }
 
+async function listRegistrationRecordsForTeam(teamId) {
+    if (!teamId) return [];
+
+    try {
+        const formsSnapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
+        const registrationSnapshots = await Promise.all(formsSnapshot.docs.map(async (formDoc) => {
+            const form = { id: formDoc.id, ...(formDoc.data() || {}) };
+            const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms/${formDoc.id}/registrations`));
+            return snapshot.docs.map((registrationDoc) => ({
+                id: registrationDoc.id,
+                formId: formDoc.id,
+                programName: form.programName || form.title || '',
+                ...(registrationDoc.data() || {})
+            }));
+        }));
+
+        return registrationSnapshots.flat();
+    } catch (error) {
+        console.error('Failed to access registration records for volunteer screening:', error);
+        throw error;
+    }
+}
+
+async function assertVolunteerScreeningClearedForTeamGrant(teamId, target = {}) {
+    const normalizedTarget = {
+        userId: String(target.userId || '').trim(),
+        email: String(target.email || '').trim().toLowerCase()
+    };
+
+    if (normalizedTarget.userId && !normalizedTarget.email) {
+        const profile = await getUserProfile(normalizedTarget.userId);
+        normalizedTarget.email = String(profile?.email || '').trim().toLowerCase();
+    }
+
+    const registrations = await listRegistrationRecordsForTeam(teamId);
+    assertVolunteerScreeningCleared(registrations, normalizedTarget);
+}
+
 export async function grantScorekeeperAccess(teamId, memberUserId) {
     const normalizedUserId = String(memberUserId || '').trim();
     if (!teamId) throw new Error('Missing team for scorekeeper access');
     if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: normalizedUserId });
 
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, {
@@ -1182,6 +1223,8 @@ export async function grantStreamScoreAccess(teamId, memberUserId) {
     const normalizedUserId = String(memberUserId || '').trim();
     if (!teamId) throw new Error('Missing team for Stream & Score access');
     if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: normalizedUserId });
 
     const docRef = doc(db, "teams", teamId);
     const teamSnap = await getDoc(docRef);
@@ -1316,6 +1359,8 @@ export async function addTeamAdminEmail(teamId, email) {
     if (!normalizedEmail) {
         throw new Error('Admin email is required');
     }
+
+    await assertVolunteerScreeningClearedForTeamGrant(teamId, { email: normalizedEmail });
 
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, {
@@ -3175,6 +3220,13 @@ export async function inviteAdmin(teamId, adminEmail) {
         throw new Error('You must be signed in to invite an admin');
     }
 
+    const normalizedEmail = String(adminEmail || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+        throw new Error('Admin email is required');
+    }
+
+    await assertVolunteerScreeningClearedForTeamGrant(teamId, { email: normalizedEmail });
+
     const team = await getTeam(teamId);
     if (!team) {
         throw new Error('Team not found');
@@ -3186,7 +3238,7 @@ export async function inviteAdmin(teamId, adminEmail) {
         type: 'admin_invite',
         teamId,
         teamName: team.name || null,
-        email: adminEmail,
+        email: normalizedEmail,
         generatedBy: currentUser.uid,
         createdAt: Timestamp.now(),
         // 7 days from now
@@ -3198,7 +3250,7 @@ export async function inviteAdmin(teamId, adminEmail) {
     const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
 
     // Check if user already exists
-    const existingUser = await getUserByEmail(adminEmail);
+    const existingUser = await getUserByEmail(normalizedEmail);
 
     return {
         id: docRef.id,
