@@ -40,6 +40,7 @@ describe('profile notification wiring', () => {
     expect(dbSource).toContain("status: 'pending_verification'");
     expect(rulesSource).toContain('match /accountMergeRequests/{requestId}');
     expect(rulesSource).toContain('isAccountMergeRequestPayloadValid');
+    expect(rulesSource).toContain('isParentAccountOwner(userId)');
     expect(rulesSource).toContain("data.status == 'pending_verification'");
   });
 });

@@ -132,6 +132,13 @@ service cloud.firestore {
              teamId in get(userPath).data.get('parentTeamIds', []);
     }
 
+    function isParentAccountOwner(userId) {
+      let userPath = /databases/$(database)/documents/users/$(userId);
+      return isOwner(userId) &&
+             exists(userPath) &&
+             get(userPath).data.get('parentTeamIds', []).size() > 0;
+    }
+
     function isPublishedLinkedCertificate(teamId, data) {
       let playerId = data.get('playerId', '');
       return data.get('status', '') == 'published' &&
@@ -918,7 +925,7 @@ service cloud.firestore {
 
       match /accountMergeRequests/{requestId} {
         allow read: if isOwner(userId) || isGlobalAdmin();
-        allow create: if isOwner(userId) && isAccountMergeRequestPayloadValid(request.resource.data, userId);
+        allow create: if isParentAccountOwner(userId) && isAccountMergeRequestPayloadValid(request.resource.data, userId);
         allow update, delete: if false;
       }
     }
