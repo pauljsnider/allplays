@@ -1094,6 +1094,11 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /accountMergeRequests/{requestId} {
+      allow read: if isGlobalAdmin();
+      allow write: if false;
+    }
+
     // Teams - only public teams are readable by anonymous browse/listing paths.
     match /teams/{teamId} {
       allow read: if canReadTeamDocument(resource.data);
