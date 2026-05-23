@@ -5,6 +5,7 @@ import {
     fieldLabelsToDefinitions,
     formatRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
+    normalizeBackgroundCheck,
     normalizePaymentSettings,
     normalizeBackgroundCheckSettings,
     normalizeInstallmentPlan,
@@ -30,11 +31,17 @@ describe('admin registration form setup', () => {
             ],
             paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             installmentPlan: { enabled: true, installmentCount: '3', firstDueDate: '2026-06-01', intervalDays: '30' },
+            backgroundCheck: {
+                required: true,
+                instructions: 'Coaches must complete screening before practices.',
+                enabled: true,
+                initialScreeningStatus: 'submitted',
+                providerName: 'JDP'
+            },
             discountRules: [
                 { id: 'early', type: 'early_bird', label: 'Early bird', amountType: 'fixed', amountValue: '25', earlyBirdDeadline: '2026-03-01' },
                 { type: 'quantity', label: 'Sibling discount', amountType: 'percent', amountValue: '10', minimumQuantity: '2' }
             ],
-            backgroundCheck: { enabled: true, initialScreeningStatus: 'submitted', providerName: 'JDP' },
             waiverText: 'I accept the risk.',
             status: 'published'
         }, { teamId: 'team-1' });
@@ -50,7 +57,13 @@ describe('admin registration form setup', () => {
             currency: 'USD',
             paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             installmentPlan: { enabled: true, title: 'Installment plan', installmentCount: 3, firstDueDate: '2026-06-01', intervalDays: 30 },
-            backgroundCheck: { enabled: true, initialScreeningStatus: 'submitted', providerName: 'JDP' },
+            backgroundCheck: {
+                required: true,
+                instructions: 'Coaches must complete screening before practices.',
+                enabled: true,
+                initialScreeningStatus: 'submitted',
+                providerName: 'JDP'
+            },
             waiverText: 'I accept the risk.',
             status: 'published',
             published: true
@@ -72,13 +85,34 @@ describe('admin registration form setup', () => {
     });
 
     it('normalizes manual screening settings to bounded admin statuses', () => {
-        expect(normalizeBackgroundCheckSettings()).toEqual({ enabled: false, initialScreeningStatus: 'pending', providerName: '' });
+        expect(normalizeBackgroundCheckSettings()).toEqual({ required: false, instructions: '', enabled: false, initialScreeningStatus: 'pending', providerName: '' });
         expect(normalizeBackgroundCheckSettings({ enabled: true, initialScreeningStatus: 'flagged', providerName: ' Protect Youth Sports ' })).toEqual({
+            required: false,
+            instructions: '',
             enabled: true,
             initialScreeningStatus: 'flagged',
             providerName: 'Protect Youth Sports'
         });
+        expect(normalizeBackgroundCheckSettings({ required: true, instructions: ' Screen before volunteering. ' })).toEqual({
+            required: true,
+            instructions: 'Screen before volunteering.',
+            enabled: true,
+            initialScreeningStatus: 'pending',
+            providerName: ''
+        });
         expect(normalizeBackgroundCheckSettings({ enabled: true, initialScreeningStatus: 'unknown' }).initialScreeningStatus).toBe('pending');
+    });
+
+    it('normalizes background-check policy metadata safely', () => {
+        expect(normalizeBackgroundCheck()).toEqual({ required: false, instructions: '' });
+        expect(normalizeBackgroundCheck({ required: true, instructions: '  Complete screening before volunteering.  ' })).toEqual({
+            required: true,
+            instructions: 'Complete screening before volunteering.'
+        });
+        expect(normalizeBackgroundCheck({ required: false, instructions: 'Ignored when disabled' })).toEqual({
+            required: false,
+            instructions: ''
+        });
     });
 
     it('normalizes checkout and payment settings to bounded booleans', () => {
@@ -139,6 +173,7 @@ describe('admin registration form setup', () => {
 
         expect(payload.status).toBe('draft');
         expect(payload.published).toBe(false);
+        expect(payload.backgroundCheck).toEqual({ required: false, instructions: '', enabled: false, initialScreeningStatus: 'pending', providerName: '' });
         expect(validateAdminRegistrationFormPayload(payload)).toEqual([
             'Title is required.',
             'Waiver text is required.'
@@ -176,6 +211,8 @@ describe('admin registration form setup', () => {
         expect(adminPage).toContain('registration-background-check-enabled');
         expect(adminPage).toContain('registration-screening-initial-status');
         expect(adminPage).toContain('registration-screening-provider');
+        expect(adminPage).toContain('registration-background-check-required');
+        expect(adminPage).toContain('registration-background-check-instructions');
         expect(adminPage).toContain('registration-waiver');
         expect(adminPage).toContain('Publish and show link');
         expect(adminJs).toContain('window.openRegistrationFormsAdmin');
@@ -188,6 +225,8 @@ describe('admin registration form setup', () => {
         expect(adminJs).toContain('parseRegistrationDiscountRulesText');
         expect(adminJs).toContain('backgroundCheck: {');
         expect(adminJs).toContain("document.getElementById('registration-background-check-enabled')");
+        expect(adminJs).toContain("document.getElementById('registration-background-check-required')");
+        expect(adminJs).toContain("document.getElementById('registration-background-check-instructions')");
         expect(adminJs).toContain('const teamId = activeRegistrationTeam.id;');
         expect(adminJs).toContain('if (activeRegistrationTeam?.id !== teamId) return;');
         expect(adminJs).toContain('teams/${teamId}/registrationForms');

@@ -327,6 +327,11 @@
             init();
         });
 
+        function isCancelledGame(game) {
+            const status = String(game?.status || '').toLowerCase();
+            return status === 'cancelled' || status === 'canceled';
+        }
+
         async function init() {
             const { teamId, gameId } = getUrlParams();
             console.log('Track init - teamId:', teamId, 'gameId:', gameId);
@@ -354,9 +359,15 @@
                     return;
                 }
 
-                // Practices cannot be tracked - redirect to schedule
+                // Practices and cancelled games cannot be tracked - redirect to schedule
                 if (game.type === 'practice') {
                     alert('Practice events cannot be tracked. Use game tracking for games only.');
+                    window.location.href = `edit-schedule.html#teamId=${teamId}`;
+                    return;
+                }
+
+                if (isCancelledGame(game)) {
+                    alert('Cancelled games cannot be tracked. Restore or reschedule the game before tracking.');
                     window.location.href = `edit-schedule.html#teamId=${teamId}`;
                     return;
                 }
@@ -1247,6 +1258,13 @@ Write the match report now:`;
             const sendEmail = document.getElementById('sendEmailCheckbox').checked;
 
             try {
+                const latestGame = await getGame(currentTeamId, currentGameId);
+                if (isCancelledGame(latestGame || currentGame)) {
+                    alert('Cancelled games cannot be completed. Restore or reschedule the game before saving stats.');
+                    window.location.href = `edit-schedule.html#teamId=${currentTeamId}`;
+                    return;
+                }
+
                 await commitStandardTrackerFinishData({
                     db,
                     writeBatch,

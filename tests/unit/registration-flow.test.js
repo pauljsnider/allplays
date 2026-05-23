@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { JSDOM } from 'jsdom';
 import {
     buildInstallmentSchedule,
     buildPendingRegistrationRecord,
@@ -334,6 +335,10 @@ describe('public registration flow', () => {
         expect(page).toContain('? await submitRegistrationWithCapacity(submission)');
         expect(page).toContain(': await submitRegistrationWithoutCapacity(submission);');
         expect(page).toContain('registrationId: result.registrationId');
+        expect(page).toContain('let preparedCheckoutRegistration = null;');
+        expect(page).toContain('const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);');
+        expect(page).toContain('preparedCheckoutRegistration?.retryKey === retryKey');
+        expect(page).toContain('preparedCheckoutRegistration = { retryKey, result };');
         expect(page).toContain('return { status: \'pending\', registrationId: registrationRef.id };');
         expect(page).toContain('return { status: placement.status, registrationId: registrationRef.id };');
         expect(page).toContain("paymentLoadingState.classList.add('hidden');");
@@ -374,6 +379,207 @@ describe('public registration flow', () => {
         expect(rules).toContain('hasOnlyFlatStringValues(data.participant)');
         expect(rules).toContain('hasOnlyFlatStringValues(data.guardian)');
         expect(rules).toContain('data.keys().size() <= 20');
+    });
+
+    it('does not create a second pending registration when online checkout retry follows a Stripe failure', async () => {
+        const page = fs.readFileSync('registration.html', 'utf8');
+        const dom = new JSDOM(page, { url: 'https://example.test/registration.html?teamId=team-1&formId=form-1' });
+        const document = dom.window.document;
+        const formElement = document.getElementById('registration-form');
+        const payRegistrationButton = document.getElementById('pay-registration');
+        const errorMessage = document.getElementById('error-message');
+        const paymentLoadingState = document.getElementById('payment-loading-state');
+
+        formElement.innerHTML += `
+            <input name="participant.playerName" data-group="participant" data-field-id="playerName" value="Sam" />
+            <input name="guardian.email" data-group="guardian" data-field-id="email" value="parent@example.com" />
+            <input name="paymentPlanId" type="radio" value="pay_full" checked />
+        `;
+        document.getElementById('waiver-accepted').checked = true;
+
+        const activeForm = normalizeRegistrationForm({
+            programName: 'Clinic',
+            published: true,
+            feeAmountCents: 5000,
+            paymentSettings: { onlineCheckoutEnabled: true },
+            participantFields: [{ id: 'playerName', label: 'Player name', required: true }],
+            guardianFields: [{ id: 'email', label: 'Guardian email', required: true }],
+            waiverText: 'Waiver'
+        }, { teamId: 'team-1', formId: 'form-1' });
+        const createdRegistrations = [];
+        const initiateStripeCheckout = vi.fn()
+            .mockRejectedValueOnce(new Error('Stripe unavailable'))
+            .mockRejectedValueOnce(new Error('Stripe unavailable again'));
+        let preparedCheckoutRegistration = null;
+
+        const readGroupValues = (groupName, fields) => collectFieldValues(fields, Array.from(formElement.querySelectorAll(`[data-group="${groupName}"]`)).reduce((values, input) => {
+            values[input.dataset.fieldId] = input.value;
+            return values;
+        }, {}));
+        const buildRetryKey = (submission, amountCents, currency) => JSON.stringify({
+            amountCents,
+            currency,
+            guardian: submission.guardian,
+            participant: submission.participant,
+            quantity: submission.feeSnapshot.quantity,
+            selectedOptionId: submission.selectedOptionId,
+            selectedPaymentPlanId: submission.selectedPaymentPlanId,
+            teamId: 'team-1',
+            formId: 'form-1',
+            waiverAccepted: submission.waiverAccepted
+        });
+        const submitRegistrationWithoutCapacity = vi.fn(async (submission) => {
+            createdRegistrations.push(buildPendingRegistrationRecord({
+                form: activeForm,
+                ...submission,
+                now: { sentinel: 'serverTimestamp' }
+            }));
+            return { status: 'pending', registrationId: `registration-${createdRegistrations.length}` };
+        });
+        const clickPayRegistration = async () => {
+            errorMessage.classList.add('hidden');
+            payRegistrationButton.disabled = true;
+            paymentLoadingState.classList.remove('hidden');
+            const submission = {
+                participant: readGroupValues('participant', activeForm.participantFields),
+                guardian: readGroupValues('guardian', activeForm.guardianFields),
+                waiverAccepted: document.getElementById('waiver-accepted').checked,
+                selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
+                selectedOptionId: '',
+                feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: 1, now: new Date('2026-05-23T00:00:00Z') })
+            };
+            const validationErrors = validateRegistrationSubmission(activeForm, submission);
+            if (validationErrors.length > 0) {
+                throw new Error(validationErrors.join(' '));
+            }
+            const amountCents = Math.max(0, Number(submission.feeSnapshot?.finalAmountDueCents || 0));
+            const currency = String(submission.feeSnapshot?.currency || activeForm.currency || 'USD').toLowerCase();
+            const retryKey = buildRetryKey(submission, amountCents, currency);
+            const result = preparedCheckoutRegistration?.retryKey === retryKey
+                ? preparedCheckoutRegistration.result
+                : await submitRegistrationWithoutCapacity(submission);
+            preparedCheckoutRegistration = { retryKey, result };
+            try {
+                await initiateStripeCheckout({ registrationId: result.registrationId, amount: amountCents, currency });
+            } catch (error) {
+                errorMessage.textContent = 'Failed to initiate payment. Please try again later.';
+                errorMessage.classList.remove('hidden');
+            } finally {
+                payRegistrationButton.disabled = false;
+                paymentLoadingState.classList.add('hidden');
+            }
+        };
+
+        await clickPayRegistration();
+        await clickPayRegistration();
+
+        expect(errorMessage.textContent).toBe('Failed to initiate payment. Please try again later.');
+        expect(submitRegistrationWithoutCapacity).toHaveBeenCalledTimes(1);
+        expect(createdRegistrations).toHaveLength(1);
+        expect(initiateStripeCheckout).toHaveBeenCalledTimes(2);
+        expect(initiateStripeCheckout.mock.calls[1][0].registrationId).toBe('registration-1');
+        expect(payRegistrationButton.disabled).toBe(false);
+    });
+
+    it('does not increment capacity counts twice when checkout retry follows a Stripe failure', async () => {
+        const page = fs.readFileSync('registration.html', 'utf8');
+        const dom = new JSDOM(page, { url: 'https://example.test/registration.html?teamId=team-1&formId=form-1' });
+        const document = dom.window.document;
+        const formElement = document.getElementById('registration-form');
+        const payRegistrationButton = document.getElementById('pay-registration');
+        const errorMessage = document.getElementById('error-message');
+        const paymentLoadingState = document.getElementById('payment-loading-state');
+
+        formElement.innerHTML += `
+            <input name="participant.playerName" data-group="participant" data-field-id="playerName" value="Sam" />
+            <input name="guardian.email" data-group="guardian" data-field-id="email" value="parent@example.com" />
+            <input name="paymentPlanId" type="radio" value="pay_full" checked />
+            <input name="registrationOptionId" type="radio" value="u10" checked />
+        `;
+        document.getElementById('waiver-accepted').checked = true;
+
+        const activeForm = normalizeRegistrationForm({
+            programName: 'Clinic',
+            published: true,
+            feeAmountCents: 5000,
+            paymentSettings: { onlineCheckoutEnabled: true },
+            participantFields: [{ id: 'playerName', label: 'Player name', required: true }],
+            guardianFields: [{ id: 'email', label: 'Guardian email', required: true }],
+            registrationOptions: [{ id: 'u10', title: 'U10', capacityLimit: 2, waitlistEnabled: true }],
+            waiverText: 'Waiver'
+        }, { teamId: 'team-1', formId: 'form-1' });
+        let registrationOptionCounts = { u10: { enrolled: 0, waitlisted: 0 } };
+        const initiateStripeCheckout = vi.fn()
+            .mockRejectedValueOnce(new Error('Stripe unavailable'))
+            .mockRejectedValueOnce(new Error('Stripe unavailable again'));
+        let preparedCheckoutRegistration = null;
+
+        const readGroupValues = (groupName, fields) => collectFieldValues(fields, Array.from(formElement.querySelectorAll(`[data-group="${groupName}"]`)).reduce((values, input) => {
+            values[input.dataset.fieldId] = input.value;
+            return values;
+        }, {}));
+        const buildRetryKey = (submission, amountCents, currency) => JSON.stringify({
+            amountCents,
+            currency,
+            guardian: submission.guardian,
+            participant: submission.participant,
+            quantity: submission.feeSnapshot.quantity,
+            selectedOptionId: submission.selectedOptionId,
+            selectedPaymentPlanId: submission.selectedPaymentPlanId,
+            teamId: 'team-1',
+            formId: 'form-1',
+            waiverAccepted: submission.waiverAccepted
+        });
+        const submitRegistrationWithCapacity = vi.fn(async (submission) => {
+            const placement = decideRegistrationPlacement({
+                form: activeForm,
+                selectedOptionId: submission.selectedOptionId,
+                counts: registrationOptionCounts
+            });
+            registrationOptionCounts = {
+                ...registrationOptionCounts,
+                [placement.selectedOption.countKey]: placement.nextCounts
+            };
+            return { status: placement.status, registrationId: 'registration-capacity-1' };
+        });
+        const clickPayRegistration = async () => {
+            errorMessage.classList.add('hidden');
+            payRegistrationButton.disabled = true;
+            paymentLoadingState.classList.remove('hidden');
+            const submission = {
+                participant: readGroupValues('participant', activeForm.participantFields),
+                guardian: readGroupValues('guardian', activeForm.guardianFields),
+                waiverAccepted: document.getElementById('waiver-accepted').checked,
+                selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
+                selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || '',
+                feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: 1, now: new Date('2026-05-23T00:00:00Z') })
+            };
+            const amountCents = Math.max(0, Number(submission.feeSnapshot?.finalAmountDueCents || 0));
+            const currency = String(submission.feeSnapshot?.currency || activeForm.currency || 'USD').toLowerCase();
+            const retryKey = buildRetryKey(submission, amountCents, currency);
+            const result = preparedCheckoutRegistration?.retryKey === retryKey
+                ? preparedCheckoutRegistration.result
+                : await submitRegistrationWithCapacity(submission);
+            preparedCheckoutRegistration = { retryKey, result };
+            try {
+                await initiateStripeCheckout({ registrationId: result.registrationId, amount: amountCents, currency });
+            } catch (error) {
+                errorMessage.textContent = 'Failed to initiate payment. Please try again later.';
+                errorMessage.classList.remove('hidden');
+            } finally {
+                payRegistrationButton.disabled = false;
+                paymentLoadingState.classList.add('hidden');
+            }
+        };
+
+        await clickPayRegistration();
+        await clickPayRegistration();
+
+        expect(errorMessage.textContent).toBe('Failed to initiate payment. Please try again later.');
+        expect(submitRegistrationWithCapacity).toHaveBeenCalledTimes(1);
+        expect(registrationOptionCounts.u10).toEqual({ enrolled: 1, waitlisted: 0 });
+        expect(initiateStripeCheckout).toHaveBeenCalledTimes(2);
+        expect(initiateStripeCheckout.mock.calls[1][0].registrationId).toBe('registration-capacity-1');
     });
 
     it('wires registration Stripe checkout to deployed functions', () => {

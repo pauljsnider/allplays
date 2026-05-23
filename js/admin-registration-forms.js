@@ -65,6 +65,16 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
     };
 }
 
+export function normalizeBackgroundCheck(settings = {}) {
+    const required = settings?.required === true;
+    const instructions = String(settings?.instructions || '').trim();
+
+    return {
+        required,
+        instructions: required ? instructions : ''
+    };
+}
+
 export function normalizePaymentSettings(settings = {}) {
     return {
         offlinePaymentEnabled: settings?.offlinePaymentEnabled === true,
@@ -80,8 +90,10 @@ export function normalizeScreeningStatus(status = 'pending') {
 }
 
 export function normalizeBackgroundCheckSettings(settings = {}) {
-    const enabled = settings?.enabled === true || settings?.backgroundCheckEnabled === true;
+    const policy = normalizeBackgroundCheck(settings);
+    const enabled = settings?.enabled === true || settings?.backgroundCheckEnabled === true || policy.required === true;
     return {
+        ...policy,
         enabled,
         initialScreeningStatus: enabled ? normalizeScreeningStatus(settings?.initialScreeningStatus) : 'pending',
         providerName: String(settings?.providerName || '').trim()

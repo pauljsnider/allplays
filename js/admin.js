@@ -671,6 +671,8 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-offline-payment').checked = form.paymentSettings?.offlinePaymentEnabled === true;
     document.getElementById('registration-online-checkout').checked = form.paymentSettings?.onlineCheckoutEnabled === true;
     document.getElementById('registration-discount-rules').value = formatRegistrationDiscountRulesText(form.discountRules);
+    document.getElementById('registration-background-check-required').checked = form.backgroundCheck?.required === true;
+    document.getElementById('registration-background-check-instructions').value = form.backgroundCheck?.instructions || '';
     document.getElementById('registration-background-check-enabled').checked = form.backgroundCheck?.enabled === true;
     document.getElementById('registration-screening-initial-status').value = form.backgroundCheck?.initialScreeningStatus || 'pending';
     document.getElementById('registration-screening-provider').value = form.backgroundCheck?.providerName || '';
@@ -846,6 +848,8 @@ async function saveRegistrationForm(event) {
         },
         discountRules: parseRegistrationDiscountRulesText(document.getElementById('registration-discount-rules').value),
         backgroundCheck: {
+            required: document.getElementById('registration-background-check-required').checked,
+            instructions: document.getElementById('registration-background-check-instructions').value,
             enabled: document.getElementById('registration-background-check-enabled').checked,
             initialScreeningStatus: document.getElementById('registration-screening-initial-status').value,
             providerName: document.getElementById('registration-screening-provider').value
