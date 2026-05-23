@@ -399,18 +399,8 @@ function PrivateAiThread({
 
       {status ? <StatusBanner status={status} /> : null}
 
-      <form className="chat-composer private-ai-composer border-t border-gray-100 bg-white p-2" onSubmit={onSubmit}>
-        <div className="chat-composer-input-shell private-ai-composer-input-shell">
-          <button
-            type="button"
-            className={`chat-dictation-button ${dictating ? 'chat-dictation-button-active' : ''}`}
-            onClick={onToggleDictation}
-            disabled={sending}
-            aria-label={dictating ? 'Stop dictation' : 'Start dictation'}
-            aria-pressed={dictating}
-          >
-            {dictating ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mic className="h-4 w-4" aria-hidden="true" />}
-          </button>
+      <form className="chat-composer private-ai-composer safe-bottom border border-gray-200 bg-white p-2 shadow-app" onSubmit={onSubmit}>
+        <div className="chat-composer-input-shell">
           <textarea
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
@@ -420,7 +410,7 @@ function PrivateAiThread({
                 onSubmit();
               }
             }}
-            className="chat-composer-textarea private-ai-composer-textarea"
+            className="chat-composer-textarea"
             placeholder="Ask about schedules, teams, players, messages..."
             rows={1}
             disabled={sending}
@@ -433,6 +423,22 @@ function PrivateAiThread({
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
           </button>
+        </div>
+        <div className="chat-composer-toolbar private-ai-composer-toolbar">
+          <button
+            type="button"
+            className={`chat-tool-button ${dictating ? 'chat-tool-button-active' : ''}`}
+            onClick={onToggleDictation}
+            disabled={sending}
+            aria-label={dictating ? 'Stop voice input' : 'Voice to text'}
+            aria-pressed={dictating}
+          >
+            {dictating ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mic className="h-4 w-4" aria-hidden="true" />}
+          </button>
+          <div className="chat-composer-notice private-ai-composer-notice" aria-live="polite">
+            {dictating ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Bot className="h-3.5 w-3.5" aria-hidden="true" />}
+            <span className="truncate">{dictating ? 'Listening...' : 'Private AI chat'}</span>
+          </div>
         </div>
       </form>
     </section>

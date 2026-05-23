@@ -150,6 +150,12 @@ test.describe('private AI chat', () => {
         const textarea = page.getByPlaceholder('Ask about schedules, teams, players, messages...');
         await expect(textarea).toBeVisible();
         await expect.poll(() => textarea.evaluate((element) => window.getComputedStyle(element).fontSize)).toBe('16px');
-        await expect(page.getByRole('button', { name: 'Start dictation' })).toBeVisible();
+        await expect.poll(() => textarea.evaluate((element) => window.getComputedStyle(element).paddingLeft)).toBe('12px');
+
+        const voiceButton = page.getByRole('button', { name: 'Voice to text' });
+        await expect(voiceButton).toBeVisible();
+        const textareaBox = await textarea.boundingBox();
+        const voiceBox = await voiceButton.boundingBox();
+        expect(voiceBox.y).toBeGreaterThan(textareaBox.y + textareaBox.height - 2);
     });
 });

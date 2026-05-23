@@ -166,7 +166,7 @@ describe('private AI chat page', () => {
     it('shows a useful fallback when browser dictation is unavailable', async () => {
         const { container } = await renderPrivateAi();
 
-        await click(container.querySelector('button[aria-label="Start dictation"]'));
+        await click(container.querySelector('button[aria-label="Voice to text"]'));
 
         expect(container.textContent).toContain('Dictation is not available in this view');
     });
@@ -191,10 +191,10 @@ describe('private AI chat page', () => {
         const { container } = await renderPrivateAi();
         const textarea = container.querySelector('textarea');
         await setFieldValue(textarea, 'Show');
-        await click(container.querySelector('button[aria-label="Start dictation"]'));
+        await click(container.querySelector('button[aria-label="Voice to text"]'));
 
         expect(start).toHaveBeenCalledOnce();
-        expect(container.querySelector('button[aria-label="Stop dictation"]')).toBeTruthy();
+        expect(container.querySelector('button[aria-label="Stop voice input"]')).toBeTruthy();
 
         await act(async () => {
             window.__privateAiRecognition.onresult({
