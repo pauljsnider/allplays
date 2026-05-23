@@ -169,6 +169,15 @@ describe('team fee payment summary export', () => {
         expect(escapeCsvValue('line one\nline two')).toBe('"line one\nline two"');
     });
 
+    it('neutralizes spreadsheet formula injection patterns', () => {
+        expect(escapeCsvValue('=IMPORTXML("https://example.com")')).toBe('"\'=IMPORTXML(""https://example.com"")"');
+        expect(escapeCsvValue('+cmd')).toBe("'+cmd");
+        expect(escapeCsvValue('-10')).toBe("'-10");
+        expect(escapeCsvValue('@SUM(A1:A2)')).toBe("'@SUM(A1:A2)");
+        expect(escapeCsvValue('notes|=HYPERLINK("https://example.com")')).toBe('"\'notes|=HYPERLINK(""https://example.com"")"');
+        expect(escapeCsvValue('plain text')).toBe('plain text');
+    });
+
     it('builds rows for paid, partial, unpaid, canceled, and refunded states', () => {
         const rows = buildTeamFeePaymentSummaryRows([
             {

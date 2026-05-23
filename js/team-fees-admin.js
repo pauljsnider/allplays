@@ -347,7 +347,8 @@ const PAYMENT_SUMMARY_CSV_COLUMNS = [
 
 export function escapeCsvValue(value) {
     const text = value === null || value === undefined ? '' : String(value);
-    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    const sanitized = /^(?:\s)*[=+\-@]/.test(text) || /\|(?:\s)*[=+\-@]/.test(text) ? `'${text}` : text;
+    return /[",\n\r]/.test(sanitized) ? `"${sanitized.replace(/"/g, '""')}"` : sanitized;
 }
 
 export function serializeTeamFeePaymentSummaryCsv(rows = []) {
