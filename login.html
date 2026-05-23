@@ -101,7 +101,7 @@
         import { getUserProfile } from './js/db.js?v=32';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=1';
-        import * as loginPageModule from './js/login-page.js?v=3';
+        import * as loginPageModule from './js/login-page.js?v=4';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -322,7 +322,8 @@
             errorDiv.classList.add('hidden');
 
             try {
-                window.sessionStorage.setItem('postGoogleAuthMode', isLogin ? 'login' : 'signup');
+                const googleAuthMode = loginPageModule.getGoogleAuthModeForLoginPage({ isLogin, urlCodeParam });
+                window.sessionStorage.setItem('postGoogleAuthMode', googleAuthMode);
                 // If in signup mode, validate activation code before starting auth
                 let activationCode = null;
                 if (!isLogin) {
@@ -340,7 +341,8 @@
                     console.log('[Login Page] Popup succeeded, redirecting...');
                     const profile = await getUserProfile(result.user.uid);
                     const userWithRoles = { ...result.user, ...profile };
-                    const shouldRedeemInvite = shouldRedeemInviteFromLogin && isLogin;
+                    const shouldRedeemInvite = shouldRedeemInviteFromLogin &&
+                        (googleAuthMode === 'login' || googleAuthMode === 'invite');
                     window.location.href = redirectCoordinator.getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
                 }
                 // If result is null, redirect flow was triggered - page will reload
