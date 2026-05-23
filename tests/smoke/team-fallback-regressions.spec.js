@@ -70,6 +70,7 @@ const FIREBASE_STUB = `
 export const auth = { currentUser: { uid: 'user-1', email: 'paul@paulsnider.net' } };
 export const db = {};
 export const storage = {};
+export const functions = {};
 export function onAuthStateChanged(_auth, callback) { callback(auth.currentUser); return () => {}; }
 export function collection() { return {}; }
 export function doc() { return {}; }
@@ -83,6 +84,8 @@ export function query() { return {}; }
 export function where() { return {}; }
 export function orderBy() { return {}; }
 export function limit() { return {}; }
+export function startAfter() { return {}; }
+export function runTransaction() { return Promise.resolve(); }
 export function onSnapshot(_ref, next) { if (typeof next === 'function') next({ docs: [], empty: true, forEach() {} }); return () => {}; }
 export function serverTimestamp() { return new Date(); }
 export function writeBatch() { return { set() {}, update() {}, delete() {}, commit: () => Promise.resolve() }; }
@@ -99,33 +102,6 @@ export function getAI() {
 export function getGenerativeModel() {
     return {};
 }
-`;
-
-const FIREBASE_STUB = `
-export const auth = { currentUser: null };
-export const db = {};
-export const storage = {};
-export const functions = {};
-export function onAuthStateChanged() { return () => {}; }
-export function collection() { return {}; }
-export function doc() { return {}; }
-export function getDoc() { return Promise.resolve({ exists: () => false, data: () => ({}) }); }
-export function getDocs() { return Promise.resolve({ docs: [] }); }
-export function setDoc() { return Promise.resolve(); }
-export function updateDoc() { return Promise.resolve(); }
-export function addDoc() { return Promise.resolve({ id: 'doc-1' }); }
-export function deleteDoc() { return Promise.resolve(); }
-export function writeBatch() { return { set() {}, update() {}, delete() {}, commit: () => Promise.resolve() }; }
-export function onSnapshot() { return () => {}; }
-export function serverTimestamp() { return new Date(); }
-export function query() { return {}; }
-export function where() { return {}; }
-export function orderBy() { return {}; }
-export function limit() { return {}; }
-export function startAfter() { return {}; }
-export function runTransaction() { return Promise.resolve(); }
-export function getFunctions() { return {}; }
-export function httpsCallable() { return () => Promise.resolve({ data: {} }); }
 `;
 
 const ROSTER_PROFILE_FIELDS_STUB = `
