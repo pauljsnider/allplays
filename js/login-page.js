@@ -55,6 +55,18 @@ export function shouldInitializeSignupMode({ windowObject = window, urlCodeParam
     return String(windowObject.location.hash || '').toLowerCase() === '#signup';
 }
 
+export function getGoogleAuthModeForLoginPage({ isLogin = true, urlCodeParam = null } = {}) {
+    if (isLogin) {
+        return 'login';
+    }
+
+    if (urlCodeParam && urlCodeParam.length === 8) {
+        return 'invite';
+    }
+
+    return 'signup';
+}
+
 export function createLoginRedirectCoordinator({
     windowObject = window,
     getRedirectUrl,
@@ -77,7 +89,8 @@ export function createLoginRedirectCoordinator({
     function getGoogleRedirectUrl(userWithRoles) {
         const googleAuthMode = windowObject.sessionStorage.getItem('postGoogleAuthMode');
         windowObject.sessionStorage.removeItem('postGoogleAuthMode');
-        const shouldRedeemInvite = shouldRedeemInviteFromLogin && googleAuthMode === 'login';
+        const shouldRedeemInvite = shouldRedeemInviteFromLogin &&
+            (googleAuthMode === 'login' || googleAuthMode === 'invite');
         inviteRedemptionOverride = shouldRedeemInvite;
         return getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
     }
