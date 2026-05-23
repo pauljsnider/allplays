@@ -2,15 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
-    getChatMessages: vi.fn(),
-    getGames: vi.fn(),
-    getParentTeams: vi.fn(),
-    getPlayers: vi.fn(),
-    getTeam: vi.fn(),
-    getUnreadChatCounts: vi.fn(),
-    getUserProfile: vi.fn(),
-    getUserTeamsWithAccess: vi.fn(),
-    listParentTeamFeeRecipients: vi.fn()
+    getUserProfile: vi.fn()
 }));
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -121,14 +113,6 @@ beforeEach(async () => {
     let docIndex = 0;
     firebaseMocks.addDoc.mockImplementation(async () => ({ id: `ai-message-${++docIndex}` }));
     dbMocks.getUserProfile.mockResolvedValue({ fullName: 'Pat Parent', notificationPreferences: { chat: true } });
-    dbMocks.getParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears', sport: 'Basketball' }]);
-    dbMocks.getUserTeamsWithAccess.mockResolvedValue([]);
-    dbMocks.getUnreadChatCounts.mockResolvedValue({ 'team-1': 2 });
-    dbMocks.getChatMessages.mockResolvedValue([{ senderName: 'Coach Jamie', text: 'Practice packet posted.', createdAt: new Date('2026-05-21T12:00:00Z') }]);
-    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'Basketball' });
-    dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Avery', number: '9' }]);
-    dbMocks.getGames.mockResolvedValue([]);
-    dbMocks.listParentTeamFeeRecipients.mockResolvedValue([]);
     chatMocks.loadChatInbox.mockResolvedValue({
         teams: [{
             id: 'team-1',
@@ -259,7 +243,7 @@ describe('private AI service', () => {
             ok: false,
             error: 'No matching team was found for this account.'
         });
-        expect(dbMocks.getTeam).not.toHaveBeenCalled();
+        expect(teamMocks.loadParentTeamDetail).not.toHaveBeenCalled();
 
         await expect(runPrivateAiTool(authUser, { name: 'get_team_detail', args: { teamName: 'bear' } })).resolves.toMatchObject({
             ok: true,
@@ -267,6 +251,6 @@ describe('private AI service', () => {
                 team: expect.objectContaining({ id: 'team-1', name: 'Bears' })
             })
         });
-        expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1', { includeInactive: true });
+        expect(teamMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', authUser);
     });
 });

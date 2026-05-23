@@ -1,14 +1,4 @@
-import {
-  getChatMessages,
-  getGames,
-  getParentTeams,
-  getPlayers,
-  getTeam,
-  getUnreadChatCounts,
-  getUserProfile,
-  getUserTeamsWithAccess,
-  listParentTeamFeeRecipients
-} from '../../../../js/db.js';
+import { getUserProfile } from '../../../../js/db.js';
 import {
   db,
   addDoc,
@@ -21,6 +11,13 @@ import {
 } from '../../../../js/firebase.js';
 import { getApp } from '../../../../js/vendor/firebase-app.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
+import { getChatInboxPreview, loadChatInbox } from './chatService';
+import { loadParentHome } from './homeService';
+import {
+  loadParentCertificates,
+  loadParentFeesForApp,
+  loadParentRegistrations
+} from './parentToolsService';
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -30,6 +27,7 @@ import {
   type ParentScheduleEvent
 } from './scheduleLogic';
 import { loadParentSchedule } from './scheduleService';
+import { loadParentTeamDetail } from './teamDetailService';
 import type { AuthUser } from './types';
 
 export type PrivateAiRole = 'user' | 'assistant';
@@ -212,7 +210,7 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
         return {
           name,
           ok: true,
-          data: summarizeHome(await loadPrivateAiHome(user))
+          data: summarizeHome(await loadParentHome(user))
         };
       case 'get_schedule':
         return {
@@ -224,7 +222,7 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
         return {
           name,
           ok: true,
-          data: summarizeMessages(await loadPrivateAiChatInbox(user))
+          data: summarizeMessages(await loadChatInbox(user))
         };
       case 'get_team_detail': {
         const teamId = await resolveAccessibleTeamId(user, args);
@@ -234,22 +232,26 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
         return {
           name,
           ok: true,
-          data: summarizeTeamDetail(await loadPrivateAiTeamDetail(teamId, user))
+          data: summarizeTeamDetail(await loadParentTeamDetail(teamId, user))
         };
       }
       case 'get_fees':
         return {
           name,
           ok: true,
-          data: summarizeFees(await loadPrivateAiFees(user))
+          data: summarizeFees(await loadParentFeesForApp(user))
         };
       case 'get_parent_tools': {
+        const [registrations, certificates] = await Promise.all([
+          loadParentRegistrations(user).catch(() => []),
+          loadParentCertificates(user).catch(() => [])
+        ]);
         return {
           name,
           ok: true,
           data: {
-            registrations: [],
-            certificates: []
+            registrations: registrations.slice(0, 10),
+            certificates: certificates.slice(0, 10)
           }
         };
       }
@@ -263,215 +265,6 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
       error: error?.message || 'Tool failed.'
     };
   }
-}
-
-async function loadPrivateAiHome(user: AuthUser) {
-  const schedule = await loadParentSchedule(user);
-  const [messages, fees] = await Promise.all([
-    loadPrivateAiChatInbox(user).catch(() => ({ teams: [] })),
-    loadPrivateAiFees(user).catch(() => [])
-  ]);
-  const upcomingEvents = schedule.events
-    .filter((event) => !event.isCancelled && event.date.getTime() >= startOfDay(new Date()).getTime())
-    .sort((a, b) => a.date.getTime() - b.date.getTime());
-  const teamsById = new Map<string, any>();
-
-  schedule.children.forEach((child) => {
-    if (!teamsById.has(child.teamId)) {
-      teamsById.set(child.teamId, {
-        teamId: child.teamId,
-        teamName: child.teamName,
-        sport: null,
-        role: 'Parent',
-        players: [],
-        unreadCount: 0,
-        openActions: 0,
-        nextEvent: null
-      });
-    }
-    teamsById.get(child.teamId).players.push({
-      playerId: child.playerId,
-      playerName: child.playerName,
-      teamId: child.teamId,
-      teamName: child.teamName
-    });
-  });
-
-  messages.teams.forEach((team: any) => {
-    if (!teamsById.has(team.teamId)) {
-      teamsById.set(team.teamId, {
-        teamId: team.teamId,
-        teamName: team.teamName,
-        sport: team.sport || null,
-        role: team.role || 'Team',
-        players: [],
-        unreadCount: 0,
-        openActions: 0,
-        nextEvent: null
-      });
-    }
-    const existing = teamsById.get(team.teamId);
-    existing.unreadCount = Number(team.unreadCount || 0);
-    existing.sport = existing.sport || team.sport || null;
-    existing.role = team.role || existing.role;
-  });
-
-  const teams = [...teamsById.values()].map((team) => {
-    const teamEvents = upcomingEvents.filter((event) => event.teamId === team.teamId);
-    return {
-      ...team,
-      nextEvent: teamEvents[0] || null,
-      openActions: teamEvents.filter((event) => event.myRsvp === 'not_responded').length + Number(team.unreadCount || 0)
-    };
-  });
-
-  const rsvpNeeded = upcomingEvents.filter((event) => event.isDbGame && !event.availabilityLocked && event.myRsvp === 'not_responded').length;
-  const packetsReady = upcomingEvents.filter((event) => event.practiceHomePacketSummary).length;
-  const actionItems = [
-    ...upcomingEvents
-      .filter((event) => event.isDbGame && !event.availabilityLocked && event.myRsvp === 'not_responded')
-      .slice(0, 5)
-      .map((event) => ({
-        kind: 'rsvp',
-        title: `${event.childName} needs availability`,
-        detail: `${event.teamName} ${getScheduleTitle(event)} · ${formatEventDateLabel(event.date)} ${formatEventTimeLabel(event.date)}`,
-        to: `/schedule/${event.teamId}/${event.id}`,
-        priority: 10
-      })),
-    ...messages.teams
-      .filter((team: any) => Number(team.unreadCount || 0) > 0)
-      .slice(0, 5)
-      .map((team: any) => ({
-        kind: 'message',
-        title: `${team.unreadCount} unread message${Number(team.unreadCount) === 1 ? '' : 's'}`,
-        detail: team.teamName,
-        to: `/messages/${team.teamId}`,
-        priority: 60
-      }))
-  ];
-
-  return {
-    metrics: {
-      players: schedule.children.length,
-      teams: teams.length,
-      rsvpNeeded,
-      unreadMessages: messages.teams.reduce((total: number, team: any) => total + Number(team.unreadCount || 0), 0),
-      packetsReady
-    },
-    actionItems,
-    players: schedule.children.map((child) => ({
-      playerId: child.playerId,
-      playerName: child.playerName,
-      teamId: child.teamId,
-      teamName: child.teamName,
-      nextEvent: upcomingEvents.find((event) => event.teamId === child.teamId && event.childId === child.playerId) || null
-    })),
-    teams,
-    upcomingEvents: upcomingEvents.slice(0, 8),
-    fees
-  };
-}
-
-async function loadPrivateAiChatInbox(user: AuthUser) {
-  const teams = await loadAccessibleTeams(user);
-  const teamIds = teams.map((team: any) => team.id).filter(Boolean);
-  const unreadCounts = teamIds.length ? await getUnreadChatCounts(user.uid, teamIds).catch(() => ({})) : {};
-  const inboxTeams = await Promise.all(teams.map(async (team: any) => {
-    const messages = await Promise.resolve(getChatMessages(team.id, { limit: 1 })).catch(() => []);
-    const lastMessage = messages[0] || null;
-    return {
-      id: team.id,
-      teamId: team.id,
-      name: team.name || 'Team',
-      teamName: team.name || 'Team',
-      sport: team.sport || null,
-      role: getAccessibleTeamRole(user, team),
-      unreadCount: Number((unreadCounts as Record<string, number>)[team.id] || 0),
-      lastMessage
-    };
-  }));
-
-  return { teams: inboxTeams };
-}
-
-async function loadPrivateAiFees(user: AuthUser) {
-  const schedule = await loadParentSchedule(user).catch(() => ({ children: [], events: [] }));
-  return Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch(() => []);
-}
-
-async function loadPrivateAiTeamDetail(teamId: string, user: AuthUser) {
-  const [team, players, games] = await Promise.all([
-    Promise.resolve(getTeam(teamId, { includeInactive: true })),
-    Promise.resolve(getPlayers(teamId, { includeInactive: true })).catch(() => []),
-    Promise.resolve(getGames(teamId)).catch(() => [])
-  ]);
-  const now = new Date();
-  const sortedGames = (Array.isArray(games) ? games : [])
-    .map((game: any) => ({ ...game, date: normalizeScheduleDate(game.date || game.dateTime || game.startTime) || new Date(0) }))
-    .sort((a: any, b: any) => a.date.getTime() - b.date.getTime());
-  const linkedPlayerIds = new Set((user.parentOf || [])
-    .filter((link: any) => link?.teamId === teamId)
-    .map((link: any) => String(link.playerId || link.childId || '').trim())
-    .filter(Boolean));
-  const normalizedPlayers = (Array.isArray(players) ? players : []).map((player: any) => ({
-    id: player.id,
-    name: player.name || player.playerName || 'Player',
-    number: player.number || '',
-    position: player.position || '',
-    photoUrl: player.photoUrl || player.imageUrl || null,
-    isLinked: linkedPlayerIds.has(player.id)
-  }));
-
-  return {
-    team: {
-      id: teamId,
-      name: team?.name || 'Team',
-      sport: team?.sport || null,
-      photoUrl: team?.photoUrl || team?.teamPhotoUrl || null,
-      description: team?.description || ''
-    },
-    players: normalizedPlayers,
-    linkedPlayers: normalizedPlayers.filter((player) => player.isLinked),
-    upcomingEvents: sortedGames.filter((game: any) => game.date.getTime() >= startOfDay(now).getTime()).slice(0, 8),
-    recentResults: sortedGames.filter((game: any) => game.date.getTime() < startOfDay(now).getTime()).reverse().slice(0, 6),
-    nextEvent: sortedGames.find((game: any) => game.date.getTime() >= startOfDay(now).getTime()) || null,
-    record: null,
-    standings: { enabled: false },
-    leaderboards: [],
-    trackingSummaries: [],
-    counts: {
-      games: sortedGames.filter((game: any) => String(game.type || 'game').toLowerCase() !== 'practice').length,
-      practices: sortedGames.filter((game: any) => String(game.type || '').toLowerCase() === 'practice').length,
-      completedGames: sortedGames.filter((game: any) => String(game.status || '').toLowerCase() === 'completed').length
-    }
-  };
-}
-
-async function loadAccessibleTeams(user: AuthUser) {
-  const [parentTeams, accessTeams] = await Promise.all([
-    Promise.resolve(getParentTeams(user.uid, { includeInactive: true })).catch(() => []),
-    Promise.resolve(getUserTeamsWithAccess(user.uid, user.email, { includeInactive: true })).catch(() => [])
-  ]);
-  const byId = new Map<string, any>();
-  [...(parentTeams || []), ...(accessTeams || [])].forEach((team: any) => {
-    if (team?.id) byId.set(team.id, team);
-  });
-  return [...byId.values()].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-}
-
-function getAccessibleTeamRole(user: AuthUser, team: any) {
-  const email = String(user.email || '').toLowerCase();
-  if (team.ownerId === user.uid) return 'Admin';
-  if (Array.isArray(team.adminEmails) && team.adminEmails.map((value: unknown) => String(value || '').toLowerCase()).includes(email)) return 'Coach';
-  if ((user.parentOf || []).some((link: any) => link?.teamId === team.id)) return 'Parent';
-  return 'Team';
-}
-
-function getChatInboxPreview(message: any) {
-  if (!message) return 'No messages yet';
-  const sender = message.ai ? 'ALL PLAYS' : message.senderName || message.senderEmail || 'Unknown';
-  const text = String(message.text || '').trim();
-  return `${sender}: ${text || 'Attachment'}`;
 }
 
 async function savePrivateAiMessage(user: AuthUser, input: {
@@ -625,7 +418,7 @@ function summarizeHome(home: any) {
     players: (home.players || []).slice(0, 12).map((player: any) => ({
       playerId: player.playerId,
       childId: player.childId,
-      name: player.name || player.childName || player.playerName,
+      name: player.name || player.childName,
       teamId: player.teamId,
       teamName: player.teamName,
       rsvpNeeded: player.rsvpNeeded,
@@ -639,7 +432,7 @@ function summarizeHome(home: any) {
       teamName: team.teamName,
       sport: team.sport,
       role: team.role,
-      players: (team.players || []).map((player: any) => player.name || player.childName || player.playerName).filter(Boolean),
+      players: (team.players || []).map((player: any) => player.name || player.childName).filter(Boolean),
       unreadCount: team.unreadCount,
       openActions: team.openActions,
       nextEvent: team.nextEvent ? summarizeScheduleEvent(team.nextEvent) : null
@@ -679,7 +472,7 @@ function summarizeSchedule(schedule: any, args: Record<string, unknown>) {
   }
 
   return {
-    children: (schedule.children || []).slice(0, 20).map((child: any) => pickFields(child, ['playerId', 'childId', 'name', 'childName', 'playerName', 'teamId', 'teamName'])),
+    children: (schedule.children || []).slice(0, 20).map((child: any) => pickFields(child, ['playerId', 'childId', 'name', 'childName', 'teamId', 'teamName'])),
     events: events.slice(0, itemLimit).map(summarizeScheduleEvent)
   };
 }
@@ -741,13 +534,14 @@ function summarizeFees(fees: any[]) {
 async function resolveAccessibleTeamId(user: AuthUser, args: Record<string, unknown>) {
   const teamId = compactText(args.teamId);
   const teamName = compactText(args.teamName).toLowerCase();
-  const teams = await loadAccessibleTeams(user);
-  if (teamId && teams.some((team: any) => team.id === teamId)) return teamId;
+  const home = await loadParentHome(user);
+  const teams = home.teams || [];
+  if (teamId && teams.some((team: any) => team.teamId === teamId)) return teamId;
   if (teamId) return null;
   if (teamName) {
-    return teams.find((team: any) => compactText(team.name).toLowerCase().includes(teamName))?.id || null;
+    return teams.find((team: any) => compactText(team.teamName).toLowerCase().includes(teamName))?.teamId || null;
   }
-  return teams[0]?.id || null;
+  return teams[0]?.teamId || null;
 }
 
 function summarizeScheduleEvent(event: ParentScheduleEvent) {

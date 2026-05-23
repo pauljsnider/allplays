@@ -1,0 +1,1207 @@
+import { Capacitor } from '@capacitor/core';
+import {
+  canAccessTeamChat,
+  canModerateChat,
+  deleteChatMessage,
+  deleteUploadedChatAttachments,
+  editChatMessage,
+  getAggregatedStatsForGames,
+  getChatConversations,
+  getChatMessages,
+  getGameEvents,
+  getGames,
+  getParentTeams,
+  getPlayers,
+  getTeam,
+  getUnreadChatCounts,
+  getUserByEmail,
+  getUserProfile,
+  getUserTeamsWithAccess,
+  postChatMessage,
+  subscribeToChatMessages,
+  toggleChatReaction,
+  updateChatLastRead,
+  uploadChatImage,
+  upsertChatConversation
+} from '../../../../js/db.js';
+import { getApp } from '../../../../js/vendor/firebase-app.js';
+import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
+import { resolveImageFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
+import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import {
+  DEFAULT_TEAM_CONVERSATION_ID,
+  MAX_CHAT_MEDIA_SIZE,
+  buildDefaultTeamConversation,
+  buildChatAudienceMetadata,
+  getChatMemberDisplayName,
+  getMessagePreviewText,
+  getRecipientOptionId,
+  hasAllPlaysMention,
+  isDefaultTeamConversation,
+  isStaffConversation,
+  type ChatAudienceMetadata,
+  type ChatRecipientOption,
+  type ChatTargetType
+} from './chatLogic';
+import type { AuthUser } from './types';
+
+const primaryDataTimeoutMs = 5000;
+const chatUploadTimeoutMs = 25000;
+const imageUploadSessionKey = 'allplays-chat-image-upload-session';
+const aiStatsGamesLimit = 10;
+const aiGamesContextLimit = 20;
+const aiEventsGamesLimit = 3;
+const aiEventsPerGameLimit = 25;
+
+export type ChatTeam = {
+  id: string;
+  name: string;
+  sport?: string | null;
+  photoUrl?: string | null;
+  role: 'Parent' | 'Coach' | 'Admin';
+  canModerate: boolean;
+  unreadCount: number;
+  lastMessage: ChatMessage | null;
+};
+
+export type ChatConversation = {
+  id: string;
+  type: 'team' | 'group' | 'direct';
+  name?: string | null;
+  participantIds?: string[];
+  participantRoles?: string[];
+  mutedBy?: string[];
+  isDefault?: boolean;
+  isLegacy?: boolean;
+};
+
+export type ChatAttachment = {
+  type: 'image' | 'video';
+  url: string | null;
+  path?: string | null;
+  thumbnailUrl?: string | null;
+  name?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+  uploadedAt?: unknown;
+};
+
+export type ChatMessage = {
+  id: string;
+  text?: string | null;
+  senderId?: string | null;
+  senderName?: string | null;
+  senderEmail?: string | null;
+  senderPhotoUrl?: string | null;
+  attachments?: ChatAttachment[];
+  imageUrl?: string | null;
+  imagePath?: string | null;
+  imageName?: string | null;
+  imageType?: string | null;
+  imageSize?: number | null;
+  createdAt?: unknown;
+  editedAt?: unknown;
+  deleted?: boolean;
+  ai?: boolean;
+  aiName?: string | null;
+  aiQuestion?: string | null;
+  aiMeta?: Record<string, unknown> | null;
+  reactions?: Record<string, string[]>;
+  targetType?: ChatTargetType;
+  recipientIds?: string[];
+  targetRole?: string | null;
+  conversationId?: string | null;
+  _doc?: unknown;
+};
+
+export type ChatInboxLoadResult = {
+  teams: ChatTeam[];
+};
+
+export type ChatSubscribeResult = {
+  unsubscribe: () => void;
+};
+
+type FirestoreDocument = Record<string, any> & { id: string };
+
+type ImageUploadSession = {
+  apiKey: string;
+  idToken: string;
+  refreshToken: string;
+  expirationTime: number;
+};
+
+let aiModelCache: any = null;
+
+function isNativeRuntime() {
+  return Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
+}
+
+function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<T>((_, reject) => {
+    timeoutId = window.setTimeout(() => reject(new Error(`${label} timed out.`)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  });
+}
+
+function compactString(value: unknown) {
+  return String(value || '').trim();
+}
+
+function getProjectId() {
+  const projectId = firebaseAuth.app?.options?.projectId;
+  if (!projectId) {
+    throw new Error('Firebase project ID is missing.');
+  }
+  return projectId;
+}
+
+function getFirestoreBaseUrl() {
+  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(getProjectId())}/databases/(default)/documents`;
+}
+
+async function getNativeHeaders() {
+  const token = await getNativeAuthIdToken(true);
+  if (!token) {
+    throw new Error('Native auth token is unavailable.');
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  };
+}
+
+async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
+  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
+    ...init,
+    headers: {
+      ...(await getNativeHeaders()),
+      ...(init.headers || {})
+    }
+  }), 'Firestore REST request');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+function encodeFirestoreValue(value: any): Record<string, unknown> {
+  if (value === null || value === undefined) return { nullValue: 'NULL_VALUE' };
+  if (typeof value === 'string') return { stringValue: value };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number') return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map((entry) => encodeFirestoreValue(entry)) } };
+  if (typeof value === 'object') {
+    return {
+      mapValue: {
+        fields: Object.keys(value).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+          acc[key] = encodeFirestoreValue(value[key]);
+          return acc;
+        }, {})
+      }
+    };
+  }
+  return { stringValue: String(value) };
+}
+
+function decodeFirestoreValue(value: any): any {
+  if (!value || typeof value !== 'object') return null;
+  if ('stringValue' in value) return value.stringValue;
+  if ('booleanValue' in value) return value.booleanValue;
+  if ('integerValue' in value) return Number(value.integerValue || 0);
+  if ('doubleValue' in value) return Number(value.doubleValue || 0);
+  if ('timestampValue' in value) return new Date(value.timestampValue);
+  if ('nullValue' in value) return null;
+  if ('arrayValue' in value) return (value.arrayValue?.values || []).map((entry: any) => decodeFirestoreValue(entry));
+  if ('mapValue' in value) return decodeFirestoreFields(value.mapValue?.fields || {});
+  return null;
+}
+
+function decodeFirestoreFields(fields: Record<string, any> = {}) {
+  return Object.keys(fields).reduce<Record<string, any>>((acc, key) => {
+    acc[key] = decodeFirestoreValue(fields[key]);
+    return acc;
+  }, {});
+}
+
+function decodeFirestoreDocument(document: any): FirestoreDocument | null {
+  if (!document?.name) return null;
+  return {
+    id: String(document.name).split('/').pop() || '',
+    ...decodeFirestoreFields(document.fields || {})
+  };
+}
+
+async function nativeGetDocument(path: string) {
+  try {
+    return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`));
+  } catch (error: any) {
+    const message = String(error?.message || '').toLowerCase();
+    if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function nativeListCollection(path: string, params: Record<string, string | number> = {}) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => query.set(key, String(value)));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const payload = await nativeFirestoreRequest(`/${path}${suffix}`);
+  return (payload.documents || [])
+    .map((document: any) => decodeFirestoreDocument(document))
+    .filter(Boolean) as FirestoreDocument[];
+}
+
+async function nativePatchDocument(path: string, data: Record<string, unknown>) {
+  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(data[key]);
+    return acc;
+  }, {});
+  const params = new URLSearchParams();
+  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', key));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  await nativeFirestoreRequest(`/${path}${suffix}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ fields })
+  });
+}
+
+async function nativeCreateDocument(path: string, data: Record<string, unknown>) {
+  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(data[key]);
+    return acc;
+  }, {});
+  return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
+    method: 'POST',
+    body: JSON.stringify({ fields })
+  }));
+}
+
+async function nativeRunQuery(structuredQuery: Record<string, unknown>) {
+  const payload = await nativeFirestoreRequest(':runQuery', {
+    method: 'POST',
+    body: JSON.stringify({ structuredQuery })
+  });
+  return (Array.isArray(payload) ? payload : [])
+    .map((entry) => decodeFirestoreDocument(entry.document))
+    .filter(Boolean) as FirestoreDocument[];
+}
+
+async function nativeQueryTeamsByField(fieldPath: string, op: string, value: string) {
+  if (!value) return [];
+  return nativeRunQuery({
+    from: [{ collectionId: 'teams' }],
+    where: {
+      fieldFilter: {
+        field: { fieldPath },
+        op,
+        value: encodeFirestoreValue(value)
+      }
+    }
+  });
+}
+
+async function nativeGetUserByEmail(email: string) {
+  const [user] = await nativeRunQuery({
+    from: [{ collectionId: 'users' }],
+    where: {
+      fieldFilter: {
+        field: { fieldPath: 'email' },
+        op: 'EQUAL',
+        value: encodeFirestoreValue(email)
+      }
+    },
+    limit: 1
+  }).catch(() => []);
+  return user || null;
+}
+
+function getMessageCollectionPath(teamId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
+  if (isDefaultTeamConversation(conversationId)) {
+    return `teams/${encodeURIComponent(teamId)}/chatMessages`;
+  }
+  return `teams/${encodeURIComponent(teamId)}/chatConversations/${encodeURIComponent(conversationId)}/chatMessages`;
+}
+
+function getMessageDocumentPath(teamId: string, messageId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
+  return `${getMessageCollectionPath(teamId, conversationId)}/${encodeURIComponent(messageId)}`;
+}
+
+function mapUserWithProfile(user: AuthUser, profile: Record<string, any>) {
+  return {
+    ...user,
+    parentOf: Array.isArray(profile.parentOf) ? profile.parentOf : Array.isArray(user.parentOf) ? user.parentOf : [],
+    isAdmin: profile.isAdmin === true || user.isAdmin === true || user.roles?.includes('platformAdmin')
+  };
+}
+
+function getTeamRole(user: AuthUser, team: Record<string, any>, profile: Record<string, any>): ChatTeam['role'] {
+  if (canModerateChat(mapUserWithProfile(user, profile), team)) {
+    return team.ownerId === user.uid || user.isAdmin ? 'Admin' : 'Coach';
+  }
+  return 'Parent';
+}
+
+async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>) {
+  const ownedTeams = await nativeQueryTeamsByField('ownerId', 'EQUAL', user.uid);
+  const adminTeams = user.email ? await nativeQueryTeamsByField('adminEmails', 'ARRAY_CONTAINS', user.email.toLowerCase()) : [];
+  const parentTeamIds = [
+    ...(Array.isArray(profile.parentOf) ? profile.parentOf.map((entry: any) => entry?.teamId) : []),
+    ...(Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : [])
+  ].map(compactString).filter(Boolean);
+  const parentTeams = await Promise.all([...new Set(parentTeamIds)].map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)));
+  const map = new Map<string, FirestoreDocument>();
+  [...ownedTeams, ...adminTeams, ...parentTeams].forEach((team) => {
+    if (team?.id) map.set(team.id, team);
+  });
+  return [...map.values()].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+}
+
+async function getLatestMessagePreview(teamId: string): Promise<ChatMessage | null> {
+  try {
+    const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1 })), `latest chat ${teamId}`, 2500);
+    return message || null;
+  } catch (error) {
+    if (!isNativeRuntime()) return null;
+    const [message] = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/chatMessages`, {
+      orderBy: 'createdAt desc',
+      pageSize: 1
+    }).catch(() => []);
+    return message as ChatMessage || null;
+  }
+}
+
+export async function loadChatInbox(user: AuthUser | null): Promise<ChatInboxLoadResult> {
+  if (!user?.uid) return { teams: [] };
+
+  const profile = await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load').catch(async (error) => {
+    if (!isNativeRuntime()) throw error;
+    return nativeGetDocument(`users/${encodeURIComponent(user.uid)}`);
+  }) as Record<string, any> || {};
+
+  let teams: Record<string, any>[] = [];
+  try {
+    const [memberTeams, parentTeams] = await withTimeout(Promise.all([
+      getUserTeamsWithAccess(user.uid, user.email || profile.email || ''),
+      getParentTeams(user.uid)
+    ]), 'Chat teams load');
+    const map = new Map<string, Record<string, any>>();
+    [...memberTeams, ...parentTeams].forEach((team: any) => {
+      if (team?.id) map.set(team.id, team);
+    });
+    teams = [...map.values()];
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[chat-service] Falling back to REST team load:', error);
+    teams = await nativeLoadUserTeams(user, profile);
+  }
+
+  const userWithProfile = mapUserWithProfile(user, profile);
+  const accessibleTeams = teams.filter((team) => canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
+  const unreadCounts = await withTimeout(
+    Promise.resolve(getUnreadChatCounts(user.uid, accessibleTeams.map((team) => team.id))),
+    'Chat unread counts',
+    3000
+  ).catch(() => ({} as Record<string, number>));
+
+  const previews = await Promise.all(accessibleTeams.map(async (team) => ({
+    team,
+    lastMessage: await getLatestMessagePreview(team.id)
+  })));
+
+  return {
+    teams: previews.map(({ team, lastMessage }) => ({
+      id: team.id,
+      name: team.name || 'Team',
+      sport: team.sport || null,
+      photoUrl: team.photoUrl || null,
+      role: getTeamRole(user, team, profile),
+      canModerate: canModerateChat(userWithProfile, { ...team, id: team.id }),
+      unreadCount: Number(unreadCounts[team.id] || 0),
+      lastMessage
+    })).sort((a, b) => {
+      const unreadDiff = Number(b.unreadCount > 0) - Number(a.unreadCount > 0);
+      if (unreadDiff) return unreadDiff;
+      return a.name.localeCompare(b.name);
+    })
+  };
+}
+
+export async function loadChatTeamContext(teamId: string, user: AuthUser | null) {
+  if (!user?.uid || !teamId) {
+    throw new Error('Team chat requires a signed-in user and team.');
+  }
+
+  const [team, profile] = await Promise.all([
+    withTimeout(Promise.resolve(getTeam(teamId)), 'Chat team load').catch(async (error) => {
+      if (!isNativeRuntime()) throw error;
+      return nativeGetDocument(`teams/${encodeURIComponent(teamId)}`);
+    }),
+    withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load').catch(async (error) => {
+      if (!isNativeRuntime()) throw error;
+      return nativeGetDocument(`users/${encodeURIComponent(user.uid)}`);
+    })
+  ]);
+
+  if (!team) throw new Error('Team not found.');
+  const currentTeam = { ...team, id: teamId };
+  const profileData = profile || {};
+  const userWithProfile = mapUserWithProfile(user, profileData as Record<string, any>);
+  if (!canAccessTeamChat(userWithProfile, currentTeam)) {
+    throw new Error('You do not have access to this team chat.');
+  }
+
+  return {
+    team: currentTeam,
+    profile: profileData as Record<string, any>,
+    canModerate: canModerateChat(userWithProfile, currentTeam)
+  };
+}
+
+export async function loadChatConversations(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<ChatConversation[]> {
+  try {
+    return await withTimeout(Promise.resolve(getChatConversations(teamId, user, { team, canModerate })), 'Chat conversations load') as ChatConversation[];
+  } catch (error) {
+    console.warn('[chat-service] Falling back to default chat conversation:', error);
+    return [buildDefaultTeamConversation(team) as ChatConversation];
+  }
+}
+
+export async function ensureStaffChatConversation(teamId: string, user: AuthUser, conversations: ChatConversation[] = []): Promise<ChatConversation> {
+  const existing = conversations.find((conversation) => isStaffConversation(conversation));
+  if (existing) return existing;
+
+  return await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
+    type: 'group',
+    participantIds: [user.uid],
+    participantRoles: ['staff'],
+    mutedBy: [],
+    name: 'Staff only'
+  })), 'Staff chat conversation create') as ChatConversation;
+}
+
+export function subscribeToTeamChatMessages(
+  teamId: string,
+  conversationId: string,
+  onMessages: (messages: ChatMessage[], oldestDoc: unknown | null) => void,
+  onError?: (error: Error) => void
+): ChatSubscribeResult {
+  let cancelled = false;
+  let unsubscribe: (() => void) | null = null;
+  let pollTimer: number | undefined;
+
+  const startPollingFallback = async () => {
+    const load = async () => {
+      if (cancelled) return;
+      try {
+        const messages = await nativeListCollection(getMessageCollectionPath(teamId, conversationId), {
+          orderBy: 'createdAt desc',
+          pageSize: 50
+        });
+        onMessages(messages as ChatMessage[], messages[messages.length - 1]?._doc || null);
+      } catch (error: any) {
+        onError?.(error);
+      }
+    };
+    await load();
+    if (!cancelled) {
+      pollTimer = window.setInterval(load, 8000);
+    }
+  };
+
+  try {
+    unsubscribe = subscribeToChatMessages(teamId, { limit: 50, conversationId }, (messages: ChatMessage[], oldestDoc: unknown | null) => {
+      if (!cancelled) onMessages(messages, oldestDoc);
+    });
+  } catch (error: any) {
+    if (!isNativeRuntime()) {
+      onError?.(error);
+    } else {
+      void startPollingFallback();
+    }
+  }
+
+  return {
+    unsubscribe: () => {
+      cancelled = true;
+      if (pollTimer) window.clearInterval(pollTimer);
+      unsubscribe?.();
+    }
+  };
+}
+
+export async function loadOlderTeamChatMessages(teamId: string, conversationId: string, startAfterDoc: unknown | null) {
+  if (!startAfterDoc) return [];
+  try {
+    return await withTimeout(Promise.resolve(getChatMessages(teamId, {
+      limit: 50,
+      startAfterDoc,
+      conversationId
+    })), 'Older chat messages load') as ChatMessage[];
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[chat-service] Older chat history is limited in native REST fallback:', error);
+    return [];
+  }
+}
+
+function readImageUploadSession(): ImageUploadSession | null {
+  try {
+    const raw = window.localStorage?.getItem(imageUploadSessionKey);
+    return raw ? JSON.parse(raw) as ImageUploadSession : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeImageUploadSession(session: ImageUploadSession) {
+  try {
+    window.localStorage?.setItem(imageUploadSessionKey, JSON.stringify(session));
+  } catch (error) {
+    console.warn('[chat-service] Unable to persist chat image upload session:', error);
+  }
+}
+
+async function refreshImageUploadSession(session: ImageUploadSession): Promise<ImageUploadSession> {
+  const response = await withTimeout(fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(session.apiKey)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: session.refreshToken
+    })
+  }), 'Chat media upload auth refresh');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || 'Chat media upload auth refresh failed.');
+  }
+  const nextSession = {
+    apiKey: session.apiKey,
+    idToken: payload.id_token || session.idToken,
+    refreshToken: payload.refresh_token || session.refreshToken,
+    expirationTime: Date.now() + Math.max(Number.parseInt(payload.expires_in || '3600', 10) - 30, 60) * 1000
+  };
+  writeImageUploadSession(nextSession);
+  return nextSession;
+}
+
+async function createImageUploadSession(apiKey: string): Promise<ImageUploadSession> {
+  const response = await withTimeout(fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(apiKey)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ returnSecureToken: true })
+  }), 'Chat media upload auth');
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || 'Chat media upload auth failed.');
+  }
+  const session = {
+    apiKey,
+    idToken: payload.idToken,
+    refreshToken: payload.refreshToken,
+    expirationTime: Date.now() + Math.max(Number.parseInt(payload.expiresIn || '3600', 10) - 30, 60) * 1000
+  };
+  if (!session.idToken || !session.refreshToken) {
+    throw new Error('Chat media upload auth did not return a usable token.');
+  }
+  writeImageUploadSession(session);
+  return session;
+}
+
+async function getImageUploadSession(apiKey: string) {
+  const existing = readImageUploadSession();
+  if (existing?.apiKey === apiKey && existing.expirationTime > Date.now() + 60000) {
+    return existing;
+  }
+  if (existing?.apiKey === apiKey && existing.refreshToken) {
+    try {
+      return await refreshImageUploadSession(existing);
+    } catch (error) {
+      console.warn('[chat-service] Refreshing chat media upload auth failed:', error);
+    }
+  }
+  return createImageUploadSession(apiKey);
+}
+
+async function nativeUploadChatMedia(teamId: string, file: File): Promise<ChatAttachment> {
+  const imageConfig = resolveImageFirebaseConfig();
+  const bucket = imageConfig.storageBucket;
+  if (!imageConfig.apiKey || !bucket) {
+    throw new Error('Image upload Firebase config is missing.');
+  }
+  const session = await getImageUploadSession(imageConfig.apiKey);
+  const safeName = String(file.name || 'media').replace(/[^\w.-]+/g, '_');
+  const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
+  const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
+  const path = `${mediaFolder}/${Date.now()}_chat_${teamId}_${safeName}`;
+  const response = await withTimeout(fetch(`https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session.idToken}`,
+      'Content-Type': file.type || 'application/octet-stream'
+    },
+    body: file
+  }), 'Chat media upload', chatUploadTimeoutMs);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `Chat media upload failed (${response.status}).`);
+  }
+  const token = payload.downloadTokens || payload.metadata?.firebaseStorageDownloadTokens;
+  const url = token
+    ? `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media&token=${encodeURIComponent(String(token).split(',')[0])}`
+    : `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o/${encodeURIComponent(payload.name || path)}?alt=media`;
+
+  return {
+    type: isVideo ? 'video' : 'image',
+    url,
+    path,
+    name: file.name || null,
+    mimeType: file.type || null,
+    size: Number.isFinite(file.size) ? file.size : null,
+    thumbnailUrl: null
+  };
+}
+
+export async function uploadTeamChatAttachment(teamId: string, file: File): Promise<ChatAttachment> {
+  if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+    throw new Error('Choose image or video files only.');
+  }
+  if (file.size > MAX_CHAT_MEDIA_SIZE) {
+    throw new Error('Photos and videos must be 5MB or smaller each.');
+  }
+  if (isNativeRuntime()) {
+    return nativeUploadChatMedia(teamId, file);
+  }
+  try {
+    return await withTimeout(Promise.resolve(uploadChatImage(teamId, file)), 'Chat media upload', chatUploadTimeoutMs) as ChatAttachment;
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function nativePostChatMessage(teamId: string, input: {
+  text: string;
+  senderId: string;
+  senderName?: string | null;
+  senderEmail?: string | null;
+  senderPhotoUrl?: string | null;
+  attachments?: ChatAttachment[];
+  ai?: boolean;
+  aiName?: string | null;
+  aiQuestion?: string | null;
+  aiMeta?: Record<string, unknown> | null;
+  conversationId?: string;
+} & ChatAudienceMetadata) {
+  const createdAt = new Date();
+  const attachments = input.attachments || [];
+  const firstImage = attachments.find((attachment) => attachment.type === 'image') || null;
+  return nativeCreateDocument(getMessageCollectionPath(teamId, input.conversationId), {
+    text: input.text || '',
+    senderId: input.senderId,
+    senderName: input.senderName || null,
+    senderEmail: input.senderEmail || null,
+    senderPhotoUrl: input.senderPhotoUrl || null,
+    attachments: attachments.map((attachment) => ({ ...attachment, uploadedAt: createdAt })),
+    imageUrl: firstImage?.url || null,
+    imagePath: firstImage?.path || null,
+    imageName: firstImage?.name || null,
+    imageType: firstImage?.mimeType || null,
+    imageSize: firstImage?.size ?? null,
+    createdAt,
+    editedAt: null,
+    deleted: false,
+    ai: input.ai === true,
+    aiName: input.aiName || null,
+    aiQuestion: input.aiQuestion || null,
+    aiMeta: input.aiMeta || null,
+    targetType: input.targetType,
+    recipientIds: input.targetType === 'individuals' ? input.recipientIds : [],
+    targetRole: input.targetType === 'staff' ? (input.targetRole || 'staff') : null,
+    conversationId: isDefaultTeamConversation(input.conversationId) ? null : input.conversationId
+  });
+}
+
+export async function sendTeamChatMessage({
+  teamId,
+  user,
+  profile,
+  text,
+  files = [],
+  selectedConversation,
+  selectedConversationId,
+  selectedRecipientTarget,
+  selectedRecipientIds,
+  onProgress
+}: {
+  teamId: string;
+  user: AuthUser;
+  profile: Record<string, any>;
+  text: string;
+  files?: File[];
+  selectedConversation?: ChatConversation | null;
+  selectedConversationId: string;
+  selectedRecipientTarget: ChatTargetType;
+  selectedRecipientIds: string[];
+  onProgress?: (stage: 'uploading' | 'posting') => void;
+}) {
+  const attachments: ChatAttachment[] = [];
+  try {
+    for (const file of files) {
+      onProgress?.('uploading');
+      attachments.push(await uploadTeamChatAttachment(teamId, file));
+    }
+    onProgress?.('posting');
+
+    const targetMetadata = buildChatAudienceMetadata({
+      selectedConversation,
+      selectedConversationId,
+      selectedRecipientTarget,
+      selectedRecipientIds
+    });
+
+    let conversationId = selectedConversationId || DEFAULT_TEAM_CONVERSATION_ID;
+    let createdConversation: ChatConversation | null = null;
+    if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
+      const participantIds = targetMetadata.targetType === 'staff'
+        ? [user.uid]
+        : Array.from(new Set([user.uid, ...targetMetadata.recipientIds]));
+      const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
+      createdConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
+        type: participantIds.length === 2 ? 'direct' : 'group',
+        participantIds,
+        participantRoles,
+        mutedBy: [],
+        name: targetMetadata.targetType === 'staff' ? 'Staff only' : null
+      })), 'Chat conversation create') as ChatConversation;
+      conversationId = createdConversation.id;
+    }
+
+    const payload = {
+      text,
+      senderId: user.uid,
+      senderName: profile.fullName || user.displayName || null,
+      senderEmail: user.email,
+      senderPhotoUrl: profile.photoUrl || user.photoUrl || null,
+      attachments,
+      conversationId,
+      ...targetMetadata
+    };
+
+    if (isNativeRuntime()) {
+      await nativePostChatMessage(teamId, payload);
+    } else {
+      await withTimeout(Promise.resolve(postChatMessage(teamId, payload)), 'Chat message send');
+    }
+
+    return {
+      conversationId,
+      createdConversation,
+      wantsAi: hasAllPlaysMention(text)
+    };
+  } catch (error) {
+    if (attachments.length > 0) {
+      try {
+        await deleteUploadedChatAttachments(attachments);
+      } catch (cleanupError) {
+        console.error('Failed to clean up uploaded chat attachments:', cleanupError);
+      }
+    }
+    throw error;
+  }
+}
+
+export async function editTeamChatMessage(teamId: string, messageId: string, text: string, conversationId: string) {
+  try {
+    return await withTimeout(Promise.resolve(editChatMessage(teamId, messageId, text, { conversationId })), 'Chat message edit');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[chat-service] Falling back to REST chat message edit:', error);
+    return nativePatchDocument(getMessageDocumentPath(teamId, messageId, conversationId), {
+      text,
+      editedAt: new Date()
+    });
+  }
+}
+
+export async function deleteTeamChatMessage(teamId: string, messageId: string, conversationId: string) {
+  try {
+    return await withTimeout(Promise.resolve(deleteChatMessage(teamId, messageId, { conversationId })), 'Chat message delete');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[chat-service] Falling back to REST chat message delete:', error);
+    return nativePatchDocument(getMessageDocumentPath(teamId, messageId, conversationId), {
+      deleted: true
+    });
+  }
+}
+
+export async function toggleTeamChatReaction(teamId: string, messageId: string, reactionKey: string, userId: string, conversationId: string) {
+  try {
+    return await withTimeout(Promise.resolve(toggleChatReaction(teamId, messageId, reactionKey, userId, { conversationId })), 'Chat reaction update');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[chat-service] Falling back to REST chat reaction update:', error);
+    const path = getMessageDocumentPath(teamId, messageId, conversationId);
+    const message = await nativeGetDocument(path);
+    if (!message) throw new Error('Message not found.');
+    const reactions = message.reactions && typeof message.reactions === 'object' ? message.reactions : {};
+    const existing = Array.isArray(reactions[reactionKey]) ? reactions[reactionKey].map(String) : [];
+    const next = existing.includes(userId)
+      ? existing.filter((id: string) => id !== userId)
+      : [...existing, userId];
+    await nativePatchDocument(path, {
+      reactions: {
+        ...reactions,
+        [reactionKey]: next
+      }
+    });
+    return !existing.includes(userId);
+  }
+}
+
+export async function markTeamChatRead(userId: string, teamId: string) {
+  try {
+    return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId)), 'Chat last read update', 2500);
+  } catch (error) {
+    if (!isNativeRuntime()) {
+      console.warn('[chat-service] Failed to update chat last-read:', error);
+      return null;
+    }
+    console.warn('[chat-service] Falling back to REST chat last-read update:', error);
+    const userPath = `users/${encodeURIComponent(userId)}`;
+    const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
+    await nativePatchDocument(userPath, {
+      chatLastRead: {
+        ...(profile.chatLastRead || {}),
+        [teamId]: new Date()
+      }
+    });
+    return null;
+  }
+}
+
+export async function loadChatRecipientOptions(teamId: string): Promise<ChatRecipientOption[]> {
+  const players = await withTimeout(Promise.resolve(getPlayers(teamId)), 'Chat recipient load').catch(() => []);
+  const parentProfiles = await loadChatRecipientProfiles(players);
+  const options: ChatRecipientOption[] = [];
+  (Array.isArray(players) ? players : []).forEach((player: any) => {
+    if (!player?.id) return;
+    const number = player.number !== undefined && player.number !== null && String(player.number).trim() !== ''
+      ? `#${player.number}`
+      : 'Roster';
+    options.push({
+      id: getRecipientOptionId('player', player.id),
+      name: player.name || `Player ${String(player.id).slice(0, 6)}`,
+      detail: number
+    });
+    (Array.isArray(player.parents) ? player.parents : []).forEach((parent: any) => {
+      const parentKey = parent?.userId || compactString(parent?.email).toLowerCase();
+      if (!parentKey) return;
+      const parentId = getRecipientOptionId(parent.userId ? 'user' : 'email', parentKey);
+      const profile = parentProfiles.get(parentId) || {};
+      options.push({
+        id: parentId,
+        name: getChatMemberDisplayName({
+          name: parent.name,
+          fullName: parent.fullName,
+          displayName: parent.displayName,
+          profileName: profile.name,
+          profileFullName: profile.fullName,
+          profileDisplayName: profile.displayName,
+          email: parent.email || profile.email
+        }, 'Guardian'),
+        detail: player.name ? `Guardian for ${player.name}` : 'Guardian'
+      });
+    });
+  });
+
+  const byId = new Map<string, ChatRecipientOption>();
+  options.forEach((option) => byId.set(option.id, option));
+  return [...byId.values()].sort((a, b) => `${a.name} ${a.detail || ''}`.localeCompare(`${b.name} ${b.detail || ''}`));
+}
+
+async function loadChatRecipientProfiles(players: any): Promise<Map<string, Record<string, any>>> {
+  const parents = (Array.isArray(players) ? players : [])
+    .flatMap((player: any) => (Array.isArray(player?.parents) ? player.parents : []));
+  const uniqueParents = new Map<string, any>();
+  parents.forEach((parent: any) => {
+    const key = parent?.userId
+      ? getRecipientOptionId('user', parent.userId)
+      : parent?.email
+        ? getRecipientOptionId('email', String(parent.email).trim().toLowerCase())
+        : '';
+    if (key && !uniqueParents.has(key)) {
+      uniqueParents.set(key, parent);
+    }
+  });
+
+  const entries = await Promise.all([...uniqueParents.entries()].map(async ([recipientId, parent]) => {
+    const userId = compactString(parent?.userId);
+    const email = compactString(parent?.email).toLowerCase();
+    try {
+      if (userId) {
+        const profile = await withTimeout(Promise.resolve(getUserProfile(userId)), 'Chat recipient profile load', 2500)
+          .catch(async (error) => {
+            if (!isNativeRuntime()) throw error;
+            return nativeGetDocument(`users/${encodeURIComponent(userId)}`);
+          });
+        return [recipientId, profile || {}] as const;
+      }
+      if (email) {
+        const profile = await withTimeout(Promise.resolve(getUserByEmail(email)), 'Chat recipient profile load', 2500)
+          .catch(async (error) => {
+            if (!isNativeRuntime()) throw error;
+            return nativeGetUserByEmail(email);
+          });
+        return [recipientId, profile || {}] as const;
+      }
+    } catch (error) {
+      console.warn('[chat-service] Failed to hydrate chat recipient profile:', error);
+    }
+    return [recipientId, {}] as const;
+  }));
+
+  return new Map(entries);
+}
+
+function toDate(value: any) {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  if (value?.toDate) return value.toDate();
+  if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000);
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function truncateText(text: unknown, maxLen: number) {
+  const clean = String(text || '').trim();
+  if (clean.length <= maxLen) return clean || null;
+  return `${clean.slice(0, maxLen).trim()}...`;
+}
+
+function isCompletedGame(game: any) {
+  const status = String(game?.status || '').toLowerCase();
+  if (status === 'final' || status === 'completed') return true;
+  const homeScore = Number(game?.homeScore || 0);
+  const awayScore = Number(game?.awayScore || 0);
+  return homeScore > 0 || awayScore > 0;
+}
+
+function shouldFetchStats(question: string) {
+  return /(stats|scorer|score|points|rebounds|assists|goals|saves|leader|leading|top|better|improv|improve|development|progress|player\s*#?\s*\d+)/i.test(question);
+}
+
+function shouldFetchEvents(question: string) {
+  return /(play\s*by\s*play|play-by-play|timeline|game\s*log|event\s*log|events|possessions|highlights|what happened|sequence)/i.test(question);
+}
+
+function serializeGame(game: any) {
+  const date = toDate(game?.date);
+  return {
+    id: game?.id || null,
+    date: date ? date.toISOString() : null,
+    opponent: game?.opponent || null,
+    location: game?.location || null,
+    status: game?.status || null,
+    homeScore: game?.homeScore ?? null,
+    awayScore: game?.awayScore ?? null,
+    summary: truncateText(game?.summary, 700)
+  };
+}
+
+function findMatchedPlayer(question: string, players: any[]) {
+  const match = question.match(/player\s*#?\s*(\d{1,3})/i);
+  if (!match) return null;
+  const target = String(Number(match[1]));
+  return players.find((player) => String(player.number ?? '') === target) || null;
+}
+
+async function buildAiContext(teamId: string, team: Record<string, any>, question: string, { fetchStats, fetchEvents }: { fetchStats: boolean; fetchEvents: boolean }) {
+  const [players, games] = await Promise.all([
+    getPlayers(teamId, { includeInactive: true }),
+    getGames(teamId)
+  ]);
+  const playersById = new Map((players || []).map((player: any) => [player.id, player]));
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  const gamesWithDates = (games || [])
+    .map((game: any) => ({ ...game, _date: toDate(game.date) }))
+    .filter((game: any) => game._date);
+
+  const upcomingGames = gamesWithDates
+    .filter((game: any) => game._date >= cutoff)
+    .sort((a: any, b: any) => a._date.getTime() - b._date.getTime())
+    .slice(0, 10)
+    .map(serializeGame);
+
+  const recentGames = gamesWithDates
+    .filter((game: any) => game._date < cutoff)
+    .sort((a: any, b: any) => b._date.getTime() - a._date.getTime())
+    .slice(0, aiGamesContextLimit)
+    .map(serializeGame);
+
+  let statsSummary = null;
+  if (fetchStats) {
+    const completedGames = gamesWithDates
+      .filter(isCompletedGame)
+      .sort((a: any, b: any) => b._date.getTime() - a._date.getTime())
+      .slice(0, aiStatsGamesLimit);
+    const totals = await getAggregatedStatsForGames(teamId, completedGames.map((game: any) => game.id));
+    statsSummary = {
+      gamesUsed: completedGames.map(serializeGame),
+      totalsByPlayer: Object.entries(totals || {}).map(([playerId, stats]) => ({
+        id: playerId,
+        name: (playersById.get(playerId) as any)?.name || 'Unknown',
+        number: (playersById.get(playerId) as any)?.number || null,
+        stats
+      }))
+    };
+  }
+
+  let eventsSummary = null;
+  if (fetchEvents) {
+    const recentCompleted = gamesWithDates
+      .filter(isCompletedGame)
+      .sort((a: any, b: any) => b._date.getTime() - a._date.getTime())
+      .slice(0, aiEventsGamesLimit);
+    const eventsByGame = await Promise.all(recentCompleted.map(async (game: any) => {
+      const events = await getGameEvents(teamId, game.id, { limit: aiEventsPerGameLimit });
+      return {
+        game: serializeGame(game),
+        events: (events || []).slice().reverse().map((event: any) => {
+          const player = event.playerId ? playersById.get(event.playerId) as any : null;
+          return {
+            id: event.id,
+            timestamp: event.timestamp ?? null,
+            period: event.period ?? null,
+            gameTime: event.gameTime ?? null,
+            text: event.text || null,
+            type: event.type || null,
+            playerId: event.playerId || null,
+            playerName: player?.name || null,
+            playerNumber: player?.number ?? null,
+            statKey: event.statKey || null,
+            value: event.value ?? null,
+            isOpponent: event.isOpponent === true
+          };
+        })
+      };
+    }));
+    eventsSummary = {
+      gamesUsed: recentCompleted.map(serializeGame),
+      eventsByGame
+    };
+  }
+
+  const matchedPlayer = findMatchedPlayer(question, players || []);
+  return {
+    team: {
+      id: teamId,
+      name: team?.name || null,
+      sport: team?.sport || null
+    },
+    players: (players || []).map((player: any) => ({
+      id: player.id,
+      name: player.name || null,
+      number: player.number || null
+    })),
+    matchedPlayer: matchedPlayer ? {
+      id: matchedPlayer.id,
+      name: matchedPlayer.name || null,
+      number: matchedPlayer.number ?? null
+    } : null,
+    gamesUpcoming: upcomingGames,
+    gamesRecent: recentGames,
+    stats: statsSummary,
+    playByPlay: eventsSummary
+  };
+}
+
+async function getAiModel() {
+  if (aiModelCache) return aiModelCache;
+  const firebaseApp = getApp();
+  const ai = getAI(firebaseApp, { backend: new GoogleAIBackend() });
+  aiModelCache = getGenerativeModel(ai, { model: 'gemini-2.5-flash' });
+  return aiModelCache;
+}
+
+export async function sendAllPlaysChatAnswer({
+  teamId,
+  team,
+  user,
+  question,
+  selectedConversation,
+  selectedConversationId,
+  selectedRecipientTarget,
+  selectedRecipientIds
+}: {
+  teamId: string;
+  team: Record<string, any>;
+  user: AuthUser;
+  question: string;
+  selectedConversation?: ChatConversation | null;
+  selectedConversationId: string;
+  selectedRecipientTarget: ChatTargetType;
+  selectedRecipientIds: string[];
+}) {
+  const fetchStats = shouldFetchStats(question);
+  const fetchEvents = shouldFetchEvents(question);
+  const context = await buildAiContext(teamId, team, question, { fetchStats, fetchEvents });
+  const prompt = `You are ALL PLAYS, a sports management expert for youth teams.\n` +
+    `You are speaking to coaches, admins, and parents.\n` +
+    `Use ONLY the provided DATA to answer. If the data is insufficient, say so.\n` +
+    `Respond in a clear, readable format with short paragraphs or bullet points.\n` +
+    `Limit to at most 6 bullets total. Use *bold* only for short labels.\n\n` +
+    `QUESTION:\n${question}\n\nDATA (JSON):\n${JSON.stringify(context)}\n`;
+  const model = await getAiModel();
+  const result = await model.generateContent(prompt);
+  const responseText = result.response.text();
+  const targetMetadata = buildChatAudienceMetadata({
+    selectedConversation,
+    selectedConversationId,
+    selectedRecipientTarget,
+    selectedRecipientIds
+  });
+  await postChatMessage(teamId, {
+    text: responseText,
+    senderId: user.uid,
+    senderName: null,
+    senderEmail: null,
+    senderPhotoUrl: null,
+    ai: true,
+    aiName: 'ALL PLAYS',
+    aiQuestion: question,
+    conversationId: selectedConversationId,
+    ...targetMetadata,
+    aiMeta: {
+      statsGameLimit: aiStatsGamesLimit,
+      gamesContextLimit: aiGamesContextLimit,
+      statsRequested: fetchStats,
+      eventsGameLimit: aiEventsGamesLimit,
+      eventsPerGameLimit: aiEventsPerGameLimit,
+      eventsRequested: fetchEvents,
+      statsRequestSource: 'heuristic'
+    }
+  });
+}
+
+export function getChatInboxPreview(message: ChatMessage | null) {
+  if (!message) return 'No messages yet';
+  const sender = message.ai ? 'ALL PLAYS' : message.senderName || message.senderEmail || 'Unknown';
+  return `${sender}: ${getMessagePreviewText(message)}`;
+}

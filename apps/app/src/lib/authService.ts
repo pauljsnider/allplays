@@ -11,7 +11,6 @@ import {
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
-  signInWithCredential,
   signInWithEmailAndPassword,
   signInWithEmailLink,
   signInWithPopup,
@@ -142,6 +141,7 @@ type NativePluginSignInResult = {
   credential?: {
     idToken?: string;
     accessToken?: string;
+    serverAuthCode?: string;
   } | null;
   additionalUserInfo?: {
     isNewUser?: boolean;
@@ -702,6 +702,21 @@ function getNativeGoogleRequestUri() {
   return origin.startsWith('http://') || origin.startsWith('https://') ? origin : 'https://allplays.ai';
 }
 
+function getNativeGoogleSignInOptions() {
+  const options: {
+    skipNativeAuth: boolean;
+    useCredentialManager?: boolean;
+  } = {
+    skipNativeAuth: true
+  };
+
+  if (Capacitor.getPlatform?.() === 'android') {
+    options.useCredentialManager = false;
+  }
+
+  return options;
+}
+
 async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAccessToken?: string | null) {
   const postBody = new URLSearchParams({
     providerId: 'google.com'
@@ -735,23 +750,6 @@ function isNewFirebaseUser(user: FirebaseUser) {
     return user.isNewUser;
   }
   return Boolean(user.metadata?.creationTime && user.metadata.creationTime === user.metadata.lastSignInTime);
-}
-
-function isCancelledAuthError(error: any) {
-  const message = `${error?.code || ''} ${error?.message || ''}`.toLowerCase();
-  return message.includes('cancel') || message.includes('closed');
-}
-
-function isNetworkOrTimeoutAuthError(error: any) {
-  const message = `${error?.code || ''} ${error?.message || ''}`.toLowerCase();
-  return (
-    message.includes('network') ||
-    message.includes('timed out') ||
-    message.includes('request failed') ||
-    message.includes('offline') ||
-    message.includes('could not connect') ||
-    message.includes('couldn’t connect')
-  );
 }
 
 function rolesFromProfile(profile: Record<string, unknown> = {}): UserRole[] {
@@ -993,7 +991,7 @@ async function signInWithNativeGoogleCredential() {
 
   console.info('[app-auth] Native Google: requesting Google ID token.');
   const result = await withTimeout(
-    FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true }) as Promise<NativePluginSignInResult>,
+    FirebaseAuthentication.signInWithGoogle(getNativeGoogleSignInOptions()) as Promise<NativePluginSignInResult>,
     'Native Google sign-in timed out.',
     authTimeoutMs
   );
@@ -1003,25 +1001,12 @@ async function signInWithNativeGoogleCredential() {
     throw new Error('Google sign-in did not return an ID token.');
   }
 
-  const credential = GoogleAuthProvider.credential(idToken);
-  try {
-    console.info('[app-auth] Native Google: signing into Firebase Web Auth.');
-    return await withTimeout(
-      signInWithCredential(auth, credential) as Promise<UserCredential>,
-      'Firebase Google sign-in timed out.',
-      authTimeoutMs
-    );
-  } catch (error) {
-    if (isNetworkOrTimeoutAuthError(error) && !isCancelledAuthError(error)) {
-      console.warn('[app-auth] Native Google web credential exchange failed; using REST session fallback:', error);
-      const user = await signInWithNativeGoogleRestSession(idToken, accessToken);
-      return {
-        user,
-        nativeRest: true
-      } as UserCredential;
-    }
-    throw error;
-  }
+  console.info('[app-auth] Native Google: exchanging token with Firebase Auth REST.');
+  const user = await signInWithNativeGoogleRestSession(idToken, accessToken);
+  return {
+    user,
+    nativeRest: true
+  } as UserCredential;
 }
 
 async function processGoogleResult(result: UserCredential | null, activationCode?: string | null) {

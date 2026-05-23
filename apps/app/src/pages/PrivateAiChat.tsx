@@ -4,6 +4,7 @@ import {
   Bot,
   ChevronRight,
   Loader2,
+  Mic,
   RefreshCw,
   Send,
   ShieldCheck,
@@ -19,6 +20,15 @@ import {
   formatChatMessageHtml,
   formatChatTime
 } from '../lib/chatLogic';
+import {
+  appendDictationTranscript,
+  collectFinalDictationTranscript,
+  getDictationErrorMessage,
+  getSpeechRecognitionConstructor,
+  isCapacitorNativeRuntime,
+  startNativeSpeechDictation,
+  type SpeechRecognitionLike
+} from '../lib/dictation';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 
@@ -40,8 +50,11 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [dictating, setDictating] = useState(false);
   const [status, setStatus] = useState<ChatStatus | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const stopNativeDictationRef = useRef<(() => Promise<void>) | null>(null);
 
   const refreshMessages = async () => {
     if (!auth.user) return;
@@ -68,6 +81,117 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
   }, [messages.length, sending]);
+
+  useEffect(() => () => {
+    recognitionRef.current?.abort();
+    recognitionRef.current = null;
+    void stopNativeDictationRef.current?.().catch(() => {});
+    stopNativeDictationRef.current = null;
+  }, []);
+
+  const addDictatedText = (transcript: string) => {
+    setDraft((current) => appendDictationTranscript(current, transcript));
+    setStatus({
+      tone: 'success',
+      message: 'Dictation added to your message.'
+    });
+  };
+
+  const finishDictation = () => {
+    setDictating(false);
+    recognitionRef.current = null;
+    stopNativeDictationRef.current = null;
+  };
+
+  const startWebDictation = () => {
+    const Recognition = getSpeechRecognitionConstructor(typeof window === 'undefined' ? null : window);
+    if (!Recognition) {
+      setStatus({
+        tone: 'neutral',
+        message: 'Dictation is not available in this view. Use the keyboard microphone to dictate into the message box.'
+      });
+      finishDictation();
+      return;
+    }
+
+    const recognition = new Recognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = typeof navigator !== 'undefined' ? navigator.language || 'en-US' : 'en-US';
+    recognition.onresult = (event) => {
+      const transcript = collectFinalDictationTranscript(event);
+      if (transcript) {
+        addDictatedText(transcript);
+      }
+    };
+    recognition.onerror = (event) => {
+      setStatus({
+        tone: 'error',
+        message: getDictationErrorMessage(event)
+      });
+      finishDictation();
+    };
+    recognition.onend = finishDictation;
+
+    recognitionRef.current = recognition;
+    setStatus({
+      tone: 'neutral',
+      message: 'Listening... speak your message, then pause.'
+    });
+    setDictating(true);
+
+    try {
+      recognition.start();
+    } catch (error: any) {
+      setStatus({
+        tone: 'error',
+        message: error?.message || 'Dictation could not start.'
+      });
+      finishDictation();
+    }
+  };
+
+  const toggleDictation = async () => {
+    if (sending) return;
+
+    if (dictating) {
+      await stopNativeDictationRef.current?.().catch(() => {});
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        recognitionRef.current?.abort();
+      }
+      finishDictation();
+      return;
+    }
+
+    if (isCapacitorNativeRuntime(typeof window === 'undefined' ? null : window)) {
+      setStatus({
+        tone: 'neutral',
+        message: 'Listening... speak your message, then pause.'
+      });
+      setDictating(true);
+      try {
+        const session = await startNativeSpeechDictation({
+          language: typeof navigator !== 'undefined' ? navigator.language || 'en-US' : 'en-US',
+          onTranscript: addDictatedText,
+          onError: (message) => setStatus({ tone: 'error', message }),
+          onEnd: finishDictation
+        });
+        stopNativeDictationRef.current = session.stop;
+        setDictating(true);
+      } catch (error: any) {
+        setStatus({
+          tone: 'error',
+          message: error?.message || 'Dictation could not start.'
+        });
+        finishDictation();
+      }
+      return;
+    }
+
+    startWebDictation();
+  };
 
   const sendMessage = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -122,6 +246,8 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       draft={draft}
       onDraftChange={setDraft}
       onSubmit={sendMessage}
+      onToggleDictation={toggleDictation}
+      dictating={dictating}
       status={status}
       bottomRef={bottomRef}
     />
@@ -233,6 +359,8 @@ function PrivateAiThread({
   draft,
   onDraftChange,
   onSubmit,
+  onToggleDictation,
+  dictating,
   status,
   bottomRef
 }: {
@@ -242,6 +370,8 @@ function PrivateAiThread({
   draft: string;
   onDraftChange: (value: string) => void;
   onSubmit: (event?: FormEvent) => void;
+  onToggleDictation: () => void;
+  dictating: boolean;
   status: ChatStatus | null;
   bottomRef: MutableRefObject<HTMLDivElement | null>;
 }) {
@@ -270,7 +400,17 @@ function PrivateAiThread({
       {status ? <StatusBanner status={status} /> : null}
 
       <form className="chat-composer private-ai-composer border-t border-gray-100 bg-white p-2" onSubmit={onSubmit}>
-        <div className="chat-composer-input-shell">
+        <div className="chat-composer-input-shell private-ai-composer-input-shell">
+          <button
+            type="button"
+            className={`chat-dictation-button ${dictating ? 'chat-dictation-button-active' : ''}`}
+            onClick={onToggleDictation}
+            disabled={sending}
+            aria-label={dictating ? 'Stop dictation' : 'Start dictation'}
+            aria-pressed={dictating}
+          >
+            {dictating ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mic className="h-4 w-4" aria-hidden="true" />}
+          </button>
           <textarea
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
@@ -280,7 +420,7 @@ function PrivateAiThread({
                 onSubmit();
               }
             }}
-            className="chat-composer-textarea"
+            className="chat-composer-textarea private-ai-composer-textarea"
             placeholder="Ask about schedules, teams, players, messages..."
             rows={1}
             disabled={sending}

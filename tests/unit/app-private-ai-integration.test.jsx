@@ -107,10 +107,16 @@ beforeEach(() => {
         configurable: true,
         value: vi.fn()
     });
+    delete window.SpeechRecognition;
+    delete window.webkitSpeechRecognition;
+    delete window.__privateAiRecognition;
 });
 
 afterEach(() => {
     document.body.innerHTML = '';
+    delete window.SpeechRecognition;
+    delete window.webkitSpeechRecognition;
+    delete window.__privateAiRecognition;
 });
 
 describe('private AI chat page', () => {
@@ -155,5 +161,53 @@ describe('private AI chat page', () => {
 
         expect(container.textContent).toContain('AI down');
         expect(container.querySelector('textarea').value).toBe('Can you help?');
+    });
+
+    it('shows a useful fallback when browser dictation is unavailable', async () => {
+        const { container } = await renderPrivateAi();
+
+        await click(container.querySelector('button[aria-label="Start dictation"]'));
+
+        expect(container.textContent).toContain('Dictation is not available in this view');
+    });
+
+    it('adds speech recognition transcript to the composer', async () => {
+        const start = vi.fn();
+        const stop = vi.fn();
+        const abort = vi.fn();
+        window.SpeechRecognition = function MockRecognition() {
+            window.__privateAiRecognition = this;
+            this.continuous = true;
+            this.interimResults = true;
+            this.lang = '';
+            this.start = start;
+            this.stop = stop;
+            this.abort = abort;
+            this.onresult = null;
+            this.onerror = null;
+            this.onend = null;
+        };
+
+        const { container } = await renderPrivateAi();
+        const textarea = container.querySelector('textarea');
+        await setFieldValue(textarea, 'Show');
+        await click(container.querySelector('button[aria-label="Start dictation"]'));
+
+        expect(start).toHaveBeenCalledOnce();
+        expect(container.querySelector('button[aria-label="Stop dictation"]')).toBeTruthy();
+
+        await act(async () => {
+            window.__privateAiRecognition.onresult({
+                resultIndex: 0,
+                results: [
+                    { isFinal: true, 0: { transcript: 'my next game' } }
+                ]
+            });
+            window.__privateAiRecognition.onend();
+        });
+        await flush();
+
+        expect(textarea.value).toBe('Show my next game');
+        expect(container.textContent).toContain('Dictation added to your message.');
     });
 });
