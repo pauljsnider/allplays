@@ -20,8 +20,8 @@ describe('family page external calendar failures', () => {
     it('records both team and share-token calendar failures without blocking the page', () => {
         const source = readRepoFile('family.html');
 
-        expect(source).toContain('recordExternalCalendarFailure({\n                url: calendarUrl,');
-        expect(source).toContain('recordExternalCalendarFailure({\n              url: calUrl,');
+        expect(source).toMatch(/recordExternalCalendarFailure\(\{\s*url:\s*calendarUrl,/);
+        expect(source).toMatch(/recordExternalCalendarFailure\(\{\s*url:\s*calUrl,/);
         expect(source).toContain('return { calendarEvents: [] };');
         expect(source).toContain('return [];');
         expect(source).not.toContain("console.error('[family] Error fetching calendar:'");
