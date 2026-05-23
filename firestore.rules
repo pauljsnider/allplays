@@ -512,7 +512,7 @@ service cloud.firestore {
              data.keys().hasAny(['feeSnapshot']) &&
              isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
              (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&
-             (!data.keys().hasAny(['screeningRequired']) || (
+             (!data.keys().hasAny(['screeningRequired', 'screeningStatus', 'screeningProvider', 'screeningProviderReference']) || (
                get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('enabled', false) == true &&
                data.screeningRequired == true &&
                data.screeningStatus == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('initialScreeningStatus', 'pending') &&

@@ -367,6 +367,7 @@ describe('public registration flow', () => {
         expect(rules).toContain("'feeSnapshot'");
         expect(rules).toContain("'screeningRequired'");
         expect(rules).toContain("'screeningStatus'");
+        expect(rules).toContain("!data.keys().hasAny(['screeningRequired', 'screeningStatus', 'screeningProvider', 'screeningProviderReference'])");
         expect(rules).toContain("data.screeningStatus == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('initialScreeningStatus', 'pending')");
         expect(rules).toContain('isRegistrationFeeSnapshotValid');
         expect(rules).toContain('isPublicRegistrationCapacityCounterUpdate');
