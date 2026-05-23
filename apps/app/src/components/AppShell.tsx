@@ -12,14 +12,17 @@ import {
   ImagePlus,
   KeyRound,
   MessageCircle,
+  Newspaper,
   Plus,
   Search,
+  Share2,
   Shield,
   Sparkles,
   Ticket,
   UserCircle,
   UserPlus,
   Users,
+  UsersRound,
   X
 } from 'lucide-react';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -40,7 +43,7 @@ type AddWorkflow = {
   id: string;
   label: string;
   detail: string;
-  section: 'Team' | 'Player' | 'Schedule' | 'Team Ops';
+  section: 'Team' | 'Player' | 'Schedule' | 'Social' | 'Team Ops';
   icon: typeof Plus;
   kind: 'native' | 'website';
   href: string;
@@ -284,7 +287,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   Native routes open in the app. Full coach/admin workflows open the current ALL PLAYS website until those screens are migrated.
                 </p>
               </div>
-              {(['Team', 'Player', 'Schedule', 'Team Ops'] as AddWorkflow['section'][]).map((section) => (
+              {(['Team', 'Player', 'Schedule', 'Social', 'Team Ops'] as AddWorkflow['section'][]).map((section) => (
                 <section key={section} className="add-workflow-section">
                   <div className="add-workflow-section-title">{section}</div>
                   <div className="add-workflow-grid">
@@ -411,6 +414,33 @@ function buildAddWorkflows(): AddWorkflow[] {
       icon: CalendarDays,
       kind: 'native',
       href: '/parent-tools/calendar'
+    },
+    {
+      id: 'social-post',
+      label: 'Post moment',
+      detail: 'Photo, game recap, player stat, or update',
+      section: 'Social',
+      icon: Newspaper,
+      kind: 'native',
+      href: '/home?section=feed&social=create'
+    },
+    {
+      id: 'find-friends',
+      label: 'Find friends',
+      detail: 'Search adults, requests, suggestions',
+      section: 'Social',
+      icon: UsersRound,
+      kind: 'native',
+      href: '/home?section=friends'
+    },
+    {
+      id: 'share-recap',
+      label: 'Share game recap',
+      detail: 'Start from schedule or match report',
+      section: 'Social',
+      icon: Share2,
+      kind: 'native',
+      href: '/home?section=feed&social=create&type=game_recap'
     },
     {
       id: 'team-media',

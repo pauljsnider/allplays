@@ -8,6 +8,21 @@ const homeMocks = vi.hoisted(() => ({
     loadParentHome: vi.fn()
 }));
 
+const socialMocks = vi.hoisted(() => ({
+    loadSocialHome: vi.fn(),
+    createSocialPost: vi.fn(),
+    reactToSocialPost: vi.fn(),
+    commentOnSocialPost: vi.fn(),
+    hideSocialPost: vi.fn(),
+    reportSocialPost: vi.fn(),
+    searchSocialUsers: vi.fn(),
+    sendFriendRequest: vi.fn(),
+    respondToFriendRequest: vi.fn(),
+    removeFriend: vi.fn(),
+    blockFriend: vi.fn(),
+    uploadSocialPostMedia: vi.fn()
+}));
+
 const playerMocks = vi.hoisted(() => ({
     loadParentPlayerDetail: vi.fn(),
     markParentPlayerIncentivePaid: vi.fn(),
@@ -21,6 +36,7 @@ const playerMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
+vi.mock('../../apps/app/src/lib/socialService.ts', () => socialMocks);
 vi.mock('../../apps/app/src/lib/playerService.ts', () => playerMocks);
 
 import { Home } from '../../apps/app/src/pages/Home.tsx';
@@ -207,6 +223,105 @@ beforeEach(() => {
         }
     });
 
+    socialMocks.loadSocialHome.mockResolvedValue({
+        feedItems: [
+            {
+                id: 'post-1',
+                type: 'player_moment',
+                visibility: 'friends',
+                authorId: 'friend-1',
+                authorName: 'Jamie Friend',
+                authorPhotoUrl: null,
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerIds: ['player-1'],
+                playerNames: ['Pat Star'],
+                sourceType: 'player',
+                sourceId: 'player-1',
+                title: 'Pat Star highlight',
+                detail: 'Player moment · Pat Star · Bears',
+                caption: 'Great ball movement in the second half.',
+                media: [],
+                route: '/players/team-1/player-1',
+                createdAt: new Date('2100-06-01T18:00:00Z'),
+                reactionCounts: { like: 2 },
+                commentCount: 1
+            }
+        ],
+        friends: [
+            {
+                id: 'friendship-1',
+                userId: 'friend-1',
+                name: 'Jamie Friend',
+                email: 'jamie@example.com',
+                photoUrl: null,
+                sharedTeamIds: ['team-1'],
+                sharedTeamNames: ['Bears'],
+                status: 'accepted',
+                requesterId: 'user-1',
+                recipientId: 'friend-1'
+            }
+        ],
+        suggestions: [
+            {
+                id: 'friendship-2',
+                userId: 'friend-2',
+                name: 'Morgan Parent',
+                email: 'morgan@example.com',
+                photoUrl: null,
+                sharedTeamIds: ['team-1'],
+                sharedTeamNames: ['Bears'],
+                status: 'none',
+                requesterId: null,
+                recipientId: 'friend-2'
+            }
+        ],
+        incomingRequests: [
+            {
+                id: 'friendship-3',
+                userId: 'friend-3',
+                name: 'Casey Parent',
+                email: 'casey@example.com',
+                photoUrl: null,
+                sharedTeamIds: ['team-1'],
+                sharedTeamNames: ['Bears'],
+                status: 'pending',
+                requesterId: 'friend-3',
+                recipientId: 'user-1'
+            }
+        ],
+        outgoingRequests: [],
+        metrics: {
+            feedItems: 1,
+            friends: 1,
+            incomingRequests: 1,
+            suggestions: 1
+        }
+    });
+    socialMocks.createSocialPost.mockResolvedValue('post-new');
+    socialMocks.sendFriendRequest.mockResolvedValue('friendship-new');
+    socialMocks.respondToFriendRequest.mockResolvedValue();
+    socialMocks.searchSocialUsers.mockResolvedValue([
+        {
+            id: 'friendship-search',
+            userId: 'friend-search',
+            name: 'Taylor Search',
+            email: 'taylor@example.com',
+            photoUrl: null,
+            sharedTeamIds: ['team-1'],
+            sharedTeamNames: ['Bears'],
+            status: 'none',
+            requesterId: null,
+            recipientId: 'friend-search'
+        }
+    ]);
+    socialMocks.uploadSocialPostMedia.mockResolvedValue({
+        type: 'image',
+        url: 'https://img.example.test/social.png',
+        name: 'social.png',
+        thumbnailUrl: null
+    });
+
     playerMocks.loadParentPlayerDetail.mockResolvedValue({
         child: { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' },
         player: { id: 'player-1', name: 'Pat Star', teamId: 'team-1', teamName: 'Bears', number: '9', photoUrl: '' },
@@ -271,9 +386,15 @@ describe('React app Home and player drill-in integration', () => {
         await waitForText(container, 'Do first');
         expect(container.textContent).toContain('Team chats');
         expect(container.textContent).toContain('2 unread messages');
+        expect(container.textContent).toContain('Team feed');
+        expect(container.textContent).toContain('Pat Star highlight');
         expect(container.textContent).toContain('Next up');
         await waitForText(container, 'More to do');
         expect(homeMocks.loadParentHome).toHaveBeenCalledWith(auth.user);
+        expect(socialMocks.loadSocialHome).toHaveBeenCalledWith(auth.user, expect.objectContaining({
+            players: expect.any(Array),
+            teams: expect.any(Array)
+        }));
 
         await clickButton(container, 'Teams');
         await waitForText(container, 'Teams');
@@ -281,19 +402,22 @@ describe('React app Home and player drill-in integration', () => {
         expect(teamLink?.getAttribute('href')).toBe('/teams?selectedTeamId=team-1&from=home');
         expect(teamLink?.getAttribute('aria-label')).toBe('Open Bears in My Teams');
 
-        await clickButton(container, 'Access');
-        await waitForText(container, 'Accept invite');
-        expect(container.textContent).toContain('Request player access');
-        expect(container.textContent).toContain('Calendar tools');
-        expect(container.textContent).toContain('Family share');
+        await clickButton(container, 'Feed');
+        await waitForText(container, 'Shareable ideas');
+        expect(container.textContent).toContain('Jamie Friend');
+        expect(container.textContent).toContain('Great ball movement in the second half.');
         expect(Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toEqual(expect.arrayContaining([
-            '/accept-invite',
-            '/parent-tools/access',
-            '/parent-tools/calendar',
-            '/parent-tools/share',
-            '/parent-tools/registrations',
-            '/parent-tools/certificates'
+            '/players/team-1/player-1',
+            '/home?section=friends'
         ]));
+
+        await clickButton(container, 'Friends');
+        await waitForText(container, 'Needs response');
+        expect(container.textContent).toContain('Casey Parent');
+        expect(container.textContent).toContain('Morgan Parent');
+        expect(container.textContent).toContain('Jamie Friend');
+        await clickButton(container, 'Accept');
+        expect(socialMocks.respondToFriendRequest).toHaveBeenCalledWith('friendship-3', 'accepted');
 
         await clickButton(container, 'Players');
         await waitForText(container, 'Player Drill-In');

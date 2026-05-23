@@ -132,6 +132,98 @@ async function mockHomePlayerModules(page) {
         });
     });
 
+    await page.route(/\/src\/lib\/socialService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadSocialHome() {
+                    return {
+                        feedItems: [{
+                            id: 'post-1',
+                            type: 'player_moment',
+                            visibility: 'friends',
+                            authorId: 'friend-1',
+                            authorName: 'Jamie Friend',
+                            authorPhotoUrl: null,
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            playerIds: ['player-1'],
+                            playerNames: ['Pat Star'],
+                            sourceType: 'player',
+                            sourceId: 'player-1',
+                            title: 'Pat Star highlight',
+                            detail: 'Player moment · Pat Star · Bears',
+                            caption: 'Great ball movement in the second half.',
+                            media: [],
+                            route: '/players/team-1/player-1',
+                            href: null,
+                            createdAt: new Date('2100-06-01T18:00:00Z'),
+                            reactionCounts: { like: 2 },
+                            commentCount: 1
+                        }],
+                        friends: [{
+                            id: 'friendship-1',
+                            userId: 'friend-1',
+                            name: 'Jamie Friend',
+                            email: 'jamie@example.com',
+                            photoUrl: null,
+                            sharedTeamIds: ['team-1'],
+                            sharedTeamNames: ['Bears'],
+                            status: 'accepted',
+                            requesterId: 'user-1',
+                            recipientId: 'friend-1'
+                        }],
+                        suggestions: [{
+                            id: 'friendship-2',
+                            userId: 'friend-2',
+                            name: 'Morgan Parent',
+                            email: 'morgan@example.com',
+                            photoUrl: null,
+                            sharedTeamIds: ['team-1'],
+                            sharedTeamNames: ['Bears'],
+                            status: 'none',
+                            requesterId: null,
+                            recipientId: 'friend-2'
+                        }],
+                        incomingRequests: [{
+                            id: 'friendship-3',
+                            userId: 'friend-3',
+                            name: 'Casey Parent',
+                            email: 'casey@example.com',
+                            photoUrl: null,
+                            sharedTeamIds: ['team-1'],
+                            sharedTeamNames: ['Bears'],
+                            status: 'pending',
+                            requesterId: 'friend-3',
+                            recipientId: 'user-1'
+                        }],
+                        outgoingRequests: [],
+                        metrics: {
+                            feedItems: 1,
+                            friends: 1,
+                            incomingRequests: 1,
+                            suggestions: 1
+                        }
+                    };
+                }
+                export async function createSocialPost() { return 'post-new'; }
+                export async function reactToSocialPost() {}
+                export async function commentOnSocialPost() {}
+                export async function hideSocialPost() {}
+                export async function reportSocialPost() {}
+                export async function searchSocialUsers() { return []; }
+                export async function sendFriendRequest() { return 'friendship-new'; }
+                export async function respondToFriendRequest() {}
+                export async function removeFriend() {}
+                export async function blockFriend() {}
+                export async function uploadSocialPostMedia() {
+                    return { type: 'image', url: 'https://img.example.test/social.png', name: 'social.png', thumbnailUrl: null };
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/playerService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
@@ -279,6 +371,8 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await expect(page.getByText('Do first')).toBeVisible();
     await expect(page.getByText('Team chats')).toBeVisible();
     await expect(page.getByText('2 unread messages')).toBeVisible();
+    await expect(page.getByText('Team feed')).toBeVisible();
+    await expect(page.getByText('Pat Star highlight').first()).toBeVisible();
     await expect(page.getByText('Next up')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Pat Star needs availability' })).toBeVisible();
     await expect.poll(async () => {
@@ -289,17 +383,18 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await page.getByRole('button', { name: 'Teams' }).click();
     await expect(page.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Access' }).click();
-    await expect(page.getByText('Accept invite')).toBeVisible();
-    await expect(page.getByText('Request player access')).toBeVisible();
-    await expect(page.getByText('Calendar tools')).toBeVisible();
-    await expect(page.getByText('Family share')).toBeVisible();
-    await expect(page.locator('a[href="#/accept-invite"]')).toBeVisible();
-    await expect(page.locator('a[href="#/parent-tools/access"]')).toBeVisible();
-    await expect(page.locator('a[href="#/parent-tools/calendar"]')).toBeVisible();
-    await expect(page.locator('a[href="#/parent-tools/share"]')).toBeVisible();
-    await expect(page.locator('a[href="#/parent-tools/registrations"]')).toBeVisible();
-    await expect(page.locator('a[href="#/parent-tools/certificates"]')).toBeVisible();
+    await page.getByRole('button', { name: 'Feed' }).click();
+    await expect(page.getByText('Shareable ideas')).toBeVisible();
+    await expect(page.getByText('Jamie Friend')).toBeVisible();
+    await expect(page.getByText('Great ball movement in the second half.')).toBeVisible();
+    await expect(page.locator('a[href="#/players/team-1/player-1"]').first()).toBeVisible();
+    await expect(page.locator('a[href="#/home?section=friends"]')).toBeVisible();
+
+    await page.locator('.home-section-nav').getByRole('button', { name: 'Friends' }).click();
+    await expect(page.getByText('Needs response')).toBeVisible();
+    await expect(page.getByText('Casey Parent')).toBeVisible();
+    await expect(page.getByText('Morgan Parent')).toBeVisible();
+    await expect(page.getByText('Jamie Friend')).toBeVisible();
 
     await page.getByRole('button', { name: 'Players' }).click();
     await expect(page.getByRole('heading', { name: 'Player Drill-In' })).toBeVisible();
@@ -394,9 +489,10 @@ test.describe('desktop Home workspace', () => {
 
         await expect(page.getByRole('heading', { name: 'Today for your players' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Today' })).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.getByRole('button', { name: 'Feed' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Players' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Teams' })).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Access' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Friends' })).toBeVisible();
         await expect.poll(async () => {
             const box = await page.locator('.home-hero').boundingBox();
             return Math.round(box?.height || 0);

@@ -16,7 +16,7 @@ const teamsCacheTtlMs = 10 * 60 * 1000;
 let cachedTeams: AppSearchTeam[] | null = null;
 let cachedTeamsLoadedAt = 0;
 
-export type AppSearchKind = 'action' | 'team' | 'player';
+export type AppSearchKind = 'action' | 'team' | 'player' | 'social';
 
 export type AppSearchItem = {
   id: string;
@@ -129,6 +129,27 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
       title: 'Messages',
       subtitle: 'Team chat and staff threads',
       route: '/messages'
+    },
+    {
+      id: 'social-feed',
+      kind: 'social',
+      title: 'Social Feed',
+      subtitle: 'Sports moments from teams, players, and friends',
+      route: '/home?section=feed'
+    },
+    {
+      id: 'find-friends',
+      kind: 'social',
+      title: 'Find Friends',
+      subtitle: 'Search adult accounts and manage friend requests',
+      route: '/home?section=friends'
+    },
+    {
+      id: 'create-social-post',
+      kind: 'social',
+      title: 'Post Moment',
+      subtitle: 'Share a photo, game recap, player stat, or team update',
+      route: '/home?section=feed&social=create'
     },
     {
       id: 'profile',

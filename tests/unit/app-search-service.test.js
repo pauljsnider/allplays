@@ -71,6 +71,9 @@ describe('React app search service', () => {
             'my-teams',
             'schedule',
             'messages',
+            'social-feed',
+            'find-friends',
+            'create-social-post',
             'profile'
         ]);
 
@@ -136,7 +139,7 @@ describe('React app search service', () => {
             teams: manyTeams,
             players: manyPlayers
         });
-        expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'profile']);
+        expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'social-feed', 'find-friends', 'create-social-post', 'profile']);
         expect(defaultResults.teams).toHaveLength(20);
         expect(defaultResults.players).toHaveLength(20);
     });
