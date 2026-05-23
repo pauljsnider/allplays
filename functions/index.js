@@ -43,6 +43,14 @@ const {
   resolveTeamEmailRecipients,
   buildTeamEmailMailJob
 } = require('./team-email-core.cjs');
+const {
+  normalizeEmail,
+  normalizeAccountMergePreviewInput,
+  hashAccountMergeVerificationToken,
+  validateAccountMergeVerificationRecord,
+  assertNotSelfMerge,
+  buildAccountMergePreview
+} = require('./account-merge-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -379,6 +387,151 @@ exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (da
   });
 
   return { autoLinked: true, userId: userRef.id };
+});
+
+function accountMergePreviewAuditRef() {
+  return firestore.collection('accountMergePreviewRequests').doc();
+}
+
+async function writeAccountMergePreviewAudit(payload) {
+  await accountMergePreviewAuditRef().set({
+    ...payload,
+    didMutateOwnershipLinks: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+async function findAccountMergeSourceByEmail(sourceEmail) {
+  const [emailSnap, profileEmailSnap] = await Promise.all([
+    firestore.collection('users')
+      .where('email', '==', sourceEmail)
+      .limit(1)
+      .get(),
+    firestore.collection('users')
+      .where('profileEmail', '==', sourceEmail)
+      .limit(1)
+      .get()
+  ]);
+  return emailSnap.empty ? (profileEmailSnap.empty ? null : profileEmailSnap.docs[0]) : emailSnap.docs[0];
+}
+
+async function resolveAccountMergeSource(input, destinationUid) {
+  let sourceUid = input.sourceUid;
+  let verification = null;
+
+  if (input.verificationToken) {
+    const tokenHash = hashAccountMergeVerificationToken(input.verificationToken);
+    const tokenSnap = await firestore.doc(`accountMergeVerificationTokens/${tokenHash}`).get();
+    if (!tokenSnap.exists) {
+      throw new functions.https.HttpsError('failed-precondition', 'Account merge verification token is invalid.');
+    }
+    verification = {
+      ...(tokenSnap.data() || {}),
+      id: tokenSnap.id
+    };
+    try {
+      sourceUid = validateAccountMergeVerificationRecord({
+        record: verification,
+        destinationUid,
+        sourceUid: input.sourceUid
+      });
+    } catch (error) {
+      throw new functions.https.HttpsError('failed-precondition', error.message || 'Account merge verification token is invalid.');
+    }
+  }
+
+  if (sourceUid) {
+    const sourceSnap = await firestore.doc(`users/${sourceUid}`).get();
+    return { sourceSnap, verification };
+  }
+
+  const sourceSnap = await findAccountMergeSourceByEmail(input.sourceEmail);
+  return { sourceSnap, verification };
+}
+
+exports.previewAccountMerge = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before previewing an account merge.');
+  }
+
+  const destinationUid = context.auth.uid;
+  const destinationEmail = normalizeEmail(context.auth.token?.email);
+  let input;
+  try {
+    input = normalizeAccountMergePreviewInput(data || {});
+    assertNotSelfMerge({
+      destinationUid,
+      destinationEmail,
+      sourceUid: input.sourceUid,
+      sourceEmail: input.sourceEmail
+    });
+  } catch (error) {
+    await writeAccountMergePreviewAudit({
+      destinationUid,
+      destinationEmail,
+      status: 'rejected',
+      errorCode: 'invalid-argument',
+      errorMessage: error.message || 'Invalid account merge preview request.'
+    });
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid account merge preview request.');
+  }
+
+  try {
+    const [destinationSnap, sourceResult] = await Promise.all([
+      firestore.doc(`users/${destinationUid}`).get(),
+      resolveAccountMergeSource(input, destinationUid)
+    ]);
+
+    if (!destinationSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Destination account could not be found.');
+    }
+
+    const sourceSnap = sourceResult.sourceSnap;
+    if (!sourceSnap?.exists) {
+      throw new functions.https.HttpsError('not-found', 'Source account could not be found.');
+    }
+
+    const sourceUser = sourceSnap.data() || {};
+    if (input.sourceEmail && normalizeEmail(sourceUser.email || sourceUser.profileEmail) !== input.sourceEmail) {
+      throw new functions.https.HttpsError('not-found', 'Source account could not be found.');
+    }
+
+    const preview = buildAccountMergePreview({
+      sourceUid: sourceSnap.id,
+      sourceUser,
+      destinationUid,
+      destinationUser: destinationSnap.data() || {}
+    });
+
+    await writeAccountMergePreviewAudit({
+      destinationUid,
+      destinationEmail: preview.destination.email || destinationEmail,
+      sourceUid: sourceSnap.id,
+      sourceEmail: preview.source.email || input.sourceEmail || '',
+      status: 'previewed',
+      verificationTokenAccepted: Boolean(input.verificationToken),
+      verificationTokenId: sourceResult.verification?.id || null,
+      preview
+    });
+
+    return { preview };
+  } catch (error) {
+    const code = error instanceof functions.https.HttpsError ? error.code : 'internal';
+    const message = error instanceof functions.https.HttpsError
+      ? error.message
+      : 'Account merge preview could not be created.';
+    await writeAccountMergePreviewAudit({
+      destinationUid,
+      destinationEmail,
+      sourceUid: input.sourceUid || '',
+      sourceEmail: input.sourceEmail || '',
+      status: 'rejected',
+      errorCode: code,
+      errorMessage: message
+    });
+    if (error instanceof functions.https.HttpsError) throw error;
+    throw new functions.https.HttpsError('internal', message);
+  }
 });
 
 async function logRsvpTokenRedemptionAttempt({ teamId, payload }) {
