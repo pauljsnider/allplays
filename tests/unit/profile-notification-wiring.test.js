@@ -18,4 +18,28 @@ describe('profile notification wiring', () => {
     expect(source).toContain('saveNotificationPreferencesForTeam');
     expect(source).toContain('registerPushNotifications');
   });
+
+  it('renders and validates the account merge request entry point', () => {
+    const source = readFileSync(new URL('../../profile.html', import.meta.url), 'utf8');
+    expect(source).toContain('id="account-merge-section"');
+    expect(source).toContain('id="show-account-merge-form-btn"');
+    expect(source).toContain('id="account-merge-email"');
+    expect(source).toContain('id="submit-account-merge-btn"');
+    expect(source).toContain('Enter a valid email address.');
+    expect(source).toContain('Enter a different email than the account you are signed in with.');
+    expect(source).toContain('Merge request pending verification.');
+  });
+
+  it('wires account merge requests to a scoped Firestore helper and rules', () => {
+    const profileSource = readFileSync(new URL('../../profile.html', import.meta.url), 'utf8');
+    const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+    const rulesSource = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+
+    expect(profileSource).toContain('createAccountMergeRequest');
+    expect(dbSource).toContain("collection(db, 'users', userId, 'accountMergeRequests')");
+    expect(dbSource).toContain("status: 'pending_verification'");
+    expect(rulesSource).toContain('match /accountMergeRequests/{requestId}');
+    expect(rulesSource).toContain('isAccountMergeRequestPayloadValid');
+    expect(rulesSource).toContain("data.status == 'pending_verification'");
+  });
 });

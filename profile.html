@@ -116,6 +116,32 @@
                             placeholder="123-456-7890">
                     </div>
                 </div>
+
+                <div id="account-merge-section" class="hidden mt-6 pt-6 border-t border-gray-200 space-y-4">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-900">Merge another account</h3>
+                            <p class="text-sm text-gray-600">Request a merge for another ALL PLAYS account you own. We will verify that email before any account data moves.</p>
+                        </div>
+                        <button id="show-account-merge-form-btn" type="button" class="px-4 py-2 bg-gray-900 text-white rounded-md text-sm font-semibold hover:bg-gray-800 whitespace-nowrap">
+                            Merge another account
+                        </button>
+                    </div>
+
+                    <div id="account-merge-form" class="hidden bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
+                        <div>
+                            <label for="account-merge-email" class="block text-sm font-medium text-gray-700">Secondary account email</label>
+                            <input type="email" id="account-merge-email" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 border p-2" placeholder="other-email@example.com" autocomplete="email">
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <button id="submit-account-merge-btn" type="button" class="px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700">
+                                Request merge
+                            </button>
+                            <span id="account-merge-status" class="text-sm text-gray-500"></span>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex items-center gap-3">
                     <button id="save-profile"
                         class="px-5 py-2.5 bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
@@ -424,6 +450,7 @@
             updateUserProfile,
             generateAccessCode,
             createAccessCode,
+            createAccountMergeRequest,
             getUserAccessCodes,
             uploadUserPhoto,
             getUserTeamsWithAccess,
@@ -431,7 +458,7 @@
             getNotificationPreferencesForTeam,
             saveNotificationPreferencesForTeam,
             upsertNotificationDeviceToken
-        } from './js/db.js?v=32';
+        } from './js/db.js?v=33';
         import { normalizeTeamNotificationPreferences } from './js/notification-preferences.js?v=1';
         import { registerPushNotifications } from './js/push-notifications.js?v=1';
 
@@ -465,6 +492,82 @@
                 document.getElementById('profile-status').className = 'text-sm text-red-600';
             }
         }
+
+        function normalizeEmail(value) {
+            return String(value || '').trim().toLowerCase();
+        }
+
+        function isValidEmail(value) {
+            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+        }
+
+        function setAccountMergeStatus(message, tone = 'neutral') {
+            const status = document.getElementById('account-merge-status');
+            status.textContent = message || '';
+            if (tone === 'error') {
+                status.className = 'text-sm text-red-600';
+                return;
+            }
+            if (tone === 'success') {
+                status.className = 'text-sm text-green-600';
+                return;
+            }
+            status.className = 'text-sm text-gray-500';
+        }
+
+        function showAccountMergeEntryPoint(parentTeams) {
+            if ((parentTeams || []).length > 0) {
+                document.getElementById('account-merge-section').classList.remove('hidden');
+            }
+        }
+
+        document.getElementById('show-account-merge-form-btn').addEventListener('click', () => {
+            document.getElementById('account-merge-form').classList.remove('hidden');
+            document.getElementById('account-merge-email').focus();
+            setAccountMergeStatus('');
+        });
+
+        document.getElementById('submit-account-merge-btn').addEventListener('click', async () => {
+            const button = document.getElementById('submit-account-merge-btn');
+            const input = document.getElementById('account-merge-email');
+            const secondaryEmail = normalizeEmail(input.value);
+            const primaryEmail = normalizeEmail(currentUser?.email);
+
+            if (!secondaryEmail) {
+                setAccountMergeStatus('Enter the email address for the other account.', 'error');
+                return;
+            }
+            if (!isValidEmail(secondaryEmail)) {
+                setAccountMergeStatus('Enter a valid email address.', 'error');
+                return;
+            }
+            if (secondaryEmail === primaryEmail) {
+                setAccountMergeStatus('Enter a different email than the account you are signed in with.', 'error');
+                return;
+            }
+            if (!currentUser?.uid) {
+                setAccountMergeStatus('Sign in before requesting an account merge.', 'error');
+                return;
+            }
+
+            try {
+                button.disabled = true;
+                button.textContent = 'Requesting...';
+                setAccountMergeStatus('Preparing merge request...');
+                await createAccountMergeRequest(currentUser.uid, {
+                    primaryEmail,
+                    secondaryEmail
+                });
+                input.value = '';
+                setAccountMergeStatus('Merge request pending verification. We will verify the other email before moving any account data.', 'success');
+            } catch (error) {
+                console.error('Error requesting account merge:', error);
+                setAccountMergeStatus('Unable to request merge right now. Please try again.', 'error');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Request merge';
+            }
+        });
 
         function setNotificationStatus(message, tone = 'neutral') {
             const status = document.getElementById('notification-status');
@@ -530,6 +633,7 @@
             }
 
             await loadSelectedTeamNotificationPreferences();
+            return parentTeams;
         }
 
         async function loadSelectedTeamNotificationPreferences() {
@@ -989,7 +1093,8 @@
             document.getElementById('email').value = user.email || '';
             showVerificationStatus(user);
             await loadProfile();
-            await loadNotificationTeams();
+            const parentTeams = await loadNotificationTeams();
+            showAccountMergeEntryPoint(parentTeams);
             await loadAccessCodes();
             await checkPasswordlessUser();
         });
