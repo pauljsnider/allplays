@@ -49,7 +49,12 @@ const {
   hashAccountMergeVerificationToken,
   validateAccountMergeVerificationRecord,
   assertNotSelfMerge,
-  buildAccountMergePreview
+  buildAccountMergePreview,
+  buildMergedParentAccount,
+  buildMergedPlayerParents,
+  findDuplicateParentUserIds,
+  isVerifiedAccountMergeRequest,
+  mergePreferenceObjects
 } = require('./account-merge-core.cjs');
 
 if (admin.apps.length === 0) {
@@ -273,6 +278,193 @@ function buildAutoAcceptedParentLink({ codeData, team, player }) {
     relation: codeData.relation || null
   };
 }
+
+function hashAccountMergePreviewToken(token) {
+  return crypto.createHash('sha256').update(String(token || '').trim()).digest('hex');
+}
+
+function normalizeAccountMergeInput(data = {}) {
+  return {
+    sourceUid: normalizeFirestoreId(data.sourceUid, 'sourceUid'),
+    destinationUid: normalizeFirestoreId(data.destinationUid, 'destinationUid'),
+    requestId: String(data.requestId || '').trim(),
+    previewToken: String(data.previewToken || '').trim()
+  };
+}
+
+async function resolveAccountMergeRequest(input) {
+  if (input.requestId) {
+    const requestRef = firestore.doc(`accountMergeRequests/${input.requestId}`);
+    const requestSnap = await requestRef.get();
+    const previewTokenHash = input.previewToken ? hashAccountMergePreviewToken(input.previewToken) : undefined;
+    return { requestRef, requestSnap, previewTokenHash };
+  }
+
+  if (!input.previewToken) {
+    throw new functions.https.HttpsError('invalid-argument', 'A verified merge request or preview token is required.');
+  }
+
+  const previewTokenHash = hashAccountMergePreviewToken(input.previewToken);
+  const requestQuery = await firestore.collection('accountMergeRequests')
+    .where('previewTokenHash', '==', previewTokenHash)
+    .limit(1)
+    .get();
+  if (requestQuery.empty) {
+    throw new functions.https.HttpsError('failed-precondition', 'Verified account merge request not found.');
+  }
+  return { requestRef: requestQuery.docs[0].ref, requestSnap: requestQuery.docs[0], previewTokenHash };
+}
+
+function collectParentPlayerKeys(...users) {
+  const keys = new Set();
+  users.forEach((user = {}) => {
+    (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : []).forEach((key) => {
+      if (typeof key === 'string' && key.includes('::')) keys.add(key);
+    });
+    (Array.isArray(user.parentOf) ? user.parentOf : []).forEach((link) => {
+      if (link?.teamId && link?.playerId) keys.add(`${link.teamId}::${link.playerId}`);
+    });
+  });
+  return [...keys];
+}
+
+function buildPlayerRefFromParentKey(parentPlayerKey) {
+  const [teamId, playerId] = String(parentPlayerKey || '').split('::');
+  if (!teamId || !playerId || teamId.includes('/') || playerId.includes('/')) return null;
+  return firestore.doc(`teams/${teamId}/players/${playerId}`);
+}
+
+async function mergeNotificationPreferenceDocs({ sourceUid, destinationUid, teamIds, actorUid }) {
+  const affected = [];
+  await Promise.all([...new Set(teamIds)].map(async (teamId) => {
+    const sourceRef = firestore.doc(`users/${sourceUid}/notificationPreferences/${teamId}`);
+    const destinationRef = firestore.doc(`users/${destinationUid}/notificationPreferences/${teamId}`);
+    const [sourceSnap, destinationSnap] = await Promise.all([sourceRef.get(), destinationRef.get()]);
+    if (!sourceSnap.exists) return;
+    const merged = {
+      ...mergePreferenceObjects(destinationSnap.exists ? destinationSnap.data() || {} : {}, sourceSnap.data() || {}),
+      mergedFromUid: sourceUid,
+      mergedBy: actorUid,
+      mergedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+    await destinationRef.set(merged, { merge: true });
+    affected.push(`users/${destinationUid}/notificationPreferences/${teamId}`);
+  }));
+  return affected;
+}
+
+exports.confirmParentAccountMerge = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before confirming an account merge.');
+  }
+
+  let input;
+  try {
+    input = normalizeAccountMergeInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid account merge request.');
+  }
+  if (input.sourceUid === input.destinationUid) {
+    throw new functions.https.HttpsError('invalid-argument', 'Source and destination accounts must be different.');
+  }
+
+  const actorSnap = await firestore.doc(`users/${context.auth.uid}`).get();
+  const actor = actorSnap.exists ? actorSnap.data() || {} : {};
+  if (actor.isAdmin !== true) {
+    throw new functions.https.HttpsError('permission-denied', 'Only admins can confirm parent account merges.');
+  }
+
+  const { requestRef, requestSnap, previewTokenHash } = await resolveAccountMergeRequest(input);
+  if (!requestSnap.exists) {
+    throw new functions.https.HttpsError('failed-precondition', 'Verified account merge request not found.');
+  }
+  const requestData = requestSnap.data() || {};
+  if (requestData.sourceUid !== input.sourceUid || requestData.destinationUid !== input.destinationUid) {
+    throw new functions.https.HttpsError('failed-precondition', 'Account merge request is not for these accounts.');
+  }
+  if (requestData.status === 'completed') {
+    return { merged: true, idempotent: true, requestId: requestRef.id, affectedCollections: requestData.affectedCollections || [] };
+  }
+  if (!isVerifiedAccountMergeRequest(requestData, { ...input, previewTokenHash })) {
+    throw new functions.https.HttpsError('failed-precondition', 'Account merge request is not verified for these accounts.');
+  }
+
+  const sourceRef = firestore.doc(`users/${input.sourceUid}`);
+  const destinationRef = firestore.doc(`users/${input.destinationUid}`);
+  const affectedCollections = new Set(['users', 'accountMergeRequests']);
+  let parentPlayerKeys = [];
+
+  await firestore.runTransaction(async (transaction) => {
+    const [sourceSnap, destinationSnap] = await Promise.all([
+      transaction.get(sourceRef),
+      transaction.get(destinationRef)
+    ]);
+    if (!sourceSnap.exists || !destinationSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Source and destination users must both exist.');
+    }
+
+    const sourceUser = sourceSnap.data() || {};
+    const destinationUser = destinationSnap.data() || {};
+    const destinationUpdate = buildMergedParentAccount(destinationUser, sourceUser);
+    parentPlayerKeys = collectParentPlayerKeys(sourceUser, destinationUser);
+    const playerRefs = parentPlayerKeys.map(buildPlayerRefFromParentKey).filter(Boolean);
+    const playerSnaps = await Promise.all(playerRefs.map((ref) => transaction.get(ref)));
+
+    transaction.update(destinationRef, {
+      ...destinationUpdate,
+      mergedParentAccountUids: admin.firestore.FieldValue.arrayUnion(input.sourceUid),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    transaction.update(sourceRef, {
+      mergedIntoUid: input.destinationUid,
+      mergeStatus: 'merged',
+      mergedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    playerSnaps.forEach((playerSnap) => {
+      if (!playerSnap.exists) return;
+      const playerData = playerSnap.data() || {};
+      const currentParents = Array.isArray(playerData.parents) ? playerData.parents : [];
+      const result = buildMergedPlayerParents(currentParents, input.sourceUid, input.destinationUid);
+      const duplicateParentUserIds = findDuplicateParentUserIds(result.parents);
+      if (duplicateParentUserIds.length > 0) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Player parent merge would leave duplicate parent account links. Retry after cleaning up duplicate parent records.'
+        );
+      }
+      if (result.changed) {
+        transaction.update(playerSnap.ref, { parents: result.parents, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+        affectedCollections.add('teams/players');
+      }
+    });
+
+    transaction.set(requestRef, {
+      sourceUid: input.sourceUid,
+      destinationUid: input.destinationUid,
+      actorUid: context.auth.uid,
+      affectedCollections: [...affectedCollections],
+      confirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      status: 'completed'
+    }, { merge: true });
+  });
+
+  const preferencePaths = await mergeNotificationPreferenceDocs({
+    sourceUid: input.sourceUid,
+    destinationUid: input.destinationUid,
+    teamIds: parentPlayerKeys.map((key) => key.split('::')[0]).filter(Boolean),
+    actorUid: context.auth.uid
+  });
+  if (preferencePaths.length > 0) {
+    affectedCollections.add('users/notificationPreferences');
+    await requestRef.set({ affectedCollections: [...affectedCollections], affectedPaths: preferencePaths }, { merge: true });
+  }
+
+  return { merged: true, idempotent: false, requestId: requestRef.id, affectedCollections: [...affectedCollections] };
+});
 
 exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
