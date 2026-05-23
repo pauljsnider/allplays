@@ -95,7 +95,10 @@
                 </select>
 
                 <!-- Export -->
-                <button id="export-ics-btn" onclick="exportIcs()" class="ml-auto inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition border border-primary-200">
+                <button id="print-schedule" onclick="printCurrentSchedule()" class="ml-auto inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white rounded-lg hover:bg-gray-50 transition border border-gray-200">
+                    Print Schedule
+                </button>
+                <button id="export-ics-btn" onclick="exportIcs()" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition border border-primary-200">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     .ics Export
                 </button>
@@ -142,6 +145,7 @@
         import { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } from './js/calendar-rsvp.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
         import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
+        import { printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -164,6 +168,7 @@
         window.setTimeRange = setTimeRange;
         window.setTypeFilter = setTypeFilter;
         window.applyFilters = applyFilters;
+        window.printCurrentSchedule = printCurrentSchedule;
         window.navMonth = navMonth;
         window.exportIcs = exportIcs;
         window.openDayDetail = openDayDetail;
@@ -777,6 +782,19 @@
             if (calendarMonth > 11) { calendarMonth = 0; calendarYear++; }
             if (calendarMonth < 0) { calendarMonth = 11; calendarYear--; }
             render();
+        }
+
+        function printCurrentSchedule() {
+            const options = promptSchedulePrintOptions();
+            if (!options) return;
+            const selectedTeam = currentTeamFilter
+                ? allEvents.find((event) => event.teamId === currentTeamFilter)?.teamName
+                : 'All teams';
+            printSchedule(filteredEvents, {
+                ...options,
+                title: `${selectedTeam || 'All teams'} schedule`,
+                teamName: selectedTeam || ''
+            });
         }
 
         // ===== ICS EXPORT =====
