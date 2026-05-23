@@ -584,9 +584,14 @@ test('blocks apply until every included home row is mapped, then saves report da
 
     await expect(page.locator('#apply-status')).toHaveText('Stats saved! Now you can add a game summary.');
     await expect(page.locator('#summary-section')).not.toHaveClass(/hidden/);
+    await expect(page.locator('#apply-btn')).toBeVisible();
+
+    await page.locator('#home-score-input').fill('21');
+    await page.locator('#apply-btn').click();
+    await expect(page.locator('#apply-status')).toHaveText('Stats saved! Now you can add a game summary.');
 
     const savedState = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
-    expect(savedState.commitCalls).toBe(1);
+    expect(savedState.commitCalls).toBe(2);
     expect(savedState.uploadCount).toBe(1);
     expect(savedState.aggregatedStats).toEqual({
         p1: {
@@ -606,7 +611,7 @@ test('blocks apply until every included home row is mapped, then saves report da
             stats: { pts: 7, reb: 0, ast: 0, fouls: 1 }
         }
     });
-    expect(savedState.game.homeScore).toBe(19);
+    expect(savedState.game.homeScore).toBe(21);
     expect(savedState.game.awayScore).toBe(24);
     expect(savedState.game.status).toBe('completed');
     expect(savedState.game.statSheetPhotoUrl).toBe('https://img.test/statsheet.png');
@@ -615,16 +620,6 @@ test('blocks apply until every included home row is mapped, then saves report da
         statsheet_2: { name: 'Kai North', number: '11', pts: 9, reb: 0, ast: 0, fouls: 2 }
     });
 
-    await expect(page.locator('#apply-btn')).toBeVisible();
-    await page.locator('#home-score-input').fill('21');
-    await page.locator('#apply-btn').click();
-    await expect(page.locator('#apply-status')).toHaveText('Stats saved! Now you can add a game summary.');
-
-    const reappliedState = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
-    expect(reappliedState.commitCalls).toBe(2);
-    expect(reappliedState.uploadCount).toBe(1);
-    expect(reappliedState.game.homeScore).toBe(21);
-    expect(reappliedState.game.statSheetPhotoUrl).toBe('https://img.test/statsheet.png');
 });
 
 test('respects overwrite confirmation and renders rewritten stats on the game report', async ({ page, baseURL }) => {
