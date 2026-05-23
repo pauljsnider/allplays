@@ -52,8 +52,42 @@ export function hasFullTeamAccess() {
 
 const FIREBASE_APP_STUB = `
 export function getApp() {
-    return {};
+    return { options: { projectId: 'demo-allplays', appId: 'demo-app' }, name: '[DEFAULT]' };
 }
+export function _getProvider() {
+    return { isInitialized: () => false, getImmediate: () => ({}), get: () => Promise.resolve({}), initialize: () => ({}) };
+}
+export function _registerComponent() {}
+export function _removeServiceInstance() {}
+export function registerVersion() {}
+export function _isFirebaseServerApp() { return false; }
+export function getApps() { return [getApp()]; }
+export const SDK_VERSION = 'test';
+export function initializeApp() { return getApp(); }
+`;
+
+const FIREBASE_STUB = `
+export const auth = { currentUser: { uid: 'user-1', email: 'paul@paulsnider.net' } };
+export const db = {};
+export const storage = {};
+export function onAuthStateChanged(_auth, callback) { callback(auth.currentUser); return () => {}; }
+export function collection() { return {}; }
+export function doc() { return {}; }
+export function getDoc() { return Promise.resolve({ exists: () => false, data: () => ({}) }); }
+export function getDocs() { return Promise.resolve({ docs: [], empty: true, forEach() {} }); }
+export function setDoc() { return Promise.resolve(); }
+export function updateDoc() { return Promise.resolve(); }
+export function addDoc() { return Promise.resolve({ id: 'doc-1' }); }
+export function deleteDoc() { return Promise.resolve(); }
+export function query() { return {}; }
+export function where() { return {}; }
+export function orderBy() { return {}; }
+export function limit() { return {}; }
+export function onSnapshot(_ref, next) { if (typeof next === 'function') next({ docs: [], empty: true, forEach() {} }); return () => {}; }
+export function serverTimestamp() { return new Date(); }
+export function writeBatch() { return { set() {}, update() {}, delete() {}, commit: () => Promise.resolve() }; }
+export function getFunctions() { return {}; }
+export function httpsCallable() { return () => Promise.resolve({ data: null }); }
 `;
 
 const FIREBASE_AI_STUB = `
@@ -648,11 +682,13 @@ export function getDefaultLivePeriod() {
 `;
 
 async function routeCommonPageStubs(page) {
-    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
-    await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
+    await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+    await page.route(/\/js\/firebase\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
-    await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
-    await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
+    await page.route(/\/js\/vendor\/firebase-app\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
+    await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
 }
 
 async function routeLiveGameStubs(page) {
