@@ -2665,14 +2665,24 @@
             document.getElementById('basketball-tracker-modal')?.classList.remove('hidden');
         }
 
+        function isCancelledGame(game) {
+            const status = String(game?.status || '').toLowerCase();
+            return status === 'cancelled' || status === 'canceled';
+        }
+
         function handleTrackClick(gameId) {
             const game = gamesCache[gameId];
             if (!game) return;
+            if (isCancelledGame(game)) {
+                alert('Cancelled games cannot be tracked. Restore or reschedule the game before tracking.');
+                return;
+            }
             openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game));
         }
 
         function renderDbGame(game) {
             const isCompleted = game.status === 'completed';
+            const isCancelled = isCancelledGame(game);
             // Cache game data for later retrieval
             gamesCache[game.id] = game;
             return `
@@ -2698,21 +2708,21 @@
                         ${renderOfficiatingSummary(game.officiatingSlots)}
                         ${game.assignments && game.assignments.length > 0 ? `<div class="mt-1 text-xs text-gray-600">${game.assignments.map(a => `<span class="inline-block bg-gray-100 rounded px-1.5 py-0.5 mr-1 mb-1"><b>${escapeHtml(a.role)}:</b> ${escapeHtml(a.value || 'TBD')}</span>`).join('')}</div>` : ''}
                         ${isCompleted ? `<span class="inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full font-semibold mt-2">Final: ${game.homeScore}-${game.awayScore}</span>` : ''}
-                        ${game.status === 'cancelled' ? '<div class="mt-1"><span class="inline-block bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full font-semibold">CANCELLED</span></div>' : ''}
+                        ${isCancelled ? '<div class="mt-1"><span class="inline-block bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full font-semibold">CANCELLED</span></div>' : ''}
                         ${game.rsvpSummary ? `<div class="text-xs text-gray-500 mt-1">${game.rsvpSummary.going || 0} going · ${game.rsvpSummary.maybe || 0} maybe · ${game.rsvpSummary.notGoing || 0} can't go · ${game.rsvpSummary.notResponded || 0} no response</div>` : ''}
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button data-game-id="${game.id}" class="edit-game-btn px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200">Edit</button>
                         ${game.competitionType === 'tournament' && game.tournament?.poolName ? `<button data-game-id="${game.id}" class="advance-tournament-pool-btn px-3 py-1 bg-violet-100 text-violet-700 rounded text-sm hover:bg-violet-200">Advance Pool</button>` : ''}
-                        ${!isCompleted ? `<button data-game-id="${game.id}" class="track-game-btn px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</button>` : ''}
+                        ${!isCompleted && !isCancelled ? `<button data-game-id="${game.id}" class="track-game-btn px-3 py-1 bg-indigo-100 text-indigo-700 rounded text-sm hover:bg-indigo-200">Track</button>` : ''}
                         ${!isCompleted ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 ${game.liveStatus === 'live' ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'} rounded text-sm">${game.liveStatus === 'live' ? 'Live Now' : 'View Live'}</a>` : ''}
                         ${!isCompleted ? `<button data-live-link="${game.id}" class="copy-live-link-btn px-3 py-1 bg-rose-100 text-rose-700 rounded text-sm hover:bg-rose-200">Share</button>` : ''}
                         ${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Report</a>` : ''}
                         ${game.liveStatus === 'completed' ? `<a href="live-game.html?teamId=${currentTeamId}&gameId=${game.id}&replay=true" class="px-3 py-1 bg-teal-100 text-teal-700 rounded text-sm hover:bg-teal-200">Watch Replay</a>` : ''}
                         <a href="game-plan.html#teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-primary-100 text-primary-700 rounded text-sm hover:bg-primary-200">Game Plan</a>
-                        ${game.status !== 'cancelled' ? `<a href="game-day.html?teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-orange-100 text-orange-700 rounded text-sm hover:bg-orange-200">Command Center</a>` : ''}
+                        ${!isCancelled ? `<a href="game-day.html?teamId=${currentTeamId}&gameId=${game.id}" class="px-3 py-1 bg-orange-100 text-orange-700 rounded text-sm hover:bg-orange-200">Command Center</a>` : ''}
                         <button data-game-id="${game.id}" data-event-doc-id="${game.id}" data-event-type="game" data-event-title="${escapeHtml(`vs. ${game.opponent || 'TBD'}`)}" data-event-date="${(game.date?.toDate ? game.date.toDate() : new Date(game.date)).toISOString()}" class="view-rsvps-btn px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">RSVPs</button>
-                        ${game.status !== 'cancelled' ? `<button data-game-id="${game.id}" class="cancel-game-btn px-3 py-1 border border-orange-300 text-orange-600 rounded text-sm hover:bg-orange-50">Cancel</button>` : '<span class="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-semibold">Cancelled</span>'}
+                        ${!isCancelled ? `<button data-game-id="${game.id}" class="cancel-game-btn px-3 py-1 border border-orange-300 text-orange-600 rounded text-sm hover:bg-orange-50">Cancel</button>` : '<span class="px-3 py-1 bg-red-100 text-red-700 rounded text-sm font-semibold">Cancelled</span>'}
                         <button data-id="${game.id}" class="px-3 py-1 border border-red-300 text-red-600 rounded text-sm hover:bg-red-50 delete-btn">Delete</button>
                     </div>
                 </div>
