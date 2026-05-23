@@ -188,4 +188,116 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.getUserProfile).not.toHaveBeenCalled();
         expect(dbMocks.getUserTeamsWithAccess).not.toHaveBeenCalled();
     });
+
+    it('uploads media, creates targeted conversations, and posts complete chat metadata', async () => {
+        const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
+        const video = new File(['clip'], 'warmups.mp4', { type: 'video/mp4' });
+        const uploadedPhoto = {
+            type: 'image',
+            url: 'https://cdn.example.test/arrival.jpg',
+            path: 'team-photos/arrival.jpg',
+            name: 'arrival.jpg',
+            mimeType: 'image/jpeg',
+            size: photo.size
+        };
+        const uploadedVideo = {
+            type: 'video',
+            url: 'https://cdn.example.test/warmups.mp4',
+            path: 'team-videos/warmups.mp4',
+            name: 'warmups.mp4',
+            mimeType: 'video/mp4',
+            size: video.size
+        };
+        dbMocks.uploadChatImage
+            .mockResolvedValueOnce(uploadedPhoto)
+            .mockResolvedValueOnce(uploadedVideo);
+        dbMocks.upsertChatConversation.mockResolvedValue({
+            id: 'group-player-coach',
+            type: 'group',
+            participantIds: ['user-1', 'player:player-1', 'user:coach-1'],
+            participantRoles: []
+        });
+        dbMocks.postChatMessage.mockResolvedValue({ id: 'msg-1' });
+        const progress = [];
+
+        const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
+        const result = await sendTeamChatMessage({
+            teamId: 'team-1',
+            user: {
+                uid: 'user-1',
+                email: 'parent@example.com',
+                displayName: 'Pat Parent'
+            },
+            profile: {
+                fullName: 'Pat Profile',
+                photoUrl: 'https://cdn.example.test/pat.jpg'
+            },
+            text: '@ALL PLAYS summarize this thread',
+            files: [photo, video],
+            selectedConversation: null,
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'individuals',
+            selectedRecipientIds: ['user:coach-1', 'player:player-1'],
+            onProgress: (stage) => progress.push(stage)
+        });
+
+        expect(progress).toEqual(['uploading', 'uploading', 'posting']);
+        expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(1, 'team-1', photo);
+        expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(2, 'team-1', video);
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'group',
+            participantIds: ['user-1', 'player:player-1', 'user:coach-1'],
+            participantRoles: []
+        }));
+        expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            text: '@ALL PLAYS summarize this thread',
+            senderId: 'user-1',
+            senderName: 'Pat Profile',
+            senderEmail: 'parent@example.com',
+            senderPhotoUrl: 'https://cdn.example.test/pat.jpg',
+            attachments: [uploadedPhoto, uploadedVideo],
+            conversationId: 'group-player-coach',
+            targetType: 'individuals',
+            recipientIds: ['player:player-1', 'user:coach-1'],
+            targetRole: null
+        }));
+        expect(result).toEqual({
+            conversationId: 'group-player-coach',
+            createdConversation: expect.objectContaining({ id: 'group-player-coach' }),
+            wantsAi: true
+        });
+    });
+
+    it('cleans uploaded chat media if the message write fails', async () => {
+        const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
+        const uploadedPhoto = {
+            type: 'image',
+            url: 'https://cdn.example.test/arrival.jpg',
+            path: 'team-photos/arrival.jpg',
+            name: 'arrival.jpg',
+            mimeType: 'image/jpeg',
+            size: photo.size
+        };
+        dbMocks.uploadChatImage.mockResolvedValue(uploadedPhoto);
+        dbMocks.postChatMessage.mockRejectedValue(new Error('Firestore unavailable'));
+
+        const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
+        await expect(sendTeamChatMessage({
+            teamId: 'team-1',
+            user: {
+                uid: 'user-1',
+                email: 'parent@example.com',
+                displayName: 'Pat Parent'
+            },
+            profile: {},
+            text: 'Photo only',
+            files: [photo],
+            selectedConversation: null,
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: []
+        })).rejects.toThrow('Firestore unavailable');
+
+        expect(dbMocks.deleteUploadedChatAttachments).toHaveBeenCalledWith([uploadedPhoto]);
+    });
 });

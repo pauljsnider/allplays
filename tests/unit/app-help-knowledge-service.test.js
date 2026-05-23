@@ -1,0 +1,36 @@
+// @vitest-environment jsdom
+import { describe, expect, it } from 'vitest';
+
+describe('app help knowledge service', () => {
+    it('indexes root help and workflow pages for private AI lookup', async () => {
+        const { getHelpKnowledgeDocs } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const docs = getHelpKnowledgeDocs();
+
+        expect(docs.length).toBeGreaterThanOrEqual(20);
+        expect(docs.map((doc) => doc.file)).toEqual(expect.arrayContaining([
+            'help.html',
+            'help-account.html',
+            'help-team-operations.html',
+            'workflow-communication.html',
+            'workflow-schedule.html',
+            'workflow-live-watch-replay.html'
+        ]));
+    });
+
+    it('finds functional workflow help with source pages and snippets', async () => {
+        const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const results = searchHelpKnowledge({
+            query: 'How do I reset my password and verify email?',
+            roles: ['parent'],
+            limit: 4
+        });
+
+        expect(results.length).toBeGreaterThan(0);
+        expect(results[0]).toMatchObject({
+            file: expect.stringMatching(/help-account|workflow-getting-started/),
+            url: expect.stringContaining('https://allplays.ai/')
+        });
+        expect(results.map((result) => result.title).join(' ')).toMatch(/Account|Access|Create|Help/i);
+        expect(results[0].snippet.length).toBeGreaterThan(40);
+    });
+});

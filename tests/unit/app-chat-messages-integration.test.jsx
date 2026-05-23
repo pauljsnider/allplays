@@ -225,6 +225,14 @@ beforeEach(() => {
         configurable: true,
         value: vi.fn()
     });
+    Object.defineProperty(window, 'SpeechRecognition', {
+        configurable: true,
+        value: undefined
+    });
+    Object.defineProperty(window, 'webkitSpeechRecognition', {
+        configurable: true,
+        value: undefined
+    });
     Object.defineProperty(navigator, 'clipboard', {
         configurable: true,
         value: {
@@ -631,10 +639,78 @@ describe('React app messages integration', () => {
         await flush();
     });
 
+    it('sends attachment-only updates and clears local previews after posting', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+        const fileInput = container.querySelector('input[type="file"]');
+        const video = new File(['clip'], 'warmups.mp4', { type: 'video/mp4' });
+        Object.defineProperty(fileInput, 'files', { configurable: true, value: [video] });
+
+        await act(async () => {
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await flush();
+
+        expect(container.textContent).toContain('1 attachment ready');
+        await click(container, 'Send message');
+
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+            text: '',
+            files: [video],
+            selectedConversationId: 'team'
+        }));
+        expect(container.textContent).not.toContain('1 attachment ready');
+        expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:chat-upload');
+    });
+
     it('hides the voice button when dictation is unsupported', async () => {
         const { container } = await renderMessages('/messages/team-1');
 
         expect(container.querySelector('button[aria-label="Voice to text"]')).toBeNull();
+    });
+
+    it('uses browser speech dictation to fill the composer and return to the compact toolbar state', async () => {
+        let recognitionInstance;
+        class MockSpeechRecognition {
+            constructor() {
+                recognitionInstance = this;
+                this.start = vi.fn();
+                this.stop = vi.fn(() => {
+                    this.onend?.();
+                });
+            }
+        }
+
+        voiceMocks.hasBrowserSupport.mockReturnValue(true);
+        Object.defineProperty(window, 'webkitSpeechRecognition', {
+            configurable: true,
+            value: MockSpeechRecognition
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Voice to text');
+        expect(recognitionInstance.start).toHaveBeenCalled();
+        expect(container.textContent).toContain('Listening...');
+
+        await act(async () => {
+            recognitionInstance.onresult({
+                results: [
+                    [{ transcript: 'Leaving after warmups' }]
+                ]
+            });
+        });
+        await flush();
+
+        const textarea = container.querySelector('textarea');
+        expect(textarea.value).toBe('Leaving after warmups');
+
+        await act(async () => {
+            recognitionInstance.onend();
+        });
+        await flush();
+
+        expect(container.querySelector('button[aria-label="Voice to text"]')).toBeTruthy();
+        expect(container.textContent).not.toContain('Listening...');
     });
 
     it('keeps native dictation listening when iOS resolves start without a result payload', async () => {

@@ -198,6 +198,25 @@ describe('React app shell search', () => {
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/teams.html');
     });
 
+    it('opens the add workflow launcher with native and website actions', async () => {
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Add');
+
+        expect(container.textContent).toContain('Add to ALL PLAYS');
+        expect(container.textContent).toContain('Create team');
+        expect(container.textContent).toContain('Add player');
+        expect(container.textContent).toContain('Game or practice');
+        expect(container.textContent).toContain('Invite family');
+
+        await clickButton(container, 'Join with code');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/accept-invite');
+
+        await clickButton(container, 'Add');
+        await clickButton(container, 'Create team');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/dashboard.html');
+    });
+
     it('supports Cmd/Ctrl+K and Enter keyboard navigation', async () => {
         const { container } = await renderShell();
 

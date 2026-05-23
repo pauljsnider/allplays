@@ -81,6 +81,18 @@ a {
   padding-bottom: calc(88px + env(safe-area-inset-bottom));
 }
 
+.app-page-ai {
+  height: 100dvh;
+  min-height: 0;
+  padding-bottom: var(--app-bottom-nav-height);
+  overflow: hidden;
+}
+
+.app-page-ai > main {
+  height: calc(100dvh - var(--app-bottom-nav-height) - 52px - max(12px, env(safe-area-inset-top)));
+  overflow: hidden;
+}
+
 .app-page-chat-detail {
   height: 100dvh;
   padding-bottom: var(--app-bottom-nav-height);
@@ -98,6 +110,108 @@ a {
   border-radius: 16px;
   background: #ffffff;
   box-shadow: 0 10px 24px rgba(16, 24, 40, 0.07);
+}
+
+.add-workflow-panel {
+  max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)) - 24px);
+  overflow: hidden;
+}
+
+.add-workflow-content {
+  max-height: min(72dvh, 640px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.add-workflow-section {
+  margin-top: 14px;
+}
+
+.add-workflow-section-title {
+  color: #475467;
+  font-size: 0.68rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.add-workflow-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.add-workflow-card {
+  display: flex;
+  min-height: 58px;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 9px 10px;
+  text-align: left;
+  transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease;
+}
+
+.add-workflow-card:hover {
+  border-color: #c7d2fe;
+  background: #f8faff;
+  transform: translateY(-1px);
+}
+
+.add-workflow-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.add-workflow-label,
+.add-workflow-detail {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.add-workflow-label {
+  color: #111827;
+  font-size: 0.86rem;
+  font-weight: 950;
+}
+
+.add-workflow-detail {
+  margin-top: 1px;
+  color: #667085;
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.add-workflow-badge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #f2f4f7;
+  padding: 4px 7px;
+  color: #475467;
+  font-size: 0.62rem;
+  font-weight: 950;
+}
+
+.add-workflow-badge-website {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+@media (min-width: 640px) {
+  .add-workflow-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .app-section-title {
@@ -821,7 +935,7 @@ a {
 .chat-window-mobile {
   height: 100%;
   min-height: 0;
-  padding: 0 10px 6px;
+  padding: 0 6px 6px;
   overflow: hidden;
 }
 
@@ -847,6 +961,12 @@ a {
 
 .private-ai-rail {
   gap: 10px;
+}
+
+.desktop-app-page-messages .private-ai-rail {
+  overflow-y: auto;
+  padding-right: 3px;
+  overscroll-behavior: contain;
 }
 
 .private-ai-prompt-button {
@@ -875,16 +995,16 @@ a {
 
 .private-ai-conversation-button {
   display: flex;
-  min-height: 58px;
+  min-height: 50px;
   width: 100%;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   background: #ffffff;
-  padding: 9px 10px;
+  padding: 7px 9px;
   text-align: left;
 }
 
@@ -904,22 +1024,23 @@ a {
 
 .private-ai-conversation-title {
   color: #111827;
-  font-size: 0.84rem;
+  font-size: 0.79rem;
   font-weight: 900;
 }
 
 .private-ai-conversation-preview {
   color: #667085;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 750;
 }
 
 .private-ai-conversation-strip {
   display: flex;
   flex: 0 0 auto;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
-  padding: 0 2px 2px;
+  margin-top: -2px;
+  padding: 1px 0 6px;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
@@ -931,19 +1052,19 @@ a {
 .private-ai-conversation-chip {
   display: inline-flex;
   min-width: 0;
-  max-width: min(64vw, 240px);
-  height: 36px;
+  max-width: min(56vw, 220px);
+  height: 30px;
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   border: 1px solid #e5e7eb;
-  border-radius: 999px;
+  border-radius: 10px;
   background: #ffffff;
-  padding: 0 12px;
+  padding: 0 9px;
   color: #344054;
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 900;
-  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.08);
+  box-shadow: none;
 }
 
 .private-ai-conversation-chip span {
@@ -959,9 +1080,13 @@ a {
 }
 
 .private-ai-conversation-chip-new {
-  border-color: #111827;
-  background: #111827;
-  color: #ffffff;
+  border-color: #d0d5dd;
+  background: #ffffff;
+  color: #111827;
+}
+
+.private-ai-conversation-chip-new svg {
+  color: #4f46e5;
 }
 
 .private-ai-conversation-chip-muted {
@@ -985,7 +1110,7 @@ a {
 
 .private-ai-content {
   justify-content: flex-end;
-  padding: 10px 8px;
+  padding: 8px 4px;
 }
 
 .private-ai-welcome {
@@ -997,16 +1122,133 @@ a {
 
 .private-ai-composer {
   flex: 0 0 auto;
+  padding: 6px;
+}
+
+.private-ai-composer.safe-bottom {
+  padding-bottom: 6px;
 }
 
 .private-ai-window-mobile {
-  height: calc(100dvh - 176px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-  min-height: 520px;
+  height: 100%;
+  min-height: 0;
   padding-top: 0;
 }
 
-.private-ai-composer-toolbar {
-  min-height: 32px;
+.private-ai-window-mobile .private-ai-card {
+  border-radius: 14px;
+}
+
+.private-ai-mobile-topbar {
+  padding: 8px;
+  border-radius: 14px;
+}
+
+.private-ai-mobile-mark,
+.private-ai-desktop-mark {
+  position: relative;
+  overflow: visible;
+  border: 1px solid #c7d2fe;
+  background: linear-gradient(135deg, #ffffff 0%, #eef2ff 100%);
+  box-shadow: 0 8px 18px rgba(79, 70, 229, 0.14);
+}
+
+.private-ai-mobile-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+}
+
+.private-ai-desktop-mark img,
+.private-ai-mobile-mark img {
+  width: 72%;
+  height: 72%;
+  border-radius: 9px;
+  object-fit: contain;
+}
+
+.private-ai-mark-spark {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 15px;
+  height: 15px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #4f46e5;
+  color: #ffffff;
+  padding: 2px;
+}
+
+.private-ai-topbar-action {
+  width: 36px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+}
+
+.private-ai-message-row {
+  padding: 2px 3px;
+}
+
+.private-ai-bubble {
+  max-width: 92%;
+  border-radius: 13px;
+  padding: 6px 9px;
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.08);
+}
+
+.private-ai-bubble-own {
+  max-width: 88%;
+}
+
+.private-ai-message-text {
+  font-size: 0.8125rem;
+  font-weight: 575;
+  line-height: 1.38;
+}
+
+.private-ai-message-text p {
+  margin: 0 0 0.35rem;
+}
+
+.private-ai-message-text p:last-child,
+.private-ai-message-text ul:last-child,
+.private-ai-message-text ol:last-child {
+  margin-bottom: 0;
+}
+
+.private-ai-message-text ul,
+.private-ai-message-text ol {
+  margin: 0.25rem 0 0.35rem 1rem;
+}
+
+.private-ai-message-text li {
+  margin: 0.1rem 0;
+}
+
+.private-ai-bot-label {
+  margin-bottom: 3px;
+  font-size: 0.62rem;
+}
+
+.private-ai-bot-label svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+.private-ai-message-meta {
+  margin-top: 3px;
+  font-size: 0.625rem;
+}
+
+.private-ai-day-divider {
+  margin: 8px 0 6px;
+  font-size: 0.625rem;
+}
+
+.private-ai-composer .private-ai-composer-toolbar {
+  min-height: 28px;
+  margin-top: 5px;
 }
 
 .private-ai-composer-notice {
@@ -1232,6 +1474,16 @@ a {
   bottom: auto;
   flex: 0 0 auto;
   padding: 8px;
+}
+
+.desktop-app-page-messages .private-ai-composer,
+.app-page-ai .private-ai-composer {
+  padding: 6px;
+}
+
+.desktop-app-page-messages .private-ai-composer.safe-bottom,
+.app-page-ai .private-ai-composer.safe-bottom {
+  padding-bottom: 6px;
 }
 
 .chat-message-html a {

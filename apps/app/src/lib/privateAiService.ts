@@ -14,6 +14,7 @@ import {
 import { getApp } from '../../../../js/vendor/firebase-app.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
 import { getChatInboxPreview, loadChatInbox } from './chatService';
+import { searchHelpKnowledge } from './helpKnowledgeService';
 import { loadParentHome } from './homeService';
 import {
   loadParentCertificates,
@@ -227,6 +228,15 @@ export async function generatePrivateAiAnswer(
   const model = await getPrivateAiModel();
   const history = summarizeChatHistory(priorMessages);
   const toolResults: PrivateAiToolResult[] = [];
+  if (looksLikeFunctionalHelpQuestion(question)) {
+    toolResults.push(await runPrivateAiTool(user, {
+      name: 'get_help',
+      args: {
+        query: question,
+        limit: 5
+      }
+    }));
+  }
   let plannerInput = buildPlannerPrompt({ user, question, history, toolResults });
 
   for (let round = 0; round < maxToolRounds; round += 1) {
@@ -352,6 +362,16 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
           }
         };
       }
+      case 'get_help':
+        return {
+          name,
+          ok: true,
+          data: summarizeHelpKnowledge(searchHelpKnowledge({
+            query: compactText(args.query) || compactText(args.topic) || compactText(args.question),
+            roles: user.roles || [],
+            limit: Number(args.limit || 5)
+          }))
+        };
       default:
         return { name, ok: false, error: `Unsupported tool: ${name}` };
     }
@@ -489,7 +509,8 @@ function buildPlannerPrompt({
     `- get_team_detail: one accessible team. Args: teamId or teamName.\n` +
     `- get_player_development: one linked player, recent stats, tracking summaries, incentives, profile, clips, and next actions for coaching/development. Args: playerId, teamId, playerName.\n` +
     `- get_fees: open parent fee records.\n` +
-    `- get_parent_tools: registrations and certificates.\n\n` +
+    `- get_parent_tools: registrations and certificates.\n` +
+    `- get_help: ALL PLAYS help/workflow documentation for how-to, setup, feature, and troubleshooting questions. Args: query, limit.\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
     `RECENT CHAT HISTORY:\n${JSON.stringify(history)}\n\n` +
     `QUESTION:\n${question}\n\n` +
@@ -509,6 +530,7 @@ function buildFinalAnswerPrompt({
 }) {
   return `You are ALL PLAYS, a private assistant for the signed-in youth sports parent or coach.\n` +
     `Use ONLY this account-scoped data. If the data is missing, say what is missing.\n` +
+    `For product/how-to questions, use help documentation results and include the relevant help page when useful.\n` +
     `Answer concisely. Include dates, times, team names, and player names when relevant.\n` +
     `Return strict JSON only: {"answer":"..."}.\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
@@ -715,6 +737,20 @@ function summarizeFees(fees: any[]) {
   };
 }
 
+function summarizeHelpKnowledge(results: ReturnType<typeof searchHelpKnowledge>) {
+  return {
+    results: results.map((result) => ({
+      id: result.id,
+      title: result.title,
+      file: result.file,
+      url: result.url,
+      roles: result.roles,
+      summary: result.summary,
+      snippet: result.snippet
+    }))
+  };
+}
+
 async function resolveAccessibleTeamId(user: AuthUser, args: Record<string, unknown>) {
   const teamId = compactText(args.teamId);
   const teamName = compactText(args.teamName).toLowerCase();
@@ -851,6 +887,44 @@ function messageBelongsToConversation(message: PrivateAiMessage, conversationId:
   return activeConversationId === DEFAULT_PRIVATE_AI_CONVERSATION_ID
     ? messageConversationId === DEFAULT_PRIVATE_AI_CONVERSATION_ID
     : messageConversationId === activeConversationId;
+}
+
+function looksLikeFunctionalHelpQuestion(question: string) {
+  const text = compactText(question).toLowerCase();
+  if (!text) return false;
+  return [
+    'how do ',
+    'how can ',
+    'where do ',
+    'where can ',
+    'what does ',
+    'what is ',
+    'can i ',
+    'why can',
+    'help',
+    'troubleshoot',
+    'setup',
+    'set up',
+    'create',
+    'invite',
+    'reset password',
+    'verify email',
+    'upload',
+    'share',
+    'export',
+    'import',
+    'rsvp',
+    'rideshare',
+    'registration',
+    'fees',
+    'payments',
+    'roster',
+    'schedule',
+    'track',
+    'live game',
+    'replay',
+    'match report'
+  ].some((term) => text.includes(term));
 }
 
 function clampAnswer(answer: string) {

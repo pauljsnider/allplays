@@ -2,14 +2,23 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bot,
   CalendarDays,
+  CalendarPlus,
+  ClipboardList,
+  CreditCard,
+  Dumbbell,
+  FilePlus2,
   Home,
+  ImagePlus,
+  KeyRound,
   MessageCircle,
   Plus,
   Search,
   Shield,
+  Sparkles,
+  Ticket,
   UserCircle,
+  UserPlus,
   Users,
   X
 } from 'lucide-react';
@@ -17,6 +26,7 @@ import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 import { AppSearchDialog } from './AppSearchDialog';
+import { openPublicUrl } from '../lib/publicActions';
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -25,6 +35,17 @@ const navItems: NavItem[] = [
   { label: 'My Teams', path: '/teams', icon: Users },
   { label: 'Profile', path: '/profile', icon: UserCircle }
 ];
+
+type AddWorkflow = {
+  id: string;
+  label: string;
+  detail: string;
+  section: 'Team' | 'Player' | 'Schedule' | 'Team Ops';
+  icon: typeof Plus;
+  kind: 'native' | 'website';
+  href: string;
+  badge?: string;
+};
 
 interface AppShellProps {
   auth: AuthState;
@@ -53,13 +74,19 @@ export function AppShell({ auth, children }: AppShellProps) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const goToRoute = (route: string) => {
+  const addWorkflows = buildAddWorkflows();
+
+  const handleAddWorkflow = async (workflow: AddWorkflow) => {
     setAddTeamOpen(false);
-    navigate(route);
+    if (workflow.kind === 'website') {
+      await openPublicUrl(workflow.href);
+      return;
+    }
+    navigate(workflow.href);
   };
 
   return (
-    <div className={isDesktopWeb ? `desktop-app-page ${isDesktopMessages ? 'desktop-app-page-messages' : ''}` : `app-page ${isMobileChatDetail ? 'app-page-chat-detail' : ''}`}>
+    <div className={isDesktopWeb ? `desktop-app-page ${isDesktopMessages ? 'desktop-app-page-messages' : ''}` : `app-page ${isMobileChatDetail ? 'app-page-chat-detail' : ''} ${isAiRoute ? 'app-page-ai' : ''}`}>
       {isDesktopWeb ? (
         <>
           <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
@@ -85,7 +112,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   onClick={() => navigate('/ai')}
                   title="Private AI"
                 >
-                  <Bot className="h-5 w-5" aria-hidden="true" />
+                  <Sparkles className="h-5 w-5" aria-hidden="true" />
                   AI
                 </button>
                 <button
@@ -103,7 +130,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   onClick={() => setAddTeamOpen(true)}
                 >
                   <Plus className="h-5 w-5" aria-hidden="true" />
-                  Add Team
+                  Add
                 </button>
               </div>
             </div>
@@ -167,7 +194,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   aria-label="Private AI"
                   title="Private AI"
                 >
-                  <Bot className="h-5 w-5" aria-hidden="true" />
+                  <Sparkles className="h-5 w-5" aria-hidden="true" />
                 </button>
                 <button
                   type="button"
@@ -182,17 +209,23 @@ export function AppShell({ auth, children }: AppShellProps) {
                   type="button"
                   className="primary-button !h-10 !min-h-10 !w-10 !p-0 sm:!w-auto sm:!px-3"
                   onClick={() => setAddTeamOpen(true)}
-                  aria-label="Add team"
-                  title="Add team"
+                  aria-label="Add"
+                  title="Add"
                 >
                   <Plus className="h-5 w-5" aria-hidden="true" />
-                  <span className="hidden sm:inline">Add Team</span>
+                  <span className="hidden sm:inline">Add</span>
                 </button>
               </div>
             </div>
           </header> : null}
 
-          <main className={isMobileChatDetail ? 'mx-auto w-full max-w-5xl px-0 py-0' : 'mx-auto w-full max-w-5xl px-4 py-4 sm:py-6'}>{children}</main>
+          <main className={
+            isMobileChatDetail
+              ? 'mx-auto w-full max-w-5xl px-0 py-0'
+              : isAiRoute
+                ? 'mx-auto w-full max-w-5xl px-2 py-2 sm:py-4'
+                : 'mx-auto w-full max-w-5xl px-4 py-4 sm:py-6'
+          }>{children}</main>
 
           <nav
             className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`}
@@ -224,43 +257,64 @@ export function AppShell({ auth, children }: AppShellProps) {
       <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
 
       {addTeamOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add team">
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-app-lg">
+        <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add workflow">
+          <div className="add-workflow-panel w-full max-w-3xl rounded-2xl bg-white shadow-app-lg">
             <div className="flex items-center justify-between border-b border-gray-200 p-4">
               <div>
-                <div className="app-label">Team setup</div>
-                <h2 className="text-lg font-black text-gray-950">Add Team</h2>
+                <div className="app-label">Create or add</div>
+                <h2 className="text-lg font-black text-gray-950">Add to ALL PLAYS</h2>
+                <p className="mt-1 text-sm font-semibold text-gray-500">Start common team, player, schedule, and family workflows.</p>
               </div>
               <button
                 type="button"
                 className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
                 onClick={() => setAddTeamOpen(false)}
-                aria-label="Close add team"
+                aria-label="Close add workflow"
               >
                 <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
-            <div className="space-y-3 p-4">
-              <div className="rounded-xl border border-primary-100 bg-primary-50 p-3">
+            <div className="add-workflow-content p-4">
+              <div className="add-workflow-feature rounded-xl border border-primary-100 bg-primary-50 p-3">
                 <div className="flex items-center gap-2 text-sm font-black text-primary-800">
                   <Shield className="h-4 w-4" aria-hidden="true" />
-                  Uses the same team setup contract
+                  Uses existing app and website workflows
                 </div>
                 <p className="mt-1 text-sm font-semibold leading-6 text-primary-900/80">
-                  This is stubbed for navigation first. The production flow should reuse create team, invites, registration import, and staff permissions from the current website modules.
+                  Native routes open in the app. Full coach/admin workflows open the current ALL PLAYS website until those screens are migrated.
                 </p>
               </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {['Create team', 'Join with code', 'Import roster'].map((label) => (
-                  <button key={label} type="button" className="secondary-button justify-center" onClick={() => goToRoute('/capabilities/dashboard')}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {auth.roles.map((role) => (
-                  <RoleBadge key={role} role={role} />
-                ))}
+              {(['Team', 'Player', 'Schedule', 'Team Ops'] as AddWorkflow['section'][]).map((section) => (
+                <section key={section} className="add-workflow-section">
+                  <div className="add-workflow-section-title">{section}</div>
+                  <div className="add-workflow-grid">
+                    {addWorkflows.filter((workflow) => workflow.section === section).map((workflow) => {
+                      const Icon = workflow.icon;
+                      return (
+                        <button
+                          key={workflow.id}
+                          type="button"
+                          className="add-workflow-card"
+                          onClick={() => void handleAddWorkflow(workflow)}
+                        >
+                          <span className="add-workflow-icon">
+                            <Icon className="h-4 w-4" aria-hidden="true" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="add-workflow-label">{workflow.label}</span>
+                            <span className="add-workflow-detail">{workflow.detail}</span>
+                          </span>
+                          <span className={`add-workflow-badge ${workflow.kind === 'website' ? 'add-workflow-badge-website' : ''}`}>
+                            {workflow.badge || (workflow.kind === 'website' ? 'Site' : 'App')}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {auth.roles.map((role) => <RoleBadge key={role} role={role} />)}
               </div>
             </div>
           </div>
@@ -268,6 +322,139 @@ export function AppShell({ auth, children }: AppShellProps) {
       ) : null}
     </div>
   );
+}
+
+function buildAddWorkflows(): AddWorkflow[] {
+  return [
+    {
+      id: 'create-team',
+      label: 'Create team',
+      detail: 'New team, import shell, staff access',
+      section: 'Team',
+      icon: Users,
+      kind: 'website',
+      href: legacyUrl('dashboard.html'),
+      badge: 'Coach/Admin'
+    },
+    {
+      id: 'join-code',
+      label: 'Join with code',
+      detail: 'Accept team, parent, or staff invite',
+      section: 'Team',
+      icon: KeyRound,
+      kind: 'native',
+      href: '/accept-invite'
+    },
+    {
+      id: 'request-access',
+      label: 'Find team',
+      detail: 'Browse public teams or request access',
+      section: 'Team',
+      icon: Search,
+      kind: 'website',
+      href: legacyUrl('teams.html')
+    },
+    {
+      id: 'add-player',
+      label: 'Add player',
+      detail: 'Roster, parent invite, fields, import',
+      section: 'Player',
+      icon: UserPlus,
+      kind: 'website',
+      href: legacyUrl('edit-roster.html'),
+      badge: 'Coach/Admin'
+    },
+    {
+      id: 'invite-family',
+      label: 'Invite family',
+      detail: 'Co-parent and caregiver access',
+      section: 'Player',
+      icon: UserPlus,
+      kind: 'native',
+      href: '/parent-tools/access'
+    },
+    {
+      id: 'profile-builder',
+      label: 'Player profile',
+      detail: 'Headshot, highlights, share settings',
+      section: 'Player',
+      icon: FilePlus2,
+      kind: 'native',
+      href: '/home',
+      badge: 'Select player'
+    },
+    {
+      id: 'add-event',
+      label: 'Game or practice',
+      detail: 'Schedule, reminders, officials, recurring',
+      section: 'Schedule',
+      icon: CalendarPlus,
+      kind: 'website',
+      href: legacyUrl('edit-schedule.html'),
+      badge: 'Coach/Admin'
+    },
+    {
+      id: 'practice-packet',
+      label: 'Practice packet',
+      detail: 'Drills, attendance, notes, home work',
+      section: 'Schedule',
+      icon: Dumbbell,
+      kind: 'website',
+      href: legacyUrl('drills.html'),
+      badge: 'Coach/Admin'
+    },
+    {
+      id: 'calendar-sync',
+      label: 'Calendar sync',
+      detail: 'Download or subscribe to schedules',
+      section: 'Schedule',
+      icon: CalendarDays,
+      kind: 'native',
+      href: '/parent-tools/calendar'
+    },
+    {
+      id: 'team-media',
+      label: 'Photos/video',
+      detail: 'Albums, uploads, links, moderation',
+      section: 'Team Ops',
+      icon: ImagePlus,
+      kind: 'native',
+      href: '/teams'
+    },
+    {
+      id: 'registration',
+      label: 'Registration',
+      detail: 'Forms, waivers, fees, waitlist',
+      section: 'Team Ops',
+      icon: Ticket,
+      kind: 'native',
+      href: '/parent-tools/registrations'
+    },
+    {
+      id: 'fees',
+      label: 'Fees',
+      detail: 'Create fees, checkout, balances',
+      section: 'Team Ops',
+      icon: CreditCard,
+      kind: 'website',
+      href: legacyUrl('team-fees.html'),
+      badge: 'Coach/Admin'
+    },
+    {
+      id: 'awards',
+      label: 'Awards',
+      detail: 'Certificates and AI narratives',
+      section: 'Team Ops',
+      icon: ClipboardList,
+      kind: 'website',
+      href: legacyUrl('certificates.html'),
+      badge: 'Coach/Admin'
+    }
+  ];
+}
+
+function legacyUrl(path: string) {
+  return new URL(path, 'https://allplays.ai').toString();
 }
 
 function isTypingTarget(target: EventTarget | null) {

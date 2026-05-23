@@ -345,4 +345,45 @@ describe('private AI service', () => {
         });
         expect(playerMocks.loadParentPlayerDetail).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
     });
+
+    it('retrieves help workflow pages for functional questions', async () => {
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, {
+            name: 'get_help',
+            args: {
+                query: 'How do I offer a ride or update RSVP?',
+                limit: 3
+            }
+        })).resolves.toMatchObject({
+            ok: true,
+            data: {
+                results: expect.arrayContaining([
+                    expect.objectContaining({
+                        title: expect.stringMatching(/Messages|Availability|Communication|Schedule/i),
+                        file: expect.stringMatching(/workflow-communication|workflow-schedule|help-/),
+                        url: expect.stringContaining('https://allplays.ai/')
+                    })
+                ])
+            }
+        });
+    });
+
+    it('preloads help docs before answering likely how-to questions', async () => {
+        aiMocks.model.generateContent.mockResolvedValueOnce(modelText(JSON.stringify({
+            answer: 'Open login.html, choose Forgot password, then use the newest reset email.'
+        })));
+
+        const { generatePrivateAiAnswer } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const result = await generatePrivateAiAnswer(authUser, 'How do I reset my password?');
+
+        expect(result.toolResults[0]).toMatchObject({
+            name: 'get_help',
+            ok: true,
+            data: {
+                results: expect.any(Array)
+            }
+        });
+        expect(result.answer).toContain('Forgot password');
+    });
 });

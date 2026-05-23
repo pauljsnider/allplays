@@ -8,8 +8,8 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
-async function mockMessagesModules(page) {
-    await page.addInitScript(() => {
+async function mockMessagesModules(page, options = {}) {
+    await page.addInitScript(({ speech }) => {
         window.__chatCalls = {
             sends: [],
             reactions: [],
@@ -18,7 +18,31 @@ async function mockMessagesModules(page) {
             reads: [],
             ai: []
         };
-    });
+        if (speech) {
+            class MockSpeechRecognition {
+                constructor() {
+                    window.__speechRecognitionInstance = this;
+                }
+
+                start() {
+                    window.__speechRecognitionStarted = true;
+                }
+
+                stop() {
+                    window.__speechRecognitionStopped = true;
+                    if (this.onend) this.onend();
+                }
+
+                abort() {
+                    window.__speechRecognitionAborted = true;
+                    if (this.onend) this.onend();
+                }
+            }
+
+            window.SpeechRecognition = MockSpeechRecognition;
+            window.webkitSpeechRecognition = MockSpeechRecognition;
+        }
+    }, { speech: Boolean(options.speech) });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -206,6 +230,26 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await expect.poll(() => thread.evaluate((element) => (
         element.scrollHeight - element.scrollTop - element.clientHeight <= 4
     ))).toBe(true);
+    const mobileFrame = await page.evaluate(() => {
+        const nav = document.querySelector('nav[aria-label="Primary navigation"]');
+        const composer = document.querySelector('.chat-composer');
+        const toolbar = document.querySelector('.chat-composer-toolbar');
+        const textarea = document.querySelector('.chat-composer-textarea');
+        const navBox = nav.getBoundingClientRect();
+        const composerBox = composer.getBoundingClientRect();
+        const textareaBox = textarea.getBoundingClientRect();
+        return {
+            composerBottom: composerBox.bottom,
+            composerHeight: composerBox.height,
+            navTop: navBox.top,
+            toolbarMarginTop: Number.parseFloat(window.getComputedStyle(toolbar).marginTop),
+            textareaHeight: textareaBox.height
+        };
+    });
+    expect(mobileFrame.composerBottom).toBeLessThanOrEqual(mobileFrame.navTop + 2);
+    expect(mobileFrame.composerHeight).toBeLessThan(132);
+    expect(mobileFrame.textareaHeight).toBeLessThanOrEqual(50);
+    expect(mobileFrame.toolbarMarginTop).toBeLessThanOrEqual(8);
     await expect(page.getByRole('button', { name: /Audience: Full team/ })).toBeVisible();
 
     await page.getByRole('button', { name: 'Add attachment' }).click();
@@ -263,6 +307,7 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await expect.poll(() => page.evaluate(() => window.__chatCalls.ai)).toEqual(['who needs RSVP help?']);
 
     await page.getByRole('button', { name: 'Add reaction' }).last().click();
+    await expect(page.locator('.chat-reaction-picker-above')).toBeVisible();
     await page.getByRole('button', { name: 'Like' }).click();
     await expect.poll(() => page.evaluate(() => window.__chatCalls.reactions[0])).toMatchObject({
         teamId: 'team-1',
@@ -273,8 +318,8 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     });
 });
 
-test('messages selected-member and validation flows stay usable on mobile', async ({ page, baseURL }) => {
-    await mockMessagesModules(page);
+test('messages selected-member, dictation, and validation flows stay usable on mobile', async ({ page, baseURL }) => {
+    await mockMessagesModules(page, { speech: true });
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByText('Latest ride update.')).toBeVisible();
@@ -283,6 +328,20 @@ test('messages selected-member and validation flows stay usable on mobile', asyn
     await page.locator('label').filter({ hasText: 'Coach Jamie' }).click();
     await page.getByRole('button', { name: 'Done' }).click();
     await expect(page.getByRole('button', { name: /Audience: Coach Jamie/ })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Voice to text' }).click();
+    await expect(page.getByText('Listening...')).toBeVisible();
+    await page.evaluate(() => {
+        const recognition = window.__speechRecognitionInstance;
+        recognition.onresult({
+            results: [
+                [{ transcript: 'Running five minutes late' }]
+            ]
+        });
+        recognition.onend();
+    });
+    await expect(page.getByPlaceholder('Message Bears')).toHaveValue('Running five minutes late');
+    await expect(page.getByRole('button', { name: 'Voice to text' })).toBeVisible();
 
     await page.getByPlaceholder('Message Bears').fill('Can you confirm arrival time?');
     await page.getByRole('button', { name: 'Send message' }).click();

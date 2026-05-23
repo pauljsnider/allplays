@@ -1,7 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import {
-  Bot,
   ChevronRight,
   Loader2,
   MessageCircle,
@@ -342,8 +341,9 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
           <aside className="messages-list-pane private-ai-rail">
             <section className="app-card p-3">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-gray-950 text-white">
-                  <Bot className="h-5 w-5" aria-hidden="true" />
+                <div className="private-ai-desktop-mark flex h-10 w-10 flex-none items-center justify-center rounded-xl text-primary-700">
+                  <img src="./logo_small.png" alt="" aria-hidden="true" />
+                  <Sparkles className="private-ai-mark-spark" aria-hidden="true" />
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-black text-gray-950">Private AI</div>
@@ -449,15 +449,6 @@ function PrivateAiConversationList({
   if (compact) {
     return (
       <section className="private-ai-conversation-strip" aria-label="AI conversations">
-        <button
-          type="button"
-          className="private-ai-conversation-chip private-ai-conversation-chip-new"
-          onClick={onNewConversation}
-          disabled={loading}
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          New
-        </button>
         {loading ? (
           <span className="private-ai-conversation-chip private-ai-conversation-chip-muted">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -539,19 +530,20 @@ function PrivateAiMobileTopbar({
   onNewConversation: () => void;
 }) {
   return (
-    <section className="chat-topbar app-card p-3">
+    <section className="chat-topbar app-card p-3 private-ai-mobile-topbar">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-gray-950 text-white">
-          <Bot className="h-5 w-5" aria-hidden="true" />
+        <div className="private-ai-mobile-mark flex h-10 w-10 flex-none items-center justify-center rounded-xl text-primary-700">
+          <img src="./logo_small.png" alt="" aria-hidden="true" />
+          <Sparkles className="private-ai-mark-spark" aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="app-label">Private AI</div>
           <h1 className="truncate text-lg font-black text-gray-950">Ask ALL PLAYS</h1>
         </div>
-        <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={onNewConversation} aria-label="New AI chat">
+        <button type="button" className="ghost-button private-ai-topbar-action !h-10 !min-h-10 !w-10 !p-0" onClick={onNewConversation} aria-label="New AI chat">
           <Plus className="h-4 w-4" aria-hidden="true" />
         </button>
-        <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={onRefresh} aria-label="Refresh AI chat">
+        <button type="button" className="ghost-button private-ai-topbar-action !h-10 !min-h-10 !w-10 !p-0" onClick={onRefresh} aria-label="Refresh AI chat">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
         </button>
       </div>
@@ -643,7 +635,7 @@ function PrivateAiThread({
             {dictating ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mic className="h-4 w-4" aria-hidden="true" />}
           </button>
           <div className="chat-composer-notice private-ai-composer-notice" aria-live="polite">
-            {dictating ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Bot className="h-3.5 w-3.5" aria-hidden="true" />}
+            {dictating ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />}
             <span className="truncate">{dictating ? 'Listening...' : 'Private AI chat'}</span>
           </div>
         </div>
@@ -673,23 +665,23 @@ function PrivateAiBubble({ message, previous }: { message: PrivateAiMessage; pre
   return (
     <>
       {showDay ? (
-        <div className="my-3 text-center text-[11px] font-black uppercase tracking-[0.08em] text-gray-400">
+        <div className="private-ai-day-divider my-3 text-center text-[11px] font-black uppercase tracking-[0.08em] text-gray-400">
           {formatChatDay(message.createdAt)}
         </div>
       ) : null}
-      <div className={`message-row flex ${isOwn ? 'justify-end' : 'justify-start'} px-2 py-1`}>
-        <div className={`max-w-[86%] rounded-2xl px-3 py-2 shadow-sm ${isOwn ? 'bg-primary-600 text-white' : 'border border-gray-200 bg-white text-gray-950'} ${message.error ? 'border-rose-200 bg-rose-50 text-rose-800' : ''}`}>
+      <div className={`message-row private-ai-message-row flex ${isOwn ? 'justify-end' : 'justify-start'} px-2 py-1`}>
+        <div className={`private-ai-bubble ${isOwn ? 'private-ai-bubble-own bg-primary-600 text-white' : 'border border-gray-200 bg-white text-gray-950'} ${message.error ? 'border-rose-200 bg-rose-50 text-rose-800' : ''}`}>
           {!isOwn ? (
-            <div className="mb-1 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.06em] text-primary-700">
-              <Bot className="h-3.5 w-3.5" aria-hidden="true" />
+            <div className="private-ai-bot-label mb-1 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.06em] text-primary-700">
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
               ALL PLAYS
             </div>
           ) : null}
           <div
-            className={`chat-message-html text-sm font-semibold leading-6 ${isOwn ? 'chat-message-html-own' : ''}`}
+            className={`chat-message-html private-ai-message-text ${isOwn ? 'chat-message-html-own' : ''}`}
             dangerouslySetInnerHTML={{ __html: formatChatMessageHtml(message.text) }}
           />
-          <div className={`mt-1 flex flex-wrap items-center justify-end gap-1 text-[10px] font-bold ${isOwn ? 'text-white/75' : 'text-gray-400'}`}>
+          <div className={`private-ai-message-meta mt-1 flex flex-wrap items-center justify-end gap-1 text-[10px] font-bold ${isOwn ? 'text-white/75' : 'text-gray-400'}`}>
             {message.toolNames?.length ? <span>Looked up {message.toolNames.join(', ')}</span> : null}
             <span>{formatChatTime(message.createdAt)}</span>
           </div>

@@ -6,8 +6,12 @@ import {
     formatChatMessageHtml,
     getChatMemberDisplayName,
     getAudienceSummaryText,
+    getMessageSenderLabel,
+    getReactionNames,
     getMessagePreviewText,
+    getSortedChatMessages,
     isChatComposerLinkSafe,
+    mergeChatMessageLists,
     normalizeChatReactions
 } from '../../apps/app/src/lib/chatLogic.ts';
 
@@ -103,6 +107,30 @@ describe('React app chat logic', () => {
             thumbs_up: ['user-1', 'user-2'],
             heart: ['user-3']
         });
+    });
+
+    it('sorts and merges live and older message windows without duplicates', () => {
+        const old = { id: 'old', text: 'Earlier', createdAt: new Date('2026-05-20T12:00:00Z') };
+        const duplicateLive = { id: 'same', text: 'Live wins', createdAt: new Date('2026-05-21T12:02:00Z') };
+        const duplicateOld = { id: 'same', text: 'Older copy', createdAt: new Date('2026-05-21T12:01:00Z') };
+        const newest = { id: 'new', text: 'Latest', createdAt: { seconds: 1779365100 } };
+
+        expect(getSortedChatMessages([newest, old, duplicateLive]).map((message) => message.id)).toEqual(['old', 'same', 'new']);
+        expect(mergeChatMessageLists([old, duplicateOld], [duplicateLive, newest, { text: 'missing id' }])).toEqual([
+            old,
+            duplicateLive,
+            newest
+        ]);
+    });
+
+    it('summarizes reaction names and sender labels for parent-readable chat bubbles', () => {
+        expect(getReactionNames(['user-1', 'coach-1', 'parent-2', 'admin-3', 'helper-4'], 'user-1', {
+            'coach-1': 'Coach Jamie'
+        })).toBe('You, Coach Jamie, User parent, User admin- +1 more');
+
+        expect(getMessageSenderLabel({ senderId: 'user-1', senderName: 'Pat Parent' }, 'user-1')).toBe('You');
+        expect(getMessageSenderLabel({ ai: true, aiName: 'ALL PLAYS Assistant' }, 'user-1')).toBe('ALL PLAYS Assistant');
+        expect(getMessageSenderLabel({ senderEmail: 'coach@example.com' }, 'user-1')).toBe('coach@example.com');
     });
 
     it('extracts AI questions and previews deleted or media-only messages', () => {
