@@ -12,6 +12,7 @@ import {
     normalizeHouseholdInvites,
     removeFamilyMember
 } from '../../js/family-plan.js';
+import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from '../../js/family-share-utils.js';
 
 function member(status, email = `${status}@example.com`) {
     return { id: email, email, status };
@@ -319,5 +320,60 @@ describe('family plan helpers', () => {
         expect(rules).toContain('data.playerKey == data.teamId + "::" + data.playerId');
         expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
         expect(rules).toContain('allow update, delete: if false;');
+    });
+
+    it('keeps family share link listing on an owner-only query without composite index requirements', () => {
+        const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+        const listFn = source.slice(source.indexOf('export async function listFamilyShareTokens'));
+        expect(listFn).toContain("where('ownerUserId', '==', ownerUserId)");
+        expect(listFn).not.toContain("where('active', '==', true)");
+        expect(listFn).not.toContain("orderBy('createdAt', 'desc')");
+        expect(listFn).toContain('.filter(token => token.active !== false)');
+        expect(listFn).toContain('return bTime - aTime;');
+    });
+
+    it('guards family share token creation and normalizes share payloads', () => {
+        const source = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+        expect(source).toContain("from './family-share-utils.js?v=1'");
+        expect(source).toContain("throw new Error('No linked players are available to share yet.')");
+        expect(source).toContain('globalThis.crypto.getRandomValues(bytes)');
+    });
+
+    it('normalizes family share calendar URLs to valid unique web links', () => {
+        expect(normalizeFamilyShareCalendarUrls([
+            ' https://league.example/schedule.ics ',
+            'ftp://league.example/schedule.ics',
+            'not-a-url',
+            'https://league.example/schedule.ics',
+            'http://travel.example/team.ics'
+        ])).toEqual([
+            'https://league.example/schedule.ics',
+            'http://travel.example/team.ics'
+        ]);
+    });
+
+    it('normalizes family share children and drops incomplete player links', () => {
+        expect(normalizeFamilyShareChildren([
+            { teamId: 'team-1', teamName: 'Tigers', playerId: 'player-1', playerName: 'Sam', playerPhotoUrl: 'photo.jpg' },
+            { teamId: 'team-2', playerName: 'Missing player id' },
+            { playerId: 'player-3', playerName: 'Missing team id' }
+        ])).toEqual([
+            {
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                playerId: 'player-1',
+                playerName: 'Sam',
+                playerPhotoUrl: 'photo.jpg'
+            }
+        ]);
+    });
+
+    it('shows a clearer parent dashboard family-share workflow', () => {
+        const html = readFileSync(new URL('../../parent-dashboard.html', import.meta.url), 'utf8');
+        expect(html).toContain('id="share-link-workflow-status"');
+        expect(html).toContain('function updateShareLinkControlsReady()');
+        expect(html).toContain('Link created and copied to clipboard.');
+        expect(html).toContain('id="retry-share-links-btn"');
+        expect(html).toContain("from './js/db.js?v=33'");
     });
 });

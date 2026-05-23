@@ -93,21 +93,23 @@
                             <p class="text-xs text-gray-500 mt-0.5">Let grandparents or friends follow along — no login needed.</p>
                         </div>
                         <button id="new-share-link-btn"
-                            class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 rounded-lg hover:bg-primary-100 transition">
+                            class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-primary-700 bg-primary-50 border border-primary-200 rounded-lg hover:bg-primary-100 disabled:opacity-60 disabled:cursor-not-allowed transition">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
                             </svg>
                             New Link
                         </button>
                     </div>
+                    <div id="share-link-workflow-status" class="hidden mx-4 mt-4 text-xs rounded-lg px-3 py-2"></div>
                     <div id="share-link-form" class="hidden px-4 pt-4 pb-2 border-b border-gray-100 space-y-3">
                         <div>
-                            <label class="block text-xs font-medium text-gray-700 mb-1">Label (optional)</label>
-                            <input type="text" id="share-link-label" placeholder="e.g. Grandma's link" maxlength="60"
+                            <label for="share-link-label" class="block text-xs font-medium text-gray-700 mb-1">Link label</label>
+                            <input type="text" id="share-link-label" placeholder="Grandparents, sitter, relatives" maxlength="60"
                                 class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-primary-500 focus:border-primary-500">
+                            <p id="share-link-player-summary" class="mt-1 text-[11px] text-gray-500"></p>
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-gray-700 mb-1">Extra Calendars (optional)</label>
+                            <label for="share-form-calendar-input" class="block text-xs font-medium text-gray-700 mb-1">Extra Calendars (optional)</label>
                             <p class="text-[11px] text-gray-500 mb-2">Add .ics calendar URLs (league, travel team, etc.) to include in the family page schedule.</p>
                             <div id="share-form-calendar-list" class="space-y-1 mb-2"></div>
                             <div class="flex gap-1">
@@ -375,7 +377,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=32';
+        } from './js/db.js?v=33';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import {
             getIncentiveRules,
@@ -1150,6 +1152,69 @@
             return `${getFamilyPageOrigin()}/family.html?token=${tokenId}`;
         }
 
+        function showShareLinkWorkflowStatus(message, tone = 'neutral') {
+            const statusEl = document.getElementById('share-link-workflow-status');
+            if (!statusEl) return;
+            const toneClasses = {
+                neutral: 'bg-gray-50 text-gray-700 border border-gray-200',
+                success: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+                error: 'bg-red-50 text-red-700 border border-red-200'
+            };
+            statusEl.className = `mx-4 mt-4 text-xs rounded-lg px-3 py-2 ${toneClasses[tone] || toneClasses.neutral}`;
+            statusEl.textContent = message;
+            statusEl.classList.remove('hidden');
+        }
+
+        function hideShareLinkWorkflowStatus() {
+            const statusEl = document.getElementById('share-link-workflow-status');
+            if (!statusEl) return;
+            statusEl.classList.add('hidden');
+            statusEl.textContent = '';
+        }
+
+        function setShareLinkFormOpen(isOpen) {
+            const form = document.getElementById('share-link-form');
+            const newBtn = document.getElementById('new-share-link-btn');
+            if (!form) return;
+            form.classList.toggle('hidden', !isOpen);
+            if (newBtn) newBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            if (isOpen) {
+                hideShareLinkWorkflowStatus();
+                document.getElementById('share-link-label')?.focus();
+            }
+        }
+
+        function resetShareLinkForm() {
+            const labelEl = document.getElementById('share-link-label');
+            const calInput = document.getElementById('share-form-calendar-input');
+            const createStatusEl = document.getElementById('share-link-create-status');
+            if (labelEl) labelEl.value = '';
+            if (calInput) calInput.value = '';
+            shareFormCalendarUrls.length = 0;
+            renderShareFormCalendarList();
+            if (createStatusEl) {
+                createStatusEl.classList.add('hidden');
+                createStatusEl.textContent = '';
+            }
+        }
+
+        function updateShareLinkControlsReady() {
+            const newBtn = document.getElementById('new-share-link-btn');
+            const createBtn = document.getElementById('create-share-link-btn');
+            const summaryEl = document.getElementById('share-link-player-summary');
+            const hasChildren = familyShareChildren.length > 0;
+            if (newBtn) {
+                newBtn.disabled = !hasChildren;
+                newBtn.title = hasChildren ? '' : 'Share links are available after a linked player loads.';
+            }
+            if (createBtn) createBtn.disabled = !hasChildren;
+            if (summaryEl) {
+                summaryEl.textContent = hasChildren
+                    ? `This link shares ${familyShareChildren.length} linked player${familyShareChildren.length === 1 ? '' : 's'} in a read-only family page.`
+                    : 'No linked players are available to share yet.';
+            }
+        }
+
         function renderShareFormCalendarList() {
             const listEl = document.getElementById('share-form-calendar-list');
             if (!listEl) return;
@@ -1236,10 +1301,11 @@
             if (!currentUserId) return;
             const listEl = document.getElementById('share-links-list');
             if (!listEl) return;
+            listEl.innerHTML = '<div class="text-xs text-gray-400">Loading share links...</div>';
             try {
                 const tokens = await listFamilyShareTokens(currentUserId);
                 if (!tokens.length) {
-                    listEl.innerHTML = '<div class="text-xs text-gray-500">No share links yet. Create one to get started.</div>';
+                    listEl.innerHTML = '<div class="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-xs text-gray-500">No active share links yet. Create one when you want to send a read-only family page.</div>';
                     return;
                 }
                 listEl.innerHTML = tokens.map(token => {
@@ -1313,7 +1379,15 @@
                 }).join('');
             } catch (err) {
                 console.warn('[parent-dashboard] Failed to load share links:', err);
-                if (listEl) listEl.innerHTML = '<div class="text-xs text-red-500">Unable to load share links.</div>';
+                if (listEl) {
+                    listEl.innerHTML = `
+                        <div class="rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-xs text-red-700">
+                            <div class="font-semibold">Unable to load share links.</div>
+                            <button type="button" id="retry-share-links-btn" class="mt-2 font-semibold underline">Try again</button>
+                        </div>
+                    `;
+                    document.getElementById('retry-share-links-btn')?.addEventListener('click', loadShareLinks);
+                }
             }
         }
 
@@ -1360,6 +1434,7 @@
             const statusEl = document.getElementById('share-link-create-status');
             const calAddBtn = document.getElementById('share-form-calendar-add-btn');
             const calInput = document.getElementById('share-form-calendar-input');
+            updateShareLinkControlsReady();
 
             calAddBtn?.addEventListener('click', () => {
                 const url = calInput?.value?.trim();
@@ -1381,19 +1456,24 @@
             });
 
             newBtn?.addEventListener('click', () => {
-                form?.classList.toggle('hidden');
-                if (!form?.classList.contains('hidden')) document.getElementById('share-link-label')?.focus();
+                if (!familyShareChildren.length) {
+                    showShareLinkWorkflowStatus('Linked players are still loading. Try again in a moment.', 'neutral');
+                    return;
+                }
+                setShareLinkFormOpen(form?.classList.contains('hidden'));
             });
 
             cancelBtn?.addEventListener('click', () => {
-                form?.classList.add('hidden');
-                shareFormCalendarUrls.length = 0;
-                renderShareFormCalendarList();
-                if (statusEl) { statusEl.classList.add('hidden'); statusEl.textContent = ''; }
+                setShareLinkFormOpen(false);
+                resetShareLinkForm();
             });
 
             createBtn?.addEventListener('click', async () => {
                 if (!currentUserId) return;
+                if (!familyShareChildren.length) {
+                    showShareLinkWorkflowStatus('No linked players are available to share yet.', 'error');
+                    return;
+                }
                 const label = document.getElementById('share-link-label')?.value?.trim() || '';
                 const origText = createBtn.textContent;
                 createBtn.disabled = true;
@@ -1402,18 +1482,12 @@
                 try {
                     const tokenId = await createFamilyShareToken(currentUserId, familyShareChildren, label, [...shareFormCalendarUrls]);
                     const url = buildFamilyShareUrl(tokenId);
-                    form?.classList.add('hidden');
-                    document.getElementById('share-link-label').value = '';
-                    shareFormCalendarUrls.length = 0;
-                    renderShareFormCalendarList();
+                    setShareLinkFormOpen(false);
+                    resetShareLinkForm();
                     await loadShareLinks();
                     try { await navigator.clipboard.writeText(url); } catch (_) {}
-                    if (statusEl) {
-                        statusEl.className = 'text-xs rounded-lg px-3 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200';
-                        statusEl.textContent = 'Link created and copied to clipboard!';
-                        statusEl.classList.remove('hidden');
-                        setTimeout(() => statusEl.classList.add('hidden'), 4000);
-                    }
+                    showShareLinkWorkflowStatus('Link created and copied to clipboard.', 'success');
+                    setTimeout(hideShareLinkWorkflowStatus, 5000);
                 } catch (err) {
                     console.error('[parent-dashboard] Failed to create share link:', err);
                     if (statusEl) {
@@ -1424,6 +1498,7 @@
                 } finally {
                     createBtn.disabled = false;
                     createBtn.textContent = origText;
+                    updateShareLinkControlsReady();
                 }
             });
         }
@@ -1447,6 +1522,7 @@
                     refreshParentMembershipRequestList(user.uid)
                 ]);
                 familyShareChildren = data.children || [];
+                updateShareLinkControlsReady();
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
                 renderPlayers(data.children);

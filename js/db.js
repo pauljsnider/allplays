@@ -48,6 +48,7 @@ import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
+import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
@@ -6872,24 +6873,25 @@ export async function getAssignmentClaims(teamId, gameId) {
 
 function generateShareToken() {
     const bytes = new Uint8Array(20);
-    crypto.getRandomValues(bytes);
+    globalThis.crypto.getRandomValues(bytes);
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 export async function createFamilyShareToken(ownerUserId, children, label, extraCalendarUrls = []) {
+    const normalizedChildren = normalizeFamilyShareChildren(children);
+    if (!ownerUserId) {
+        throw new Error('Sign in before creating a family share link.');
+    }
+    if (!normalizedChildren.length) {
+        throw new Error('No linked players are available to share yet.');
+    }
     const tokenId = generateShareToken();
     const now = Timestamp.now();
     await setDoc(doc(db, 'familyShareTokens', tokenId), {
         ownerUserId,
-        label: label || '',
-        children: (children || []).map(c => ({
-            teamId: c.teamId || '',
-            teamName: c.teamName || '',
-            playerId: c.playerId || '',
-            playerName: c.playerName || '',
-            playerPhotoUrl: c.playerPhotoUrl || null
-        })),
-        extraCalendarUrls: (extraCalendarUrls || []).filter(u => typeof u === 'string' && u.trim()),
+        label: String(label || '').trim().slice(0, 60),
+        children: normalizedChildren,
+        extraCalendarUrls: normalizeFamilyShareCalendarUrls(extraCalendarUrls),
         createdAt: now,
         updatedAt: now,
         active: true
@@ -6899,7 +6901,7 @@ export async function createFamilyShareToken(ownerUserId, children, label, extra
 
 export async function updateFamilyShareTokenCalendars(tokenId, urls) {
     await updateDoc(doc(db, 'familyShareTokens', tokenId), {
-        extraCalendarUrls: (urls || []).filter(u => typeof u === 'string' && u.trim()),
+        extraCalendarUrls: normalizeFamilyShareCalendarUrls(urls),
         updatedAt: Timestamp.now()
     });
 }
@@ -6914,12 +6916,17 @@ export async function getFamilyShareToken(tokenId) {
 export async function listFamilyShareTokens(ownerUserId) {
     const q = query(
         collection(db, 'familyShareTokens'),
-        where('ownerUserId', '==', ownerUserId),
-        where('active', '==', true),
-        orderBy('createdAt', 'desc')
+        where('ownerUserId', '==', ownerUserId)
     );
     const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(token => token.active !== false)
+        .sort((a, b) => {
+            const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
+            const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt || 0).getTime();
+            return bTime - aTime;
+        });
 }
 
 export async function revokeFamilyShareToken(tokenId) {
