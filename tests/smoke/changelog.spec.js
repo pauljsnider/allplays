@@ -164,7 +164,7 @@ test('changelog keyboard shortcut focuses search', async ({ page, baseURL }) => 
     const search = page.locator('#cl-search');
 
     // Ensure search is not focused
-    await page.locator('h1').click();
+    await page.getByRole('heading', { name: 'Changelog' }).click();
     await expect(search).not.toBeFocused();
 
     // Press / to focus
