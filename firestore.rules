@@ -911,6 +911,10 @@ service cloud.firestore {
         allow read, write: if isOwner(userId) || isGlobalAdmin();
       }
 
+      match /privateAiMessages/{messageId} {
+        allow read, create, update, delete: if isOwner(userId) || isGlobalAdmin();
+      }
+
       match /entitlements/{entitlementId} {
         allow read: if isOwner(userId) || isGlobalAdmin();
         allow write: if isGlobalAdmin();
