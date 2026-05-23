@@ -4090,6 +4090,7 @@ export async function getParentDashboardData(userId) {
 export async function updatePlayerProfile(teamId, playerId, data) {
     // Restricted update for parents.
     // SECURITY: sensitive fields must never live on the public player doc.
+    assertNoSensitivePlayerFields(data || {});
     const now = Timestamp.now();
 
     // Public player doc: allow photoUrl and non-sensitive roster profile fields.
@@ -4106,8 +4107,9 @@ export async function updatePlayerProfile(teamId, playerId, data) {
             updatedAt: now
         });
     }
+}
 
-    // Private profile doc: emergencyContact / medicalInfo only.
+export async function updatePlayerPrivateProfile(teamId, playerId, data) {
     const privateUpdate = {};
     if (Object.prototype.hasOwnProperty.call(data, 'emergencyContact')) {
         privateUpdate.emergencyContact = data.emergencyContact || null;
@@ -4116,7 +4118,7 @@ export async function updatePlayerProfile(teamId, playerId, data) {
         privateUpdate.medicalInfo = data.medicalInfo || '';
     }
     if (Object.keys(privateUpdate).length > 0) {
-        privateUpdate.updatedAt = now;
+        privateUpdate.updatedAt = Timestamp.now();
         const ref = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
         await setDoc(ref, privateUpdate, { merge: true });
     }

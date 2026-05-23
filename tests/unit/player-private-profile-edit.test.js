@@ -65,15 +65,20 @@ function buildPlayerProfileUpdatePayload(overrides = {}) {
     });
 }
 
-function buildUpdatePlayerProfile() {
+function buildDbProfileUpdateHelpers() {
     const source = readDbSource();
-    const fnSource = extractFunction(source, 'export async function updatePlayerProfile(')
+    const assertFnSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
+    const publicFnSource = extractFunction(source, 'export async function updatePlayerProfile(')
         .replace('export async function updatePlayerProfile', 'async function updatePlayerProfile');
+    const privateFnSource = extractFunction(source, 'export async function updatePlayerPrivateProfile(')
+        .replace('export async function updatePlayerPrivateProfile', 'async function updatePlayerPrivateProfile');
 
     const factory = new Function('deps', `
         const { Timestamp, updateDoc, doc, db, setDoc } = deps;
-        ${fnSource}
-        return updatePlayerProfile;
+        ${assertFnSource}
+        ${publicFnSource}
+        ${privateFnSource}
+        return { updatePlayerProfile, updatePlayerPrivateProfile };
     `);
 
     const deps = {
@@ -88,7 +93,7 @@ function buildUpdatePlayerProfile() {
 
     return {
         deps,
-        updatePlayerProfile: factory(deps)
+        ...factory(deps)
     };
 }
 
@@ -143,7 +148,7 @@ describe('player private-profile edit payload', () => {
     });
 });
 
-describe('updatePlayerProfile private doc writes', () => {
+describe('player profile private doc writes', () => {
     it('keeps standard sensitive roster fields out of the public player document helper', () => {
         const source = readDbSource();
         const fnSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
@@ -158,8 +163,17 @@ describe('updatePlayerProfile private doc writes', () => {
         })).toThrow('Do not write sensitive fields to public player doc');
     });
 
+    it('rejects sensitive fields passed to the public player document helper', async () => {
+        const { updatePlayerProfile } = buildDbProfileUpdateHelpers();
+
+        await expect(updatePlayerProfile('team-1', 'player-1', {
+            emergencyContact: { name: 'Pat Parent', phone: '555-0100' },
+            medicalInfo: 'Asthma inhaler'
+        })).rejects.toThrow('Do not write sensitive fields to public player doc');
+    });
+
     it('skips the private profile document when only photoUrl is present', async () => {
-        const { deps, updatePlayerProfile } = buildUpdatePlayerProfile();
+        const { deps, updatePlayerProfile } = buildDbProfileUpdateHelpers();
 
         await updatePlayerProfile('team-1', 'player-1', {
             photoUrl: 'https://img.example/player.jpg'
@@ -167,5 +181,34 @@ describe('updatePlayerProfile private doc writes', () => {
 
         expect(deps.updateDoc).toHaveBeenCalledTimes(1);
         expect(deps.setDoc).not.toHaveBeenCalled();
+    });
+
+    it('writes emergency contact and medical info through the private profile helper', async () => {
+        const { deps, updatePlayerPrivateProfile } = buildDbProfileUpdateHelpers();
+
+        await updatePlayerPrivateProfile('team-1', 'player-1', {
+            emergencyContact: { name: 'Pat Parent', phone: '555-0100' },
+            medicalInfo: 'Asthma inhaler'
+        });
+
+        expect(deps.updateDoc).not.toHaveBeenCalled();
+        expect(deps.setDoc).toHaveBeenCalledWith(
+            'teams/team-1/players/player-1/private/profile',
+            {
+                emergencyContact: { name: 'Pat Parent', phone: '555-0100' },
+                medicalInfo: 'Asthma inhaler',
+                updatedAt: 'ts-now'
+            },
+            { merge: true }
+        );
+    });
+
+    it('wires the edit form to split public and private profile saves', () => {
+        const source = readPlayerPage();
+
+        expect(source).toContain('updatePlayerPrivateProfile');
+        expect(source).toContain('const { emergencyContact, medicalInfo, ...publicData } = data;');
+        expect(source).toContain('await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);');
+        expect(source).toContain('await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);');
     });
 });
