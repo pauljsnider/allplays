@@ -70,14 +70,16 @@
       #cl-toc a.active { background:#eef2ff; color:#4338ca; font-weight:600; }
 
       /* ── Search bar ──────────────────────────────────────────────────── */
-      #cl-search-wrap { position:sticky; top:0; z-index:20; background:rgba(248,250,252,.97); backdrop-filter:blur(8px); border-bottom:1px solid #e2e8f0; padding:.75rem 0; margin-bottom:1.5rem; }
+      #cl-search-wrap { position:sticky; top:0; z-index:40; background:rgba(248,250,252,.97); backdrop-filter:blur(8px); border-bottom:1px solid #e2e8f0; padding:.75rem 0; margin-bottom:1.5rem; }
       #cl-search { width:100%; padding:.5rem .75rem .5rem 2.25rem; border:1px solid #cbd5e1; border-radius:.5rem; font-size:.9375rem; background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") no-repeat .625rem center; outline:none; }
       #cl-search:focus { border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.15); }
       #cl-search-clear { display:none; position:absolute; right:.625rem; top:50%; transform:translateY(-50%); cursor:pointer; color:#94a3b8; font-size:1.1rem; line-height:1; padding:2px 4px; border-radius:4px; }
       #cl-search-clear:hover { color:#334155; background:#f1f5f9; }
 
       /* ── Filter chips ────────────────────────────────────────────────── */
-      .filter-chip { display:inline-flex; align-items:center; gap:5px; font-size:.75rem; font-weight:600; letter-spacing:.02em; padding:3px 10px; border-radius:999px; border:1.5px solid #e2e8f0; background:#fff; color:#64748b; cursor:pointer; white-space:nowrap; transition:all .12s; }
+      #cl-chips { display:flex; gap:.5rem; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:2px; scrollbar-width:none; }
+      #cl-chips::-webkit-scrollbar { display:none; }
+      .filter-chip { display:inline-flex; align-items:center; gap:5px; font-size:.75rem; font-weight:600; letter-spacing:.02em; padding:3px 10px; border-radius:999px; border:1.5px solid #e2e8f0; background:#fff; color:#64748b; cursor:pointer; white-space:nowrap; flex-shrink:0; transition:all .12s; }
       .filter-chip:hover { border-color:#94a3b8; color:#334155; }
       .filter-chip.active { border-color:#6366f1; background:#eef2ff; color:#4338ca; }
       .filter-chip[data-cat="all"].active { background:#6366f1; color:#fff; border-color:#6366f1; }
@@ -98,6 +100,7 @@
       .release-toggle { display:inline-flex; align-items:center; gap:.375rem; font-size:.75rem; font-weight:600; color:#6366f1; cursor:pointer; background:none; border:none; padding:0; margin-top:.75rem; }
       .release-toggle svg { transition:transform .2s; }
       .release-toggle.collapsed svg { transform:rotate(-90deg); }
+      .release-body { margin-top:.75rem; }
       .release-body.collapsed { display:none; }
 
       /* ── No global results ───────────────────────────────────────────── */
@@ -123,18 +126,20 @@
       <input id="cl-search" type="search" placeholder="Search changelog…" autocomplete="off" spellcheck="false" />
       <span id="cl-search-clear" title="Clear">✕</span>
     </div>
-    <div class="flex gap-2 flex-wrap mt-2 items-center">
-      <button class="filter-chip active" data-cat="all">All</button>
-      <button class="filter-chip" data-cat="tracking">Game Tracking</button>
-      <button class="filter-chip" data-cat="broadcast">Broadcasting</button>
-      <button class="filter-chip" data-cat="schedule">Schedule</button>
-      <button class="filter-chip" data-cat="roster">Roster</button>
-      <button class="filter-chip" data-cat="payments">Payments</button>
-      <button class="filter-chip" data-cat="registration">Registration</button>
-      <button class="filter-chip" data-cat="media">Media</button>
-      <button class="filter-chip" data-cat="ai">AI</button>
-      <button class="filter-chip" data-cat="platform">Platform</button>
-      <span id="cl-status"></span>
+    <div class="mt-2 flex items-center gap-3">
+      <div id="cl-chips">
+        <button class="filter-chip active" data-cat="all">All</button>
+        <button class="filter-chip" data-cat="tracking">Game Tracking</button>
+        <button class="filter-chip" data-cat="broadcast">Broadcasting</button>
+        <button class="filter-chip" data-cat="schedule">Schedule</button>
+        <button class="filter-chip" data-cat="roster">Roster</button>
+        <button class="filter-chip" data-cat="payments">Payments</button>
+        <button class="filter-chip" data-cat="registration">Registration</button>
+        <button class="filter-chip" data-cat="media">Media</button>
+        <button class="filter-chip" data-cat="ai">AI</button>
+        <button class="filter-chip" data-cat="platform">Platform</button>
+      </div>
+      <span id="cl-status" class="flex-shrink-0 text-xs text-slate-400 whitespace-nowrap"></span>
     </div>
   </div>
 
@@ -164,7 +169,7 @@
         <p class="release-subtitle">New sports, full payment pipeline, registration management, team media, live-tracker resilience, broadcasting overhaul, calendar feeds, org scheduling tools, and roster access improvements.</p>
         <button class="release-toggle" data-target="body-may-2026">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Hide older
+          Collapse
         </button>
         <div class="release-body" id="body-may-2026">
 
@@ -610,11 +615,11 @@
         <p class="release-date">March 2026</p>
         <h2 class="release-title">Platform Hardening &amp; New Integrations</h2>
         <p class="release-subtitle">Admin invite reliability, soft-delete, streaming integrations, Help Center rebuild, ICS calendar correctness, replay improvements, and dozens of targeted bug fixes.</p>
-        <button class="release-toggle" data-target="body-mar-2026">
+        <button class="release-toggle collapsed" data-target="body-mar-2026">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Hide older
+          Expand
         </button>
-        <div class="release-body" id="body-mar-2026">
+        <div class="release-body collapsed" id="body-mar-2026">
 
         <p class="group-heading">New Features</p>
 
@@ -795,11 +800,11 @@
         <p class="release-date">February 2026</p>
         <h2 class="release-title">Live Experience &amp; Team Communication</h2>
         <p class="release-subtitle">Game Day Command Center, practice management, team chat voice and reactions, public schedule calendar, RSVP flows, rideshare, and a first-class global search.</p>
-        <button class="release-toggle" data-target="body-feb-2026">
+        <button class="release-toggle collapsed" data-target="body-feb-2026">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Hide older
+          Expand
         </button>
-        <div class="release-body" id="body-feb-2026">
+        <div class="release-body collapsed" id="body-feb-2026">
 
         <p class="group-heading">New Features</p>
 
@@ -972,11 +977,11 @@
         <p class="release-date">January 2026</p>
         <h2 class="release-title">Basketball Tracker</h2>
         <p class="release-subtitle">Dedicated basketball tracking with foul management, quarter tracking, stat undo, and game replay links.</p>
-        <button class="release-toggle" data-target="body-jan-2026">
+        <button class="release-toggle collapsed" data-target="body-jan-2026">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Hide older
+          Expand
         </button>
-        <div class="release-body" id="body-jan-2026">
+        <div class="release-body collapsed" id="body-jan-2026">
 
         <div class="entry" data-cats="tracking">
           <div class="entry-header">
@@ -1024,11 +1029,11 @@
         <p class="release-date">December 2025</p>
         <h2 class="release-title">Initial Launch</h2>
         <p class="release-subtitle">ALL PLAYS goes live with core team management, live game stat tracking, real-time broadcasting, and practice session foundations.</p>
-        <button class="release-toggle" data-target="body-dec-2025">
+        <button class="release-toggle collapsed" data-target="body-dec-2025">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Hide older
+          Expand
         </button>
-        <div class="release-body" id="body-dec-2025">
+        <div class="release-body collapsed" id="body-dec-2025">
 
         <div class="entry" data-cats="tracking">
           <div class="entry-header">
@@ -1092,6 +1097,24 @@
 </script>
 
 <script>
+// ── Sticky search: sit just below the app header ─────────────────────────────
+(function positionSearch() {
+  const appHeader  = document.querySelector('header');
+  const searchWrap = document.getElementById('cl-search-wrap');
+  const sidebar    = document.querySelector('aside');
+  function update() {
+    const h = appHeader ? appHeader.getBoundingClientRect().height : 0;
+    searchWrap.style.top = h + 'px';
+    if (sidebar) sidebar.style.top = (h + searchWrap.getBoundingClientRect().height + 8) + 'px';
+  }
+  // header is injected async by renderHeader; poll briefly then settle
+  let tries = 0;
+  const id = setInterval(() => {
+    if (document.querySelector('header') || ++tries > 20) { clearInterval(id); update(); }
+  }, 50);
+  window.addEventListener('resize', update);
+})();
+
 // ── Build sidebar TOC ─────────────────────────────────────────────────────────
 const toc = document.getElementById('cl-toc');
 document.querySelectorAll('section.release').forEach(sec => {
@@ -1118,15 +1141,12 @@ releases.forEach(r => spy.observe(r));
 // ── Collapse/expand release bodies ───────────────────────────────────────────
 document.querySelectorAll('.release-toggle').forEach(btn => {
   btn.addEventListener('click', () => {
-    const bodyId = btn.dataset.target;
-    const body   = document.getElementById(bodyId);
+    const body      = document.getElementById(btn.dataset.target);
     const collapsed = body.classList.toggle('collapsed');
     btn.classList.toggle('collapsed', collapsed);
-    btn.querySelector('span') && (btn.querySelector('span').textContent = collapsed ? 'Show' : 'Hide older');
-    // update text node (SVG + text)
-    btn.childNodes.forEach(n => {
-      if (n.nodeType === 3) n.textContent = collapsed ? ' Show older' : ' Hide older';
-    });
+    // update the text node that follows the SVG
+    const textNode = Array.from(btn.childNodes).find(n => n.nodeType === 3 && n.textContent.trim());
+    if (textNode) textNode.textContent = collapsed ? ' Expand' : ' Collapse';
   });
 });
 
@@ -1182,7 +1202,11 @@ function applyFilters() {
       if (bodyEl && bodyEl.classList.contains('collapsed')) {
         bodyEl.classList.remove('collapsed');
         const btn = sec.querySelector('.release-toggle');
-        if (btn) { btn.classList.remove('collapsed'); btn.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = ' Hide older'; }); }
+        if (btn) {
+          btn.classList.remove('collapsed');
+          const textNode = Array.from(btn.childNodes).find(n => n.nodeType === 3 && n.textContent.trim());
+          if (textNode) textNode.textContent = ' Collapse';
+        }
       }
     }
 
