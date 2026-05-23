@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Bot,
   CalendarDays,
   ChevronRight,
   Home,
@@ -38,6 +39,9 @@ export function AppShell({ auth, children }: AppShellProps) {
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
+  const isAiRoute = location.pathname === '/ai';
+  const isMobileChatDetail = !isDesktopWeb && ((location.pathname.startsWith('/messages/') && location.pathname !== '/messages') || isAiRoute);
+  const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
 
   const filteredCapabilities = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -67,7 +71,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   };
 
   return (
-    <div className={isDesktopWeb ? 'desktop-app-page' : 'app-page'}>
+    <div className={isDesktopWeb ? `desktop-app-page ${isDesktopMessages ? 'desktop-app-page-messages' : ''}` : `app-page ${isMobileChatDetail ? 'app-page-chat-detail' : ''}`}>
       {isDesktopWeb ? (
         <>
           <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
@@ -89,6 +93,15 @@ export function AppShell({ auth, children }: AppShellProps) {
               <div className="flex flex-none items-center gap-2">
                 <button
                   type="button"
+                  className={`ghost-button !h-10 !min-h-10 ${isAiRoute ? '!border-primary-200 !bg-primary-50 !text-primary-700' : ''}`}
+                  onClick={() => navigate('/ai')}
+                  title="Private AI"
+                >
+                  <Bot className="h-5 w-5" aria-hidden="true" />
+                  AI
+                </button>
+                <button
+                  type="button"
                   className="ghost-button !h-10 !min-h-10"
                   onClick={() => setSearchOpen(true)}
                 >
@@ -107,7 +120,7 @@ export function AppShell({ auth, children }: AppShellProps) {
             </div>
           </header>
 
-          <div className="mx-auto grid max-w-7xl grid-cols-[236px_minmax(0,1fr)] gap-6 px-6 py-6">
+          <div className={`mx-auto grid max-w-7xl grid-cols-[236px_minmax(0,1fr)] gap-6 px-6 py-6 ${isDesktopMessages ? 'desktop-shell-grid-messages' : ''}`}>
             <aside className="sticky top-[84px] h-[calc(100vh-108px)] self-start rounded-2xl border border-gray-200 bg-white p-3 shadow-app">
               <nav className="space-y-1" aria-label="Primary navigation">
                 {navItems.map((item) => {
@@ -136,12 +149,12 @@ export function AppShell({ auth, children }: AppShellProps) {
                 </div>
               </div>
             </aside>
-            <main className="min-w-0 pb-8">{children}</main>
+            <main className={`min-w-0 ${isDesktopMessages ? 'desktop-main-messages' : 'pb-8'}`}>{children}</main>
           </div>
         </>
       ) : (
         <>
-          <header className="safe-top sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
+          {!isMobileChatDetail ? <header className="safe-top sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 pb-3">
               <button
                 type="button"
@@ -158,6 +171,15 @@ export function AppShell({ auth, children }: AppShellProps) {
                 </span>
               </button>
               <div className="flex flex-none items-center gap-2">
+                <button
+                  type="button"
+                  className={`ghost-button !h-10 !min-h-10 !w-10 !p-0 ${isAiRoute ? '!border-primary-200 !bg-primary-50 !text-primary-700' : ''}`}
+                  onClick={() => navigate('/ai')}
+                  aria-label="Private AI"
+                  title="Private AI"
+                >
+                  <Bot className="h-5 w-5" aria-hidden="true" />
+                </button>
                 <button
                   type="button"
                   className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
@@ -179,11 +201,11 @@ export function AppShell({ auth, children }: AppShellProps) {
                 </button>
               </div>
             </div>
-          </header>
+          </header> : null}
 
-          <main className="mx-auto w-full max-w-5xl px-4 py-4 sm:py-6">{children}</main>
+          <main className={isMobileChatDetail ? 'mx-auto w-full max-w-5xl px-0 py-0' : 'mx-auto w-full max-w-5xl px-4 py-4 sm:py-6'}>{children}</main>
 
-          <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur">
+          <nav className={`safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white/95 px-2 pt-2 backdrop-blur ${isMobileChatDetail ? 'app-bottom-nav-chat-detail' : ''}`} aria-label="Primary navigation">
             <div className="mx-auto grid max-w-5xl grid-cols-5 gap-1">
               {navItems.map((item) => {
                 const Icon = item.icon;

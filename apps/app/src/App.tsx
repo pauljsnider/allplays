@@ -8,6 +8,7 @@ import { GameDetail } from './pages/GameDetail';
 import { Home } from './pages/Home';
 import { Messages } from './pages/Messages';
 import { PlayerDetail } from './pages/PlayerDetail';
+import { PrivateAiChat } from './pages/PrivateAiChat';
 import { Profile } from './pages/Profile';
 import { ResetPassword } from './pages/ResetPassword';
 import { Schedule } from './pages/Schedule';
@@ -33,6 +34,7 @@ export default function App() {
       <Route path="/schedule/:teamId/:eventId" element={<Protected auth={auth}><ScheduleEventDetail auth={auth} /></Protected>} />
       <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
       <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
+      <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
       <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
       <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
       <Route path="/players/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
