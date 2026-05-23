@@ -58,7 +58,7 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
         registrationOptions: normalizeRegistrationOptions(input.registrationOptions),
         paymentSettings: normalizePaymentSettings(input.paymentSettings),
         discountRules: normalizeRegistrationDiscountRules(input.discountRules),
-        backgroundCheck: normalizeBackgroundCheck(input.backgroundCheck),
+        backgroundCheck: normalizeBackgroundCheckSettings(input.backgroundCheck),
         waiverText: String(input.waiverText || '').trim(),
         status,
         published: status === 'published'
@@ -79,6 +79,24 @@ export function normalizePaymentSettings(settings = {}) {
     return {
         offlinePaymentEnabled: settings?.offlinePaymentEnabled === true,
         onlineCheckoutEnabled: settings?.onlineCheckoutEnabled === true
+    };
+}
+
+export const SCREENING_STATUSES = ['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected'];
+
+export function normalizeScreeningStatus(status = 'pending') {
+    const normalized = String(status || 'pending').trim().toLowerCase().replace(/[ _]+/g, '-');
+    return SCREENING_STATUSES.includes(normalized) ? normalized : 'pending';
+}
+
+export function normalizeBackgroundCheckSettings(settings = {}) {
+    const policy = normalizeBackgroundCheck(settings);
+    const enabled = settings?.enabled === true || settings?.backgroundCheckEnabled === true || policy.required === true;
+    return {
+        ...policy,
+        enabled,
+        initialScreeningStatus: enabled ? normalizeScreeningStatus(settings?.initialScreeningStatus) : 'pending',
+        providerName: String(settings?.providerName || '').trim()
     };
 }
 
