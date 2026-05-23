@@ -401,6 +401,20 @@ async function writeAccountMergePreviewAudit(payload) {
   });
 }
 
+async function findAccountMergeSourceByEmail(sourceEmail) {
+  const [emailSnap, profileEmailSnap] = await Promise.all([
+    firestore.collection('users')
+      .where('email', '==', sourceEmail)
+      .limit(1)
+      .get(),
+    firestore.collection('users')
+      .where('profileEmail', '==', sourceEmail)
+      .limit(1)
+      .get()
+  ]);
+  return emailSnap.empty ? (profileEmailSnap.empty ? null : profileEmailSnap.docs[0]) : emailSnap.docs[0];
+}
+
 async function resolveAccountMergeSource(input, destinationUid) {
   let sourceUid = input.sourceUid;
   let verification = null;
@@ -411,7 +425,10 @@ async function resolveAccountMergeSource(input, destinationUid) {
     if (!tokenSnap.exists) {
       throw new functions.https.HttpsError('failed-precondition', 'Account merge verification token is invalid.');
     }
-    verification = tokenSnap.data() || {};
+    verification = {
+      ...(tokenSnap.data() || {}),
+      id: tokenSnap.id
+    };
     try {
       sourceUid = validateAccountMergeVerificationRecord({
         record: verification,
@@ -428,11 +445,8 @@ async function resolveAccountMergeSource(input, destinationUid) {
     return { sourceSnap, verification };
   }
 
-  const querySnap = await firestore.collection('users')
-    .where('email', '==', input.sourceEmail)
-    .limit(1)
-    .get();
-  return { sourceSnap: querySnap.empty ? null : querySnap.docs[0], verification };
+  const sourceSnap = await findAccountMergeSourceByEmail(input.sourceEmail);
+  return { sourceSnap, verification };
 }
 
 exports.previewAccountMerge = functions.https.onCall(async (data, context) => {

@@ -21,6 +21,17 @@ describe('account merge preview callable source contract', () => {
         expect(functionsSource).toContain("HttpsError('not-found', 'Source account could not be found.')");
     });
 
+    it('looks up source accounts by email and profileEmail', () => {
+        expect(functionsSource).toContain('findAccountMergeSourceByEmail');
+        expect(functionsSource).toContain(".where('email', '==', sourceEmail)");
+        expect(functionsSource).toContain(".where('profileEmail', '==', sourceEmail)");
+    });
+
+    it('persists the accepted verification token document id in audits', () => {
+        expect(functionsSource).toContain('id: tokenSnap.id');
+        expect(functionsSource).toContain('verificationTokenId: sourceResult.verification?.id || null');
+    });
+
     it('writes audit records without mutating ownership links', () => {
         expect(functionsSource).toContain("firestore.collection('accountMergePreviewRequests')");
         expect(functionsSource).toContain('didMutateOwnershipLinks: false');
