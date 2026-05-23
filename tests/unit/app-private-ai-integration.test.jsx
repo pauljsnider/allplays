@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
 
 const privateAiMocks = vi.hoisted(() => ({
+    DEFAULT_PRIVATE_AI_CONVERSATION_ID: 'default',
+    createPrivateAiConversation: vi.fn(),
+    loadPrivateAiConversations: vi.fn(),
     loadPrivateAiMessages: vi.fn(),
     sendPrivateAiMessage: vi.fn()
 }));
@@ -78,6 +81,22 @@ async function click(button) {
 beforeEach(() => {
     vi.clearAllMocks();
     layoutMocks.isDesktopWeb = false;
+    privateAiMocks.loadPrivateAiConversations.mockResolvedValue([
+        {
+            id: 'default',
+            title: 'Recent chat',
+            createdAt: new Date('2026-05-21T12:00:00Z'),
+            updatedAt: new Date('2026-05-21T12:00:00Z'),
+            lastMessagePreview: 'I can look up your ALL PLAYS data.'
+        }
+    ]);
+    privateAiMocks.createPrivateAiConversation.mockResolvedValue({
+        id: 'conversation-2',
+        title: 'New chat',
+        createdAt: new Date('2026-05-21T12:02:00Z'),
+        updatedAt: new Date('2026-05-21T12:02:00Z'),
+        lastMessagePreview: ''
+    });
     privateAiMocks.loadPrivateAiMessages.mockResolvedValue([
         {
             id: 'msg-1',
@@ -92,12 +111,14 @@ beforeEach(() => {
             id: 'msg-2',
             role: 'user',
             text: 'What is next?',
+            conversationId: 'default',
             createdAt: new Date('2026-05-21T12:01:00Z')
         },
         assistantMessage: {
             id: 'msg-3',
             role: 'assistant',
             text: '**Bears** play Monday at 6:00 PM.',
+            conversationId: 'default',
             createdAt: new Date('2026-05-21T12:01:02Z'),
             toolNames: ['get_schedule']
         },
@@ -123,7 +144,8 @@ describe('private AI chat page', () => {
     it('loads the private thread and sends a message through the AI service', async () => {
         const { container } = await renderPrivateAi();
 
-        expect(privateAiMocks.loadPrivateAiMessages).toHaveBeenCalledWith(auth.user);
+        expect(privateAiMocks.loadPrivateAiConversations).toHaveBeenCalledWith(auth.user);
+        expect(privateAiMocks.loadPrivateAiMessages).toHaveBeenCalledWith(auth.user, undefined, 'default');
         expect(container.textContent).toContain('Ask ALL PLAYS');
         expect(container.textContent).toContain('I can look up your ALL PLAYS data.');
 
@@ -131,7 +153,7 @@ describe('private AI chat page', () => {
         await setFieldValue(textarea, 'What is next?');
         await click(container.querySelector('button[aria-label="Send AI message"]'));
 
-        expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'What is next?');
+        expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'What is next?', 'default');
         expect(container.textContent).toContain('Bears play Monday at 6:00 PM.');
         expect(container.textContent).toContain('Looked up get_schedule');
     });
@@ -149,6 +171,16 @@ describe('private AI chat page', () => {
         await click(suggestion);
 
         expect(container.querySelector('textarea').value).toBe('Who still needs an RSVP?');
+    });
+
+    it('starts a new conversation and loads that thread', async () => {
+        const { container } = await renderPrivateAi();
+
+        await click(container.querySelector('button[aria-label="New AI chat"]'));
+
+        expect(privateAiMocks.createPrivateAiConversation).toHaveBeenCalledWith(auth.user);
+        expect(privateAiMocks.loadPrivateAiMessages).toHaveBeenLastCalledWith(auth.user, undefined, 'conversation-2');
+        expect(container.textContent).toContain('New chat');
     });
 
     it('shows service errors without losing the typed message', async () => {

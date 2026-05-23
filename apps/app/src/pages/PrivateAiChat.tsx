@@ -4,15 +4,21 @@ import {
   Bot,
   ChevronRight,
   Loader2,
+  MessageCircle,
   Mic,
+  Plus,
   RefreshCw,
   Send,
   ShieldCheck,
   Sparkles
 } from 'lucide-react';
 import {
+  createPrivateAiConversation,
+  DEFAULT_PRIVATE_AI_CONVERSATION_ID,
+  loadPrivateAiConversations,
   loadPrivateAiMessages,
   sendPrivateAiMessage,
+  type PrivateAiConversation,
   type PrivateAiMessage
 } from '../lib/privateAiService';
 import {
@@ -40,6 +46,8 @@ type ChatStatus = {
 const suggestedPrompts = [
   'What do I need to handle today?',
   'Who still needs an RSVP?',
+  'How can my player improve this week?',
+  'Build a coaching plan from recent games',
   'Show unread team messages',
   'What is my next game?'
 ];
@@ -47,6 +55,9 @@ const suggestedPrompts = [
 export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
   const [messages, setMessages] = useState<PrivateAiMessage[]>([]);
+  const [conversations, setConversations] = useState<PrivateAiConversation[]>([]);
+  const [conversationLoading, setConversationLoading] = useState(true);
+  const [activeConversationId, setActiveConversationId] = useState(DEFAULT_PRIVATE_AI_CONVERSATION_ID);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -56,12 +67,43 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const stopNativeDictationRef = useRef<(() => Promise<void>) | null>(null);
 
+  const refreshConversations = async (showLoading = true) => {
+    if (!auth.user) {
+      setConversations([]);
+      setConversationLoading(false);
+      return;
+    }
+
+    if (showLoading) setConversationLoading(true);
+    try {
+      const nextConversations = await loadPrivateAiConversations(auth.user);
+      setConversations(nextConversations);
+      setActiveConversationId((current) => {
+        const hasCurrent = nextConversations.some((conversation) => conversation.id === current);
+        return hasCurrent ? current : nextConversations[0]?.id || DEFAULT_PRIVATE_AI_CONVERSATION_ID;
+      });
+    } catch (error: any) {
+      setStatus({
+        tone: 'error',
+        message: error?.message || 'Unable to load AI conversations.'
+      });
+      setConversations([]);
+    } finally {
+      if (showLoading) setConversationLoading(false);
+    }
+  };
+
   const refreshMessages = async () => {
-    if (!auth.user) return;
+    if (!auth.user) {
+      setLoading(false);
+      setMessages([]);
+      return;
+    }
+
     setLoading(true);
     setStatus(null);
     try {
-      setMessages(await loadPrivateAiMessages(auth.user));
+      setMessages(await loadPrivateAiMessages(auth.user, undefined, activeConversationId));
     } catch (error: any) {
       setStatus({
         tone: 'error',
@@ -74,9 +116,15 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
-    refreshMessages();
+    setActiveConversationId(DEFAULT_PRIVATE_AI_CONVERSATION_ID);
+    void refreshConversations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    refreshMessages();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user?.uid, activeConversationId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
@@ -206,17 +254,19 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       id: `local-user-${Date.now()}`,
       role: 'user',
       text,
+      conversationId: activeConversationId,
       createdAt: new Date()
     };
     setMessages((current) => [...current, optimisticUser]);
 
     try {
-      const result = await sendPrivateAiMessage(auth.user, text);
+      const result = await sendPrivateAiMessage(auth.user, text, activeConversationId);
       setMessages((current) => [
         ...current.filter((message) => message.id !== optimisticUser.id),
         result.userMessage,
         result.assistantMessage
       ]);
+      await refreshConversations(false);
     } catch (error: any) {
       setMessages((current) => current.filter((message) => message.id !== optimisticUser.id));
       setDraft(text);
@@ -233,10 +283,41 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     setDraft(prompt);
   };
 
+  const startNewConversation = async () => {
+    if (!auth.user || conversationLoading) return;
+    setConversationLoading(true);
+    setStatus(null);
+    try {
+      const conversation = await createPrivateAiConversation(auth.user);
+      setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
+      setActiveConversationId(conversation.id);
+      setMessages([]);
+      setDraft('');
+    } catch (error: any) {
+      setStatus({
+        tone: 'error',
+        message: error?.message || 'Unable to start a new AI chat.'
+      });
+    } finally {
+      setConversationLoading(false);
+    }
+  };
+
+  const selectConversation = (conversationId: string) => {
+    setActiveConversationId(conversationId || DEFAULT_PRIVATE_AI_CONVERSATION_ID);
+    setStatus(null);
+  };
+
   const stats = useMemo(() => ({
     messages: messages.length,
-    lookups: messages.reduce((total, message) => total + (message.toolNames?.length || 0), 0)
-  }), [messages]);
+    lookups: messages.reduce((total, message) => total + (message.toolNames?.length || 0), 0),
+    conversations: conversations.length || (messages.length ? 1 : 0)
+  }), [conversations.length, messages]);
+
+  const refreshAiView = () => {
+    void refreshConversations(false);
+    void refreshMessages();
+  };
 
   const thread = (
     <PrivateAiThread
@@ -256,7 +337,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   if (isDesktopWeb) {
     return (
       <div className="messages-page messages-page-web private-ai-page">
-        <PrivateAiHeader loading={loading} onRefresh={refreshMessages} />
+        <PrivateAiHeader loading={loading || conversationLoading} onRefresh={refreshAiView} />
         <section className="messages-two-pane private-ai-two-pane mt-4">
           <aside className="messages-list-pane private-ai-rail">
             <section className="app-card p-3">
@@ -269,11 +350,20 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
                   <div className="truncate text-xs font-bold text-gray-500">{auth.user?.email || 'Signed in'}</div>
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <StatPill label="Chats" value={String(stats.conversations)} />
                 <StatPill label="Messages" value={String(stats.messages)} />
                 <StatPill label="Lookups" value={String(stats.lookups)} />
               </div>
             </section>
+
+            <PrivateAiConversationList
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              loading={conversationLoading}
+              onSelect={selectConversation}
+              onNewConversation={startNewConversation}
+            />
 
             <section className="app-card p-3">
               <div className="app-label">Ask about</div>
@@ -304,7 +394,15 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
 
   return (
     <div className="chat-window chat-window-mobile private-ai-window private-ai-window-mobile">
-      <PrivateAiMobileTopbar loading={loading} onRefresh={refreshMessages} />
+      <PrivateAiMobileTopbar loading={loading || conversationLoading} onRefresh={refreshAiView} onNewConversation={startNewConversation} />
+      <PrivateAiConversationList
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        loading={conversationLoading}
+        onSelect={selectConversation}
+        onNewConversation={startNewConversation}
+        compact
+      />
       {thread}
     </div>
   );
@@ -333,7 +431,113 @@ function PrivateAiHeader({ loading, onRefresh }: { loading: boolean; onRefresh: 
   );
 }
 
-function PrivateAiMobileTopbar({ loading, onRefresh }: { loading: boolean; onRefresh: () => void }) {
+function PrivateAiConversationList({
+  conversations,
+  activeConversationId,
+  loading,
+  onSelect,
+  onNewConversation,
+  compact = false
+}: {
+  conversations: PrivateAiConversation[];
+  activeConversationId: string;
+  loading: boolean;
+  onSelect: (conversationId: string) => void;
+  onNewConversation: () => void;
+  compact?: boolean;
+}) {
+  if (compact) {
+    return (
+      <section className="private-ai-conversation-strip" aria-label="AI conversations">
+        <button
+          type="button"
+          className="private-ai-conversation-chip private-ai-conversation-chip-new"
+          onClick={onNewConversation}
+          disabled={loading}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          New
+        </button>
+        {loading ? (
+          <span className="private-ai-conversation-chip private-ai-conversation-chip-muted">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Loading
+          </span>
+        ) : conversations.length ? conversations.map((conversation) => (
+          <button
+            key={conversation.id}
+            type="button"
+            className={`private-ai-conversation-chip ${conversation.id === activeConversationId ? 'private-ai-conversation-chip-active' : ''}`}
+            onClick={() => onSelect(conversation.id)}
+            aria-pressed={conversation.id === activeConversationId}
+          >
+            <MessageCircle className="h-4 w-4" aria-hidden="true" />
+            <span>{conversation.title}</span>
+          </button>
+        )) : (
+          <span className="private-ai-conversation-chip private-ai-conversation-chip-muted">No saved chats</span>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="app-card p-3" aria-label="AI conversations">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="app-label">Conversations</div>
+          <div className="mt-0.5 text-sm font-black text-gray-950">Past chats</div>
+        </div>
+        <button
+          type="button"
+          className="ghost-button !h-9 !min-h-9 !px-2"
+          onClick={onNewConversation}
+          disabled={loading}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          New
+        </button>
+      </div>
+      <div className="mt-3 space-y-2">
+        {loading ? (
+          <div className="flex min-h-16 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-xs font-black text-gray-500">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+            Loading chats
+          </div>
+        ) : null}
+        {!loading && conversations.length ? conversations.map((conversation) => (
+          <button
+            key={conversation.id}
+            type="button"
+            className={`private-ai-conversation-button ${conversation.id === activeConversationId ? 'private-ai-conversation-button-active' : ''}`}
+            onClick={() => onSelect(conversation.id)}
+            aria-pressed={conversation.id === activeConversationId}
+          >
+            <span className="private-ai-conversation-title">{conversation.title}</span>
+            <span className="private-ai-conversation-preview">
+              {conversation.lastMessagePreview || 'Start a private ALL PLAYS thread'}
+            </span>
+          </button>
+        )) : null}
+        {!loading && !conversations.length ? (
+          <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-sm font-bold text-gray-500">
+            Start a private chat and it will stay here for later.
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function PrivateAiMobileTopbar({
+  loading,
+  onRefresh,
+  onNewConversation
+}: {
+  loading: boolean;
+  onRefresh: () => void;
+  onNewConversation: () => void;
+}) {
   return (
     <section className="chat-topbar app-card p-3">
       <div className="flex min-w-0 items-center gap-3">
@@ -344,6 +548,9 @@ function PrivateAiMobileTopbar({ loading, onRefresh }: { loading: boolean; onRef
           <div className="app-label">Private AI</div>
           <h1 className="truncate text-lg font-black text-gray-950">Ask ALL PLAYS</h1>
         </div>
+        <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={onNewConversation} aria-label="New AI chat">
+          <Plus className="h-4 w-4" aria-hidden="true" />
+        </button>
         <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={onRefresh} aria-label="Refresh AI chat">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
         </button>
@@ -411,7 +618,7 @@ function PrivateAiThread({
               }
             }}
             className="chat-composer-textarea"
-            placeholder="Ask about schedules, teams, players, messages..."
+            placeholder="Ask ALL PLAYS..."
             rows={1}
             disabled={sending}
           />
@@ -453,7 +660,7 @@ function PrivateAiWelcome() {
       </div>
       <div className="mt-3 text-base font-black text-gray-950">What do you need from ALL PLAYS?</div>
       <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">
-        Ask about your teams, schedule, messages, fees, players, registrations, and profile.
+        Ask about your teams, schedule, messages, fees, player development, coaching ideas, registrations, and profile.
       </div>
     </div>
   );

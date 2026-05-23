@@ -873,6 +873,102 @@ a {
   color: #3730a3;
 }
 
+.private-ai-conversation-button {
+  display: flex;
+  min-height: 58px;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.private-ai-conversation-button-active {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+}
+
+.private-ai-conversation-title,
+.private-ai-conversation-preview {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.private-ai-conversation-title {
+  color: #111827;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.private-ai-conversation-preview {
+  color: #667085;
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.private-ai-conversation-strip {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 2px 2px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.private-ai-conversation-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.private-ai-conversation-chip {
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(64vw, 240px);
+  height: 36px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 0 12px;
+  color: #344054;
+  font-size: 0.78rem;
+  font-weight: 900;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.08);
+}
+
+.private-ai-conversation-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.private-ai-conversation-chip-active {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.private-ai-conversation-chip-new {
+  border-color: #111827;
+  background: #111827;
+  color: #ffffff;
+}
+
+.private-ai-conversation-chip-muted {
+  color: #667085;
+  box-shadow: none;
+}
+
 .private-ai-window {
   min-height: 0;
 }
@@ -904,7 +1000,9 @@ a {
 }
 
 .private-ai-window-mobile {
-  padding-top: max(10px, env(safe-area-inset-top));
+  height: calc(100dvh - 176px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  min-height: 520px;
+  padding-top: 0;
 }
 
 .private-ai-composer-toolbar {

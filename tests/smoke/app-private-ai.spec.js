@@ -71,36 +71,70 @@ async function mockPrivateAiModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
+
+                let conversations = [
+                    {
+                        id: 'default',
+                        title: 'Recent chat',
+                        createdAt: new Date('2026-05-21T12:00:00Z'),
+                        updatedAt: new Date('2026-05-21T12:00:00Z'),
+                        lastMessagePreview: 'I can look up your ALL PLAYS schedule and messages.'
+                    }
+                ];
+
                 let messages = [
                     {
                         id: 'msg-1',
                         role: 'assistant',
                         text: 'I can look up your ALL PLAYS schedule and messages.',
+                        conversationId: 'default',
                         createdAt: new Date('2026-05-21T12:00:00Z'),
                         toolNames: []
                     }
                 ];
 
-                export async function loadPrivateAiMessages() {
-                    return messages;
+                export async function loadPrivateAiConversations() {
+                    return conversations;
                 }
 
-                export async function sendPrivateAiMessage(user, text) {
-                    window.__privateAiCalls.push({ uid: user.uid, text });
+                export async function createPrivateAiConversation() {
+                    const conversation = {
+                        id: 'conversation-2',
+                        title: 'New chat',
+                        createdAt: new Date('2026-05-21T12:02:00Z'),
+                        updatedAt: new Date('2026-05-21T12:02:00Z'),
+                        lastMessagePreview: ''
+                    };
+                    conversations = [conversation, ...conversations];
+                    return conversation;
+                }
+
+                export async function loadPrivateAiMessages(user, limit, conversationId = 'default') {
+                    return messages.filter((message) => (message.conversationId || 'default') === conversationId);
+                }
+
+                export async function sendPrivateAiMessage(user, text, conversationId = 'default') {
+                    window.__privateAiCalls.push({ uid: user.uid, text, conversationId });
                     const userMessage = {
                         id: 'msg-2',
                         role: 'user',
                         text,
+                        conversationId,
                         createdAt: new Date('2026-05-21T12:01:00Z')
                     };
                     const assistantMessage = {
                         id: 'msg-3',
                         role: 'assistant',
                         text: '**Bears** play Monday at 6:00 PM.',
+                        conversationId,
                         createdAt: new Date('2026-05-21T12:01:02Z'),
                         toolNames: ['get_schedule']
                     };
                     messages = [...messages, userMessage, assistantMessage];
+                    conversations = conversations.map((conversation) => conversation.id === conversationId
+                        ? { ...conversation, title: text, lastMessagePreview: assistantMessage.text, updatedAt: new Date('2026-05-21T12:01:02Z') }
+                        : conversation);
                     return {
                         userMessage,
                         assistantMessage,
@@ -121,15 +155,15 @@ test.describe('private AI chat', () => {
         await page.getByRole('button', { name: 'AI' }).click();
         await expect(page).toHaveURL(/#\/ai$/);
         await expect(page.getByRole('heading', { name: 'Ask ALL PLAYS' })).toBeVisible();
-        await expect(page.getByText('I can look up your ALL PLAYS schedule and messages.')).toBeVisible();
+        await expect(page.locator('.chat-message-html').getByText('I can look up your ALL PLAYS schedule and messages.')).toBeVisible();
 
-        await page.getByPlaceholder('Ask about schedules, teams, players, messages...').fill('What is next?');
+        await page.getByPlaceholder('Ask ALL PLAYS...').fill('What is next?');
         await page.getByRole('button', { name: 'Send AI message' }).click();
 
         await expect(page.getByText('Bears play Monday at 6:00 PM.')).toBeVisible();
         await expect(page.getByText('Looked up get_schedule')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__privateAiCalls)).toEqual([
-            { uid: 'user-1', text: 'What is next?' }
+            { uid: 'user-1', text: 'What is next?', conversationId: 'default' }
         ]);
     });
 
@@ -142,12 +176,14 @@ test.describe('private AI chat', () => {
         await expect(page).toHaveURL(/#\/ai$/);
         await expect(page.getByRole('heading', { name: 'Ask ALL PLAYS' })).toBeVisible();
         await expect(page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Home' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Go to home' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'New AI chat' })).toBeVisible();
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
         const topbarBox = await page.locator('.chat-topbar').boundingBox();
         expect(topbarBox.y).toBeGreaterThanOrEqual(8);
 
-        const textarea = page.getByPlaceholder('Ask about schedules, teams, players, messages...');
+        const textarea = page.getByPlaceholder('Ask ALL PLAYS...');
         await expect(textarea).toBeVisible();
         await expect.poll(() => textarea.evaluate((element) => window.getComputedStyle(element).fontSize)).toBe('16px');
         await expect.poll(() => textarea.evaluate((element) => window.getComputedStyle(element).paddingLeft)).toBe('12px');
