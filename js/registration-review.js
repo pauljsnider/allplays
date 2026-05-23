@@ -21,6 +21,13 @@ function cleanEmail(value) {
     return cleanString(value).toLowerCase();
 }
 
+const SCREENING_STATUSES = new Set(['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected']);
+
+function normalizeScreeningStatus(status) {
+    const normalized = cleanString(status).toLowerCase().replace(/[ _]+/g, '-');
+    return SCREENING_STATUSES.has(normalized) ? normalized : 'pending';
+}
+
 function firstNonEmpty(...values) {
     return values.map(cleanString).find(Boolean) || '';
 }
@@ -236,6 +243,9 @@ export function summarizeRegistration(registration = {}) {
         playerName: player.name || 'Unnamed player',
         playerNumber: player.number || '',
         guardianLabel: guardians.map((guardian) => guardian.email || guardian.name).filter(Boolean).join(', '),
+        screeningRequired: registration.screeningRequired === true,
+        screeningStatus: registration.screeningRequired === true ? normalizeScreeningStatus(registration.screeningStatus) : '',
+        screeningProviderReference: registration.screeningRequired === true ? cleanString(registration.screeningProviderReference) : '',
         submittedAt: registration.submittedAt || registration.createdAt || null
     };
 }

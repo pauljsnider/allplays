@@ -673,6 +673,9 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-discount-rules').value = formatRegistrationDiscountRulesText(form.discountRules);
     document.getElementById('registration-background-check-required').checked = form.backgroundCheck?.required === true;
     document.getElementById('registration-background-check-instructions').value = form.backgroundCheck?.instructions || '';
+    document.getElementById('registration-background-check-enabled').checked = form.backgroundCheck?.enabled === true;
+    document.getElementById('registration-screening-initial-status').value = form.backgroundCheck?.initialScreeningStatus || 'pending';
+    document.getElementById('registration-screening-provider').value = form.backgroundCheck?.providerName || '';
     activeRegistrationOptions = Array.isArray(form.registrationOptions) ? form.registrationOptions.map(option => ({ ...option })) : [];
     renderRegistrationOptionsEditor();
     document.getElementById('registration-waiver').value = form.waiverText || '';
@@ -846,7 +849,10 @@ async function saveRegistrationForm(event) {
         discountRules: parseRegistrationDiscountRulesText(document.getElementById('registration-discount-rules').value),
         backgroundCheck: {
             required: document.getElementById('registration-background-check-required').checked,
-            instructions: document.getElementById('registration-background-check-instructions').value
+            instructions: document.getElementById('registration-background-check-instructions').value,
+            enabled: document.getElementById('registration-background-check-enabled').checked,
+            initialScreeningStatus: document.getElementById('registration-screening-initial-status').value,
+            providerName: document.getElementById('registration-screening-provider').value
         },
         waiverText: document.getElementById('registration-waiver').value,
         status: document.getElementById('registration-status').value

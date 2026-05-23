@@ -19,6 +19,7 @@ export function normalizeRegistrationForm(form = {}, context = {}) {
         published: form.published === true || form.status === 'published',
         paymentSettings: normalizePaymentSettings(form.paymentSettings),
         discountRules: normalizeRegistrationDiscountRules(form.discountRules || []),
+        backgroundCheck: normalizeBackgroundCheckSettings(form.backgroundCheck),
         registrationOptions: normalizeRegistrationOptions(form.registrationOptions || form.options || [], registrationOptionCounts),
         registrationOptionCounts
     };
@@ -28,6 +29,22 @@ export function normalizePaymentSettings(settings = {}) {
     return {
         offlinePaymentEnabled: settings?.offlinePaymentEnabled === true,
         onlineCheckoutEnabled: settings?.onlineCheckoutEnabled === true
+    };
+}
+
+export const SCREENING_STATUSES = ['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected'];
+
+export function normalizeScreeningStatus(status = 'pending') {
+    const normalized = String(status || 'pending').trim().toLowerCase().replace(/[ _]+/g, '-');
+    return SCREENING_STATUSES.includes(normalized) ? normalized : 'pending';
+}
+
+export function normalizeBackgroundCheckSettings(settings = {}) {
+    const enabled = settings?.enabled === true || settings?.backgroundCheckEnabled === true;
+    return {
+        enabled,
+        initialScreeningStatus: enabled ? normalizeScreeningStatus(settings?.initialScreeningStatus) : 'pending',
+        providerName: String(settings?.providerName || '').trim()
     };
 }
 
@@ -358,6 +375,13 @@ export function buildRegistrationRecord({ form, participant, guardian, waiverAcc
         submittedAt: now,
         source: 'public-registration'
     };
+
+    if (form.backgroundCheck?.enabled === true) {
+        record.screeningRequired = true;
+        record.screeningStatus = normalizeScreeningStatus(form.backgroundCheck.initialScreeningStatus);
+        record.screeningProvider = String(form.backgroundCheck.providerName || '').trim();
+        record.screeningProviderReference = '';
+    }
 
     if (selectedOption) {
         record.selectedOption = {

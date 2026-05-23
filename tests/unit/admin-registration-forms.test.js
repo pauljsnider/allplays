@@ -7,6 +7,7 @@ import {
     getAdminRegistrationShareUrl,
     normalizeBackgroundCheck,
     normalizePaymentSettings,
+    normalizeBackgroundCheckSettings,
     normalizeInstallmentPlan,
     normalizeRegistrationDiscountRules,
     normalizeRegistrationOptions,
@@ -30,7 +31,13 @@ describe('admin registration form setup', () => {
             ],
             paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             installmentPlan: { enabled: true, installmentCount: '3', firstDueDate: '2026-06-01', intervalDays: '30' },
-            backgroundCheck: { required: true, instructions: 'Coaches must complete screening before practices.' },
+            backgroundCheck: {
+                required: true,
+                instructions: 'Coaches must complete screening before practices.',
+                enabled: true,
+                initialScreeningStatus: 'submitted',
+                providerName: 'JDP'
+            },
             discountRules: [
                 { id: 'early', type: 'early_bird', label: 'Early bird', amountType: 'fixed', amountValue: '25', earlyBirdDeadline: '2026-03-01' },
                 { type: 'quantity', label: 'Sibling discount', amountType: 'percent', amountValue: '10', minimumQuantity: '2' }
@@ -50,7 +57,13 @@ describe('admin registration form setup', () => {
             currency: 'USD',
             paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             installmentPlan: { enabled: true, title: 'Installment plan', installmentCount: 3, firstDueDate: '2026-06-01', intervalDays: 30 },
-            backgroundCheck: { required: true, instructions: 'Coaches must complete screening before practices.' },
+            backgroundCheck: {
+                required: true,
+                instructions: 'Coaches must complete screening before practices.',
+                enabled: true,
+                initialScreeningStatus: 'submitted',
+                providerName: 'JDP'
+            },
             waiverText: 'I accept the risk.',
             status: 'published',
             published: true
@@ -69,6 +82,25 @@ describe('admin registration form setup', () => {
             { id: 'discount_2', type: 'quantity', label: 'Sibling discount', amountType: 'percent', amountValue: 10, earlyBirdDeadline: '', minimumQuantity: 2, active: true, sortOrder: 1 }
         ]);
         expect(validateAdminRegistrationFormPayload(payload)).toEqual([]);
+    });
+
+    it('normalizes manual screening settings to bounded admin statuses', () => {
+        expect(normalizeBackgroundCheckSettings()).toEqual({ required: false, instructions: '', enabled: false, initialScreeningStatus: 'pending', providerName: '' });
+        expect(normalizeBackgroundCheckSettings({ enabled: true, initialScreeningStatus: 'flagged', providerName: ' Protect Youth Sports ' })).toEqual({
+            required: false,
+            instructions: '',
+            enabled: true,
+            initialScreeningStatus: 'flagged',
+            providerName: 'Protect Youth Sports'
+        });
+        expect(normalizeBackgroundCheckSettings({ required: true, instructions: ' Screen before volunteering. ' })).toEqual({
+            required: true,
+            instructions: 'Screen before volunteering.',
+            enabled: true,
+            initialScreeningStatus: 'pending',
+            providerName: ''
+        });
+        expect(normalizeBackgroundCheckSettings({ enabled: true, initialScreeningStatus: 'unknown' }).initialScreeningStatus).toBe('pending');
     });
 
     it('normalizes background-check policy metadata safely', () => {
@@ -141,7 +173,7 @@ describe('admin registration form setup', () => {
 
         expect(payload.status).toBe('draft');
         expect(payload.published).toBe(false);
-        expect(payload.backgroundCheck).toEqual({ required: false, instructions: '' });
+        expect(payload.backgroundCheck).toEqual({ required: false, instructions: '', enabled: false, initialScreeningStatus: 'pending', providerName: '' });
         expect(validateAdminRegistrationFormPayload(payload)).toEqual([
             'Title is required.',
             'Waiver text is required.'
@@ -176,6 +208,9 @@ describe('admin registration form setup', () => {
         expect(adminPage).toContain('Online payment processing is not available yet');
         expect(adminPage).toContain('registration-installments-enabled');
         expect(adminPage).toContain('registration-discount-rules');
+        expect(adminPage).toContain('registration-background-check-enabled');
+        expect(adminPage).toContain('registration-screening-initial-status');
+        expect(adminPage).toContain('registration-screening-provider');
         expect(adminPage).toContain('registration-background-check-required');
         expect(adminPage).toContain('registration-background-check-instructions');
         expect(adminPage).toContain('registration-waiver');
@@ -188,6 +223,8 @@ describe('admin registration form setup', () => {
         expect(adminJs).toContain('offlinePaymentEnabled: document.getElementById');
         expect(adminJs).toContain("document.getElementById('registration-installment-count')");
         expect(adminJs).toContain('parseRegistrationDiscountRulesText');
+        expect(adminJs).toContain('backgroundCheck: {');
+        expect(adminJs).toContain("document.getElementById('registration-background-check-enabled')");
         expect(adminJs).toContain("document.getElementById('registration-background-check-required')");
         expect(adminJs).toContain("document.getElementById('registration-background-check-instructions')");
         expect(adminJs).toContain('const teamId = activeRegistrationTeam.id;');
