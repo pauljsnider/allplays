@@ -115,6 +115,10 @@ const Blob = deps.Blob;
             "import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';",
             'const { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;'
         )
+        .replace(
+            "import { printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=1';",
+            'const { printSchedule, promptSchedulePrintOptions } = deps.schedulePrint;'
+        )
         .replace(/\binit\(\);\s*$/, 'await init();');
 }
 
@@ -390,6 +394,10 @@ function createDeps(submitRecorder, overrides = {}) {
                     }
                 });
             }
+        },
+        schedulePrint: {
+            printSchedule() {},
+            promptSchedulePrintOptions() { return null; }
         },
         eventDate,
         initialSummary,
