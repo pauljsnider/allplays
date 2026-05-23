@@ -175,7 +175,7 @@ export function getRecipientRefundedCents(recipient) {
 
     const ledger = Array.isArray(recipient?.paymentLedger) ? recipient.paymentLedger : Array.isArray(recipient?.ledgerEntries) ? recipient.ledgerEntries : [];
     return ledger.reduce((total, entry) => {
-        if (entry?.type !== 'stripe_refund' && entry?.type !== 'online_refund') return total;
+        if (entry?.type !== 'stripe_refund' && entry?.type !== 'online_refund' && entry?.type !== 'offline_refund') return total;
         const status = normalizeString(entry.status || 'succeeded').toLowerCase();
         if (status === 'failed' || status === 'canceled' || status === 'cancelled') return total;
         const amount = Number(entry.refundAmountCents ?? entry.amountCents ?? 0);
@@ -233,6 +233,154 @@ export function formatFeeCurrency(cents) {
         style: 'currency',
         currency: 'USD'
     }).format(amount / 100);
+}
+
+function formatFeeCsvAmount(cents) {
+    const amount = Number(cents);
+    return (Number.isFinite(amount) ? amount / 100 : 0).toFixed(2);
+}
+
+function getRecipientAssignedCents(recipient) {
+    const assigned = Number(recipient?.amountCents ?? recipient?.originalAmountCents ?? recipient?.assignedAmountCents ?? getRecipientBalanceCents(recipient));
+    return Number.isFinite(assigned) ? Math.max(0, assigned) : 0;
+}
+
+function getRecipientOutstandingCents(recipient, balanceCents = getRecipientBalanceCents(recipient), paidCents = getRecipientPaidCents(recipient)) {
+    const status = normalizeFeeStatus(recipient?.status);
+    return status === 'paid' || status === 'canceled' ? 0 : Math.max(0, balanceCents - paidCents);
+}
+
+function getRecipientLedgerEntries(recipient) {
+    return Array.isArray(recipient?.paymentLedger) ? recipient.paymentLedger : Array.isArray(recipient?.ledgerEntries) ? recipient.ledgerEntries : [];
+}
+
+function normalizeExportDate(value) {
+    if (!value) return '';
+    if (typeof value === 'string') return value.slice(0, 10);
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+    if (typeof value?.toDate === 'function') return normalizeExportDate(value.toDate());
+    if (typeof value?.seconds === 'number') return new Date(value.seconds * 1000).toISOString().slice(0, 10);
+    return '';
+}
+
+function getLedgerEntryDate(entry) {
+    return normalizeExportDate(entry?.paymentDate || entry?.paidAt || entry?.refundDate || entry?.refundedAt || entry?.createdAt || entry?.date);
+}
+
+function getLastActivityDate(recipient, activityTypes) {
+    const dates = getRecipientLedgerEntries(recipient)
+        .filter((entry) => activityTypes.has(normalizeString(entry?.type).toLowerCase()))
+        .map(getLedgerEntryDate)
+        .filter(Boolean)
+        .sort();
+    return dates.at(-1) || '';
+}
+
+function getLastPaymentDate(recipient) {
+    return normalizeExportDate(recipient?.paidAt || recipient?.manualPayment?.paidAt || recipient?.payment?.paidAt)
+        || getLastActivityDate(recipient, new Set(['offline_payment', 'manual_payment', 'stripe_payment', 'online_payment', 'payment']));
+}
+
+function getLastRefundDate(recipient) {
+    return normalizeExportDate(recipient?.refunded?.refundedAt || recipient?.refunded?.date || recipient?.refund?.refundedAt)
+        || getLastActivityDate(recipient, new Set(['offline_refund', 'stripe_refund', 'online_refund', 'refund']));
+}
+
+function getRecipientAdminNotes(recipient) {
+    return [
+        recipient?.notes,
+        recipient?.manualPayment?.note,
+        recipient?.adjustment?.note,
+        recipient?.canceled?.note,
+        recipient?.refunded?.note
+    ]
+        .map(normalizeString)
+        .filter(Boolean)
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .join(' | ');
+}
+
+function getRecipientReference(recipient) {
+    return normalizeString(recipient?.reference || recipient?.paymentReference || recipient?.manualPayment?.reference || recipient?.invoiceNumber || recipient?.receiptNumber);
+}
+
+export function buildTeamFeePaymentSummaryRows(recipients = []) {
+    return (recipients || []).map((recipient) => {
+        const balanceCents = getRecipientBalanceCents(recipient);
+        const paidCents = getRecipientPaidCents(recipient);
+        const refundedCents = getRecipientRefundedCents(recipient);
+        return {
+            recipientName: getRecipientDisplayName(recipient),
+            playerName: recipient?.playerName || recipient?.childName || '',
+            playerId: recipient?.playerId || recipient?.playerKey || '',
+            status: getStatusLabel(recipient?.status),
+            assignedAmount: formatFeeCsvAmount(getRecipientAssignedCents(recipient)),
+            paidAmount: formatFeeCsvAmount(paidCents),
+            outstandingAmount: formatFeeCsvAmount(getRecipientOutstandingCents(recipient, balanceCents, paidCents)),
+            refundedAmount: formatFeeCsvAmount(refundedCents),
+            dueDate: recipient?.dueDate || '',
+            collectionMode: recipient?.collectionMode || '',
+            lastPaymentDate: getLastPaymentDate(recipient),
+            lastRefundDate: getLastRefundDate(recipient),
+            adminNotes: getRecipientAdminNotes(recipient),
+            reference: getRecipientReference(recipient)
+        };
+    });
+}
+
+const PAYMENT_SUMMARY_CSV_COLUMNS = [
+    ['Recipient name', 'recipientName'],
+    ['Player name', 'playerName'],
+    ['Player ID', 'playerId'],
+    ['Status', 'status'],
+    ['Assigned amount', 'assignedAmount'],
+    ['Paid amount', 'paidAmount'],
+    ['Outstanding amount', 'outstandingAmount'],
+    ['Refunded amount', 'refundedAmount'],
+    ['Due date', 'dueDate'],
+    ['Collection mode', 'collectionMode'],
+    ['Last payment date', 'lastPaymentDate'],
+    ['Last refund date', 'lastRefundDate'],
+    ['Admin notes', 'adminNotes'],
+    ['Reference', 'reference']
+];
+
+export function escapeCsvValue(value) {
+    const text = value === null || value === undefined ? '' : String(value);
+    const sanitized = /^(?:\s)*[=+\-@]/.test(text) || /\|(?:\s)*[=+\-@]/.test(text) ? `'${text}` : text;
+    return /[",\n\r]/.test(sanitized) ? `"${sanitized.replace(/"/g, '""')}"` : sanitized;
+}
+
+export function serializeTeamFeePaymentSummaryCsv(rows = []) {
+    const header = PAYMENT_SUMMARY_CSV_COLUMNS.map(([label]) => escapeCsvValue(label)).join(',');
+    const lines = (rows || []).map((row) => PAYMENT_SUMMARY_CSV_COLUMNS
+        .map(([, key]) => escapeCsvValue(row?.[key]))
+        .join(','));
+    return [header, ...lines].join('\n');
+}
+
+export function buildTeamFeePaymentSummaryCsv(recipients = []) {
+    return serializeTeamFeePaymentSummaryCsv(buildTeamFeePaymentSummaryRows(recipients));
+}
+
+function buildPaymentSummaryFilename({ teamId = '', batchId = '', batch = {}, date = new Date() } = {}) {
+    const title = normalizeString(batch.title || batch.feeTitle || batch.name || batchId || 'team-fee');
+    const safeTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'team-fee';
+    const safeTeam = normalizeString(teamId).replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 32) || 'team';
+    const exportDate = normalizeExportDate(date) || new Date().toISOString().slice(0, 10);
+    return `${safeTeam}-${safeTitle}-payment-summary-${exportDate}.csv`;
+}
+
+function downloadTextFile(filename, contents, mimeType = 'text/csv;charset=utf-8') {
+    const blob = new Blob([contents], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
 }
 
 function normalizeLedgerStatus(balanceCents, paidCents) {
@@ -832,7 +980,10 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
                 <h1 id="page-title" class="mt-2 text-3xl font-bold text-gray-900">Manage team fee</h1>
                 <p id="page-subtitle" class="mt-1 text-sm text-gray-600">Review assigned recipients, record offline payments, and adjust balances.</p>
             </div>
-            <button id="refresh-btn" type="button" class="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-700 border border-gray-200 shadow-sm hover:bg-gray-50">Refresh</button>
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button id="export-payment-summary-btn" type="button" disabled class="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-gray-300">Export payment summary</button>
+                <button id="refresh-btn" type="button" class="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-gray-700 border border-gray-200 shadow-sm hover:bg-gray-50">Refresh</button>
+            </div>
         </div>
 
         <div id="fee-message" class="mb-4 hidden rounded-xl border px-4 py-3 text-sm"></div>
@@ -859,15 +1010,22 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
     const refundModal = document.getElementById('refund-modal');
     const refundForm = document.getElementById('refund-form');
     const refundSubtitle = document.getElementById('refund-modal-subtitle');
+    const exportButton = document.getElementById('export-payment-summary-btn');
+    let currentBatch = null;
+    let currentRecipients = [];
 
     async function loadBatch() {
+        exportButton.disabled = true;
         const batch = await getTeamFeeBatch(teamId, batchId);
         if (!batch) throw new Error('Fee batch not found.');
         title.textContent = batch.title || batch.feeTitle || batch.name || 'Manage team fee';
         subtitle.textContent = `${team.name || 'Team'} · Offline payment tracking`;
         const recipients = await listTeamFeeRecipients(teamId, batchId);
+        currentBatch = batch;
+        currentRecipients = recipients;
         renderSummary(summary, recipients);
         renderRecipients(list, count, recipients);
+        exportButton.disabled = false;
     }
 
     function closeRefundModal() {
@@ -951,6 +1109,12 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
         } catch (error) {
             showMessage(error?.message || 'Unable to update fee recipient.', 'error');
         }
+    });
+
+    exportButton.addEventListener('click', () => {
+        const csv = buildTeamFeePaymentSummaryCsv(currentRecipients);
+        const filename = buildPaymentSummaryFilename({ teamId, batchId, batch: currentBatch });
+        downloadTextFile(filename, csv);
     });
 
     document.getElementById('refresh-btn').addEventListener('click', () => {
