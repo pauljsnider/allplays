@@ -545,6 +545,85 @@ test('team schedule calendar shows only practices in the dedicated practice filt
     await expect(page.locator('#schedule-day-modal-content')).not.toContainText('Rivals FC');
 });
 
+test('team schedule print uses the selected range and black-and-white layout', async ({ page, baseURL }) => {
+    const now = new Date();
+    const inRangeGameDate = addDays(now, 7, 18);
+    const inRangePracticeDate = addDays(now, 10, 17);
+    const outOfRangeDate = addDays(now, 45, 18);
+    const scenario = {
+        team: {
+            name: 'Team A',
+            sport: 'Soccer',
+            calendarUrls: []
+        },
+        games: [
+            {
+                id: 'game-1',
+                opponent: 'Rivals FC',
+                location: 'Field 1',
+                type: 'game',
+                status: 'scheduled',
+                date: makeIso(inRangeGameDate)
+            },
+            {
+                id: 'practice-1',
+                title: 'Practice',
+                location: 'Gym 1',
+                type: 'practice',
+                status: 'scheduled',
+                date: makeIso(inRangePracticeDate)
+            },
+            {
+                id: 'game-2',
+                opponent: 'Late FC',
+                location: 'Field 2',
+                type: 'game',
+                status: 'scheduled',
+                date: makeIso(outOfRangeDate)
+            }
+        ],
+        trackedUids: [],
+        calendarEvents: []
+    };
+
+    await page.addInitScript(() => {
+        window.__printCalls = 0;
+        window.print = () => {
+            window.__printCalls += 1;
+        };
+    });
+    await mockTeamPageModules(page, scenario);
+    await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#team-header')).toContainText('Team A');
+    await page.locator('#show-practices').check();
+    await page.locator('#schedule-filter-all-upcoming').click();
+
+    const dialogValues = [
+        inRangeGameDate.toISOString().slice(0, 10),
+        inRangePracticeDate.toISOString().slice(0, 10),
+        true
+    ];
+    page.on('dialog', async (dialog) => {
+        const value = dialogValues.shift();
+        if (dialog.type() === 'confirm') {
+            await (value ? dialog.accept() : dialog.dismiss());
+            return;
+        }
+        await dialog.accept(String(value));
+    });
+
+    await page.locator('#print-schedule').scrollIntoViewIfNeeded();
+    await page.locator('#print-schedule').click({ force: true });
+
+    await expect.poll(() => page.evaluate(() => window.__printCalls)).toBe(1);
+    await expect(page.locator('#schedule-print-container')).toHaveClass(/schedule-print-bw/);
+    await expect(page.locator('#schedule-print-container tbody tr')).toHaveCount(2);
+    await expect(page.locator('#schedule-print-container')).toContainText('Rivals FC');
+    await expect(page.locator('#schedule-print-container')).toContainText('Practice');
+    await expect(page.locator('#schedule-print-container')).not.toContainText('Late FC');
+});
+
 test('team schedule keeps tracked duplicates and cancelled items out of the wrong filter buckets', async ({ page, baseURL }) => {
     const now = new Date();
     const completedDate = addDays(now, -5, 18);
