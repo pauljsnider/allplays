@@ -23,11 +23,12 @@ function buildRenderDbGame(overrides = {}) {
         mapLink: () => '',
         renderTournamentSummary: () => '',
         renderOfficiatingSummary: () => '',
+        isCancelledGame: (game) => ['cancelled', 'canceled'].includes(String(game?.status || '').toLowerCase()),
         ...overrides
     };
 
     const createRenderer = new Function('deps', `
-        const { gamesCache, currentTeamId, formatDate, formatTime, escapeHtml, mapLink, renderTournamentSummary, renderOfficiatingSummary } = deps;
+        const { gamesCache, currentTeamId, formatDate, formatTime, escapeHtml, mapLink, renderTournamentSummary, renderOfficiatingSummary, isCancelledGame } = deps;
         return function(game) {
 ${body}
         };
@@ -55,8 +56,27 @@ describe('edit schedule game row rendering', () => {
         });
         expect(html).toContain('CANCELLED');
         expect(html).toContain('>Cancelled</span>');
+        expect(html).not.toContain('Track</button>');
+        expect(html).not.toContain('track-game-btn');
         expect(html).not.toContain('Command Center');
         expect(html).not.toContain('cancel-game-btn');
+    });
+
+    it('treats American-spelled canceled games as untrackable too', () => {
+        const { renderDbGame } = buildRenderDbGame();
+
+        const html = renderDbGame({
+            id: 'game-canceled',
+            opponent: 'Tigers',
+            location: 'Main Gym',
+            date: '2026-03-10T18:00:00.000Z',
+            status: 'canceled',
+            liveStatus: 'scheduled'
+        });
+
+        expect(html).toContain('CANCELLED');
+        expect(html).not.toContain('track-game-btn');
+        expect(html).not.toContain('Command Center');
     });
 
     it('uses liveStatus to label active broadcasts as Live Now', () => {
