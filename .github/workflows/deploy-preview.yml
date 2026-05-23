@@ -80,6 +80,7 @@ jobs:
     permissions:
       checks: write
       contents: read
+      issues: write
       pull-requests: write
 
     steps:
@@ -148,6 +149,7 @@ jobs:
 
       - name: Report preview URL on pull request
         if: success()
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PREVIEW_URL: ${{ steps.deploy_preview.outputs.preview_url }}
