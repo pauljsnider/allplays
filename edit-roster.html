@@ -2007,19 +2007,23 @@
 
 CONTEXT:
 - Current players in roster: ${playersContext.length}
+- Current player records: ${JSON.stringify(playersContext)}
 ${textInput ? `\nADDITIONAL INSTRUCTIONS:\n${textInput}\n` : ''}
 PARSING RULES:
 1. Extract ALL players ${imageFile ? 'from the image' : 'from the text'} (look for Name and Number patterns)
 2. Number formats: "#10", "10", "#10 Name", "Name - 10", "Name (10)", etc.
 3. Skip headers, blank lines, team names, and non-player text
 4. If no number is provided, leave it empty
-5. For each player, create an operation with action="add" and player object with name and number (optional)
+5. Compare each extracted player to the current player records before choosing an action
+6. Use action="update" with playerId and changes when an extracted player matches an existing player by the same number, same normalized name, or a likely name/number correction
+7. Use action="add" with player object only when no reasonable current player match exists
+8. Never add a second active player for a likely update to an existing player
 
 EXAMPLES:
-- "#10 John Smith" → name: "John Smith", number: "10"
-- "23 Jane Doe" → name: "Jane Doe", number: "23"
-- "Sarah Johnson - 15" → name: "Sarah Johnson", number: "15"
-- "Mike Wilson" → name: "Mike Wilson", number: ""`;
+- "#10 John Smith" → if no current player matches, action: "add", player: { name: "John Smith", number: "10" }
+- "23 Jane Doe" → if current player #23 is "Jane Do", action: "update", playerId: current id, changes: { name: "Jane Doe", number: "23" }
+- "Sarah Johnson - 15" → if current player #15 is "Sarah Jones", action: "update", playerId: current id, changes: { name: "Sarah Johnson", number: "15" }
+- "Mike Wilson" → if no current player matches, action: "add", player: { name: "Mike Wilson", number: "" }`;
 
                 // Call Firebase AI with structured output
                 const firebaseApp = getApp();
