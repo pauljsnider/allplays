@@ -29,15 +29,35 @@ Open `http://localhost:8000` in your browser.
 
 ## Testing
 
-No automated test framework. Manual testing via HTML test pages:
+Two automated test tiers — both must stay green:
+
 ```bash
-python3 -m http.server 8004
-# Visit: http://127.0.0.1:8004/test-pr-changes.html
+# Unit tests (Vitest) — fast, no server needed
+npm test
+
+# Smoke / E2E tests (Playwright) — requires a running server
+npm run test:smoke
 ```
 
-Test pages: `test-foul-tracking.html`, `test-pr-changes.html`, `test-statsheet-mapping.html`
+### Unit tests — `tests/unit/`
+Read HTML and JS files via `readFileSync`; mock Firebase with `vi.fn()`. Cover:
+- JS module logic and error branches
+- HTML page structure, `data-*` attributes, element IDs
+- Internal link targets (assert referenced `.html` files exist)
+- Inline JS wiring (assert key function names and logic are present)
 
-See `PR-TESTING-GUIDE.md` for critical flow testing and `FOUL-TRACKING-TEST-GUIDE.md` for foul scenarios.
+Run one file: `npx vitest run tests/unit/my-feature.test.js --reporter=verbose`
+
+### Smoke tests — `tests/smoke/`
+Playwright tests against a live static server. Cover page boot, interactive flows (search, filters, modals), and navigation. Use `assertPageBootsWithoutFatalErrors` from `helpers/boot-path.js`; register new public pages in `page-registry.js`.
+
+### What to write
+- **New JS module** → unit test for exported functions.
+- **New static page** → unit test (structure + JS wiring) + smoke spec (boot + interactions).
+- **Bug fix** → regression unit test that fails before the fix.
+
+### Manual test pages (legacy)
+`test-foul-tracking.html`, `test-pr-changes.html`, `test-statsheet-mapping.html` remain valid for quick visual checks. See `PR-TESTING-GUIDE.md` and `FOUL-TRACKING-TEST-GUIDE.md` for critical flows not yet automated.
 
 ## Architecture
 

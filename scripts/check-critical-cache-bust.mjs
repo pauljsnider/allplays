@@ -40,7 +40,7 @@ function refreshBaseRef(baseRef) {
     const baseRefspec = `${baseRef}:refs/remotes/origin/${baseRef}`;
 
     if (isShallowRepository()) {
-        execGit(['fetch', '--unshallow', 'origin', baseRefspec]);
+        execGit(['fetch', '--depth=1', 'origin', baseRefspec]);
         return;
     }
 
@@ -86,4 +86,3 @@ if (failures.length > 0) {
 }
 
 console.log('Critical cache-bust guard passed.');
-
