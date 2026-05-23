@@ -43,6 +43,23 @@ describe('volunteer screening access guard', () => {
         expect(registrationRequiresVolunteerScreening({ screening: { required: true } })).toBe(true);
         expect(registrationRequiresVolunteerScreening({ backgroundCheck: { required: true } })).toBe(true);
         expect(registrationRequiresVolunteerScreening({ volunteerScreeningRequired: true })).toBe(true);
+        expect(registrationRequiresVolunteerScreening({
+            source: 'public-registration',
+            programName: 'Spring Volunteer Staff',
+            participant: { name: 'Helper' }
+        })).toBe(true);
+        expect(registrationRequiresVolunteerScreening({
+            source: 'public-registration',
+            programName: 'Spring League',
+            selectedOption: { title: 'Scorekeeper crew' },
+            participant: { name: 'Helper' }
+        })).toBe(true);
+        expect(registrationRequiresVolunteerScreening({
+            source: 'public-registration',
+            programName: 'Player registration',
+            selectedOption: { title: 'U10 player' },
+            participant: { name: 'Player' }
+        })).toBe(false);
         expect(registrationRequiresVolunteerScreening({ participant: { name: 'Player' } })).toBe(false);
     });
 
@@ -53,5 +70,6 @@ describe('volunteer screening access guard', () => {
         expect(dbSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: normalizedUserId });');
         expect(dbSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { email: normalizedEmail });');
         expect(dbSource).toContain('function assertVolunteerScreeningClearedForTeamGrant');
+        expect(dbSource).toContain("console.error('Failed to access registration records for volunteer screening:', error);");
     });
 });

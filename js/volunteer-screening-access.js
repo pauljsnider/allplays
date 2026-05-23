@@ -4,13 +4,32 @@ export function normalizeScreeningStatus(value = '') {
     return String(value || '').trim().toLowerCase().replace(/[\s_-]+/g, '-');
 }
 
+function normalizeRegistrationScreeningText(value = '') {
+    return String(value || '').trim().toLowerCase();
+}
+
+function appCreatedRegistrationRequiresVolunteerScreening(registration = {}) {
+    if (registration?.source !== 'public-registration') return false;
+
+    const screeningText = [
+        registration.programName,
+        registration.title,
+        registration.selectedOption?.title,
+        registration.selectedOption?.label,
+        registration.selectedOption?.id
+    ].map(normalizeRegistrationScreeningText).filter(Boolean).join(' ');
+
+    return /\b(volunteer|staff|scorekeeper|stream(?:ing)?|official|referee|background check)\b/.test(screeningText);
+}
+
 export function registrationRequiresVolunteerScreening(registration = {}) {
     return registration?.requiresScreening === true
         || registration?.screeningRequired === true
         || registration?.volunteerScreeningRequired === true
         || registration?.backgroundCheckRequired === true
         || registration?.screening?.required === true
-        || registration?.backgroundCheck?.required === true;
+        || registration?.backgroundCheck?.required === true
+        || appCreatedRegistrationRequiresVolunteerScreening(registration);
 }
 
 export function getRegistrationScreeningStatus(registration = {}) {

@@ -1157,19 +1157,24 @@ export async function createVenueBlackout(teamId, blackoutData = {}) {
 async function listRegistrationRecordsForTeam(teamId) {
     if (!teamId) return [];
 
-    const formsSnapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
-    const registrationSnapshots = await Promise.all(formsSnapshot.docs.map(async (formDoc) => {
-        const form = { id: formDoc.id, ...(formDoc.data() || {}) };
-        const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms/${formDoc.id}/registrations`));
-        return snapshot.docs.map((registrationDoc) => ({
-            id: registrationDoc.id,
-            formId: formDoc.id,
-            programName: form.programName || form.title || '',
-            ...(registrationDoc.data() || {})
+    try {
+        const formsSnapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
+        const registrationSnapshots = await Promise.all(formsSnapshot.docs.map(async (formDoc) => {
+            const form = { id: formDoc.id, ...(formDoc.data() || {}) };
+            const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms/${formDoc.id}/registrations`));
+            return snapshot.docs.map((registrationDoc) => ({
+                id: registrationDoc.id,
+                formId: formDoc.id,
+                programName: form.programName || form.title || '',
+                ...(registrationDoc.data() || {})
+            }));
         }));
-    }));
 
-    return registrationSnapshots.flat();
+        return registrationSnapshots.flat();
+    } catch (error) {
+        console.error('Failed to access registration records for volunteer screening:', error);
+        throw error;
+    }
 }
 
 async function assertVolunteerScreeningClearedForTeamGrant(teamId, target = {}) {
