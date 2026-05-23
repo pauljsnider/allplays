@@ -508,12 +508,14 @@ export async function getTeams(options = {}) {
     if (includePrivate) {
         teams = (await getDocs(query(teamsRef, orderBy("name")))).docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } else if (publicOnly) {
-        teams = (await getDocs(query(teamsRef, where("isPublic", "==", true), orderBy("name")))).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        teams = (await getDocs(query(teamsRef, where("isPublic", "==", true)))).docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     } else {
         const currentUser = auth.currentUser;
         const currentUserEmail = String(currentUser?.email || '').trim().toLowerCase();
         const teamSnapshots = await Promise.all([
-            getDocs(query(teamsRef, where("isPublic", "==", true), orderBy("name"))),
+            getDocs(query(teamsRef, where("isPublic", "==", true))),
             currentUser?.uid
                 ? getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))
                 : Promise.resolve({ docs: [] }),
