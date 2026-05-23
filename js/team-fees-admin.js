@@ -1185,6 +1185,13 @@ async function initTeamFeesAdminPage() {
     }
 }
 
+export function registerTeamFeesAdminPageHandlers(win = typeof window !== 'undefined' ? window : null) {
+    if (!win?.addEventListener) return;
+
+    win.addEventListener('DOMContentLoaded', initTeamFeesAdminPage);
+    win.addEventListener('hashchange', initTeamFeesAdminPage);
+}
+
 if (typeof window !== 'undefined') {
-    window.addEventListener('DOMContentLoaded', initTeamFeesAdminPage);
+    registerTeamFeesAdminPageHandlers(window);
 }
