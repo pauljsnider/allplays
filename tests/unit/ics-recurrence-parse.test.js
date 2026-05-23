@@ -108,6 +108,29 @@ describe('parseICS recurrence expansion', () => {
         expect(events).toHaveLength(0);
     });
 
+    it('honors WKST when applying biweekly BYDAY cadence', () => {
+        const ics = [
+            'BEGIN:VCALENDAR',
+            'BEGIN:VEVENT',
+            'UID:biweekly-sunday-series',
+            'DTSTART:20260302T180000Z',
+            'DTEND:20260302T190000Z',
+            'RRULE:FREQ=WEEKLY;INTERVAL=2;COUNT=3;BYDAY=SU;WKST=MO',
+            'SUMMARY:Biweekly Game',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\n');
+
+        const events = parseICS(ics);
+
+        expect(events).toHaveLength(3);
+        expect(events.map((event) => event.dtstart.toISOString())).toEqual([
+            '2026-03-08T18:00:00.000Z',
+            '2026-03-22T18:00:00.000Z',
+            '2026-04-05T18:00:00.000Z'
+        ]);
+    });
+
     it('does not truncate weekly COUNT expansion for long intervals', () => {
         const ics = [
             'BEGIN:VCALENDAR',

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     isTeamActive,
+    isTeamPublic,
     filterTeamsByActive,
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
@@ -32,12 +33,25 @@ describe('team visibility helpers', () => {
         expect(filterTeamsByActive(teams, true)).toEqual(teams);
     });
 
-    it('excludes inactive teams from upcoming/live cards', () => {
-        expect(shouldIncludeTeamInLiveOrUpcoming({ id: 'a', active: true })).toBe(true);
-        expect(shouldIncludeTeamInLiveOrUpcoming({ id: 'b', active: false })).toBe(false);
+    it('only treats explicitly public teams as public', () => {
+        expect(isTeamPublic({ id: 'a', isPublic: true })).toBe(true);
+        expect(isTeamPublic({ id: 'b', isPublic: false })).toBe(false);
+        expect(isTeamPublic({ id: 'c' })).toBe(false);
     });
 
-    it('keeps replay cards for inactive teams to preserve historical context', () => {
-        expect(shouldIncludeTeamInReplay({ id: 'a', active: false })).toBe(true);
+    it('excludes inactive and private teams from upcoming/live cards', () => {
+        expect(shouldIncludeTeamInLiveOrUpcoming({ id: 'a', active: true, isPublic: true })).toBe(true);
+        expect(shouldIncludeTeamInLiveOrUpcoming({ id: 'b', active: false, isPublic: true })).toBe(false);
+        expect(shouldIncludeTeamInLiveOrUpcoming({ id: 'c', active: true, isPublic: false })).toBe(false);
+        expect(shouldIncludeTeamInLiveOrUpcoming({ id: 'd', active: true })).toBe(false);
+    });
+
+    it('keeps replay cards for inactive public teams to preserve historical context', () => {
+        expect(shouldIncludeTeamInReplay({ id: 'a', active: false, isPublic: true })).toBe(true);
+    });
+
+    it('excludes private teams from replay cards', () => {
+        expect(shouldIncludeTeamInReplay({ id: 'a', active: true, isPublic: false })).toBe(false);
+        expect(shouldIncludeTeamInReplay({ id: 'b', active: true })).toBe(false);
     });
 });

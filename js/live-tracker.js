@@ -9,7 +9,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=3';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
-import { buildPersistedResumeClockState, deriveResumeClockState } from './live-tracker-resume.js?v=3';
+import { buildPersistedResumeClockState, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=4';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
@@ -2908,6 +2908,7 @@ async function init() {
     applyPeriodButtons();
 
     const persistedLocalTrackerState = readPersistedLiveTrackerState(window.localStorage, teamId, gameId);
+    let resumedLiveEventLog = [];
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
 
@@ -2994,6 +2995,7 @@ async function init() {
         const hasAggregatedStats = statsSnapshot.size > 0;
         const liveEventsSnapshot = await safeGetDocs(collection(db, `teams/${teamId}/games/${gameId}/liveEvents`), 'liveEvents');
         const liveEvents = liveEventsSnapshot.docs.map(d => d.data());
+        resumedLiveEventLog = buildResumeLogFromLiveEvents(liveEvents);
         const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
         state.scoreLogIsComplete = !resumedFromPersistedData;
         const resumeClockState = deriveResumeClockState(
@@ -3093,6 +3095,12 @@ async function init() {
 
     if (shouldResume && persistedLocalTrackerState) {
       applyPersistedLocalTrackerState(persistedLocalTrackerState);
+    }
+
+    if (shouldResume && state.log.length === 0 && resumedLiveEventLog.length > 0) {
+      state.log = resumedLiveEventLog;
+      state.scoreLogIsComplete = true;
+      persistLocalTrackerState();
     }
 
     if (!state.opp.length) {

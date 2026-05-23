@@ -608,6 +608,12 @@ function getRecurrenceDayNumber(date, recurrenceTimeZone, preserveAbsoluteTime =
   return Math.floor(Date.UTC(wallClock.year, wallClock.month, wallClock.day) / MS_PER_DAY);
 }
 
+function getRecurrenceWeekAnchorDayNumber(date, weekStartIndex, recurrenceTimeZone, preserveAbsoluteTime = false) {
+  const weekday = getRecurrenceWeekday(date, recurrenceTimeZone, preserveAbsoluteTime);
+  const daysSinceWeekStart = (weekday - weekStartIndex + 7) % 7;
+  return getRecurrenceDayNumber(date, recurrenceTimeZone, preserveAbsoluteTime) - daysSinceWeekStart;
+}
+
 function toCalendarDayNumber(date) {
   return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / MS_PER_DAY);
 }
@@ -649,6 +655,11 @@ function parseICSRRule(rawRule) {
           .map((dayCode) => dayCode.trim().toUpperCase())
           .filter((dayCode) => dayCode in ICS_DAY_TO_INDEX);
         break;
+      case 'WKST': {
+        const weekStart = value.toUpperCase();
+        if (weekStart in ICS_DAY_TO_INDEX) parsed.weekStart = weekStart;
+        break;
+      }
     }
   }
 
@@ -738,20 +749,16 @@ function expandRecurringICSEvent(event) {
     byDayIndexes.add(getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime));
   }
 
-  const startWeekAnchor = new Date(startDate);
-  startWeekAnchor.setHours(0, 0, 0, 0);
-  startWeekAnchor.setDate(startWeekAnchor.getDate() - getRecurrenceWeekday(startDate, recurrenceTimeZone, recurrenceAbsoluteTime));
+  const weekStartIndex = ICS_DAY_TO_INDEX[rrule.weekStart] ?? ICS_DAY_TO_INDEX.SU;
+  const startWeekAnchorDayNumber = getRecurrenceWeekAnchorDayNumber(startDate, weekStartIndex, recurrenceTimeZone, recurrenceAbsoluteTime);
 
   let cursor = new Date(startDate);
   let generated = 0;
   while (generated < countLimit && generated < MAX_ICS_RECURRENCE_OCCURRENCES) {
     if (untilBoundary && cursor > untilBoundary) break;
-    const cursorDayStart = new Date(cursor);
-    cursorDayStart.setHours(0, 0, 0, 0);
-    const cursorWeekAnchor = new Date(cursorDayStart);
     const cursorWeekday = getRecurrenceWeekday(cursor, recurrenceTimeZone, recurrenceAbsoluteTime);
-    cursorWeekAnchor.setDate(cursorWeekAnchor.getDate() - cursorWeekday);
-    const weekDiff = Math.floor((getRecurrenceDayNumber(cursorWeekAnchor, recurrenceTimeZone, recurrenceAbsoluteTime) - getRecurrenceDayNumber(startWeekAnchor, recurrenceTimeZone, recurrenceAbsoluteTime)) / 7);
+    const cursorWeekAnchorDayNumber = getRecurrenceWeekAnchorDayNumber(cursor, weekStartIndex, recurrenceTimeZone, recurrenceAbsoluteTime);
+    const weekDiff = Math.floor((cursorWeekAnchorDayNumber - startWeekAnchorDayNumber) / 7);
     const isCadencedWeek = weekDiff >= 0 && weekDiff % interval === 0;
     const isMatchingWeekday = byDayIndexes.has(cursorWeekday);
 
