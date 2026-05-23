@@ -3,11 +3,13 @@ import {
   db,
   addDoc,
   collection,
+  doc,
   getDocs,
   limit,
   orderBy,
   query,
-  serverTimestamp
+  serverTimestamp,
+  setDoc
 } from '../../../../js/firebase.js';
 import { getApp } from '../../../../js/vendor/firebase-app.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
@@ -18,6 +20,7 @@ import {
   loadParentFeesForApp,
   loadParentRegistrations
 } from './parentToolsService';
+import { loadParentPlayerDetail } from './playerService';
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -37,8 +40,17 @@ export type PrivateAiMessage = {
   role: PrivateAiRole;
   text: string;
   createdAt: Date;
+  conversationId?: string;
   toolNames?: string[];
   error?: boolean;
+};
+
+export type PrivateAiConversation = {
+  id: string;
+  title: string;
+  createdAt: Date;
+  updatedAt: Date;
+  lastMessagePreview?: string;
 };
 
 export type PrivateAiToolCall = {
@@ -60,6 +72,8 @@ export type PrivateAiSendResult = {
 };
 
 const privateAiCollectionName = 'privateAiMessages';
+const privateAiConversationCollectionName = 'privateAiConversations';
+export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
 const maxLoadedMessages = 80;
 const maxHistoryMessages = 12;
 const maxToolRounds = 2;
@@ -73,22 +87,78 @@ export function resetPrivateAiModelForTests() {
   aiModelCache = null;
 }
 
-export async function loadPrivateAiMessages(user: AuthUser | null, messageLimit = maxLoadedMessages): Promise<PrivateAiMessage[]> {
+export async function loadPrivateAiConversations(user: AuthUser | null, conversationLimit = 30): Promise<PrivateAiConversation[]> {
   if (!user?.uid) return [];
 
   const snapshot = await getDocs(query(
+    collection(db, 'users', user.uid, privateAiConversationCollectionName),
+    orderBy('updatedAt', 'desc'),
+    limit(conversationLimit)
+  ));
+
+  const conversations = (snapshot.docs || [])
+    .map((document: any) => normalizePrivateAiConversation(document.id, document.data?.() || {}))
+    .filter((conversation: PrivateAiConversation | null): conversation is PrivateAiConversation => Boolean(conversation));
+
+  if (conversations.length) {
+    return conversations;
+  }
+
+  const legacyMessages = await loadPrivateAiMessages(user, maxHistoryMessages, DEFAULT_PRIVATE_AI_CONVERSATION_ID).catch(() => []);
+  return legacyMessages.length ? [buildDefaultConversation(legacyMessages)] : [];
+}
+
+export async function createPrivateAiConversation(user: AuthUser | null, title = 'New chat'): Promise<PrivateAiConversation> {
+  if (!user?.uid) {
+    throw new Error('Sign in before starting an AI chat.');
+  }
+
+  const createdAt = new Date();
+  const cleanTitle = compactText(title).slice(0, 80) || 'New chat';
+  const payload = {
+    title: cleanTitle,
+    lastMessagePreview: '',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    clientCreatedAt: createdAt.toISOString(),
+    clientUpdatedAt: createdAt.toISOString()
+  };
+  const document = await addDoc(collection(db, 'users', user.uid, privateAiConversationCollectionName), payload);
+  return {
+    id: document.id,
+    title: cleanTitle,
+    createdAt,
+    updatedAt: createdAt,
+    lastMessagePreview: ''
+  };
+}
+
+export async function loadPrivateAiMessages(
+  user: AuthUser | null,
+  messageLimit = maxLoadedMessages,
+  conversationId = DEFAULT_PRIVATE_AI_CONVERSATION_ID
+): Promise<PrivateAiMessage[]> {
+  if (!user?.uid) return [];
+
+  const activeConversationId = normalizeConversationId(conversationId);
+  const snapshot = await getDocs(query(
     collection(db, 'users', user.uid, privateAiCollectionName),
     orderBy('createdAt', 'desc'),
-    limit(messageLimit)
+    limit(Math.max(messageLimit, maxLoadedMessages))
   ));
 
   return (snapshot.docs || [])
     .map((document: any) => normalizePrivateAiMessage(document.id, document.data?.() || {}))
     .filter((message: PrivateAiMessage | null): message is PrivateAiMessage => Boolean(message))
+    .filter((message: PrivateAiMessage) => messageBelongsToConversation(message, activeConversationId))
     .reverse();
 }
 
-export async function sendPrivateAiMessage(user: AuthUser, prompt: string): Promise<PrivateAiSendResult> {
+export async function sendPrivateAiMessage(
+  user: AuthUser,
+  prompt: string,
+  conversationId = DEFAULT_PRIVATE_AI_CONVERSATION_ID
+): Promise<PrivateAiSendResult> {
   if (!user?.uid) {
     throw new Error('Sign in before using the AI chat.');
   }
@@ -98,19 +168,30 @@ export async function sendPrivateAiMessage(user: AuthUser, prompt: string): Prom
     throw new Error('Type a message first.');
   }
 
-  const priorMessages = await loadPrivateAiMessages(user, maxHistoryMessages).catch(() => []);
+  const activeConversationId = normalizeConversationId(conversationId);
+  const priorMessages = await loadPrivateAiMessages(user, maxHistoryMessages, activeConversationId).catch(() => []);
   const userMessage = await savePrivateAiMessage(user, {
     role: 'user',
-    text: question
+    text: question,
+    conversationId: activeConversationId
   });
+  await touchPrivateAiConversation(user, activeConversationId, {
+    title: buildConversationTitle(question),
+    lastMessagePreview: question
+  }).catch(() => {});
 
   try {
     const aiResult = await generatePrivateAiAnswer(user, question, priorMessages);
     const assistantMessage = await savePrivateAiMessage(user, {
       role: 'assistant',
       text: aiResult.answer,
+      conversationId: activeConversationId,
       toolNames: aiResult.toolResults.filter((result) => result.ok).map((result) => result.name)
     });
+    await touchPrivateAiConversation(user, activeConversationId, {
+      title: buildConversationTitle(question),
+      lastMessagePreview: aiResult.answer
+    }).catch(() => {});
 
     return {
       userMessage,
@@ -122,8 +203,13 @@ export async function sendPrivateAiMessage(user: AuthUser, prompt: string): Prom
     const assistantMessage = await savePrivateAiMessage(user, {
       role: 'assistant',
       text: 'I could not reach ALL PLAYS AI right now. Try again in a moment.',
+      conversationId: activeConversationId,
       error: true
     });
+    await touchPrivateAiConversation(user, activeConversationId, {
+      title: buildConversationTitle(question),
+      lastMessagePreview: assistantMessage.text
+    }).catch(() => {});
 
     return {
       userMessage,
@@ -235,6 +321,17 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
           data: summarizeTeamDetail(await loadParentTeamDetail(teamId, user))
         };
       }
+      case 'get_player_development': {
+        const player = await resolveAccessiblePlayer(user, args);
+        if (!player) {
+          return { name, ok: false, error: 'No matching player was found for this account.' };
+        }
+        return {
+          name,
+          ok: true,
+          data: summarizePlayerDevelopment(await loadParentPlayerDetail(user, player.teamId, player.playerId))
+        };
+      }
       case 'get_fees':
         return {
           name,
@@ -270,13 +367,16 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
 async function savePrivateAiMessage(user: AuthUser, input: {
   role: PrivateAiRole;
   text: string;
+  conversationId?: string;
   toolNames?: string[];
   error?: boolean;
 }): Promise<PrivateAiMessage> {
   const createdAt = new Date();
+  const conversationId = normalizeConversationId(input.conversationId);
   const payload = {
     role: input.role,
     text: input.text,
+    conversationId,
     toolNames: input.toolNames || [],
     error: input.error === true,
     createdAt: serverTimestamp(),
@@ -287,9 +387,39 @@ async function savePrivateAiMessage(user: AuthUser, input: {
     id: document.id,
     role: input.role,
     text: input.text,
+    conversationId,
     createdAt,
     toolNames: input.toolNames || [],
     error: input.error === true
+  };
+}
+
+async function touchPrivateAiConversation(user: AuthUser, conversationId: string, input: {
+  title: string;
+  lastMessagePreview: string;
+}) {
+  const updatedAt = new Date();
+  const cleanTitle = compactText(input.title).slice(0, 80) || 'New chat';
+  await setDoc(doc(db, 'users', user.uid, privateAiConversationCollectionName, normalizeConversationId(conversationId)), {
+    title: cleanTitle,
+    lastMessagePreview: compactText(input.lastMessagePreview).slice(0, 180),
+    updatedAt: serverTimestamp(),
+    clientUpdatedAt: updatedAt.toISOString(),
+    createdAt: serverTimestamp(),
+    clientCreatedAt: updatedAt.toISOString()
+  }, { merge: true });
+}
+
+function normalizePrivateAiConversation(id: string, data: Record<string, any>): PrivateAiConversation | null {
+  if (!id) return null;
+  const createdAt = normalizeScheduleDate(data.createdAt) || normalizeScheduleDate(data.clientCreatedAt) || new Date(0);
+  const updatedAt = normalizeScheduleDate(data.updatedAt) || normalizeScheduleDate(data.clientUpdatedAt) || createdAt;
+  return {
+    id,
+    title: compactText(data.title).slice(0, 80) || 'New chat',
+    createdAt,
+    updatedAt,
+    lastMessagePreview: compactText(data.lastMessagePreview).slice(0, 180)
   };
 }
 
@@ -302,9 +432,22 @@ function normalizePrivateAiMessage(id: string, data: Record<string, any>): Priva
     id,
     role,
     text,
+    conversationId: compactText(data.conversationId) || DEFAULT_PRIVATE_AI_CONVERSATION_ID,
     createdAt: normalizeScheduleDate(data.createdAt) || normalizeScheduleDate(data.clientCreatedAt) || new Date(0),
     toolNames: Array.isArray(data.toolNames) ? data.toolNames.map((name: unknown) => compactText(name)).filter(Boolean) : [],
     error: data.error === true
+  };
+}
+
+function buildDefaultConversation(messages: PrivateAiMessage[]): PrivateAiConversation {
+  const latest = messages[messages.length - 1];
+  const now = latest?.createdAt || new Date(0);
+  return {
+    id: DEFAULT_PRIVATE_AI_CONVERSATION_ID,
+    title: 'Recent chat',
+    createdAt: messages[0]?.createdAt || now,
+    updatedAt: now,
+    lastMessagePreview: latest?.text || ''
   };
 }
 
@@ -344,6 +487,7 @@ function buildPlannerPrompt({
     `- get_schedule: schedule events. Args: range upcoming|recent|all, type game|practice, teamId, teamName, playerName, limit.\n` +
     `- get_messages: team chat inbox, unread counts, and latest previews.\n` +
     `- get_team_detail: one accessible team. Args: teamId or teamName.\n` +
+    `- get_player_development: one linked player, recent stats, tracking summaries, incentives, profile, clips, and next actions for coaching/development. Args: playerId, teamId, playerName.\n` +
     `- get_fees: open parent fee records.\n` +
     `- get_parent_tools: registrations and certificates.\n\n` +
     `USER:\n${JSON.stringify(summarizeSignedInUser(user))}\n\n` +
@@ -513,6 +657,46 @@ function summarizeTeamDetail(detail: any) {
   };
 }
 
+function summarizePlayerDevelopment(detail: any) {
+  return {
+    player: {
+      id: detail.player?.id || detail.child?.playerId,
+      name: detail.player?.name || detail.child?.playerName,
+      number: detail.player?.number || null,
+      position: detail.player?.position || null,
+      teamId: detail.child?.teamId,
+      teamName: detail.child?.teamName,
+      sport: detail.team?.sport || null
+    },
+    nextEvent: detail.nextEvent ? summarizeScheduleEvent(detail.nextEvent) : null,
+    actionCounts: detail.actionCounts,
+    recentGames: (detail.statRows || []).slice(0, 6).map((row: any) => ({
+      event: summarizeScheduleEvent(row.event),
+      stats: row.stats || {}
+    })),
+    trackingSummary: (detail.trackingSummary || []).slice(0, 12),
+    incentives: detail.incentives ? {
+      activeRules: (detail.incentives.currentRules || []).slice(0, 8),
+      totalEarnedCents: detail.incentives.totalEarnedCents,
+      unpaidCents: detail.incentives.unpaidCents,
+      recentEarnings: (detail.incentives.seasonGameEarnings || []).slice(0, 5).map((earning: any) => ({
+        event: summarizeScheduleEvent(earning.event),
+        totalCents: earning.totalCents,
+        paid: earning.paid,
+        breakdown: earning.breakdown
+      }))
+    } : null,
+    athleteProfile: detail.athleteProfile ? {
+      hasProfile: Boolean(detail.athleteProfile.profile),
+      shareUrl: detail.athleteProfile.shareUrl || '',
+      builderUrl: detail.athleteProfile.builderUrl || ''
+    } : null,
+    certificates: (detail.certificates || []).slice(0, 5),
+    clips: (detail.clips || []).slice(0, 8),
+    coachingPrompt: 'Use recent stats, tracking, incentives, upcoming schedule, and profile gaps to suggest practical next steps for the player. Avoid medical advice.'
+  };
+}
+
 function summarizeFees(fees: any[]) {
   return {
     fees: (fees || []).slice(0, 15).map((fee) => pickFields(fee, [
@@ -542,6 +726,38 @@ async function resolveAccessibleTeamId(user: AuthUser, args: Record<string, unkn
     return teams.find((team: any) => compactText(team.teamName).toLowerCase().includes(teamName))?.teamId || null;
   }
   return teams[0]?.teamId || null;
+}
+
+async function resolveAccessiblePlayer(user: AuthUser, args: Record<string, unknown>) {
+  const requestedTeamId = compactText(args.teamId);
+  const requestedPlayerId = compactText(args.playerId);
+  const requestedPlayerName = compactText(args.playerName).toLowerCase();
+  const home = await loadParentHome(user);
+  const players = [
+    ...(home.players || []).map((player: any) => ({
+      teamId: player.teamId,
+      playerId: player.playerId || player.childId,
+      name: player.name || player.childName || player.playerName,
+      teamName: player.teamName
+    })),
+    ...(home.teams || []).flatMap((team: any) => (team.players || []).map((player: any) => ({
+      teamId: team.teamId,
+      playerId: player.playerId || player.childId || player.id,
+      name: player.name || player.childName || player.playerName,
+      teamName: team.teamName
+    })))
+  ].filter((player: any) => player.teamId && player.playerId);
+
+  if (requestedTeamId && requestedPlayerId) {
+    return players.find((player: any) => player.teamId === requestedTeamId && player.playerId === requestedPlayerId) || null;
+  }
+  if (requestedPlayerId) {
+    return players.find((player: any) => player.playerId === requestedPlayerId) || null;
+  }
+  if (requestedPlayerName) {
+    return players.find((player: any) => compactText(player.name).toLowerCase().includes(requestedPlayerName)) || null;
+  }
+  return players[0] || null;
 }
 
 function summarizeScheduleEvent(event: ParentScheduleEvent) {
@@ -618,6 +834,23 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function compactText(value: unknown) {
   return String(value || '').trim();
+}
+
+function buildConversationTitle(prompt: string) {
+  const compact = compactText(prompt).replace(/\s+/g, ' ');
+  return compact.length > 52 ? `${compact.slice(0, 49)}...` : compact || 'New chat';
+}
+
+function normalizeConversationId(conversationId: unknown) {
+  return compactText(conversationId) || DEFAULT_PRIVATE_AI_CONVERSATION_ID;
+}
+
+function messageBelongsToConversation(message: PrivateAiMessage, conversationId: string) {
+  const activeConversationId = normalizeConversationId(conversationId);
+  const messageConversationId = normalizeConversationId(message.conversationId);
+  return activeConversationId === DEFAULT_PRIVATE_AI_CONVERSATION_ID
+    ? messageConversationId === DEFAULT_PRIVATE_AI_CONVERSATION_ID
+    : messageConversationId === activeConversationId;
 }
 
 function clampAnswer(answer: string) {

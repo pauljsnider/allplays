@@ -38,7 +38,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const isAiRoute = location.pathname === '/ai';
-  const isMobileChatDetail = !isDesktopWeb && ((location.pathname.startsWith('/messages/') && location.pathname !== '/messages') || isAiRoute);
+  const isMobileChatDetail = !isDesktopWeb && location.pathname.startsWith('/messages/') && location.pathname !== '/messages';
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
 
   useEffect(() => {

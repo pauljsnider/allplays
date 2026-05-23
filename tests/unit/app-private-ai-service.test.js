@@ -9,11 +9,13 @@ const firebaseMocks = vi.hoisted(() => ({
     db: {},
     addDoc: vi.fn(),
     collection: vi.fn((db, ...path) => ({ db, path })),
+    doc: vi.fn((db, ...path) => ({ db, path })),
     getDocs: vi.fn(),
     limit: vi.fn((count) => ({ type: 'limit', count })),
     orderBy: vi.fn((field, direction) => ({ type: 'orderBy', field, direction })),
     query: vi.fn((...parts) => ({ parts })),
-    serverTimestamp: vi.fn(() => ({ __serverTimestamp: true }))
+    serverTimestamp: vi.fn(() => ({ __serverTimestamp: true })),
+    setDoc: vi.fn()
 }));
 
 const aiMocks = vi.hoisted(() => {
@@ -46,6 +48,10 @@ const teamMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn()
 }));
 
+const playerMocks = vi.hoisted(() => ({
+    loadParentPlayerDetail: vi.fn()
+}));
+
 const toolsMocks = vi.hoisted(() => ({
     loadParentCertificates: vi.fn(),
     loadParentFeesForApp: vi.fn(),
@@ -66,6 +72,7 @@ vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => teamMocks);
+vi.mock('../../apps/app/src/lib/playerService.ts', () => playerMocks);
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => toolsMocks);
 
 const authUser = {
@@ -110,6 +117,7 @@ beforeEach(async () => {
     vi.clearAllMocks();
     aiMocks.model.generateContent.mockReset();
     firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+    firebaseMocks.setDoc.mockResolvedValue();
     let docIndex = 0;
     firebaseMocks.addDoc.mockImplementation(async () => ({ id: `ai-message-${++docIndex}` }));
     dbMocks.getUserProfile.mockResolvedValue({ fullName: 'Pat Parent', notificationPreferences: { chat: true } });
@@ -147,6 +155,24 @@ beforeEach(async () => {
         leaderboards: [],
         trackingSummaries: [],
         counts: { games: 4, practices: 2, completedGames: 4 }
+    });
+    playerMocks.loadParentPlayerDetail.mockResolvedValue({
+        child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
+        player: { id: 'player-1', name: 'Avery', number: '9', position: 'Guard' },
+        team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+        nextEvent: futureEvent(),
+        actionCounts: { rsvpNeeded: 1, packetsReady: 0, openAssignments: 1 },
+        statRows: [{ event: futureEvent({ id: 'game-0', date: new Date('2026-05-01T18:00:00Z') }), stats: { points: 8, rebounds: 4 } }],
+        trackingSummary: [{ label: 'Defense', value: 'Improving' }],
+        incentives: {
+            currentRules: [{ statKey: 'points', amountCents: 100 }],
+            totalEarnedCents: 800,
+            unpaidCents: 200,
+            seasonGameEarnings: []
+        },
+        athleteProfile: { profile: { headline: 'Two-way guard' }, shareUrl: 'https://allplays.ai/athlete-profile.html?id=profile-1', builderUrl: 'https://allplays.ai/athlete-profile-builder.html' },
+        certificates: [],
+        clips: []
     });
     toolsMocks.loadParentFeesForApp.mockResolvedValue([]);
     toolsMocks.loadParentRegistrations.mockResolvedValue([]);
@@ -190,6 +216,46 @@ describe('private AI service', () => {
         ]);
     });
 
+    it('loads and creates user-scoped private AI conversations', async () => {
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [
+                {
+                    id: 'conversation-1',
+                    data: () => ({
+                        title: 'Player plan',
+                        lastMessagePreview: 'Use recent stats for Avery.',
+                        clientCreatedAt: '2026-05-21T12:00:00Z',
+                        clientUpdatedAt: '2026-05-21T12:05:00Z'
+                    })
+                }
+            ]
+        });
+
+        const { createPrivateAiConversation, loadPrivateAiConversations } = await import('../../apps/app/src/lib/privateAiService.ts');
+        const conversations = await loadPrivateAiConversations(authUser);
+
+        expect(firebaseMocks.collection).toHaveBeenCalledWith(firebaseMocks.db, 'users', 'user-1', 'privateAiConversations');
+        expect(firebaseMocks.orderBy).toHaveBeenCalledWith('updatedAt', 'desc');
+        expect(conversations).toEqual([
+            expect.objectContaining({
+                id: 'conversation-1',
+                title: 'Player plan',
+                lastMessagePreview: 'Use recent stats for Avery.'
+            })
+        ]);
+
+        const created = await createPrivateAiConversation(authUser, 'New player development chat');
+        expect(created).toMatchObject({
+            id: 'ai-message-1',
+            title: 'New player development chat',
+            lastMessagePreview: ''
+        });
+        expect(firebaseMocks.addDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['users', 'user-1', 'privateAiConversations'] }),
+            expect.objectContaining({ title: 'New player development chat' })
+        );
+    });
+
     it('saves the prompt, lets AI request schedule data, and saves the answer privately', async () => {
         aiMocks.model.generateContent
             .mockResolvedValueOnce(modelText(JSON.stringify({
@@ -206,13 +272,17 @@ describe('private AI service', () => {
         expect(firebaseMocks.addDoc).toHaveBeenCalledTimes(2);
         expect(firebaseMocks.addDoc.mock.calls[0][1]).toMatchObject({
             role: 'user',
-            text: 'What do I need to do?'
+            text: 'What do I need to do?',
+            conversationId: 'default'
         });
         expect(firebaseMocks.addDoc.mock.calls[1][1]).toMatchObject({
             role: 'assistant',
             text: 'Avery needs an RSVP for Bears vs. Rockets on Jun 1.',
+            conversationId: 'default',
             toolNames: ['get_schedule']
         });
+        expect(firebaseMocks.setDoc).toHaveBeenCalledTimes(2);
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'users', 'user-1', 'privateAiConversations', 'default');
         expect(result.assistantMessage).toMatchObject({
             id: 'ai-message-2',
             role: 'assistant',
@@ -252,5 +322,27 @@ describe('private AI service', () => {
             })
         });
         expect(teamMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', authUser);
+    });
+
+    it('uses linked player detail data for player development coaching answers', async () => {
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } })).resolves.toMatchObject({
+            ok: true,
+            data: expect.objectContaining({
+                player: expect.objectContaining({
+                    id: 'player-1',
+                    name: 'Avery',
+                    teamName: 'Bears',
+                    sport: 'Basketball'
+                }),
+                actionCounts: { rsvpNeeded: 1, packetsReady: 0, openAssignments: 1 },
+                incentives: expect.objectContaining({
+                    totalEarnedCents: 800,
+                    unpaidCents: 200
+                })
+            })
+        });
+        expect(playerMocks.loadParentPlayerDetail).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
     });
 });
