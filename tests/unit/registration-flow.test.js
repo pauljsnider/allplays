@@ -122,6 +122,32 @@ describe('public registration flow', () => {
         });
     });
 
+    it('adds initial manual screening fields for background-check-enabled forms', () => {
+        const form = normalizeRegistrationForm({
+            programName: 'Volunteer Coach',
+            published: true,
+            backgroundCheck: { enabled: true, initialScreeningStatus: 'pending', providerName: 'Protect Youth Sports' }
+        }, { teamId: 'team-1', formId: 'form-1' });
+
+        expect(form.backgroundCheck).toEqual({
+            enabled: true,
+            initialScreeningStatus: 'pending',
+            providerName: 'Protect Youth Sports'
+        });
+        expect(buildPendingRegistrationRecord({
+            form,
+            participant: {},
+            guardian: {},
+            waiverAccepted: true,
+            now: { sentinel: 'serverTimestamp' }
+        })).toMatchObject({
+            screeningRequired: true,
+            screeningStatus: 'pending',
+            screeningProvider: 'Protect Youth Sports',
+            screeningProviderReference: ''
+        });
+    });
+
     it('normalizes installment plans and snapshots selected schedules', () => {
         const form = normalizeRegistrationForm({
             programName: 'Clinic',
@@ -334,6 +360,9 @@ describe('public registration flow', () => {
         expect(rules).toContain("'paymentPlan'");
         expect(rules).toContain('isRegistrationPaymentPlanValid');
         expect(rules).toContain("'feeSnapshot'");
+        expect(rules).toContain("'screeningRequired'");
+        expect(rules).toContain("'screeningStatus'");
+        expect(rules).toContain("data.screeningStatus == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('initialScreeningStatus', 'pending')");
         expect(rules).toContain('isRegistrationFeeSnapshotValid');
         expect(rules).toContain('isPublicRegistrationCapacityCounterUpdate');
         expect(rules).toContain('registrationCapacityUpdateId');

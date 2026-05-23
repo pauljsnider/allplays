@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
 import {
     buildRegistrationRosterDecision,
     buildRegistrationStatusUpdate,
@@ -41,8 +42,9 @@ describe('registration review helpers', () => {
         expect(getRegistrationGuardianDrafts(registration)).toEqual([
             { email: 'pat@example.com', name: 'Pat Lee', relation: 'Mother', phone: '' }
         ]);
-        expect(summarizeRegistration(registration)).toMatchObject({
+        expect(summarizeRegistration({ ...registration, screeningRequired: true, screeningStatus: 'flagged', screeningProviderReference: 'ref-123' })).toMatchObject({
             status: 'pending',
+            screeningStatus: 'flagged',
             playerName: 'Avery Lee',
             playerNumber: '12',
             guardianLabel: 'pat@example.com'
@@ -156,4 +158,15 @@ describe('registration review helpers', () => {
             type: 'new-player'
         });
     });
+
+    it('wires roster registration review to admin-only screening updates', () => {
+        const editRosterPage = fs.readFileSync('edit-roster.html', 'utf8');
+
+        expect(editRosterPage).toContain('Manual screening');
+        expect(editRosterPage).toContain('screening-status-select');
+        expect(editRosterPage).toContain('screening-provider-reference');
+        expect(editRosterPage).toContain('updateRegistrationScreening');
+        expect(editRosterPage).toContain('screeningUpdatedByName');
+    });
+
 });

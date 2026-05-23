@@ -514,6 +514,7 @@
         import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
+        import { db, doc, updateDoc, serverTimestamp } from './js/firebase.js?v=15';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=14';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess } from './js/team-access.js';
@@ -989,6 +990,25 @@
             `).join('');
         }
 
+        const screeningStatuses = ['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected'];
+
+        function normalizeScreeningStatusValue(value) {
+            const normalized = String(value || 'pending').trim().toLowerCase().replace(/[ _]+/g, '-');
+            return screeningStatuses.includes(normalized) ? normalized : 'pending';
+        }
+
+        async function updateRegistrationScreening(registrationId, status, providerReference) {
+            if (!currentTeamId || !selectedRegistrationFormId || !registrationId) return;
+            await updateDoc(doc(db, `teams/${currentTeamId}/registrationForms/${selectedRegistrationFormId}/registrations`, registrationId), {
+                screeningStatus: normalizeScreeningStatusValue(status),
+                screeningProviderReference: String(providerReference || '').trim(),
+                screeningUpdatedAt: serverTimestamp(),
+                screeningUpdatedBy: currentUser?.uid || '',
+                screeningUpdatedByName: currentUser?.displayName || currentUser?.email || 'Admin',
+                updatedAt: serverTimestamp()
+            });
+        }
+
         function formatRegistrationDate(value) {
             const date = value?.toDate ? value.toDate() : (value ? new Date(value) : null);
             return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString() : 'Unknown date';
@@ -1029,6 +1049,19 @@
                                     <p class="text-xs text-gray-500 mt-1">Guardian: ${escapeHtml(summary.guardianLabel || 'Not provided')}</p>
                                     <p class="text-xs text-gray-500">Submitted: ${formatRegistrationDate(summary.submittedAt)}</p>
                                     ${registration.linkedPlayerId ? `<p class="text-xs text-emerald-700 mt-1">Linked player: ${escapeHtml(registration.linkedPlayerId)}</p>` : ''}
+                                    ${registration.screeningRequired === true ? `
+                                        <div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3">
+                                            <p class="text-xs font-semibold uppercase tracking-wide text-amber-800">Manual screening</p>
+                                            <div class="mt-2 grid gap-2 md:grid-cols-[10rem_1fr_auto]">
+                                                <select class="screening-status-select rounded border border-amber-300 p-2 text-sm" data-registration-id="${escapeHtml(registration.id)}" aria-label="Screening status">
+                                                    ${screeningStatuses.map((status) => `<option value="${status}" ${normalizeScreeningStatusValue(registration.screeningStatus) === status ? 'selected' : ''}>${status}</option>`).join('')}
+                                                </select>
+                                                <input class="screening-provider-reference rounded border border-amber-300 p-2 text-sm" data-registration-id="${escapeHtml(registration.id)}" value="${escapeHtml(registration.screeningProviderReference || '')}" placeholder="Provider reference" aria-label="Screening provider reference">
+                                                <button type="button" class="save-screening-btn rounded border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100" data-registration-id="${escapeHtml(registration.id)}">Save screening</button>
+                                            </div>
+                                            <p class="mt-1 text-xs text-amber-700">${registration.screeningProvider ? `Provider: ${escapeHtml(registration.screeningProvider)} · ` : ''}${registration.screeningUpdatedByName ? `Updated by ${escapeHtml(registration.screeningUpdatedByName)} on ${formatRegistrationDate(registration.screeningUpdatedAt)}` : 'Admin-only status. Not shown on public registration pages.'}</p>
+                                        </div>
+                                    ` : ''}
                                     ${registration.waitlistStatusUpdatedByName ? `<p class="text-xs text-gray-500 mt-1">Waitlist updated by ${escapeHtml(registration.waitlistStatusUpdatedByName)} on ${formatRegistrationDate(registration.waitlistStatusUpdatedAt)}</p>` : ''}
                                     ${registration.decisionNote ? `<p class="text-xs text-gray-600 mt-1">Decision note: ${escapeHtml(registration.decisionNote)}</p>` : ''}
                                 </div>
@@ -1044,6 +1077,23 @@
                         </div>
                     `;
                 }).join('');
+                document.querySelectorAll('.save-screening-btn').forEach((button) => {
+                    button.addEventListener('click', async (event) => {
+                        const registrationId = event.currentTarget.dataset.registrationId;
+                        const card = event.currentTarget.closest('[data-registration-id]');
+                        const status = card?.querySelector('.screening-status-select')?.value || 'pending';
+                        const providerReference = card?.querySelector('.screening-provider-reference')?.value || '';
+                        try {
+                            event.currentTarget.disabled = true;
+                            await updateRegistrationScreening(registrationId, status, providerReference);
+                            await loadRegistrationReviews();
+                        } catch (err) {
+                            console.error('Error updating screening status', err);
+                            alert('Error updating screening status: ' + (err?.message || 'Please try again.'));
+                            event.currentTarget.disabled = false;
+                        }
+                    });
+                });
                 document.querySelectorAll('.approve-registration-btn').forEach((button) => {
                     button.addEventListener('click', async (event) => {
                         const registrationId = event.currentTarget.dataset.registrationId;

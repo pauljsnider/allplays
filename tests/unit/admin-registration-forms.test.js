@@ -6,6 +6,7 @@ import {
     formatRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
     normalizePaymentSettings,
+    normalizeBackgroundCheckSettings,
     normalizeInstallmentPlan,
     normalizeRegistrationDiscountRules,
     normalizeRegistrationOptions,
@@ -33,6 +34,7 @@ describe('admin registration form setup', () => {
                 { id: 'early', type: 'early_bird', label: 'Early bird', amountType: 'fixed', amountValue: '25', earlyBirdDeadline: '2026-03-01' },
                 { type: 'quantity', label: 'Sibling discount', amountType: 'percent', amountValue: '10', minimumQuantity: '2' }
             ],
+            backgroundCheck: { enabled: true, initialScreeningStatus: 'submitted', providerName: 'JDP' },
             waiverText: 'I accept the risk.',
             status: 'published'
         }, { teamId: 'team-1' });
@@ -48,6 +50,7 @@ describe('admin registration form setup', () => {
             currency: 'USD',
             paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
             installmentPlan: { enabled: true, title: 'Installment plan', installmentCount: 3, firstDueDate: '2026-06-01', intervalDays: 30 },
+            backgroundCheck: { enabled: true, initialScreeningStatus: 'submitted', providerName: 'JDP' },
             waiverText: 'I accept the risk.',
             status: 'published',
             published: true
@@ -66,6 +69,16 @@ describe('admin registration form setup', () => {
             { id: 'discount_2', type: 'quantity', label: 'Sibling discount', amountType: 'percent', amountValue: 10, earlyBirdDeadline: '', minimumQuantity: 2, active: true, sortOrder: 1 }
         ]);
         expect(validateAdminRegistrationFormPayload(payload)).toEqual([]);
+    });
+
+    it('normalizes manual screening settings to bounded admin statuses', () => {
+        expect(normalizeBackgroundCheckSettings()).toEqual({ enabled: false, initialScreeningStatus: 'pending', providerName: '' });
+        expect(normalizeBackgroundCheckSettings({ enabled: true, initialScreeningStatus: 'flagged', providerName: ' Protect Youth Sports ' })).toEqual({
+            enabled: true,
+            initialScreeningStatus: 'flagged',
+            providerName: 'Protect Youth Sports'
+        });
+        expect(normalizeBackgroundCheckSettings({ enabled: true, initialScreeningStatus: 'unknown' }).initialScreeningStatus).toBe('pending');
     });
 
     it('normalizes checkout and payment settings to bounded booleans', () => {
@@ -160,6 +173,9 @@ describe('admin registration form setup', () => {
         expect(adminPage).toContain('Online payment processing is not available yet');
         expect(adminPage).toContain('registration-installments-enabled');
         expect(adminPage).toContain('registration-discount-rules');
+        expect(adminPage).toContain('registration-background-check-enabled');
+        expect(adminPage).toContain('registration-screening-initial-status');
+        expect(adminPage).toContain('registration-screening-provider');
         expect(adminPage).toContain('registration-waiver');
         expect(adminPage).toContain('Publish and show link');
         expect(adminJs).toContain('window.openRegistrationFormsAdmin');
@@ -170,6 +186,8 @@ describe('admin registration form setup', () => {
         expect(adminJs).toContain('offlinePaymentEnabled: document.getElementById');
         expect(adminJs).toContain("document.getElementById('registration-installment-count')");
         expect(adminJs).toContain('parseRegistrationDiscountRulesText');
+        expect(adminJs).toContain('backgroundCheck: {');
+        expect(adminJs).toContain("document.getElementById('registration-background-check-enabled')");
         expect(adminJs).toContain('const teamId = activeRegistrationTeam.id;');
         expect(adminJs).toContain('if (activeRegistrationTeam?.id !== teamId) return;');
         expect(adminJs).toContain('teams/${teamId}/registrationForms');

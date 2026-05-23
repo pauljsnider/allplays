@@ -494,6 +494,10 @@ service cloud.firestore {
                'waitlistedAt',
                'selectedOption',
                'feeSnapshot',
+               'screeningRequired',
+               'screeningStatus',
+               'screeningProvider',
+               'screeningProviderReference',
                'source'
              ]) &&
              data.teamId == teamId &&
@@ -508,6 +512,13 @@ service cloud.firestore {
              data.keys().hasAny(['feeSnapshot']) &&
              isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
              (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&
+             (!data.keys().hasAny(['screeningRequired']) || (
+               get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('enabled', false) == true &&
+               data.screeningRequired == true &&
+               data.screeningStatus == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('initialScreeningStatus', 'pending') &&
+               data.screeningProvider == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('providerName', '') &&
+               data.screeningProviderReference == ''
+             )) &&
              (data.status == 'waitlisted' || !data.keys().hasAny(['waitlistedAt'])) &&
              (data.status != 'waitlisted' || data.keys().hasAny(['waitlistedAt'])) &&
              data.source == 'public-registration';
