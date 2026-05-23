@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { initiateStripeCheckout } from '../../js/stripe-service.js';
+import { initiateStripeCheckout, initiateTeamFeeCheckout } from '../../js/stripe-service.js';
 
 const mockInnerCallable = vi.fn();
 
@@ -51,5 +51,18 @@ describe('Stripe Service', () => {
 
         await expect(initiateStripeCheckout({ registrationId: 'reg-789' })).rejects.toThrow('Failed to get Stripe checkout URL.');
         expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'createStripeRegistrationCheckout');
+    });
+
+    it('initiates team fee checkout and returns a URL', async () => {
+        mockInnerCallable.mockResolvedValueOnce({
+            data: { checkoutUrl: 'https://checkout.stripe.com/team-fee-session' }
+        });
+        const params = { teamId: 'team-1', batchId: 'batch-1', recipientId: 'player-1' };
+
+        const checkoutUrl = await initiateTeamFeeCheckout(params);
+
+        expect(checkoutUrl).toBe('https://checkout.stripe.com/team-fee-session');
+        expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'createStripeTeamFeeCheckout');
+        expect(mockInnerCallable).toHaveBeenCalledWith(params);
     });
 });
