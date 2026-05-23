@@ -798,8 +798,7 @@ RETURN JSON:
         document.getElementById('summary-section').classList.remove('hidden');
         document.getElementById('summary-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-        // Hide the apply button and analysis section
-        document.getElementById('apply-btn').classList.add('hidden');
+        // Keep the apply control available so coaches can correct and re-save stats before leaving.
 
       } catch (error) {
         console.error('Failed to save stats:', error);
