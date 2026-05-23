@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Bot, ChevronLeft, ChevronRight, Edit3, MessageCircle, MoreHorizontal, Paperclip, Send, ShieldCheck, Smile, Trash2 } from 'lucide-react';
 import { mockMessages, mockTeams } from '../data/mockData';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -101,6 +101,11 @@ function MessageList({ activeTeamId = '', compact = false }: { activeTeamId?: st
 function ChatWindow({ auth, teamId, teamName, embedded = false }: { auth: AuthState; teamId: string; teamName: string; embedded?: boolean }) {
   const [activeMessageActionsId, setActiveMessageActionsId] = useState<string | null>(null);
   const preview = mockMessages.find((message) => message.teamId === teamId);
+
+  useEffect(() => {
+    setActiveMessageActionsId(null);
+  }, [teamId]);
+
   const messages = [
     { id: '1', sender: 'Coach Jamie', body: preview?.lastMessage || 'Welcome to the team chat.', time: '8:12 AM', mine: false },
     { id: '2', sender: auth.user?.displayName || 'Me', body: 'We can help with snacks and scorebook.', time: '8:18 AM', mine: true },
