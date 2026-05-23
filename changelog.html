@@ -28,16 +28,16 @@
     </script>
     <style>
       /* ── Category badge colors ─────────────────────────────────────────── */
-      .cat { display:inline-flex; align-items:center; gap:4px; font-size:.7rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 8px; border-radius:999px; }
-      .cat-tracking   { background:#dbeafe; color:#1d4ed8; }
-      .cat-broadcast  { background:#ede9fe; color:#6d28d9; }
-      .cat-schedule   { background:#ccfbf1; color:#0f766e; }
-      .cat-roster     { background:#ffedd5; color:#c2410c; }
-      .cat-payments   { background:#dcfce7; color:#15803d; }
-      .cat-registration { background:#fef9c3; color:#854d0e; }
-      .cat-media      { background:#fce7f3; color:#9d174d; }
-      .cat-ai         { background:#f3e8ff; color:#7e22ce; }
-      .cat-platform   { background:#f1f5f9; color:#334155; }
+      .cat { display:inline-flex; align-items:center; gap:4px; font-size:.7rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+      .cat-tracking    { background:#dbeafe; color:#1d4ed8; }
+      .cat-broadcast   { background:#ede9fe; color:#6d28d9; }
+      .cat-schedule    { background:#ccfbf1; color:#0f766e; }
+      .cat-roster      { background:#ffedd5; color:#c2410c; }
+      .cat-payments    { background:#dcfce7; color:#15803d; }
+      .cat-registration{ background:#fef9c3; color:#854d0e; }
+      .cat-media       { background:#fce7f3; color:#9d174d; }
+      .cat-ai          { background:#f3e8ff; color:#7e22ce; }
+      .cat-platform    { background:#f1f5f9; color:#334155; }
 
       /* ── Release block ────────────────────────────────────────────────── */
       .release { border-left: 3px solid #6366f1; padding-left: 1.5rem; margin-bottom: 3rem; }
@@ -46,7 +46,8 @@
       .release-subtitle { font-size:.875rem; color:#64748b; margin-bottom:1.5rem; }
 
       /* ── Entry ───────────────────────────────────────────────────────── */
-      .entry { padding: .875rem 1rem; background:#fff; border:1px solid #e2e8f0; border-radius:.75rem; margin-bottom:.625rem; }
+      .entry { padding:.875rem 1rem; background:#fff; border:1px solid #e2e8f0; border-radius:.75rem; margin-bottom:.625rem; transition: opacity .15s; }
+      .entry.cl-hidden { display:none; }
       .entry-header { display:flex; align-items:flex-start; gap:.625rem; flex-wrap:wrap; margin-bottom:.375rem; }
       .entry-title { font-size:.9375rem; font-weight:700; color:#0f172a; }
       .entry-body { font-size:.8125rem; color:#475569; line-height:1.6; }
@@ -55,11 +56,53 @@
 
       /* ── Section group heading ───────────────────────────────────────── */
       .group-heading { font-size:.75rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:#94a3b8; margin:1.25rem 0 .5rem; }
+      .group-heading.cl-hidden { display:none; }
+
+      /* ── Empty release ───────────────────────────────────────────────── */
+      .release.cl-empty .release-subtitle,
+      .release.cl-empty .group-heading,
+      .release.cl-empty .cl-release-no-results { display:block; }
+      .cl-release-no-results { display:none; font-size:.8125rem; color:#94a3b8; padding:.5rem 0; }
 
       /* ── TOC sidebar ─────────────────────────────────────────────────── */
-      #cl-toc a { display:block; font-size:.8125rem; color:#64748b; padding:.25rem .5rem; border-radius:.375rem; text-decoration:none; }
+      #cl-toc a { display:block; font-size:.8125rem; color:#64748b; padding:.25rem .5rem; border-radius:.375rem; text-decoration:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
       #cl-toc a:hover { background:#f1f5f9; color:#0f172a; }
       #cl-toc a.active { background:#eef2ff; color:#4338ca; font-weight:600; }
+
+      /* ── Search bar ──────────────────────────────────────────────────── */
+      #cl-search-wrap { position:sticky; top:0; z-index:20; background:rgba(248,250,252,.97); backdrop-filter:blur(8px); border-bottom:1px solid #e2e8f0; padding:.75rem 0; margin-bottom:1.5rem; }
+      #cl-search { width:100%; padding:.5rem .75rem .5rem 2.25rem; border:1px solid #cbd5e1; border-radius:.5rem; font-size:.9375rem; background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") no-repeat .625rem center; outline:none; }
+      #cl-search:focus { border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.15); }
+      #cl-search-clear { display:none; position:absolute; right:.625rem; top:50%; transform:translateY(-50%); cursor:pointer; color:#94a3b8; font-size:1.1rem; line-height:1; padding:2px 4px; border-radius:4px; }
+      #cl-search-clear:hover { color:#334155; background:#f1f5f9; }
+
+      /* ── Filter chips ────────────────────────────────────────────────── */
+      .filter-chip { display:inline-flex; align-items:center; gap:5px; font-size:.75rem; font-weight:600; letter-spacing:.02em; padding:3px 10px; border-radius:999px; border:1.5px solid #e2e8f0; background:#fff; color:#64748b; cursor:pointer; white-space:nowrap; transition:all .12s; }
+      .filter-chip:hover { border-color:#94a3b8; color:#334155; }
+      .filter-chip.active { border-color:#6366f1; background:#eef2ff; color:#4338ca; }
+      .filter-chip[data-cat="all"].active { background:#6366f1; color:#fff; border-color:#6366f1; }
+      .filter-chip[data-cat="tracking"].active  { background:#dbeafe; color:#1d4ed8; border-color:#93c5fd; }
+      .filter-chip[data-cat="broadcast"].active { background:#ede9fe; color:#6d28d9; border-color:#c4b5fd; }
+      .filter-chip[data-cat="schedule"].active  { background:#ccfbf1; color:#0f766e; border-color:#5eead4; }
+      .filter-chip[data-cat="roster"].active    { background:#ffedd5; color:#c2410c; border-color:#fdba74; }
+      .filter-chip[data-cat="payments"].active  { background:#dcfce7; color:#15803d; border-color:#86efac; }
+      .filter-chip[data-cat="registration"].active { background:#fef9c3; color:#854d0e; border-color:#fde047; }
+      .filter-chip[data-cat="media"].active     { background:#fce7f3; color:#9d174d; border-color:#f9a8d4; }
+      .filter-chip[data-cat="ai"].active        { background:#f3e8ff; color:#7e22ce; border-color:#d8b4fe; }
+      .filter-chip[data-cat="platform"].active  { background:#f1f5f9; color:#334155; border-color:#94a3b8; }
+
+      /* ── Status bar ──────────────────────────────────────────────────── */
+      #cl-status { font-size:.8125rem; color:#64748b; min-height:1.25rem; margin-top:.5rem; }
+
+      /* ── Collapsed releases ──────────────────────────────────────────── */
+      .release-toggle { display:inline-flex; align-items:center; gap:.375rem; font-size:.75rem; font-weight:600; color:#6366f1; cursor:pointer; background:none; border:none; padding:0; margin-top:.75rem; }
+      .release-toggle svg { transition:transform .2s; }
+      .release-toggle.collapsed svg { transform:rotate(-90deg); }
+      .release-body.collapsed { display:none; }
+
+      /* ── No global results ───────────────────────────────────────────── */
+      #cl-no-results { display:none; padding:3rem 1rem; text-align:center; color:#94a3b8; }
+      #cl-no-results.visible { display:block; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen">
@@ -68,81 +111,102 @@
 <main class="max-w-6xl mx-auto px-4 py-8">
 
   <!-- Page hero -->
-  <div class="mb-8">
+  <div class="mb-6">
     <a href="help.html" class="text-sm text-primary-700 hover:text-primary-800 font-medium">← Help Center</a>
     <h1 class="mt-2 text-4xl font-extrabold tracking-tight text-slate-900">Changelog</h1>
-    <p class="mt-2 text-slate-500 text-base max-w-2xl">Every significant feature, fix, and improvement to ALL PLAYS — newest first. Use the sidebar to jump to a release.</p>
+    <p class="mt-1 text-slate-500 text-base max-w-2xl">Every significant feature, fix, and improvement to ALL PLAYS — from launch to today.</p>
+  </div>
+
+  <!-- ── Search + Filter (sticky) ───────────────────────────────────────── -->
+  <div id="cl-search-wrap">
+    <div class="relative max-w-xl">
+      <input id="cl-search" type="search" placeholder="Search changelog…" autocomplete="off" spellcheck="false" />
+      <span id="cl-search-clear" title="Clear">✕</span>
+    </div>
+    <div class="flex gap-2 flex-wrap mt-2 items-center">
+      <button class="filter-chip active" data-cat="all">All</button>
+      <button class="filter-chip" data-cat="tracking">Game Tracking</button>
+      <button class="filter-chip" data-cat="broadcast">Broadcasting</button>
+      <button class="filter-chip" data-cat="schedule">Schedule</button>
+      <button class="filter-chip" data-cat="roster">Roster</button>
+      <button class="filter-chip" data-cat="payments">Payments</button>
+      <button class="filter-chip" data-cat="registration">Registration</button>
+      <button class="filter-chip" data-cat="media">Media</button>
+      <button class="filter-chip" data-cat="ai">AI</button>
+      <button class="filter-chip" data-cat="platform">Platform</button>
+      <span id="cl-status"></span>
+    </div>
   </div>
 
   <div class="flex gap-8 items-start">
 
     <!-- ── Sidebar TOC ────────────────────────────────────────────────── -->
-    <aside class="hidden lg:block w-44 flex-shrink-0 sticky top-6">
+    <aside class="hidden lg:block w-44 flex-shrink-0 sticky top-32">
       <p class="text-xs font-bold uppercase tracking-widest text-slate-400 mb-2">Releases</p>
-      <nav id="cl-toc">
-        <!-- JS fills this in from release sections -->
-      </nav>
+      <nav id="cl-toc"></nav>
     </aside>
 
     <!-- ── Main changelog ─────────────────────────────────────────────── -->
     <div class="flex-1 min-w-0">
 
-      <!-- ════════════════════════════════════════════════════════════════
-           HOW TO ADD A NEW RELEASE:
-           1. Copy the <section class="release"> block below.
-           2. Update the id, date badge, title, and subtitle.
-           3. Add <div class="entry"> items under the appropriate group heading.
-           4. Choose the right .cat-* badge for each entry.
-           5. Add a <a class="entry-link"> pointing to the relevant workflow
-              page if one exists.
-           ════════════════════════════════════════════════════════════════ -->
+      <div id="cl-no-results">
+        <p class="text-lg font-semibold text-slate-400 mb-1">No results found</p>
+        <p class="text-sm">Try a different keyword or clear the filter.</p>
+      </div>
 
-      <!-- ── Release: May 2026 ──────────────────────────────────────── -->
+
+      <!-- ════════════════════════════════════════════════════════════════
+           MAY 2026
+           ════════════════════════════════════════════════════════════════ -->
       <section class="release" id="may-2026">
         <p class="release-date">May 2026</p>
         <h2 class="release-title">Spring 2026 Release</h2>
-        <p class="release-subtitle">New sports, full payment pipeline, registration management, team media, live-tracker resilience improvements, broadcasting overhaul, calendar feeds, org scheduling tools, and a wide range of roster and access control improvements.</p>
+        <p class="release-subtitle">New sports, full payment pipeline, registration management, team media, live-tracker resilience, broadcasting overhaul, calendar feeds, org scheduling tools, and roster access improvements.</p>
+        <button class="release-toggle" data-target="body-may-2026">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Hide older
+        </button>
+        <div class="release-body" id="body-may-2026">
 
-        <!-- Latest Updates -->
         <p class="group-heading">Latest Updates</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="schedule">
           <div class="entry-header">
             <span class="cat cat-schedule">Schedule</span>
-            <span class="entry-title">Schedule reminders now fall back to team chat</span>
+            <span class="entry-title">Schedule reminders fall back to team chat</span>
           </div>
-          <p class="entry-body">Timed pre-event reminders can post into the default team chat as an in-app record when families miss push, email, or device-level notifications. Reminder messages use deterministic IDs to avoid duplicate retry spam, and delivery audit fields are recorded on schedule notifications.</p>
+          <p class="entry-body">Timed pre-event reminders can post into the default team chat when families miss push, email, or device-level notifications. Reminder messages use deterministic IDs to avoid duplicate retry spam, and delivery audit fields are recorded on each notification.</p>
           <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="schedule">
           <div class="entry-header">
             <span class="cat cat-schedule">Schedule</span>
             <span class="entry-title">Parent sign-up slots for team assignments</span>
           </div>
-          <p class="entry-body">Admins can mark assignment slots, such as snack duty, as parent-claimable from the schedule editor. Parents see Sign up and Release actions on their dashboard, while admin-managed assignment details remain protected.</p>
+          <p class="entry-body">Admins can mark assignment slots (e.g., snack duty) as parent-claimable from the schedule editor. Parents see Sign up and Release actions on their dashboard, while admin-managed assignment details remain protected.</p>
           <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="registration">
           <div class="entry-header">
             <span class="cat cat-registration">Registration</span>
             <span class="entry-title">Registration checkout and capacity flow refinements</span>
           </div>
-          <p class="entry-body">Online registration checkout now prepares the registration before redirecting to Stripe, carries registration context through success and cancellation returns, and restores button and spinner state after full-option errors. Full, non-waitlisted options are hidden from selection so families only choose valid registration paths.</p>
+          <p class="entry-body">Online registration checkout now prepares the registration before redirecting to Stripe, carries registration context through success and cancellation returns, and restores button and spinner state after full-option errors. Full, non-waitlisted options are hidden from selection.</p>
           <a class="entry-link" href="workflow-registration.html">→ Registration workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="roster">
           <div class="entry-header">
             <span class="cat cat-roster">Roster</span>
             <span class="entry-title">Co-parent access for athlete profiles</span>
           </div>
-          <p class="entry-body">Primary parents can invite another family member to share access to an athlete profile. The invite creates a scoped co-parent access code, supports existing-account detection, and connects the invited family member to the athlete once redeemed.</p>
+          <p class="entry-body">Primary parents can invite another family member to share access to an athlete profile. The invite creates a scoped co-parent access code, supports existing-account detection, and connects the invited family member once redeemed.</p>
           <a class="entry-link" href="workflow-roster.html">→ Roster workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="media">
           <div class="entry-header">
             <span class="cat cat-media">Media</span>
             <span class="entry-title">Safer team media item renaming</span>
@@ -151,7 +215,7 @@
           <a class="entry-link" href="workflow-team-media.html">→ Team Media workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="platform">
           <div class="entry-header">
             <span class="cat cat-platform">Platform</span>
             <span class="entry-title">Help, workflow, and admin clarity updates</span>
@@ -160,7 +224,7 @@
           <a class="entry-link" href="help.html">→ Help Center</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="ai">
           <div class="entry-header">
             <span class="cat cat-ai">AI</span>
             <span class="entry-title">Certificates workflow polish</span>
@@ -169,7 +233,7 @@
           <a class="entry-link" href="workflow-awards-certificates.html">→ Awards &amp; Certificates workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Cleaner stat reports and completed-game links</span>
@@ -178,7 +242,7 @@
           <a class="entry-link" href="workflow-postgame.html">→ Postgame workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="platform">
           <div class="entry-header">
             <span class="cat cat-platform">Platform</span>
             <span class="entry-title">Security, telemetry, and invite reliability fixes</span>
@@ -187,10 +251,9 @@
           <a class="entry-link" href="workflow-admin-ops.html">→ Admin operations workflow</a>
         </div>
 
-        <!-- New Features -->
         <p class="group-heading">New Features</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Baseball &amp; Softball Support</span>
@@ -199,73 +262,72 @@
           <a class="entry-link" href="workflow-live-tracker.html">→ Live Tracker workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="payments">
           <div class="entry-header">
             <span class="cat cat-payments">Payments</span>
             <span class="entry-title">Team Fees &amp; Payments (Stripe)</span>
           </div>
-          <p class="entry-body">Admins create fee records with line items, optional installment schedules, and per-recipient tracking. Stripe Checkout links are generated on demand. Parents view a full invoice with balance and due dates, and pay online via Stripe. Offline payments, manual adjustments, and cancellations are all supported. Only completed Stripe sessions update fee status — expired or failed sessions make no changes.</p>
+          <p class="entry-body">Admins create fee records with line items, optional installment schedules, and per-recipient tracking. Stripe Checkout links are generated on demand. Parents view a full invoice with balance and due dates and pay online. Offline payments, manual adjustments, and cancellations are all supported. Only completed Stripe sessions update fee status.</p>
           <a class="entry-link" href="workflow-fees-payments.html">→ Fees &amp; Payments workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="registration">
           <div class="entry-header">
             <span class="cat cat-registration">Registration</span>
             <span class="entry-title">Player Registration with Capacity &amp; Waitlist</span>
           </div>
-          <p class="entry-body">Admins configure registration options (e.g., Travel Team, Recreational League) with capacity limits, active/inactive status, and optional waitlists. Public registration forms enforce capacity via Firestore transaction. The admin review queue supports filtering across seven statuses: pending, waitlisted, offer extended, offer accepted, enrolled, released, rejected. Waitlist offers can be extended, participants released, and accepted registrations moved into the roster approval flow.</p>
+          <p class="entry-body">Admins configure registration options with capacity limits, active/inactive status, and optional waitlists. Public registration forms enforce capacity via Firestore transaction. The admin review queue supports filtering across seven statuses: pending, waitlisted, offer extended, offer accepted, enrolled, released, rejected.</p>
           <a class="entry-link" href="workflow-registration.html">→ Registration workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="media">
           <div class="entry-header">
             <span class="cat cat-media">Media</span>
             <span class="entry-title">Team Media &amp; Albums</span>
           </div>
-          <p class="entry-body">Coaches and admins create member-visible or manager-only albums, add YouTube/Vimeo video links, upload photos with per-file progress tracking, and set album cover images. Members can upload photos to member-visible albums. Admin bulk operations: select, bulk delete, move, and reorder items across albums. Uploaders can delete their own photos; admins can delete any item.</p>
+          <p class="entry-body">Coaches and admins create member-visible or manager-only albums, add YouTube/Vimeo video links, upload photos with per-file progress tracking, and set album cover images. Members can upload to member-visible albums. Admin bulk operations include select, bulk delete, move, and reorder.</p>
           <a class="entry-link" href="workflow-team-media.html">→ Team Media workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="ai">
           <div class="entry-header">
             <span class="cat cat-ai">AI</span>
             <span class="entry-title">Awards &amp; Certificates Studio</span>
           </div>
-          <p class="entry-body">Coaches and admins open the certificate studio from team management, choose batch (full roster) or individual mode, design certificate layout (background image, typography, signature fields), and generate per-player AI narratives from actual game stat data. AI prompts are constrained to produce safe content; narratives are truncated to fit the design and opponent names are redacted. After reviewing and editing, publish to parent dashboards and print or export using the built-in print flow. Optional frame purchase link included in the review panel.</p>
+          <p class="entry-body">Coaches open the certificate studio, choose batch or individual mode, design the layout (background, typography, signature fields), and generate per-player AI narratives from actual game stat data. AI content is safety-constrained, opponent names are redacted, and output can be edited before publishing to parent dashboards or printing.</p>
           <a class="entry-link" href="workflow-awards-certificates.html">→ Awards &amp; Certificates workflow</a>
         </div>
 
-        <!-- Broadcasting & Streaming -->
         <p class="group-heading">Broadcasting &amp; Streaming</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="broadcast">
           <div class="entry-header">
             <span class="cat cat-broadcast">Broadcasting</span>
             <span class="entry-title">Broadcast Setup Flow</span>
           </div>
-          <p class="entry-body">Replaced the generic camera prompt with a structured three-state flow: session naming → Checking (camera/mic permission request) → Ready or Permission Failed. Platform-specific recovery instructions provided for Chrome, Safari, and Android. Session name is used for replay list display and game media hub association after processing.</p>
+          <p class="entry-body">Replaced the generic camera prompt with a structured three-state flow: session naming → Checking (camera/mic permission request) → Ready or Permission Failed. Platform-specific recovery instructions are provided for Chrome, Safari, and Android. Session name is used for replay list display.</p>
           <a class="entry-link" href="workflow-game-day.html#broadcasting-and-streaming">→ Game Day: Broadcast setup</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="broadcast">
           <div class="entry-header">
             <span class="cat cat-broadcast">Broadcasting</span>
             <span class="entry-title">Stream &amp; Score Volunteer Access</span>
           </div>
-          <p class="entry-body">New combined access level grants a team member both scorekeeper and streaming permissions in a single game-day workspace. Stream &amp; Score volunteers see a consolidated interface: current game context, scoring controls, and broadcast status — without any access to roster, schedule editor, or player stats.</p>
+          <p class="entry-body">New combined access level grants a team member both scorekeeper and streaming permissions in a single game-day workspace. Stream &amp; Score volunteers see scoring controls and broadcast status without access to roster, schedule editor, or player stats.</p>
           <a class="entry-link" href="workflow-track-game.html">→ Track Game: Stream &amp; Score path</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="broadcast">
           <div class="entry-header">
             <span class="cat cat-broadcast">Broadcasting</span>
             <span class="entry-title">Live Play Announcer</span>
           </div>
-          <p class="entry-body">Opt-in audio narration of live game events using the browser's Web Speech API. Works in both live view and replay. Mutable and pauseable at any time. Browser support preference is persisted for the session. Requires a browser with Web Speech API support (Chrome, Edge recommended).</p>
+          <p class="entry-body">Opt-in audio narration of live game events using the browser's Web Speech API. Works in both live view and replay. Mutable and pauseable at any time. Browser support preference is persisted for the session.</p>
           <a class="entry-link" href="workflow-live-watch-replay.html">→ Live Watch &amp; Replay workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="broadcast">
           <div class="entry-header">
             <span class="cat cat-broadcast">Broadcasting</span>
             <span class="entry-title">Live Broadcast Simple (Goal Sports)</span>
@@ -274,316 +336,747 @@
           <a class="entry-link" href="workflow-live-tracker.html#goal-sport-live-broadcast-simple">→ Live Tracker: Goal Sport section</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="broadcast">
           <div class="entry-header">
             <span class="cat cat-broadcast">Broadcasting</span>
             <span class="entry-title">Saved Replay Highlight Library</span>
           </div>
-          <p class="entry-body">Coaches can save named highlight clips directly from the replay player. Each highlight stores a title, timestamp, player tags, and a seek-to-moment control. When a viewer clicks a highlight on the game page, the replay player jumps directly to that moment. Highlights are organized in the game media hub.</p>
+          <p class="entry-body">Coaches save named highlight clips from the replay player. Each highlight stores a title, timestamp, player tags, and a seek-to-moment control. When a viewer clicks a highlight, the replay player jumps directly to that moment. Highlights are organized in the game media hub.</p>
           <a class="entry-link" href="workflow-postgame.html">→ Postgame workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="broadcast">
           <div class="entry-header">
             <span class="cat cat-broadcast">Broadcasting</span>
             <span class="entry-title">Replay Availability States</span>
           </div>
-          <p class="entry-body">Replaced the blank video area with four explicit states: Unavailable (no recording), Processing (being prepared — playback blocked), Failed (processing error — contact support with session name), and Ready (playback available). Each state shows actionable guidance text.</p>
+          <p class="entry-body">Replaced the blank video area with four explicit states: Unavailable, Processing, Failed, and Ready. Each state shows actionable guidance text so users always know what to do next.</p>
           <a class="entry-link" href="workflow-postgame.html">→ Postgame workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="broadcast">
           <div class="entry-header">
             <span class="cat cat-broadcast">Broadcasting</span>
             <span class="entry-title">Embeddable Scoreboard Widget</span>
           </div>
-          <p class="entry-body">Coaches and admins copy an iframe embed snippet or a direct URL from the team page to display a live, read-only scoreboard on any external website or share as a standalone link. Updates in real time as the tracker records score changes. No login required to view. Public and read-only — shows only score, period, and team names.</p>
+          <p class="entry-body">Coaches copy an iframe embed snippet or a direct URL to display a live, read-only scoreboard on any external website. Updates in real time as the tracker records score changes. No login required to view.</p>
           <a class="entry-link" href="workflow-game-day.html#scoreboard-widget">→ Game Day: Scoreboard Widget</a>
         </div>
 
-        <!-- Calendar & Schedule -->
         <p class="group-heading">Calendar &amp; Schedule</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="schedule">
           <div class="entry-header">
             <span class="cat cat-schedule">Schedule</span>
             <span class="entry-title">Private Team Calendar Feed (Token-Authorized ICS)</span>
           </div>
-          <p class="entry-body">Each team member gets a personal, token-authorized HTTPS ICS subscription URL that includes games, practices, RSVP status, and officiating assignments. The SHA-256 token is tied to the member's identity and can be revoked. Subscribe via Apple Calendar, Google Calendar, or any ICS-compatible app using the new Sync Calendar dialog.</p>
+          <p class="entry-body">Each team member gets a personal, token-authorized HTTPS ICS subscription URL that includes games, practices, RSVP status, and officiating assignments. The SHA-256 token is tied to the member's identity and can be revoked. Subscribe via Apple Calendar, Google Calendar, or any ICS-compatible app.</p>
           <a class="entry-link" href="workflow-schedule.html#private-calendar-feed">→ Schedule: Private Calendar Feed</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="schedule">
           <div class="entry-header">
             <span class="cat cat-schedule">Schedule</span>
             <span class="entry-title">Public Fan Calendar Feed</span>
           </div>
-          <p class="entry-body">Public teams and teams with shareable games expose a read-only games-only ICS feed for fans. Excludes practices, RSVPs, and assignments. Accessible without a login. URL available from the schedule editor for sharing with league pages or club websites.</p>
+          <p class="entry-body">Public teams expose a read-only games-only ICS feed for fans. Excludes practices, RSVPs, and assignments. Accessible without a login. URL available from the schedule editor for sharing with league pages or club websites.</p>
           <a class="entry-link" href="workflow-schedule.html#public-fan-feed">→ Schedule: Public Fan Feed</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="schedule">
           <div class="entry-header">
             <span class="cat cat-schedule">Schedule</span>
             <span class="entry-title">Organization Draft Slot Generator</span>
           </div>
-          <p class="entry-body">Platform admins generate a full season slot grid across all teams. Input: team selection, season date range, venue availability windows, blackout dates, and game duration. Generator produces a conflict-free draft, which admins review, edit, and save locally before publishing. Published slots write to each team's schedule; mirror write failures trigger a rollback to keep all teams consistent.</p>
+          <p class="entry-body">Platform admins generate a full season slot grid across all teams given team selection, season date range, venue availability, blackout dates, and game duration. Generator produces a conflict-free draft that admins review, edit, and publish. Mirror write failures trigger a rollback to keep all teams consistent.</p>
           <a class="entry-link" href="workflow-schedule.html#organization-scheduling">→ Schedule: Org Scheduling</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="schedule">
           <div class="entry-header">
             <span class="cat cat-schedule">Schedule</span>
             <span class="entry-title">Organization Bulk Schedule Import (CSV)</span>
           </div>
-          <p class="entry-body">Platform admins download a CSV template, populate it with game data, and upload for validation. A preview table shows status for each row: Add, Update, Unchanged, or Conflict. Conflict rows are excluded automatically. Admins confirm before import commits to Firestore.</p>
+          <p class="entry-body">Platform admins download a CSV template, populate it with game data, and upload for validation. A preview table shows status per row: Add, Update, Unchanged, or Conflict. Conflict rows are excluded automatically. Admins confirm before import commits to Firestore.</p>
           <a class="entry-link" href="workflow-schedule.html#organization-scheduling">→ Schedule: Org Scheduling</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="schedule registration">
           <div class="entry-header">
             <span class="cat cat-schedule">Schedule</span>
             <span class="entry-title">Registration Schedule Import (Conflict Preview)</span>
           </div>
-          <p class="entry-body">When importing a schedule from a registration provider (e.g., Sports Connect), admins see a full conflict preview before anything commits: row-by-row status (Add, Update, Unchanged, Conflict), with conflict rows excluded by default. Uncheck specific safe rows to skip them. Import stores metadata and a miniature audit record on each committed event.</p>
+          <p class="entry-body">When importing a schedule from a registration provider, admins see a full conflict preview before anything commits. Conflict rows are excluded by default; admins can uncheck specific safe rows to skip them. Import stores metadata and a miniature audit record on each committed event.</p>
           <a class="entry-link" href="workflow-registration.html">→ Registration workflow</a>
         </div>
 
-        <!-- Roster & Access -->
         <p class="group-heading">Roster &amp; Access</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="roster">
           <div class="entry-header">
             <span class="cat cat-roster">Roster</span>
             <span class="entry-title">Roster Tracking Items</span>
           </div>
-          <p class="entry-body">Coaches and admins create player-scoped checklist items (forms collected, equipment issued, certifications on file, etc.) and toggle complete/incomplete per player. Items marked public are visible to linked parents in a read-only view on the parent dashboard. Manager-only items are never visible to parents or players.</p>
+          <p class="entry-body">Coaches and admins create player-scoped checklist items (forms collected, equipment issued, certifications on file) and toggle complete/incomplete per player. Items marked public are visible to linked parents in a read-only view. Manager-only items are never visible to parents or players.</p>
           <a class="entry-link" href="workflow-roster.html#roster-tracking-items">→ Roster: Tracking Items</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="roster">
           <div class="entry-header">
             <span class="cat cat-roster">Roster</span>
             <span class="entry-title">Household Invite &amp; Revocation</span>
           </div>
-          <p class="entry-body">Parents can share player access with a second caregiver by sending a household invite. The contact remains pending until they redeem the invite code. Revocation is available from the Parent Dashboard: removes delegated parent/player links and invalidates the invite token. The roster shows current contact status (active, pending, revoked) visible to admins.</p>
+          <p class="entry-body">Parents share player access with a second caregiver by sending a household invite. The contact remains pending until they redeem the invite code. Revocation removes delegated parent/player links and invalidates the invite token. The roster shows current contact status (active, pending, revoked) visible to admins.</p>
           <a class="entry-link" href="workflow-roster.html#household-invites-and-revocation">→ Roster: Household Invites</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="roster registration">
           <div class="entry-header">
             <span class="cat cat-roster">Roster</span>
             <span class="entry-title">Roster Import Conflict Preview</span>
           </div>
-          <p class="entry-body">Roster imports from registration providers now include a preview step showing Add, Update, Unchanged, and Conflict status per row. Conflict rows are automatically excluded from import. Admins can uncheck specific safe rows to skip them before applying. Prevents accidental overwrites of manually managed roster data.</p>
+          <p class="entry-body">Roster imports from registration providers now include a preview step showing Add, Update, Unchanged, and Conflict status per row. Conflict rows are automatically excluded from import. Prevents accidental overwrites of manually managed roster data.</p>
           <a class="entry-link" href="workflow-roster.html">→ Roster workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="roster platform">
           <div class="entry-header">
             <span class="cat cat-roster">Roster</span>
             <span class="entry-title">Invite Email Enforcement</span>
           </div>
-          <p class="entry-body">Invite redemption now enforces email matching before Firebase Auth account creation. If the signing-up email does not match the invited email, the flow is rejected with a clear mismatch error before any account is created. Invite context (code, team, role) is preserved through the signup flow so the user does not need to re-enter anything after account creation.</p>
+          <p class="entry-body">Invite redemption now enforces email matching before Firebase Auth account creation. If the signing-up email does not match the invited email, the flow is rejected with a clear mismatch error before any account is created. Invite context is preserved through the signup flow.</p>
           <a class="entry-link" href="workflow-join-team.html">→ Join Team workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="platform">
           <div class="entry-header">
             <span class="cat cat-platform">Platform</span>
             <span class="entry-title">Scoped Staff Permissions (Scorekeeper &amp; Videographer)</span>
           </div>
-          <p class="entry-body">Two new scoped staff access levels below full admin. Scorekeeper: access to stat tracking and score management controls only. Videographer: access to broadcast setup and media capture only. Both are granted from the Team Staff &amp; Permissions panel in Edit Team. Neither role can access roster, schedule editor, player stats history, or team settings.</p>
+          <p class="entry-body">Two new scoped staff access levels below full admin. Scorekeeper: stat tracking and score management only. Videographer: broadcast setup and media capture only. Both are granted from the Team Staff &amp; Permissions panel in Edit Team. Neither role can access roster, schedule editor, or team settings.</p>
           <a class="entry-link" href="workflow-team-setup.html">→ Team Setup: Staff Permissions</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="schedule platform">
           <div class="entry-header">
             <span class="cat cat-platform">Platform</span>
             <span class="entry-title">Officiating Assignments</span>
           </div>
-          <p class="entry-body">Coaches add officiating slots to game cards and assign officials from a team-maintained directory. Assigned officials receive notifications and can accept, decline, or mark can't-make-it from their officials page. Self-assignment of open slots is restricted to eligible team participants (team owner, admin, parent, roster member, or global admin). Assignment response and coverage status are visible on the schedule editor game card.</p>
+          <p class="entry-body">Coaches add officiating slots to game cards and assign officials from a team-maintained directory. Assigned officials receive notifications and can accept, decline, or mark can't-make-it. Self-assignment is restricted to eligible team participants. Assignment response and coverage status are visible on the schedule editor game card.</p>
           <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
         </div>
 
-        <!-- AI -->
         <p class="group-heading">AI Features</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="ai tracking">
           <div class="entry-header">
             <span class="cat cat-ai">AI</span>
             <span class="entry-title">AI Coach Focus (Pre-Game)</span>
           </div>
-          <p class="entry-body">Runs from the Game Day pre-game panel. Reviews previous game event data and current player availability (Going/Maybe/Out) to produce a short tactical emphasis for today's game — typically one to three sentences with a specific positional or matchup focus. Suggested emphasis, not a mandatory instruction.</p>
+          <p class="entry-body">Runs from the Game Day pre-game panel. Reviews previous game event data and current player availability to produce a short tactical emphasis for today's game. Suggested emphasis, not a mandatory instruction.</p>
           <a class="entry-link" href="workflow-game-day.html#ai-game-actions">→ Game Day: AI Actions</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="ai tracking">
           <div class="entry-header">
             <span class="cat cat-ai">AI</span>
             <span class="entry-title">Analyze Game (Post-Game AI)</span>
           </div>
-          <p class="entry-body">Runs from the Wrap-Up panel after the final whistle. Sends complete game events, substitutions, coach logs, and the Wrap-Up final score to the AI backend. Returns a structured analysis (what went well, areas to improve, key player callouts) plus a practice feed linked to drill recommendations in drills.html. Uses the Wrap-Up score — not the in-game running score — for all analysis context.</p>
+          <p class="entry-body">Runs from the Wrap-Up panel after the final whistle. Sends complete game events, substitutions, coach logs, and the Wrap-Up final score to the AI backend. Returns a structured analysis plus a practice feed linked to drill recommendations.</p>
           <a class="entry-link" href="workflow-game-day.html#ai-game-actions">→ Game Day: AI Actions</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="ai tracking">
           <div class="entry-header">
             <span class="cat cat-ai">AI</span>
             <span class="entry-title">Generate Game Summary (Editable &amp; Re-saveable)</span>
           </div>
-          <p class="entry-body">Writes a natural-language match summary paragraph using the Wrap-Up score, opponent name, and key events. Output appears in an editable field. Save Summary can be triggered any number of times; the game page always shows the most recently saved version. Coaches can generate a draft, save it, revise manually later, and save again without limit.</p>
+          <p class="entry-body">Writes a natural-language match summary paragraph using the Wrap-Up score, opponent name, and key events. Output appears in an editable field. Save Summary can be triggered any number of times; the game page always shows the most recently saved version.</p>
           <a class="entry-link" href="workflow-game-day.html#ai-game-actions">→ Game Day: AI Actions</a>
         </div>
 
-        <!-- Live Tracker -->
         <p class="group-heading">Live Tracker Improvements</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Clock State Persistence Across Reloads</span>
           </div>
-          <p class="entry-body">The Live Tracker now restores elapsed time correctly on page reload. Previously, reloading while the clock was running could lose accumulated time. Clock state (running/stopped, elapsed time) is persisted to Firestore on every tick and restored from the game record when the page initializes.</p>
+          <p class="entry-body">The Live Tracker now restores elapsed time correctly on page reload. Clock state (running/stopped, elapsed time) is persisted to Firestore on every tick and restored from the game record when the page initializes.</p>
           <a class="entry-link" href="workflow-live-tracker.html#clock-and-period-management">→ Live Tracker: Clock</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Substitution Persistence (liveLineup)</span>
           </div>
-          <p class="entry-body">Every time a substitution is applied, the current lineup is written to <code>game.liveLineup</code> in Firestore. On reload, the tracker restores from <code>liveLineup</code> rather than the original pre-game lineup, so sub changes are never lost. Multi-player substitutions are queued and applied atomically.</p>
+          <p class="entry-body">Every substitution writes the current lineup to <code>game.liveLineup</code> in Firestore. On reload, the tracker restores from <code>liveLineup</code> rather than the original pre-game lineup, so sub changes are never lost. Multi-player substitutions are applied atomically.</p>
           <a class="entry-link" href="workflow-live-tracker.html#managing-substitutions">→ Live Tracker: Substitutions</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Foul Tracking with FOULED OUT Alerts</span>
           </div>
-          <p class="entry-body">Per-player foul counters display on each player button. When a player reaches the foul limit (5 fouls for basketball), their button shows a <strong>FOULED OUT!</strong> label and is visually flagged for immediate recognition. Opponent fouls are tracked separately and persist across page reloads — previously opponent foul counts were lost on reload.</p>
+          <p class="entry-body">Per-player foul counters display on each player button. When a player reaches the foul limit, their button shows a FOULED OUT! label. Opponent fouls are tracked separately and persist across page reloads.</p>
           <a class="entry-link" href="workflow-live-tracker.html#tracking-fouls">→ Live Tracker: Fouls</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Zero-Stat Participation Markers</span>
           </div>
-          <p class="entry-body">Players who participate in a game but record zero countable stats are now explicitly marked as participants in the aggregated stat record. This prevents them from being omitted from the game report and ensures their playing time is correctly credited when the game is finished.</p>
+          <p class="entry-body">Players who participate in a game but record zero countable stats are now explicitly marked as participants in the aggregated stat record, ensuring their playing time is correctly credited when the game is finished.</p>
           <a class="entry-link" href="workflow-live-tracker.html#tracking-stats-live">→ Live Tracker: Stats</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Stat Undo Rebroadcasts Corrected Aggregates</span>
           </div>
-          <p class="entry-body">When a stat is undone in the Live Tracker, the corrected aggregated stats are now re-broadcast to Game Day Command Center and the live watch view. Previously, the undo would update the internal tracker state but the broadcast totals shown to other users would remain stale until the next stat event was recorded.</p>
+          <p class="entry-body">When a stat is undone, the corrected aggregated stats are now re-broadcast to Game Day Command Center and the live watch view. Previously, the undo updated internal tracker state but broadcast totals shown to other users remained stale.</p>
           <a class="entry-link" href="workflow-live-tracker.html">→ Live Tracker workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Playing Time Saved Correctly on Finish</span>
           </div>
-          <p class="entry-body">The game finish flow now correctly computes and saves per-player playing time using the full substitution log from <code>liveLineup</code> history. Previously, players who were subbed back in after a reload had their post-reload time omitted from the final playing time calculation.</p>
+          <p class="entry-body">The game finish flow now correctly computes and saves per-player playing time using the full substitution log from <code>liveLineup</code> history. Players subbed back in after a reload no longer have post-reload time omitted.</p>
           <a class="entry-link" href="workflow-live-tracker.html#finishing-the-game">→ Live Tracker: Finishing</a>
         </div>
 
-        <!-- Game Day -->
         <p class="group-heading">Game Day Command Center</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="tracking schedule">
           <div class="entry-header">
             <span class="cat cat-tracking">Game Tracking</span>
             <span class="entry-title">Auto-Populate Lineup from RSVP Pool</span>
           </div>
-          <p class="entry-body">When the Game Day lineup is empty, opening the lineup panel now automatically fills positions with players from the Going RSVP pool. The auto-fill uses the team's configured formation. Coaches review the auto-filled lineup and can drag-and-drop to adjust before saving. Save Lineup is still required — auto-fill does not save automatically.</p>
+          <p class="entry-body">When the Game Day lineup is empty, opening the lineup panel automatically fills positions with players from the Going RSVP pool using the team's configured formation. Coaches review and can drag-and-drop to adjust before saving manually.</p>
           <a class="entry-link" href="workflow-game-day.html">→ Game Day workflow</a>
         </div>
 
-        <!-- Platform -->
         <p class="group-heading">Platform &amp; Access</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="platform">
           <div class="entry-header">
             <span class="cat cat-platform">Platform</span>
             <span class="entry-title">Linked Opponent Teams</span>
           </div>
-          <p class="entry-body">Games can now be linked to an opponent team in the system via <code>opponentTeamId</code>. When linked, the opponent team's name and photo are pulled automatically, and opponent player photos appear in the game report. Useful for leagues where both teams are managed in ALL PLAYS.</p>
+          <p class="entry-body">Games can be linked to an opponent team in the system via <code>opponentTeamId</code>. When linked, the opponent team's name and photo are pulled automatically, and opponent player photos appear in the game report. Useful for leagues where both teams are managed in ALL PLAYS.</p>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="platform">
           <div class="entry-header">
             <span class="cat cat-platform">Platform</span>
             <span class="entry-title">Targeted Chat Conversations</span>
           </div>
-          <p class="entry-body">Coaches and admins can start a direct conversation thread with a specific parent, player, or staff member — separate from the main team chat channel. Conversation visibility is scoped to participants only. Useful for private scheduling discussions, sensitive feedback, or one-on-one check-ins.</p>
+          <p class="entry-body">Coaches and admins can start a direct conversation thread with a specific parent, player, or staff member — separate from the main team chat channel. Conversation visibility is scoped to participants only.</p>
           <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="platform roster">
           <div class="entry-header">
             <span class="cat cat-platform">Platform</span>
             <span class="entry-title">Parent Dashboard: Standalone Practices &amp; Sibling RSVP Fix</span>
           </div>
-          <p class="entry-body">Practice sessions that are not linked to a team game are now visible on the parent dashboard. Previously, standalone practices were omitted from the parent view. RSVP controls for families with multiple linked players now show separate RSVP buttons per child — previously all children shared a single RSVP control.</p>
+          <p class="entry-body">Practice sessions not linked to a team game are now visible on the parent dashboard. RSVP controls for families with multiple linked players now show separate RSVP buttons per child — previously all children shared a single RSVP control.</p>
           <a class="entry-link" href="workflow-roster.html#parent-dashboard-roster">→ Roster: Parent Dashboard</a>
         </div>
 
-        <div class="entry">
+        <div class="entry" data-cats="platform">
           <div class="entry-header">
             <span class="cat cat-platform">Platform</span>
             <span class="entry-title">Edit Config Access Guard</span>
           </div>
-          <p class="entry-body">The stat configuration editor (<code>edit-config.html</code>) now enforces access at page load. Users without coach or admin access to the team are redirected before any config data loads. Previously, the guard was applied after initial data fetch, creating a brief window where config data was visible to unauthorized users.</p>
+          <p class="entry-body">The stat configuration editor now enforces access at page load. Users without coach or admin access to the team are redirected before any config data loads, closing a brief window where config data was visible to unauthorized users.</p>
           <a class="entry-link" href="workflow-team-setup.html">→ Team Setup workflow</a>
         </div>
 
-        <div class="entry">
-          <div class="entry-header">
-            <span class="cat cat-platform">Platform</span>
-            <span class="entry-title">Athlete Profile Name Prefill</span>
-          </div>
-          <p class="entry-body">When an athlete profile page is opened with <code>teamId</code> and <code>playerId</code> URL parameters pointing to an existing roster entry, the player's name is automatically prefilled in the profile form. Only applies on new profile creation — does not overwrite an existing profile's name field.</p>
-        </div>
-
+        </div><!-- /release-body may-2026 -->
       </section>
-      <!-- ── End May 2026 ─────────────────────────────────────────────── -->
 
 
       <!-- ════════════════════════════════════════════════════════════════
-           ADD FUTURE RELEASES ABOVE THIS LINE.
-           Template for a new release:
-
-      <section class="release" id="mmm-yyyy">
-        <p class="release-date">Month YYYY</p>
-        <h2 class="release-title">Release Name</h2>
-        <p class="release-subtitle">One-sentence summary of this release's theme.</p>
+           MARCH 2026
+           ════════════════════════════════════════════════════════════════ -->
+      <section class="release" id="mar-2026">
+        <p class="release-date">March 2026</p>
+        <h2 class="release-title">Platform Hardening &amp; New Integrations</h2>
+        <p class="release-subtitle">Admin invite reliability, soft-delete, streaming integrations, Help Center rebuild, ICS calendar correctness, replay improvements, and dozens of targeted bug fixes.</p>
+        <button class="release-toggle" data-target="body-mar-2026">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Hide older
+        </button>
+        <div class="release-body" id="body-mar-2026">
 
         <p class="group-heading">New Features</p>
 
-        <div class="entry">
+        <div class="entry" data-cats="broadcast">
           <div class="entry-header">
-            <span class="cat cat-CATEGORY">Category Label</span>
-            <span class="entry-title">Feature Title</span>
+            <span class="cat cat-broadcast">Broadcasting</span>
+            <span class="entry-title">YouTube &amp; Twitch Live Stream Embed</span>
           </div>
-          <p class="entry-body">What changed and why it matters.</p>
-          <a class="entry-link" href="workflow-XYZ.html">→ Relevant workflow</a>
+          <p class="entry-body">Coaches enter a single stream URL in team settings. The platform auto-detects YouTube or Twitch and shows an embedded player with a live badge on the team page. Fans can watch the stream without leaving the ALL PLAYS experience.</p>
         </div>
 
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Help Center Redesign</span>
+          </div>
+          <p class="entry-body">Rebuilt as a workflow-first documentation site with dedicated workflow pages (game day, live tracker, schedule, roster, etc.). Each workflow page renders structured help content from a shared build pipeline. Navigation and footer links updated across the app.</p>
+          <a class="entry-link" href="help.html">→ Help Center</a>
+        </div>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">SEO Baseline</span>
+          </div>
+          <p class="entry-body">Added robots.txt, sitemap.xml, and crawl/index metadata across all HTML pages so public-facing team and help pages can be discovered and indexed by search engines.</p>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Coach RSVP Overrides &amp; Season Records</span>
+          </div>
+          <p class="entry-body">Coaches can override individual player RSVPs from the Game Day pre-game panel. Game records now carry season and league context (seasonLeague, seasonRecord) for use in stats and reports.</p>
+          <a class="entry-link" href="workflow-game-day.html">→ Game Day workflow</a>
+        </div>
+
+        <div class="entry" data-cats="platform roster">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Team &amp; Player Soft-Delete</span>
+          </div>
+          <p class="entry-body">Deleting a team or player now marks it as inactive rather than permanently removing data from Firestore. Inactive teams and players are hidden from normal views but historical game records, stats, and chat remain intact. Data is recoverable by admins.</p>
+        </div>
+
+        <div class="entry" data-cats="platform roster">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Delegated Coach Full Access</span>
+          </div>
+          <p class="entry-body">Delegated coaches now have full team management access on team edit and roster pages, matching the access level of team owners and admin-email members. Access is revoked cleanly when a coach is removed from the team.</p>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Rainout Polling (ZIP-Based Weather)</span>
+          </div>
+          <p class="entry-body">Production runtime for ZIP-based rainout polling: the system polls weather data for the team's ZIP code, aligns checks to 30-minute schedule boundaries, and surfaces delay or cancellation signals in the admin interface before the event start.</p>
+        </div>
+
+        <div class="entry" data-cats="roster">
+          <div class="entry-header">
+            <span class="cat cat-roster">Roster</span>
+            <span class="entry-title">Rideshare for Practice Events</span>
+          </div>
+          <p class="entry-body">Rideshare offer and request functionality, previously available only for games, is now available for practice events on the parent dashboard.</p>
+          <a class="entry-link" href="workflow-roster.html">→ Roster workflow</a>
+        </div>
+
+        <p class="group-heading">Admin Invite Reliability</p>
+
+        <div class="entry" data-cats="platform roster">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Admin Invite Flow Hardening</span>
+          </div>
+          <p class="entry-body">Multiple fixes across the admin invite lifecycle: invite codes are consumed after acceptance, admin membership is persisted on redemption, expired codes are rejected, stale coachOf access is revoked on team edit pages, and the new-team creation flow correctly queues admin-email invites. The full redemption path was refactored into testable shared modules.</p>
+          <a class="entry-link" href="workflow-join-team.html">→ Join Team workflow</a>
+        </div>
+
+        <div class="entry" data-cats="platform roster">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Parent Invite Signup Fail-Closed</span>
+          </div>
+          <p class="entry-body">Parent invite signup now fails closed when invite linking or finalization errors occur. Previously, errors during linking were silently swallowed, leaving accounts partially set up. The email/password signup path was refactored into a shared module with explicit rollback behavior.</p>
+        </div>
+
+        <p class="group-heading">ICS Calendar Improvements</p>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">ICS Timezone (TZID) Parsing</span>
+          </div>
+          <p class="entry-body">ICS field parameters are now preserved during parsing. TZID values on DTSTART/DTEND are extracted and used to convert wall-clock times to UTC correctly, preventing schedule import errors for teams in non-UTC timezones.</p>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">ICS Cancelled Events &amp; Recurring Expansion</span>
+          </div>
+          <p class="entry-body">Cancelled ICS events (STATUS:CANCELLED and EXDATE) are now correctly handled during calendar import rather than being added as active events. Recurring VEVENT blocks are expanded into individual occurrences, including long-running series that started before the current date, with correct weekly interval and UNTIL date handling.</p>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">ICS Practice Type Detection</span>
+          </div>
+          <p class="entry-body">Calendar sync now correctly identifies practice events from ICS imports by parsing the SUMMARY field for practice keywords, so synced practices appear in the correct section of the schedule rather than being treated as games.</p>
+        </div>
+
+        <p class="group-heading">Live Tracker &amp; Replay</p>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Period &amp; Clock Restore on Resume</span>
+          </div>
+          <p class="entry-body">The live tracker now restores the current period number and clock state from Firestore when the page is loaded or reloaded mid-game, so coaches returning to a tracking session see the correct period and time without manual re-entry.</p>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Live Reset Sync &amp; Field Status</span>
+          </div>
+          <p class="entry-body">Game reset operations now broadcast the reset to all connected viewers in real time. New field-status helpers track per-player on-field state across substitutions, improving the accuracy of playing-time calculations for generic (non-basketball) sport trackers.</p>
+        </div>
+
+        <div class="entry" data-cats="broadcast">
+          <div class="entry-header">
+            <span class="cat cat-broadcast">Broadcasting</span>
+            <span class="entry-title">Replay Speed Change Accuracy</span>
+          </div>
+          <p class="entry-body">Switching playback speed during a replay no longer causes timeline jumps. The replay timing helpers capture the exact elapsed replay time at click-time and rebase the start reference accordingly, keeping the replay position accurate across speed changes.</p>
+          <a class="entry-link" href="workflow-live-watch-replay.html">→ Live Watch &amp; Replay workflow</a>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Duplicate Game Completion Prevention</span>
+          </div>
+          <p class="entry-body">A single-flight lock prevents the game finish handler from running more than once simultaneously. Double-tapping the Finish Game button or rapid reloads at the finish moment no longer create duplicate stat aggregation records.</p>
+        </div>
+
+        <p class="group-heading">RSVP Reliability</p>
+
+        <div class="entry" data-cats="schedule roster">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Parent RSVP Child Scoping Fixes</span>
+          </div>
+          <p class="entry-body">Multiple fixes to parent RSVP submission scoping: RSVP playerIds now come from the clicked event context rather than all children, the fallback no longer fans out to all children on ambiguous context, and RSVP summaries are recomputed from subcollection data when denormalized summary data is missing. Coach RSVP overrides are correctly de-duplicated by latest effective response per player.</p>
+          <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Recurrence Expansion Fixes</span>
+          </div>
+          <p class="entry-body">Weekly recurrence intervals now apply correct gating, the UNTIL end date is treated inclusively (final day included), and series starting far in the past still produce current and future occurrences. Practice edit datetime-local inputs no longer drift due to timezone offset misapplication on prefill.</p>
+        </div>
+
+        </div><!-- /release-body mar-2026 -->
       </section>
 
-           Available category classes:
-             cat-tracking | cat-broadcast | cat-schedule | cat-roster
-             cat-payments | cat-registration | cat-media | cat-ai | cat-platform
-           ════════════════════════════════════════════════════════════════ -->
 
-    </div>
-  </div>
+      <!-- ════════════════════════════════════════════════════════════════
+           FEBRUARY 2026
+           ════════════════════════════════════════════════════════════════ -->
+      <section class="release" id="feb-2026">
+        <p class="release-date">February 2026</p>
+        <h2 class="release-title">Live Experience &amp; Team Communication</h2>
+        <p class="release-subtitle">Game Day Command Center, practice management, team chat voice and reactions, public schedule calendar, RSVP flows, rideshare, and a first-class global search.</p>
+        <button class="release-toggle" data-target="body-feb-2026">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Hide older
+        </button>
+        <div class="release-body" id="body-feb-2026">
+
+        <p class="group-heading">New Features</p>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Game Day Command Center</span>
+          </div>
+          <p class="entry-body">A unified coaching surface covering the full game lifecycle — pre-game lineup and RSVP review, live stat monitoring, in-game coach notes, half-time and wrap-up panels. Coaches can manage everything from a single page without switching between schedule, tracker, and roster views.</p>
+          <a class="entry-link" href="workflow-game-day.html">→ Game Day workflow</a>
+        </div>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Global Header Search</span>
+          </div>
+          <p class="entry-body">A command-palette style global search in the shared header covers teams, players, and quick actions. Open with the search icon or keyboard shortcut. Results update as you type and include direct navigation links.</p>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Practice Command Center</span>
+          </div>
+          <p class="entry-body">Coaches manage practice sessions with scheduling, attendance tracking, and parent take-home packet workflows from a dedicated practice command center. Parents can view and submit assigned drill completions from their dashboard.</p>
+          <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
+        </div>
+
+        <div class="entry" data-cats="schedule roster">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Game Schedule Enhancements &amp; RSVP Flows</span>
+          </div>
+          <p class="entry-body">Game cards now support home/away designation, kit color, arrival time offset, and coach notes. Parents RSVP with a four-status response (Going, Maybe, Can't Make It, No Response) from both the schedule list and calendar views. RSVP totals are visible to coaches in the Game Day pre-game panel.</p>
+          <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Public Team Schedule with Calendar View</span>
+          </div>
+          <p class="entry-body">The public team schedule page now supports list/calendar toggle, month navigation, day-detail modal on click, and filter chips (games, practices, all). Fans and parents can see upcoming events at a glance without logging in on public teams.</p>
+        </div>
+
+        <div class="entry" data-cats="schedule roster">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Practice Availability &amp; 4-Status RSVP</span>
+          </div>
+          <p class="entry-body">Parents can RSVP to practices with the same four-status flow used for games. Coaches see availability breakdowns per player on the practice page. Player deactivation is now supported, removing inactive players from RSVP pools while preserving historical records.</p>
+        </div>
+
+        <div class="entry" data-cats="roster">
+          <div class="entry-header">
+            <span class="cat cat-roster">Roster</span>
+            <span class="entry-title">Rideshare Offers &amp; Requests</span>
+          </div>
+          <p class="entry-body">Parents can offer or request rideshare for games from the parent dashboard. Seat-count protection is transactional — concurrent requests cannot over-book a ride offer. Status (offered, requested, claimed, released) is visible to all participating parents.</p>
+          <a class="entry-link" href="workflow-roster.html">→ Roster workflow</a>
+        </div>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Team Chat: Voice-to-Text &amp; Image Attachments</span>
+          </div>
+          <p class="entry-body">Coaches and parents can dictate messages using the Web Speech API voice-to-text button in the chat composer. Image attachments can be added to messages with a per-file upload progress indicator before sending.</p>
+          <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
+        </div>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Team Chat: Emoji Reactions</span>
+          </div>
+          <p class="entry-body">Standard emoji reactions on team chat messages with a floating emoji picker. Hover a reaction to see who reacted. Reaction state is stored in Firestore with no layout shift during updates. Multiple rounds of Firestore security-rule fixes were shipped to make reactions reliably work in production.</p>
+          <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Live Voice Notes in Tracker</span>
+          </div>
+          <p class="entry-body">Compact Live Notes controls are available in the live tracker, with a voice toggle for hands-free note dictation and a quick-text input. Notes are timestamped to the game clock and visible in the Game Day wrap-up panel.</p>
+          <a class="entry-link" href="workflow-live-tracker.html">→ Live Tracker workflow</a>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">League Link &amp; External Standings</span>
+          </div>
+          <p class="entry-body">Coaches save a league URL from the team settings page. An External Standings panel on the public team page embeds or links to the league standings, keeping everything a parent needs in one place.</p>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Parent Take-Home Packets from Schedule</span>
+          </div>
+          <p class="entry-body">Parents can open take-home practice packets directly from schedule list cards and the calendar day flyout — no need to navigate to the roster or practice page first.</p>
+        </div>
+
+        <p class="group-heading">Live Tracker Improvements</p>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Live Clock Sync for Viewers</span>
+          </div>
+          <p class="entry-body">The live game viewer now stays in sync with the tracker clock. Clock sync events are treated as system events (not displayed to fans) and the tracker emits periodic heartbeats so viewers joining mid-game see an accurate clock rather than 0:00.</p>
+          <a class="entry-link" href="workflow-live-watch-replay.html">→ Live Watch &amp; Replay workflow</a>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Live Tracker Substitution Integrity</span>
+          </div>
+          <p class="entry-body">Shared integrity helpers validate substitutions before applying, preventing lineup state from becoming inconsistent when rapid sub changes overlap. Multi-player substitutions are queued and applied together.</p>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Opponent Player Card Mobile Fix</span>
+          </div>
+          <p class="entry-body">Opponent player name inputs in the live tracker no longer overflow off-screen on narrow mobile viewports. Jersey number labels are fixed-width and the input/name area shrinks to fit. Empty opponent cards hide broken avatar/placeholder text until a name is entered.</p>
+        </div>
+
+        <div class="entry" data-cats="tracking broadcast">
+          <div class="entry-header">
+            <span class="cat cat-broadcast">Broadcasting</span>
+            <span class="entry-title">Live Game Playback Improvements</span>
+          </div>
+          <p class="entry-body">The LIVE badge is hidden by default and shown only when a live stream is active. REPLAY badge displays correctly during replay. Error handling was added around the game data initialization fetch so bad data does not crash the viewer.</p>
+          <a class="entry-link" href="workflow-live-watch-replay.html">→ Live Watch &amp; Replay workflow</a>
+        </div>
+
+        <div class="entry" data-cats="broadcast">
+          <div class="entry-header">
+            <span class="cat cat-broadcast">Broadcasting</span>
+            <span class="entry-title">Viewer Chat Enabled During Live Games</span>
+          </div>
+          <p class="entry-body">The live game viewer now enables the chat input whenever the game's liveStatus is active. Chat availability is determined by a shared helper that checks game state rather than relying on a static flag.</p>
+        </div>
+
+        <p class="group-heading">Drill Library</p>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Drill Workflow Improvements</span>
+          </div>
+          <p class="entry-body">Drill resource links now support any URL, not just YouTube. Drill instructions render with linkified URLs. Diagram upload failures now fall back gracefully instead of leaving the drill form in a broken state. Drill slideout closes correctly after a successful save, and a duplicate-save race condition during rapid saves was fixed.</p>
+          <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
+        </div>
+
+        </div><!-- /release-body feb-2026 -->
+      </section>
+
+
+      <!-- ════════════════════════════════════════════════════════════════
+           JANUARY 2026
+           ════════════════════════════════════════════════════════════════ -->
+      <section class="release" id="jan-2026">
+        <p class="release-date">January 2026</p>
+        <h2 class="release-title">Basketball Tracker</h2>
+        <p class="release-subtitle">Dedicated basketball tracking with foul management, quarter tracking, stat undo, and game replay links.</p>
+        <button class="release-toggle" data-target="body-jan-2026">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Hide older
+        </button>
+        <div class="release-body" id="body-jan-2026">
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Basketball Tracker: Foul Tracking</span>
+          </div>
+          <p class="entry-body">Per-player foul counters added to the basketball live tracker. Players at or past the foul limit are visually flagged. Removing or undoing a foul event correctly reverses the foul count and other related stat changes.</p>
+          <a class="entry-link" href="workflow-live-tracker.html#tracking-fouls">→ Live Tracker: Fouls</a>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Basketball Tracker: Quarter Tracking &amp; Event Removal</span>
+          </div>
+          <p class="entry-body">Quarter/period management improvements in the basketball tracker: the current quarter is tracked correctly across the full game. X buttons on individual stat events allow coaches to remove a single event without undoing all subsequent plays.</p>
+          <a class="entry-link" href="workflow-live-tracker.html">→ Live Tracker workflow</a>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Basketball Tracker Calendar Routing Fix</span>
+          </div>
+          <p class="entry-body">Games opened from calendar events (.ics links or shared schedule links) were bypassing the basketball vs. standard tracker chooser modal and always routing to the standard tracker. Calendar-linked games now correctly prompt the tracker choice for basketball games.</p>
+        </div>
+
+        <div class="entry" data-cats="broadcast">
+          <div class="entry-header">
+            <span class="cat cat-broadcast">Broadcasting</span>
+            <span class="entry-title">Game Replay Link in Live View</span>
+          </div>
+          <p class="entry-body">A link to the completed game replay is now shown in the live view controls once the game is finished. Placeholder text is removed from the replay area when a real replay is available. Chat availability logic was updated to match the correct game lifecycle state.</p>
+          <a class="entry-link" href="workflow-live-watch-replay.html">→ Live Watch &amp; Replay workflow</a>
+        </div>
+
+        </div><!-- /release-body jan-2026 -->
+      </section>
+
+
+      <!-- ════════════════════════════════════════════════════════════════
+           DECEMBER 2025
+           ════════════════════════════════════════════════════════════════ -->
+      <section class="release" id="dec-2025">
+        <p class="release-date">December 2025</p>
+        <h2 class="release-title">Initial Launch</h2>
+        <p class="release-subtitle">ALL PLAYS goes live with core team management, live game stat tracking, real-time broadcasting, and practice session foundations.</p>
+        <button class="release-toggle" data-target="body-dec-2025">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Hide older
+        </button>
+        <div class="release-body" id="body-dec-2025">
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Live Stat Tracker</span>
+          </div>
+          <p class="entry-body">Real-time stat tracking for team sports on mobile. Coaches tap player buttons to record events (shots, assists, rebounds, turnovers, etc.) as they happen. Stats aggregate live and are broadcast to the live game viewer. Events are stored in Firestore for post-game replay and reports.</p>
+          <a class="entry-link" href="workflow-live-tracker.html">→ Live Tracker workflow</a>
+        </div>
+
+        <div class="entry" data-cats="broadcast">
+          <div class="entry-header">
+            <span class="cat cat-broadcast">Broadcasting</span>
+            <span class="entry-title">Live Game Viewer &amp; Replay</span>
+          </div>
+          <p class="entry-body">Fans and parents watch real-time stats, score, and event feed from any device via a shareable game link. After the game, the same link becomes a full replay player showing events in sequence with adjustable playback speed.</p>
+          <a class="entry-link" href="workflow-live-watch-replay.html">→ Live Watch &amp; Replay workflow</a>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Practice Sessions</span>
+          </div>
+          <p class="entry-body">Coaches create event-based practice sessions linked to the team schedule. Practice entries support attendance and drill assignment foundations that were expanded in later releases.</p>
+        </div>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Team &amp; Roster Management</span>
+          </div>
+          <p class="entry-body">Core team creation, player roster management, and role-based access control (owner, admin, parent) using activation codes for secure team onboarding. Firebase Auth for email/password and Google OAuth sign-in.</p>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Beta Basketball Tracker</span>
+          </div>
+          <p class="entry-body">An optimized mobile-first basketball stat tracker was introduced alongside the standard tracker. Basketball games prompt coaches to choose between standard and beta modes. Photo upload logging improvements were shipped alongside the initial tracker build.</p>
+        </div>
+
+        </div><!-- /release-body dec-2025 -->
+      </section>
+
+    </div><!-- /flex-1 -->
+  </div><!-- /flex gap-8 -->
 </main>
 
 <div id="footer-container"></div>
@@ -599,30 +1092,146 @@
 </script>
 
 <script>
-  // Build sidebar TOC from release sections
-  const toc = document.getElementById('cl-toc');
-  document.querySelectorAll('section.release').forEach(sec => {
-    const id = sec.id;
-    const label = sec.querySelector('.release-date')?.textContent || id;
-    const a = document.createElement('a');
-    a.href = '#' + id;
-    a.textContent = label;
-    toc.appendChild(a);
-  });
+// ── Build sidebar TOC ─────────────────────────────────────────────────────────
+const toc = document.getElementById('cl-toc');
+document.querySelectorAll('section.release').forEach(sec => {
+  const a = document.createElement('a');
+  a.href = '#' + sec.id;
+  a.textContent = sec.querySelector('.release-date')?.textContent || sec.id;
+  toc.appendChild(a);
+});
 
-  // Scroll-spy: highlight active release in TOC
-  const releases = Array.from(document.querySelectorAll('section.release'));
-  const links = Array.from(toc.querySelectorAll('a'));
-  const observer = new IntersectionObserver(entries => {
+// ── Scroll-spy ────────────────────────────────────────────────────────────────
+const releases = Array.from(document.querySelectorAll('section.release'));
+const links    = Array.from(toc.querySelectorAll('a'));
+const spy = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      links.forEach(l => l.classList.remove('active'));
+      const active = links.find(l => l.getAttribute('href') === '#' + entry.target.id);
+      if (active) active.classList.add('active');
+    }
+  });
+}, { rootMargin: '-10% 0px -80% 0px' });
+releases.forEach(r => spy.observe(r));
+
+// ── Collapse/expand release bodies ───────────────────────────────────────────
+document.querySelectorAll('.release-toggle').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const bodyId = btn.dataset.target;
+    const body   = document.getElementById(bodyId);
+    const collapsed = body.classList.toggle('collapsed');
+    btn.classList.toggle('collapsed', collapsed);
+    btn.querySelector('span') && (btn.querySelector('span').textContent = collapsed ? 'Show' : 'Hide older');
+    // update text node (SVG + text)
+    btn.childNodes.forEach(n => {
+      if (n.nodeType === 3) n.textContent = collapsed ? ' Show older' : ' Hide older';
+    });
+  });
+});
+
+// ── Search + Filter logic ─────────────────────────────────────────────────────
+const searchInput  = document.getElementById('cl-search');
+const searchClear  = document.getElementById('cl-search-clear');
+const statusEl     = document.getElementById('cl-status');
+const noResults    = document.getElementById('cl-no-results');
+const chipBtns     = Array.from(document.querySelectorAll('.filter-chip'));
+let activeCategory = 'all';
+let searchQuery    = '';
+
+function normalize(s) { return s.toLowerCase().replace(/[^a-z0-9 ]/g, ' '); }
+
+function applyFilters() {
+  const q = normalize(searchQuery);
+  let totalVisible = 0;
+
+  document.querySelectorAll('section.release').forEach(sec => {
+    const entries = Array.from(sec.querySelectorAll('.entry'));
+    let secVisible = 0;
+
     entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        links.forEach(l => l.classList.remove('active'));
-        const active = links.find(l => l.getAttribute('href') === '#' + entry.target.id);
-        if (active) active.classList.add('active');
+      const cats    = (entry.dataset.cats || '').split(' ');
+      const text    = normalize(entry.textContent);
+      const catOk   = activeCategory === 'all' || cats.includes(activeCategory);
+      const queryOk = !q || text.includes(q);
+
+      if (catOk && queryOk) {
+        entry.classList.remove('cl-hidden');
+        secVisible++;
+      } else {
+        entry.classList.add('cl-hidden');
       }
     });
-  }, { rootMargin: '-10% 0px -80% 0px' });
-  releases.forEach(r => observer.observe(r));
+
+    // show/hide group headings that have no visible entries after them
+    sec.querySelectorAll('.group-heading').forEach(heading => {
+      let next = heading.nextElementSibling;
+      let hasVisible = false;
+      while (next && !next.classList.contains('group-heading') && next.tagName !== 'BUTTON') {
+        if (next.classList.contains('entry') && !next.classList.contains('cl-hidden')) {
+          hasVisible = true; break;
+        }
+        next = next.nextElementSibling;
+      }
+      heading.classList.toggle('cl-hidden', !hasVisible);
+    });
+
+    // If release body is collapsed but we are searching, expand it
+    if (secVisible > 0 && q) {
+      const bodyEl = sec.querySelector('.release-body');
+      if (bodyEl && bodyEl.classList.contains('collapsed')) {
+        bodyEl.classList.remove('collapsed');
+        const btn = sec.querySelector('.release-toggle');
+        if (btn) { btn.classList.remove('collapsed'); btn.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = ' Hide older'; }); }
+      }
+    }
+
+    totalVisible += secVisible;
+  });
+
+  // Status bar
+  if (q || activeCategory !== 'all') {
+    const catLabel = activeCategory === 'all' ? '' : chipBtns.find(b => b.dataset.cat === activeCategory)?.textContent + ' · ';
+    statusEl.textContent = totalVisible === 0 ? 'No results' : `${totalVisible} result${totalVisible !== 1 ? 's' : ''} ${catLabel ? 'in ' + catLabel.replace(' · ','') : ''}`;
+  } else {
+    statusEl.textContent = '';
+  }
+  noResults.classList.toggle('visible', totalVisible === 0);
+  searchClear.style.display = q ? 'block' : 'none';
+}
+
+searchInput.addEventListener('input', e => {
+  searchQuery = e.target.value.trim();
+  applyFilters();
+});
+
+searchClear.addEventListener('click', () => {
+  searchInput.value = '';
+  searchQuery = '';
+  applyFilters();
+  searchInput.focus();
+});
+
+chipBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    chipBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeCategory = btn.dataset.cat;
+    applyFilters();
+  });
+});
+
+// keyboard shortcut: / or Ctrl+K to focus search
+document.addEventListener('keydown', e => {
+  if ((e.key === '/' || (e.ctrlKey && e.key === 'k')) && document.activeElement !== searchInput) {
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+  }
+  if (e.key === 'Escape' && document.activeElement === searchInput) {
+    searchInput.blur();
+  }
+});
 </script>
 </body>
 </html>
