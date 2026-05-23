@@ -8,3 +8,61 @@ body {
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.2);
 }
+.schedule-print-container {
+    display: none;
+}
+
+@media print {
+    body > *:not(.schedule-print-container) {
+        display: none !important;
+    }
+
+    .schedule-print-container {
+        display: block;
+        color: #111827;
+        font-family: Arial, sans-serif;
+        padding: 24px;
+    }
+
+    .schedule-print-bw,
+    .schedule-print-bw * {
+        background: #fff !important;
+        color: #000 !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+    }
+
+    .schedule-print-header {
+        border-bottom: 2px solid currentColor;
+        margin-bottom: 16px;
+        padding-bottom: 8px;
+    }
+
+    .schedule-print-header h1 {
+        font-size: 24px;
+        margin: 0 0 4px;
+    }
+
+    .schedule-print-header p {
+        margin: 0;
+    }
+
+    .schedule-print-table {
+        border-collapse: collapse;
+        width: 100%;
+    }
+
+    .schedule-print-table th,
+    .schedule-print-table td {
+        border: 1px solid #d1d5db;
+        font-size: 12px;
+        padding: 8px;
+        text-align: left;
+        vertical-align: top;
+    }
+
+    .schedule-print-table th {
+        background: #f3f4f6;
+        font-weight: 700;
+    }
+}
