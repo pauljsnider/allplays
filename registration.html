@@ -563,7 +563,35 @@
             });
         }
 
-        // ... existing formElement.addEventListener ...
+        let preparedCheckoutRegistration = null;
+
+        function normalizeCheckoutRetryValue(value) {
+            if (Array.isArray(value)) {
+                return value.map(item => normalizeCheckoutRetryValue(item));
+            }
+            if (value && typeof value === 'object') {
+                return Object.keys(value).sort().reduce((normalized, key) => {
+                    normalized[key] = normalizeCheckoutRetryValue(value[key]);
+                    return normalized;
+                }, {});
+            }
+            return value ?? '';
+        }
+
+        function buildCheckoutRetryKey(submission, amountCents, currency) {
+            return JSON.stringify(normalizeCheckoutRetryValue({
+                teamId,
+                formId,
+                participant: submission.participant,
+                guardian: submission.guardian,
+                waiverAccepted: submission.waiverAccepted,
+                selectedPaymentPlanId: submission.selectedPaymentPlanId,
+                selectedOptionId: submission.selectedOptionId,
+                amountCents,
+                currency,
+                quantity: submission.feeSnapshot?.quantity || 1
+            }));
+        }
 
         payRegistrationButton.addEventListener('click', async (event) => {
             event.preventDefault(); // Prevent any default form submission
@@ -597,14 +625,18 @@
             try {
                 const feeSnapshot = submission.feeSnapshot;
                 const amountCents = Math.max(0, Number(feeSnapshot?.finalAmountDueCents || 0));
+                const currency = String(feeSnapshot?.currency || activeForm.currency || 'USD').toLowerCase();
                 if (!feeSnapshot || amountCents <= 0) {
                     showFormError('No payment amount specified for this registration.');
                     return;
                 }
 
-                const result = requiresRegistrationOption(activeForm)
-                    ? await submitRegistrationWithCapacity(submission)
-                    : await submitRegistrationWithoutCapacity(submission);
+                const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);
+                const result = preparedCheckoutRegistration?.retryKey === retryKey
+                    ? preparedCheckoutRegistration.result
+                    : requiresRegistrationOption(activeForm)
+                        ? await submitRegistrationWithCapacity(submission)
+                        : await submitRegistrationWithoutCapacity(submission);
 
                 if (result.status === 'waitlisted') {
                     formElement.classList.add('hidden');
@@ -617,6 +649,7 @@
                 if (!result.registrationId) {
                     throw new Error('Registration could not be prepared for checkout.');
                 }
+                preparedCheckoutRegistration = { retryKey, result };
 
                 const returnParams = new URLSearchParams({
                     teamId,
@@ -631,7 +664,7 @@
                     formId,
                     registrationId: result.registrationId,
                     amount: amountCents,
-                    currency: String(feeSnapshot.currency || activeForm.currency || 'USD').toLowerCase(),
+                    currency,
                     successUrl,
                     cancelUrl,
                     metadata: {

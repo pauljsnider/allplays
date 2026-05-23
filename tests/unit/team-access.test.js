@@ -55,6 +55,22 @@ describe('team access helpers', () => {
     });
   });
 
+  it('returns parent access level for users linked only by parent player keys', () => {
+    expect(getTeamAccessInfo({ uid: 'u4', parentPlayerKeys: ['team-1::p1'] }, TEAM)).toEqual({
+      hasAccess: true,
+      accessLevel: 'parent',
+      exitUrl: 'parent-dashboard.html'
+    });
+  });
+
+  it('does not grant parent access from parent player keys for another team', () => {
+    expect(getTeamAccessInfo({ uid: 'u4', parentPlayerKeys: ['team-2::p1'] }, TEAM)).toEqual({
+      hasAccess: false,
+      accessLevel: null,
+      exitUrl: 'index.html'
+    });
+  });
+
   it('grants limited stream access to selected streaming volunteers without full access', () => {
     const team = { ...TEAM, streamAccessMode: 'selected_volunteers', streamVolunteerEmails: [' Video@Example.com '] };
     const game = { id: 'game-1', status: 'scheduled' };

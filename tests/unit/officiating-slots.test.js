@@ -85,7 +85,11 @@ describe('officiating slots', () => {
         const rules = readFirestoreRules();
 
         expect(officialsSource).toContain('canClaimOpenSlots = isEligibleOpenSlotParticipant(currentUser, currentUserProfile, currentTeam);');
-        expect(officialsSource).toContain('Open self-assignment slots are only available to team owners, admins, or parents.');
+        expect(officialsSource).toContain("section.classList.add('hidden');");
+        expect(officialsSource).toContain("section.classList.remove('hidden');");
+        expect(officialsSource).toContain("container.innerHTML = '';");
+        expect(officialsSource).toContain('find open officiating slots');
+        expect(officialsSource).not.toContain('Open self-assignment slots are only available to team owners, admins, or parents.');
         expect(officialsSource).toContain("'./js/db.js?v=32'");
         expect(dbSource).toContain('function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, user = {})');
         expect(dbSource).toContain("throw new Error('Only team owners, admins, or parents can claim open officiating slots.');");
