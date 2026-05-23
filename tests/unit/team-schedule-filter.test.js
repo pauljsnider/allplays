@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { filterScheduleEventsForPrint } from '../../js/schedule-print.js';
 
 function loadGetFilteredScheduleEvents() {
     const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
@@ -94,6 +95,23 @@ describe('team schedule filtering', () => {
         });
 
         expect(result.map((event) => event.opponent)).toEqual(['Rivals', 'Practice']);
+    });
+
+    it('filters printable schedule events by date range and event type', () => {
+        const events = [
+            { date: '2026-05-01T18:00:00Z', type: 'game', opponent: 'Early' },
+            { date: '2026-05-10T18:00:00Z', type: 'practice', title: 'Practice' },
+            { date: '2026-05-12T18:00:00Z', type: 'game', opponent: 'In Range' },
+            { date: '2026-06-01T18:00:00Z', type: 'game', opponent: 'Late' }
+        ];
+
+        const games = filterScheduleEventsForPrint(events, {
+            startDate: '2026-05-08',
+            endDate: '2026-05-31',
+            eventType: 'game'
+        });
+
+        expect(games.map((event) => event.opponent)).toEqual(['In Range']);
     });
 
     it('wires the team availability filter and RSVP controls into team.html', () => {
