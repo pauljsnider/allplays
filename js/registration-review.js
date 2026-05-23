@@ -271,7 +271,8 @@ function resolvePaymentPlanLabel(registration = {}) {
 
 export function escapeRegistrationCsvValue(value) {
     const text = value === null || value === undefined ? '' : String(value);
-    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    const safeText = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+    return /[",\n\r]/.test(safeText) ? `"${safeText.replace(/"/g, '""')}"` : safeText;
 }
 
 export function flattenRegistrationReviewForCsv(registration = {}, form = {}) {

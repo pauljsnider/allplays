@@ -217,6 +217,29 @@ describe('registration review helpers', () => {
         expect(csv).toContain('"Needs ""waiver""\nfollow-up"');
     });
 
+    it('neutralizes spreadsheet formulas in registration review CSV cells', () => {
+        const csv = buildRegistrationReviewCsv([{
+            id: 'reg-3',
+            status: 'pending',
+            submittedData: {
+                athlete: { name: '=IMPORTXML("https://example.com","//x")', jerseyNumber: '+22' },
+                guardian: { guardianName: '-Taylor Reed', guardianEmail: '@example.com' }
+            },
+            selectedOption: { id: 'camp', title: '=Summer Camp' },
+            feeSnapshot: { finalAmountDueCents: 1000, currency: 'usd' },
+            paymentPlan: { label: '-Installments' },
+            decisionNote: '@follow-up'
+        }]);
+
+        expect(csv).toContain('"\'=IMPORTXML(""https://example.com"",""//x"")"');
+        expect(csv).toContain("'+22");
+        expect(csv).toContain("'-Taylor Reed");
+        expect(csv).toContain("'@example.com");
+        expect(csv).toContain("'=Summer Camp");
+        expect(csv).toContain("'-Installments");
+        expect(csv).toContain("'@follow-up");
+    });
+
     it('builds deterministic registration review CSV filenames', () => {
         expect(buildRegistrationReviewCsvFilename({
             teamId: 'Team 1',
