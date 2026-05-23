@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import {
+    buildRegistrationReviewCsv,
+    buildRegistrationReviewCsvFilename,
     buildRegistrationRosterDecision,
     buildRegistrationStatusUpdate,
+    flattenRegistrationReviewForCsv,
     canTransitionRegistrationStatus,
     getRegistrationGuardianDrafts,
     getRegistrationPlayerDraft,
@@ -169,4 +172,92 @@ describe('registration review helpers', () => {
         expect(editRosterPage).toContain('screeningUpdatedByName');
     });
 
+    it('flattens registration reviews for CSV export', () => {
+        const submittedAt = new Date('2026-05-23T12:00:00.000Z');
+        const row = flattenRegistrationReviewForCsv({
+            id: 'reg-1',
+            status: 'offer accepted',
+            submittedAt,
+            submittedData: {
+                athlete: { firstName: 'Avery', lastName: 'Lee', jerseyNumber: '12' },
+                guardian: { guardianName: 'Pat Lee', guardianEmail: 'Pat@example.com' }
+            },
+            selectedOptionId: 'travel',
+            feeSnapshot: { finalAmountDueCents: 12550, currency: 'usd' },
+            paymentPlan: { label: 'Pay in full' },
+            linkedPlayerId: 'player-1',
+            decisionNote: 'Approved for roster'
+        }, {
+            registrationOptions: [{ id: 'travel', title: 'Travel Team' }]
+        });
+
+        expect(row).toEqual({
+            registrationId: 'reg-1',
+            playerName: 'Avery Lee',
+            playerNumber: '12',
+            guardianName: 'Pat Lee',
+            guardianEmail: 'pat@example.com',
+            status: 'offer-accepted',
+            selectedOptionLabel: 'Travel Team',
+            selectedOptionId: 'travel',
+            submittedDate: '2026-05-23T12:00:00.000Z',
+            feeAmount: '125.50 USD',
+            paymentPlan: 'Pay in full',
+            linkedPlayerId: 'player-1',
+            decisionNote: 'Approved for roster'
+        });
+    });
+
+    it('serializes registration review CSV with safe escaping', () => {
+        const csv = buildRegistrationReviewCsv([{
+            id: 'reg-2',
+            status: 'pending',
+            submittedData: {
+                athlete: { name: 'Jordan, "JJ" Reed', jerseyNumber: '22' },
+                guardian: { guardianName: 'Taylor\nReed', guardianEmail: 'taylor@example.com' }
+            },
+            selectedOption: { id: 'camp', title: 'Summer, Camp' },
+            feeSnapshot: { finalAmountDueCents: 0, currency: 'usd' },
+            paymentPlan: { label: 'Installments' },
+            decisionNote: 'Needs "waiver"\nfollow-up'
+        }]);
+
+        expect(csv.split('\n')[0]).toBe('registration id,player name,player number,guardian name,guardian email,status,selected option label,selected option id,submitted date,fee amount,payment plan,linked player id,decision note');
+        expect(csv).toContain('"Jordan, ""JJ"" Reed"');
+        expect(csv).toContain('"Taylor\nReed"');
+        expect(csv).toContain('"Summer, Camp"');
+        expect(csv).toContain('"Needs ""waiver""\nfollow-up"');
+    });
+
+    it('neutralizes spreadsheet formulas in registration review CSV cells', () => {
+        const csv = buildRegistrationReviewCsv([{
+            id: 'reg-3',
+            status: 'pending',
+            submittedData: {
+                athlete: { name: '=IMPORTXML("https://example.com","//x")', jerseyNumber: '+22' },
+                guardian: { guardianName: '-Taylor Reed', guardianEmail: '@example.com' }
+            },
+            selectedOption: { id: 'camp', title: '=Summer Camp' },
+            feeSnapshot: { finalAmountDueCents: 1000, currency: 'usd' },
+            paymentPlan: { label: '-Installments' },
+            decisionNote: '@follow-up'
+        }]);
+
+        expect(csv).toContain('"\'=IMPORTXML(""https://example.com"",""//x"")"');
+        expect(csv).toContain("'+22");
+        expect(csv).toContain("'-Taylor Reed");
+        expect(csv).toContain("'@example.com");
+        expect(csv).toContain("'=Summer Camp");
+        expect(csv).toContain("'-Installments");
+        expect(csv).toContain("'@follow-up");
+    });
+
+    it('builds deterministic registration review CSV filenames', () => {
+        expect(buildRegistrationReviewCsvFilename({
+            teamId: 'Team 1',
+            formId: 'Spring Travel',
+            status: 'offer accepted',
+            now: new Date('2026-05-23T12:00:00.000Z')
+        })).toBe('registration-review-team-1-spring-travel-offer-accepted-2026-05-23.csv');
+    });
 });
