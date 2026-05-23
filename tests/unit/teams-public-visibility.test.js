@@ -12,6 +12,9 @@ describe('public teams visibility', () => {
         expect(source).toContain('const publicOnly = options.publicOnly === true;');
         expect(source).toContain('const includePrivate = options.includePrivate === true || includeInactive;');
         expect(source).toContain('} else if (publicOnly) {');
+        expect(source).toContain('getDocs(query(teamsRef, where("isPublic", "==", true)))');
+        expect(source).toContain('.sort((a, b) => String(a.name || \'\').localeCompare(String(b.name || \'\')))');
+        expect(source).not.toContain('where("isPublic", "==", true), orderBy("name")');
         expect(source).toContain('getDocs(query(teamsRef, where("ownerId", "==", currentUser.uid)))');
         expect(source).toContain('getDocs(query(teamsRef, where("adminEmails", "array-contains", currentUserEmail)))');
         expect(source).not.toContain('const q = includePrivate');
@@ -20,7 +23,7 @@ describe('public teams visibility', () => {
     it('wires Browse Teams to the public-only helper path and keeps a defensive client filter', () => {
         const source = readRepoFile('teams.html');
 
-        expect(source).toContain("import { getTeams } from './js/db.js?v=32';");
+        expect(source).toContain("import { getTeams } from './js/db.js?v=34';");
         expect(source).toContain('getTeams(locationFilter ? { locationFilter, publicOnly: true } : { publicOnly: true })');
         expect(source).toContain('allTeams.filter(t => t.isPublic === true)');
         expect(source).not.toContain('getTeams(locationFilter ? { locationFilter } : {})');
