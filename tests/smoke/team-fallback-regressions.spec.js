@@ -67,6 +67,33 @@ export function getGenerativeModel() {
 }
 `;
 
+const FIREBASE_STUB = `
+export const auth = { currentUser: null };
+export const db = {};
+export const storage = {};
+export const functions = {};
+export function onAuthStateChanged() { return () => {}; }
+export function collection() { return {}; }
+export function doc() { return {}; }
+export function getDoc() { return Promise.resolve({ exists: () => false, data: () => ({}) }); }
+export function getDocs() { return Promise.resolve({ docs: [] }); }
+export function setDoc() { return Promise.resolve(); }
+export function updateDoc() { return Promise.resolve(); }
+export function addDoc() { return Promise.resolve({ id: 'doc-1' }); }
+export function deleteDoc() { return Promise.resolve(); }
+export function writeBatch() { return { set() {}, update() {}, delete() {}, commit: () => Promise.resolve() }; }
+export function onSnapshot() { return () => {}; }
+export function serverTimestamp() { return new Date(); }
+export function query() { return {}; }
+export function where() { return {}; }
+export function orderBy() { return {}; }
+export function limit() { return {}; }
+export function startAfter() { return {}; }
+export function runTransaction() { return Promise.resolve(); }
+export function getFunctions() { return {}; }
+export function httpsCallable() { return () => Promise.resolve({ data: {} }); }
+`;
+
 const ROSTER_PROFILE_FIELDS_STUB = `
 export function buildRosterFieldDefinitionPayload(field = {}, index = 0) {
     return { key: field.key || 'field-' + index, label: field.label || 'Field' };
@@ -648,11 +675,12 @@ export function getDefaultLivePeriod() {
 `;
 
 async function routeCommonPageStubs(page) {
-    await page.route('**/js/auth.js?v=14', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
-    await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
-    await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
-    await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
+    await page.route(/\/js\/firebase\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
+    await page.route(/\/js\/vendor\/firebase-app\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
+    await page.route(/\/js\/vendor\/firebase-ai\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
 }
 
 async function routeLiveGameStubs(page) {
@@ -684,15 +712,17 @@ test('edit roster renders players when optional registration and parent reads ar
     const pageErrors = await collectPageErrors(page);
     await routeCommonPageStubs(page);
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ROSTER_DB_STUB }));
-    await page.route('**/js/team-access.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
-    await page.route('**/js/roster-profile-fields.js?v=3', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ROSTER_PROFILE_FIELDS_STUB }));
-    await page.route('**/js/edit-roster-registration-import.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: REGISTRATION_IMPORT_STUB }));
+    await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
+    await page.route(/\/js\/roster-profile-fields\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ROSTER_PROFILE_FIELDS_STUB }));
+    await page.route(/\/js\/edit-roster-registration-import\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: REGISTRATION_IMPORT_STUB }));
 
     await page.goto(`${baseURL}/edit-roster.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.locator('#team-name-display')).toHaveText('Roster Test Team');
     await expect(page.locator('#roster-list')).toContainText('Avery Carter');
     await expect(page.locator('#roster-list')).toContainText('Jordan Reed');
+    await expect(page.locator('#export-registration-csv-btn')).toBeVisible();
+    await expect(page.locator('#export-registration-csv-btn')).toBeDisabled();
     await expect(page.locator('#registration-review-list')).toContainText('No registration forms configured for this team.');
     expect(pageErrors).toEqual([]);
 });

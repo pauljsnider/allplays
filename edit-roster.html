@@ -360,8 +360,10 @@
                                 <option value="rejected">Rejected</option>
                                 <option value="all">All</option>
                             </select>
+                            <button id="export-registration-csv-btn" type="button" class="rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50" disabled>Export CSV</button>
                         </div>
                     </div>
+                    <p id="registration-export-message" class="hidden px-6 pt-4 text-sm text-gray-500"></p>
                     <div id="registration-review-list" class="p-6 space-y-3">
                         <p class="text-sm text-gray-500">Loading registrations...</p>
                     </div>
@@ -518,6 +520,7 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';
+        import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename } from './js/registration-review.js?v=3';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
@@ -533,6 +536,7 @@
         let rosterFieldDefinitionDrafts = [];
         let registrationForms = [];
         let selectedRegistrationFormId = '';
+        let latestRegistrationReviews = [];
         let registrationRosterImportPlan = null;
         let trackingItems = [];
         let selectedTrackingItemId = '';
@@ -586,6 +590,7 @@
                 loadRegistrationReviews();
             });
             document.getElementById('registration-status-filter').addEventListener('change', () => loadRegistrationReviews());
+            document.getElementById('export-registration-csv-btn').addEventListener('click', exportRegistrationReviewsCsv);
             document.getElementById('tracking-item-select').addEventListener('change', (event) => {
                 selectedTrackingItemId = event.target.value;
                 renderTrackingStatusMatrix();
@@ -994,20 +999,69 @@
             return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString() : 'Unknown date';
         }
 
+        function setRegistrationExportState({ enabled = false, message = '' } = {}) {
+            const button = document.getElementById('export-registration-csv-btn');
+            const messageEl = document.getElementById('registration-export-message');
+            if (button) button.disabled = !enabled;
+            if (messageEl) {
+                messageEl.textContent = message;
+                messageEl.classList.toggle('hidden', !message);
+                messageEl.classList.toggle('text-red-600', message.includes('No registrations'));
+                messageEl.classList.toggle('text-gray-500', !message.includes('No registrations'));
+            }
+        }
+
+        function downloadTextFile(filename, content, type = 'text/csv;charset=utf-8') {
+            const blob = new Blob([content], { type });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function exportRegistrationReviewsCsv() {
+            const status = document.getElementById('registration-status-filter').value;
+            if (!selectedRegistrationFormId || !latestRegistrationReviews.length) {
+                setRegistrationExportState({ enabled: false, message: 'No registrations match this filter. Choose a form or status with registrations before exporting.' });
+                return;
+            }
+            const form = registrationForms.find((item) => item.id === selectedRegistrationFormId) || { id: selectedRegistrationFormId };
+            const csv = buildRegistrationReviewCsv(latestRegistrationReviews, form);
+            const filename = buildRegistrationReviewCsvFilename({
+                teamId: currentTeamId,
+                formId: selectedRegistrationFormId,
+                status,
+                now: new Date()
+            });
+            downloadTextFile(filename, csv);
+            setRegistrationExportState({ enabled: true, message: `Exported ${latestRegistrationReviews.length} registration${latestRegistrationReviews.length === 1 ? '' : 's'} for the current filter.` });
+        }
+
         async function loadRegistrationReviews() {
             const container = document.getElementById('registration-review-list');
             if (!selectedRegistrationFormId) {
+                latestRegistrationReviews = [];
+                setRegistrationExportState({ enabled: false, message: '' });
                 container.innerHTML = '<p class="text-sm text-gray-500">No registration forms configured for this team.</p>';
                 return;
             }
             const status = document.getElementById('registration-status-filter').value;
+            latestRegistrationReviews = [];
+            setRegistrationExportState({ enabled: false, message: '' });
             container.innerHTML = '<p class="text-sm text-gray-500">Loading registrations...</p>';
             try {
                 const registrations = await listTeamRegistrationReviews(currentTeamId, selectedRegistrationFormId, status);
+                latestRegistrationReviews = registrations;
                 if (!registrations.length) {
+                    setRegistrationExportState({ enabled: false, message: 'No registrations match this filter. CSV export is available after the current filter has results.' });
                     container.innerHTML = '<p class="text-sm text-gray-500">No registrations match this filter.</p>';
                     return;
                 }
+                setRegistrationExportState({ enabled: true, message: 'Export includes applicant, guardian, status, option, fee, payment plan, submitted date, linked roster player, and decision note.' });
                 container.innerHTML = registrations.map((registration) => {
                     const summary = registration.reviewSummary || {};
                     const statusLabel = summary.status || registration.status || 'pending';
@@ -1106,6 +1160,8 @@
                 });
             } catch (err) {
                 console.error('Error loading registration reviews', err);
+                latestRegistrationReviews = [];
+                setRegistrationExportState({ enabled: false, message: '' });
                 container.innerHTML = `<p class="text-sm text-red-600">Unable to load registrations: ${escapeHtml(err?.message || 'Please try again.')}</p>`;
             }
         }
