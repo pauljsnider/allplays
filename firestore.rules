@@ -941,6 +941,18 @@ service cloud.firestore {
       }
     }
 
+    match /accountMergePreviewRequests/{requestId} {
+      allow read: if isSignedIn() &&
+                    (resource.data.destinationUid == request.auth.uid ||
+                     resource.data.sourceUid == request.auth.uid ||
+                     isGlobalAdmin());
+      allow write: if false;
+    }
+
+    match /accountMergeVerificationTokens/{tokenId} {
+      allow read, write: if false;
+    }
+
 	    // Access codes - allow public read for validation during signup
 	    match /accessCodes/{codeId} {
       // Allow anyone to read for code validation (needed for unauthenticated signup)
