@@ -10,6 +10,9 @@ concurrency:
   group: regression-guards-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   firebase-rules-deploy-guard:
     runs-on: ubuntu-latest
