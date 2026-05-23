@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 
 function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
@@ -34,12 +35,61 @@ function buildTrackerRoutingHelpers({ allConfigs, currentTeam }) {
     return createHelpers({
         allConfigs,
         currentTeam,
-        getGoalSportProfile: ({ sport }) => {
-            const normalized = String(sport || '').trim().toLowerCase();
-            return ['soccer', 'hockey', 'lacrosse', 'field hockey', 'water polo'].includes(normalized)
-                ? { sport: normalized }
-                : null;
-        }
+        getGoalSportProfile: goalSportProfileStub
+    });
+}
+
+function goalSportProfileStub({ sport }) {
+    const normalized = String(sport || '').trim().toLowerCase();
+    return ['soccer', 'hockey', 'lacrosse', 'field hockey', 'water polo'].includes(normalized)
+        ? { sport: normalized }
+        : null;
+}
+
+function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, currentTeamId = 'team-123' }) {
+    const source = readEditSchedule();
+    const helpersMatch = source.match(/let pendingTrackGameId = null;[\s\S]*?function handleTrackClick\(gameId\) \{[\s\S]*?\n        \}/);
+    const handlersMatch = source.match(/document\.getElementById\('basketball-tracker-cancel'\)[\s\S]*?window\.location\.href = `track-statsheet\.html#teamId=\$\{currentTeamId\}&gameId=\$\{gameId\}`;\n        \}\);/);
+    expect(helpersMatch, 'track choice helpers should exist').toBeTruthy();
+    expect(handlersMatch, 'track choice click handlers should exist').toBeTruthy();
+
+    const dom = new JSDOM(`
+        <div id="basketball-tracker-modal" class="hidden">
+            <p id="tracker-choice-description"></p>
+            <button id="basketball-tracker-standard"></button>
+            <button id="basketball-tracker-beta"></button>
+            <button id="basketball-tracker-live"></button>
+            <button id="basketball-tracker-live-simple" class="hidden"></button>
+            <button id="basketball-tracker-photo"></button>
+            <button id="basketball-tracker-cancel"></button>
+        </div>
+    `);
+    const fakeWindow = { location: { href: '' } };
+
+    const createHarness = new Function('deps', `
+        const { document, window, alert, allConfigs, currentTeam, currentTeamId, getGoalSportProfile } = deps;
+        ${helpersMatch[0]}
+        gamesCache = deps.gamesCache;
+        ${handlersMatch[0]}
+        return {
+            handleTrackClick,
+            alert,
+            getHref: () => window.location.href,
+            getDescription: () => document.getElementById('tracker-choice-description').textContent,
+            isHidden: (id) => document.getElementById(id).classList.contains('hidden'),
+            click: (id) => document.getElementById(id).click()
+        };
+    `);
+
+    return createHarness({
+        document: dom.window.document,
+        window: fakeWindow,
+        alert: vi.fn(),
+        allConfigs,
+        currentTeam,
+        currentTeamId,
+        gamesCache,
+        getGoalSportProfile: goalSportProfileStub
     });
 }
 
@@ -91,5 +141,57 @@ describe('edit schedule basketball tracker routing', () => {
         expect(source).toContain('openTrackerChoiceModal(gameId, isBasketballConfig(configId), isGoalSportForGame(trackingGame));');
         expect(source).toContain('window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}`;');
         expect(source).toContain('window.location.href = `track-live.html?v=2#teamId=${currentTeamId}&gameId=${gameId}&trackerMode=simple`;');
+    });
+
+    it('opens the schedule Track chooser for basketball games and preserves team/game routing', () => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: 'basketball-config', baseType: 'Basketball' }],
+            currentTeam: { sport: 'Basketball' },
+            gamesCache: {
+                'game-456': { id: 'game-456', statTrackerConfigId: 'basketball-config' }
+            }
+        });
+
+        for (const [buttonId, expectedHref] of [
+            ['basketball-tracker-standard', 'track.html#teamId=team-123&gameId=game-456'],
+            ['basketball-tracker-beta', 'track-basketball.html#teamId=team-123&gameId=game-456'],
+            ['basketball-tracker-live', 'live-tracker.html#teamId=team-123&gameId=game-456'],
+            ['basketball-tracker-photo', 'track-statsheet.html#teamId=team-123&gameId=game-456']
+        ]) {
+            harness.handleTrackClick('game-456');
+            expect(harness.isHidden('basketball-tracker-modal')).toBe(false);
+            expect(harness.isHidden('basketball-tracker-beta')).toBe(false);
+            expect(harness.isHidden('basketball-tracker-photo')).toBe(false);
+            expect(harness.getDescription()).toContain('Basketball stat config');
+            harness.click(buttonId);
+            expect(harness.getHref()).toBe(expectedHref);
+        }
+    });
+
+    it('hides basketball-only chooser actions for non-basketball games and routes live tracking', () => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: 'soccer-config', baseType: 'Soccer' }],
+            currentTeam: { sport: 'Soccer' },
+            gamesCache: {
+                'game-789': { id: 'game-789', statTrackerConfigId: 'soccer-config' }
+            }
+        });
+
+        harness.handleTrackClick('game-789');
+
+        expect(harness.isHidden('basketball-tracker-modal')).toBe(false);
+        expect(harness.isHidden('basketball-tracker-beta')).toBe(true);
+        expect(harness.isHidden('basketball-tracker-photo')).toBe(true);
+        expect(harness.isHidden('basketball-tracker-live-simple')).toBe(false);
+        harness.click('basketball-tracker-live');
+        expect(harness.getHref()).toBe('track-live.html?v=2#teamId=team-123&gameId=game-789');
+    });
+
+    it('renders completed schedule games with Report instead of Track', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain("const isCompleted = game.status === 'completed';");
+        expect(source).toContain('${!isCompleted && !isCancelled ? `<button data-game-id="${game.id}" class="track-game-btn');
+        expect(source).toContain('${isCompleted ? `<a href="game.html#teamId=${currentTeamId}&gameId=${game.id}"');
     });
 });
