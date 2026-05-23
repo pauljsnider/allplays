@@ -518,8 +518,6 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';
-        import { getApp } from './js/vendor/firebase-app.js';
-        import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1746,11 +1744,33 @@
         // ===== BULK AI UPDATE FUNCTIONALITY =====
 
         let proposedOperations = [];
+        let bulkAiModulesPromise = null;
+        let bulkAiModules = null;
+
+        async function loadBulkAiModules() {
+            if (bulkAiModules) return bulkAiModules;
+            if (!bulkAiModulesPromise) {
+                bulkAiModulesPromise = Promise.all([
+                    import('./js/vendor/firebase-app.js'),
+                    import('./js/vendor/firebase-ai.js')
+                ]).then(([firebaseAppModule, firebaseAiModule]) => {
+                    bulkAiModules = { firebaseAppModule, firebaseAiModule };
+                    return bulkAiModules;
+                }).catch((error) => {
+                    bulkAiModulesPromise = null;
+                    throw error;
+                });
+            }
+            return bulkAiModulesPromise;
+        }
 
         // Tab switching
         document.getElementById('tab-add-player').addEventListener('click', () => activateRosterTab('add-player'));
         document.getElementById('tab-csv-import').addEventListener('click', () => activateRosterTab('csv-import'));
-        document.getElementById('tab-bulk-ai').addEventListener('click', () => activateRosterTab('bulk-ai'));
+        document.getElementById('tab-bulk-ai').addEventListener('click', () => {
+            activateRosterTab('bulk-ai');
+            loadBulkAiModules().catch((error) => console.warn('Unable to preload Bulk AI modules:', error));
+        });
 
         document.getElementById('roster-csv-file').addEventListener('change', async (e) => {
             const file = e.target.files[0];
@@ -1828,6 +1848,10 @@
                     name: p.name,
                     number: p.number || ''
                 }));
+
+                const { firebaseAppModule, firebaseAiModule } = await loadBulkAiModules();
+                const { getApp } = firebaseAppModule;
+                const { getAI, getGenerativeModel, GoogleAIBackend, Schema } = firebaseAiModule;
 
                 // Define JSON schema for structured output
                 const jsonSchema = Schema.object({
