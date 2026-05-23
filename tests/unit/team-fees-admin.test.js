@@ -1,6 +1,20 @@
 // tests/unit/team-fees-admin.test.js
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible, buildOfflineRefundUpdate } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible, buildOfflineRefundUpdate, registerTeamFeesAdminPageHandlers } from '../../js/team-fees-admin.js'; // Adjusted path
+
+describe('team fees admin page routing', () => {
+    it('reinitializes when same-page manage links update the hash', () => {
+        const registrations = [];
+        const fakeWindow = {
+            addEventListener: (eventName, handler) => registrations.push({ eventName, handler })
+        };
+
+        registerTeamFeesAdminPageHandlers(fakeWindow);
+
+        expect(registrations.map(({ eventName }) => eventName)).toEqual(['DOMContentLoaded', 'hashchange']);
+        expect(registrations[1].handler).toBe(registrations[0].handler);
+    });
+});
 
 describe('buildManualPaymentUpdate', () => {
     it('should correctly handle missing or invalid currentBalanceCents by defaulting to a high number to prevent premature "paid" status', () => {
