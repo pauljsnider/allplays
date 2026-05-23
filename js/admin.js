@@ -671,6 +671,8 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-offline-payment').checked = form.paymentSettings?.offlinePaymentEnabled === true;
     document.getElementById('registration-online-checkout').checked = form.paymentSettings?.onlineCheckoutEnabled === true;
     document.getElementById('registration-discount-rules').value = formatRegistrationDiscountRulesText(form.discountRules);
+    document.getElementById('registration-background-check-required').checked = form.backgroundCheck?.required === true;
+    document.getElementById('registration-background-check-instructions').value = form.backgroundCheck?.instructions || '';
     activeRegistrationOptions = Array.isArray(form.registrationOptions) ? form.registrationOptions.map(option => ({ ...option })) : [];
     renderRegistrationOptionsEditor();
     document.getElementById('registration-waiver').value = form.waiverText || '';
@@ -842,6 +844,10 @@ async function saveRegistrationForm(event) {
             intervalDays: document.getElementById('registration-installment-interval').value
         },
         discountRules: parseRegistrationDiscountRulesText(document.getElementById('registration-discount-rules').value),
+        backgroundCheck: {
+            required: document.getElementById('registration-background-check-required').checked,
+            instructions: document.getElementById('registration-background-check-instructions').value
+        },
         waiverText: document.getElementById('registration-waiver').value,
         status: document.getElementById('registration-status').value
     }, { teamId });

@@ -58,9 +58,20 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
         registrationOptions: normalizeRegistrationOptions(input.registrationOptions),
         paymentSettings: normalizePaymentSettings(input.paymentSettings),
         discountRules: normalizeRegistrationDiscountRules(input.discountRules),
+        backgroundCheck: normalizeBackgroundCheck(input.backgroundCheck),
         waiverText: String(input.waiverText || '').trim(),
         status,
         published: status === 'published'
+    };
+}
+
+export function normalizeBackgroundCheck(settings = {}) {
+    const required = settings?.required === true;
+    const instructions = String(settings?.instructions || '').trim();
+
+    return {
+        required,
+        instructions: required ? instructions : ''
     };
 }
 
