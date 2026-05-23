@@ -218,6 +218,8 @@
     let currentConfig = null;
     let roster = [];
     let statSheetFile = null;
+    let uploadedStatSheetFile = null;
+    let uploadedStatSheetUrl = '';
     let homeRows = [];
     let visitorRows = [];
     let parsedHomeRows = [];
@@ -262,6 +264,7 @@
 
       currentTeam = team;
       currentGame = game;
+      uploadedStatSheetUrl = game.statSheetPhotoUrl || '';
       roster = players || [];
 
       renderTeamAdminBanner(document.getElementById('team-admin-banner'), {
@@ -736,14 +739,16 @@ RETURN JSON:
         applyBtn.disabled = true;
         applyBtn.classList.add('opacity-60');
 
-        let statSheetUrl = currentGame.statSheetPhotoUrl || '';
-        if (statSheetFile) {
+        let statSheetUrl = uploadedStatSheetUrl || currentGame.statSheetPhotoUrl || '';
+        if (statSheetFile && statSheetFile !== uploadedStatSheetFile) {
           applyStatus.textContent = 'Uploading stat sheet…';
           const uploadPromise = uploadStatSheetPhoto(statSheetFile);
           const uploadTimeout = new Promise((_, reject) => {
             setTimeout(() => reject(new Error('Stat sheet upload timed out. Please try again.')), 30000);
           });
           statSheetUrl = await Promise.race([uploadPromise, uploadTimeout]);
+          uploadedStatSheetFile = statSheetFile;
+          uploadedStatSheetUrl = statSheetUrl;
         }
 
         const homeScore = Number(document.getElementById('home-score-input').value || 0);
@@ -792,14 +797,14 @@ RETURN JSON:
           ...currentGame,
           ...applyPlan.gameUpdate
         };
+        uploadedStatSheetUrl = currentGame.statSheetPhotoUrl || uploadedStatSheetUrl;
         applyStatus.textContent = 'Stats saved! Now you can add a game summary.';
 
         // Show summary section instead of redirecting
         document.getElementById('summary-section').classList.remove('hidden');
         document.getElementById('summary-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-        // Hide the apply button and analysis section
-        document.getElementById('apply-btn').classList.add('hidden');
+        // Keep the apply control available so coaches can correct and re-save stats before leaving.
 
       } catch (error) {
         console.error('Failed to save stats:', error);
