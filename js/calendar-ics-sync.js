@@ -24,8 +24,7 @@ export function mergeGlobalCalendarIcsEvents({
         const hasTrackedConflict = (existingEvents || []).some((existingEvent) => {
             if (existingEvent?.source !== 'db') return false;
             if (existingEvent?.teamId !== team?.id) return false;
-            const existingDate = toDate(existingEvent?.date);
-            return !Number.isNaN(existingDate.getTime()) && Math.abs(existingDate - eventDate) < 60000;
+            return Boolean(event?.uid && existingEvent?.calendarEventUid === event.uid);
         });
         if (hasTrackedConflict) return;
 
