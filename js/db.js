@@ -981,6 +981,29 @@ export async function updateUserProfile(userId, profile) {
     await setDoc(docRef, profile, { merge: true });
 }
 
+export async function createAccountMergeRequest(userId, { primaryEmail, secondaryEmail }) {
+    if (!auth.currentUser || auth.currentUser.uid !== userId) {
+        throw new Error('You must be signed in to request an account merge');
+    }
+
+    const normalizedPrimaryEmail = String(primaryEmail || '').trim().toLowerCase();
+    const normalizedSecondaryEmail = String(secondaryEmail || '').trim().toLowerCase();
+    if (!normalizedPrimaryEmail || !normalizedSecondaryEmail) {
+        throw new Error('Both account emails are required');
+    }
+
+    const now = Timestamp.now();
+    const requestRef = await addDoc(collection(db, 'users', userId, 'accountMergeRequests'), {
+        requestedBy: userId,
+        primaryEmail: normalizedPrimaryEmail,
+        secondaryEmail: normalizedSecondaryEmail,
+        status: 'pending_verification',
+        createdAt: now,
+        updatedAt: now
+    });
+    return requestRef.id;
+}
+
 export async function getNotificationPreferencesForTeam(userId, teamId) {
     if (!userId || !teamId) return null;
     const prefRef = doc(db, 'users', userId, 'notificationPreferences', teamId);
