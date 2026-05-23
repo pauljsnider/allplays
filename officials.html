@@ -16,12 +16,12 @@
     <main class="container mx-auto px-4 py-8">
         <div class="mb-6">
             <h1 class="text-3xl font-bold text-gray-900">Official Assignments</h1>
-            <p class="text-gray-600 mt-1">Review assigned games, respond to pending assignments, and claim open officiating slots.</p>
+            <p id="officials-intro" class="text-gray-600 mt-1">Review assigned games and respond to pending assignments.</p>
         </div>
 
         <div id="officials-status" class="mb-4 text-sm text-gray-600">Loading assignments...</div>
 
-        <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <section class="space-y-6">
             <div class="bg-white rounded-lg shadow border border-gray-200">
                 <div class="p-4 border-b border-gray-200">
                     <h2 class="text-xl font-semibold text-gray-900">My Upcoming Assignments</h2>
@@ -29,9 +29,9 @@
                 <div id="assigned-games" class="divide-y divide-gray-100"></div>
             </div>
 
-            <div class="bg-white rounded-lg shadow border border-gray-200">
+            <div id="open-slots-section" class="hidden bg-white rounded-lg shadow border border-gray-200">
                 <div class="p-4 border-b border-gray-200">
-                    <h2 class="text-xl font-semibold text-gray-900">Open Slots</h2>
+                    <h2 class="text-xl font-semibold text-gray-900">Find Open Slots</h2>
                     <p class="text-sm text-gray-500">Only games with self-assignment enabled are shown.</p>
                 </div>
                 <div id="open-slots" class="divide-y divide-gray-100"></div>
@@ -115,12 +115,15 @@
         }
 
         function renderOpenSlots() {
+            const section = document.getElementById('open-slots-section');
             const container = document.getElementById('open-slots');
             if (!canClaimOpenSlots) {
-                container.innerHTML = '<div class="p-4 text-sm text-gray-500">Open self-assignment slots are only available to team owners, admins, or parents.</div>';
+                section.classList.add('hidden');
+                container.innerHTML = '';
                 return;
             }
 
+            section.classList.remove('hidden');
             const openSlots = [];
             games.filter(isUpcoming).forEach((game) => {
                 getOpenOfficiatingSlots(game).forEach((slot) => openSlots.push({ game, slot }));
@@ -192,6 +195,9 @@
                     getUserProfile(user.uid)
                 ]);
                 canClaimOpenSlots = isEligibleOpenSlotParticipant(currentUser, currentUserProfile, currentTeam);
+                if (canClaimOpenSlots) {
+                    document.getElementById('officials-intro').textContent = 'Review assigned games, respond to pending assignments, or find open officiating slots.';
+                }
                 await refresh();
             } catch (error) {
                 document.getElementById('officials-status').textContent = error.message || 'Could not load officiating access.';
