@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   buildMergedParentAccount,
   buildMergedPlayerParents,
+  findDuplicateParentUserIds,
   isVerifiedAccountMergeRequest
 } = require('../account-merge-core.cjs');
 
@@ -48,6 +49,30 @@ test('buildMergedPlayerParents rewrites source uid and deduplicates idempotent r
   const second = buildMergedPlayerParents(first.parents, 'source', 'dest');
   assert.equal(second.changed, false);
   assert.deepEqual(second.parents, first.parents);
+});
+
+test('buildMergedPlayerParents deduplicates existing destination parent entries', () => {
+  const result = buildMergedPlayerParents([
+    { userId: 'source', email: 'old@example.com', relation: 'parent' },
+    { userId: 'dest', email: 'new@example.com', status: 'active' },
+    { userId: 'dest', email: 'duplicate@example.com', status: 'active' }
+  ], 'source', 'dest');
+
+  assert.equal(result.changed, true);
+  assert.equal(result.parents.length, 1);
+  assert.equal(result.parents[0].userId, 'dest');
+  assert.deepEqual(findDuplicateParentUserIds(result.parents), []);
+});
+
+test('findDuplicateParentUserIds reports duplicate non-empty user ids', () => {
+  assert.deepEqual(findDuplicateParentUserIds([
+    { userId: 'dest' },
+    { email: 'missing-user@example.com' },
+    { userId: 'other' },
+    { userId: 'dest' },
+    { userId: '  ' },
+    { userId: 'other' }
+  ]), ['dest', 'other']);
 });
 
 test('isVerifiedAccountMergeRequest rejects unverified or mismatched requests', () => {

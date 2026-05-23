@@ -46,6 +46,7 @@ const {
 const {
   buildMergedParentAccount,
   buildMergedPlayerParents,
+  findDuplicateParentUserIds,
   isVerifiedAccountMergeRequest,
   mergePreferenceObjects
 } = require('./account-merge-core.cjs');
@@ -420,6 +421,13 @@ exports.confirmParentAccountMerge = functions.https.onCall(async (data, context)
       const playerData = playerSnap.data() || {};
       const currentParents = Array.isArray(playerData.parents) ? playerData.parents : [];
       const result = buildMergedPlayerParents(currentParents, input.sourceUid, input.destinationUid);
+      const duplicateParentUserIds = findDuplicateParentUserIds(result.parents);
+      if (duplicateParentUserIds.length > 0) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Player parent merge would leave duplicate parent account links. Retry after cleaning up duplicate parent records.'
+        );
+      }
       if (result.changed) {
         transaction.update(playerSnap.ref, { parents: result.parents, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
         affectedCollections.add('teams/players');

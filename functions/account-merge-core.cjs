@@ -102,6 +102,23 @@ function buildMergedPlayerParents(parents = [], sourceUid, destinationUid) {
     return { parents: merged, changed };
 }
 
+function findDuplicateParentUserIds(parents = []) {
+    const seen = new Set();
+    const duplicates = new Set();
+
+    (Array.isArray(parents) ? parents : []).forEach((parent) => {
+        const userId = String(parent?.userId || '').trim();
+        if (!userId) return;
+        if (seen.has(userId)) {
+            duplicates.add(userId);
+            return;
+        }
+        seen.add(userId);
+    });
+
+    return [...duplicates];
+}
+
 function isVerifiedAccountMergeRequest(request = {}, { sourceUid, destinationUid, previewTokenHash } = {}) {
     if (!request || request.sourceUid !== sourceUid || request.destinationUid !== destinationUid) return false;
     if (request.verified === true || request.previewVerified === true || request.status === 'verified') return true;
@@ -111,6 +128,7 @@ function isVerifiedAccountMergeRequest(request = {}, { sourceUid, destinationUid
 module.exports = {
     buildMergedParentAccount,
     buildMergedPlayerParents,
+    findDuplicateParentUserIds,
     isVerifiedAccountMergeRequest,
     mergePreferenceObjects,
     uniqueValues
