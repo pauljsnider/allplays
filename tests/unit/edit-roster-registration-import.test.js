@@ -15,8 +15,12 @@ describe('registration roster import planning', () => {
     it('detects linked roster teams and source roster snapshots', () => {
         expect(isExternallyLinkedRosterTeam({})).toBe(false);
         expect(isExternallyLinkedRosterTeam({ registrationSourceId: 'sports-connect' })).toBe(false);
+        expect(isExternallyLinkedRosterTeam({ registrationSource: { rosterPlayers: [{ id: 'p1' }] } })).toBe(true);
+        expect(isExternallyLinkedRosterTeam({ registrationSource: { players: [{ id: 'p1' }] } })).toBe(true);
+        expect(isExternallyLinkedRosterTeam({ registrationSource: { roster: [{ id: 'p1' }] } })).toBe(true);
         expect(isExternallyLinkedRosterTeam({ externalRosterPlayers: [{ id: 'p1' }] })).toBe(true);
         expect(getRegistrationRosterPlayers({ registrationSourceSnapshot: { rosterPlayers: [{ id: 'p1' }] } })).toEqual([{ id: 'p1' }]);
+        expect(getRegistrationRosterPlayers({ registrationSource: { rosterPlayers: [{ id: 'p2' }] } })).toEqual([{ id: 'p2' }]);
     });
 
     it('plans add and update operations by source plus external player ID while preserving local-only conflicts', () => {
