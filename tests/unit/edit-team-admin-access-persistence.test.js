@@ -198,6 +198,7 @@ function createEnvironment(initialState, overrides = {}) {
         'teamColorSecondary',
         'notificationEmail',
         'leagueUrl',
+        'bracketUrl',
         'standingsEnabled',
         'standingsRankingMode',
         'standingsPointWin',
@@ -561,6 +562,7 @@ describe('edit team admin access persistence', () => {
             env.elements.get('description').value = 'First season';
             env.elements.get('sport').value = 'Basketball';
             env.elements.get('zip').value = '66209';
+            env.elements.get('bracketUrl').value = 'https://example.com/bracket';
             expect(env.elements.get('advanced-team-setup').open).toBe(false);
 
             await env.elements.get('team-form').requestSubmit();
@@ -585,6 +587,7 @@ describe('edit team admin access persistence', () => {
                     streaming: { mode: 'all_confirmed', memberIds: [] },
                     videography: { mode: 'selected', memberIds: [] }
                 },
+                bracketUrl: 'https://example.com/bracket',
                 streamAccessMode: 'admins',
                 streamVolunteerEmails: [],
                 defaultAssignments: [],
@@ -611,6 +614,7 @@ describe('edit team admin access persistence', () => {
                 sport: 'Soccer',
                 notificationEmail: 'notify@example.com',
                 leagueUrl: 'https://example.com/league',
+                bracketUrl: 'https://example.com/bracket',
                 standingsConfig: {
                     enabled: true,
                     rankingMode: 'points',
@@ -633,6 +637,7 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('teamColorPrimary').value).toBe('#111111');
             expect(env.elements.get('notificationEmail').value).toBe('notify@example.com');
             expect(env.elements.get('leagueUrl').value).toBe('https://example.com/league');
+            expect(env.elements.get('bracketUrl').value).toBe('https://example.com/bracket');
             expect(env.elements.get('standingsEnabled').checked).toBe(true);
             expect(env.elements.get('standingsPointWin').value).toBe('5');
         } finally {

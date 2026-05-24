@@ -346,6 +346,7 @@ function MoreTab({ model }: { model: TeamDetailModel }) {
           <InternalAction icon={DollarSign} label="My fees" detail="Balances, checkout links, installments, and history." to="/parent-tools/fees" />
           <InternalAction icon={Ticket} label="Registrations" detail="Open published team registration forms." to="/parent-tools/registrations" />
           {model.team.streamUrl ? <ExternalAction icon={Radio} label="Watch stream" detail="Open the configured team stream." href={model.team.streamUrl} /> : null}
+          {model.team.bracketUrl ? <ExternalAction icon={Trophy} label="Tournament bracket" detail="Open official bracket." href={model.team.bracketUrl} /> : null}
           {model.team.leagueUrl ? <ExternalAction icon={Trophy} label="League page" detail="Open standings or league registration source." href={model.team.leagueUrl} /> : null}
         </div>
       </section>
