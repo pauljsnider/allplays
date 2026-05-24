@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     formatParentFeeAmount,
     formatParentFeeDueDate,
+    handleParentTeamFeeCheckoutClick,
     normalizeParentFeeStatus,
     renderParentTeamFees,
     sortParentFeeRecords
@@ -190,9 +191,9 @@ describe('parent dashboard team fees', () => {
         expect(html).not.toContain('admin-123');
     });
 
-    it('only renders a Pay action for unpaid or partially paid fees with a checkout or payment link', () => {
+    it('renders Pay online for eligible unpaid or partial fees with or without a stored checkout URL', () => {
         const manualOnlyHtml = renderParentTeamFees([
-            { title: 'Manual collection', amountCents: 1000 }
+            { title: 'Manual collection', teamId: 'team-1', batchId: 'batch-1', id: 'recipient-1', amountCents: 1000 }
         ]);
         const checkoutHtml = renderParentTeamFees([
             { title: 'Online collection', amountCents: 1000, checkoutUrl: 'https://pay.example/checkout' }
@@ -206,13 +207,96 @@ describe('parent dashboard team fees', () => {
         const adjustedHtml = renderParentTeamFees([
             { title: 'Adjusted collection', amountCents: 1000, status: 'adjusted', checkoutUrl: 'https://pay.example/adjusted' }
         ]);
+        const missingContextHtml = renderParentTeamFees([
+            { title: 'No context collection', amountCents: 1000 }
+        ]);
 
-        expect(manualOnlyHtml).not.toContain('>Pay</a>');
-        expect(checkoutHtml).toContain('>Pay</a>');
+        expect(manualOnlyHtml).toContain('data-team-fee-checkout="true"');
+        expect(manualOnlyHtml).toContain('data-team-id="team-1"');
+        expect(manualOnlyHtml).toContain('data-batch-id="batch-1"');
+        expect(manualOnlyHtml).toContain('data-recipient-id="recipient-1"');
+        expect(manualOnlyHtml).toContain('>Pay online</button>');
+        expect(checkoutHtml).toContain('>Pay online</a>');
         expect(checkoutHtml).toContain('https://pay.example/checkout');
-        expect(partialPaymentLinkHtml).toContain('>Pay</a>');
+        expect(partialPaymentLinkHtml).toContain('>Pay online</a>');
         expect(partialPaymentLinkHtml).toContain('https://pay.example/remaining');
-        expect(paidHtml).not.toContain('>Pay</a>');
-        expect(adjustedHtml).not.toContain('>Pay</a>');
+        expect(paidHtml).not.toContain('Pay online');
+        expect(adjustedHtml).not.toContain('Pay online');
+        expect(missingContextHtml).not.toContain('data-team-fee-checkout="true"');
+    });
+
+    it('handles parent dashboard checkout clicks and redirects to Stripe', async () => {
+        const errorEl = {
+            textContent: '',
+            classList: {
+                add: () => {},
+                remove: () => {}
+            }
+        };
+        const card = {
+            querySelector: (selector) => selector === '[data-team-fee-checkout-error]' ? errorEl : null
+        };
+        const button = {
+            dataset: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            disabled: false,
+            textContent: 'Pay online',
+            closest: (selector) => selector === '.team-fee-card' ? card : null
+        };
+        const event = {
+            target: {
+                closest: (selector) => selector === '[data-team-fee-checkout="true"]' ? button : null
+            }
+        };
+        const calls = [];
+        const locationTarget = { href: '' };
+
+        const handled = await handleParentTeamFeeCheckoutClick(event, {
+            initiateCheckout: async (params) => {
+                calls.push(params);
+                return 'https://checkout.stripe.com/team-fee-session';
+            },
+            locationTarget
+        });
+
+        expect(handled).toBe(true);
+        expect(calls).toEqual([{ teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }]);
+        expect(locationTarget.href).toBe('https://checkout.stripe.com/team-fee-session');
+    });
+
+    it('restores the checkout button and shows an inline error when checkout fails', async () => {
+        const classes = new Set(['hidden']);
+        const errorEl = {
+            textContent: '',
+            classList: {
+                add: (className) => classes.add(className),
+                remove: (className) => classes.delete(className)
+            }
+        };
+        const card = {
+            querySelector: (selector) => selector === '[data-team-fee-checkout-error]' ? errorEl : null
+        };
+        const button = {
+            dataset: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            disabled: false,
+            textContent: 'Pay online',
+            closest: (selector) => selector === '.team-fee-card' ? card : null
+        };
+        const event = {
+            target: {
+                closest: (selector) => selector === '[data-team-fee-checkout="true"]' ? button : null
+            }
+        };
+
+        await handleParentTeamFeeCheckoutClick(event, {
+            initiateCheckout: async () => {
+                throw new Error('Stripe is unavailable.');
+            },
+            locationTarget: { href: '' }
+        });
+
+        expect(button.disabled).toBe(false);
+        expect(button.textContent).toBe('Pay online');
+        expect(errorEl.textContent).toBe('Stripe is unavailable.');
+        expect(classes.has('hidden')).toBe(false);
     });
 });
