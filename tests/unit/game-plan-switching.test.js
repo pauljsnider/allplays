@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { normalizeLineupsForGamePlanPlanner } from '../../js/game-plan-interop.js';
 
 function readGamePlanPage() {
     return readFileSync(new URL('../../game-plan.html', import.meta.url), 'utf8');
@@ -109,6 +110,7 @@ function buildHarness(overrides = {}) {
         console: {
             error: vi.fn()
         },
+        normalizeLineupsForGamePlanPlanner,
         ...overrides
     };
 
@@ -133,6 +135,7 @@ function buildHarness(overrides = {}) {
         const updatePlanSummary = deps.updatePlanSummary;
         const autoSave = deps.autoSave;
         const console = deps.console;
+        const normalizeLineupsForGamePlanPlanner = deps.normalizeLineupsForGamePlanPlanner;
 
         ${createDefaultGamePlanSource}
 
@@ -218,6 +221,27 @@ describe('game plan game switching', () => {
         expect(gamePlan.lineups).toEqual({});
         expect(gamePlan.lineups).not.toHaveProperty('1-7-keeper');
         expect(harness.getState().currentGameId).toBe('game-b');
+    });
+
+    it('normalizes saved lineup keys through the loadGame harness dependency', async () => {
+        const { harness } = buildHarness();
+
+        await harness.loadGame({
+            id: 'game-a',
+            opponent: 'Sharks',
+            date: '2026-04-04T19:00:00.000Z',
+            gamePlan: {
+                numPeriods: 2,
+                periodDuration: 25,
+                subTimes: [7, 14, 21],
+                formationId: 'soccer-9v9',
+                lineups: { "H1 7'-keeper": 'player-1' }
+            }
+        });
+
+        expect(harness.getState().gamePlan.lineups).toEqual({
+            '1-7-keeper': 'player-1'
+        });
     });
 
     it('cancels any pending auto-save when switching games', async () => {
