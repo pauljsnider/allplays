@@ -90,17 +90,17 @@
         function requireSyncedAuth() {
             return new Promise((resolve, reject) => {
                 let unsubscribe = null;
-                let unsubscribePending = false;
+                let cleanupRequestedBeforeSubscribeReturned = false;
                 let settled = false;
 
                 function cleanup() {
                     if (typeof unsubscribe === 'function') {
                         const stop = unsubscribe;
                         unsubscribe = null;
-                        unsubscribePending = false;
+                        cleanupRequestedBeforeSubscribeReturned = false;
                         stop();
                     } else {
-                        unsubscribePending = true;
+                        cleanupRequestedBeforeSubscribeReturned = true;
                     }
                 }
 
@@ -116,7 +116,7 @@
                     }
                 });
 
-                if (unsubscribePending) {
+                if (cleanupRequestedBeforeSubscribeReturned) {
                     cleanup();
                 }
             });
