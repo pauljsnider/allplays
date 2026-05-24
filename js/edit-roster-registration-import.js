@@ -315,7 +315,10 @@ export function isExternallyLinkedRosterTeam(team = {}) {
     return !!(
         team.registrationSourceSnapshot ||
         team.registrationRosterSnapshot ||
-        team.externalRosterPlayers
+        team.externalRosterPlayers ||
+        Array.isArray(team.registrationSource?.rosterPlayers) ||
+        Array.isArray(team.registrationSource?.players) ||
+        Array.isArray(team.registrationSource?.roster)
     );
 }
 
