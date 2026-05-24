@@ -184,6 +184,7 @@ async function mockTeamsModules(page) {
                                 description: '',
                                 zip: '',
                                 leagueUrl: null,
+                                bracketUrl: null,
                                 streamUrl: null,
                                 websiteUrl: 'https://allplays.ai/team.html#teamId=team-empty',
                                 mediaUrl: 'https://allplays.ai/team-media.html#teamId=team-empty',
@@ -213,6 +214,7 @@ async function mockTeamsModules(page) {
                             description: 'Parent-facing team page',
                             zip: '66210',
                             leagueUrl: 'https://league.example.test/standings',
+                            bracketUrl: 'https://bracket.example.test/official',
                             streamUrl: 'https://youtube.example.test/watch',
                             websiteUrl: 'https://allplays.ai/team.html#teamId=team-1',
                             mediaUrl: 'https://allplays.ai/team-media.html#teamId=team-1',
@@ -340,11 +342,15 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('Website team page')).toBeVisible();
         await expect(page.getByText('Media albums')).toBeVisible();
         await expect(page.getByText('Watch stream')).toBeVisible();
+        await expect(page.getByText('Tournament bracket')).toBeVisible();
+        await expect(page.getByText('Open official bracket.')).toBeVisible();
         await expect(page.getByText('League page')).toBeVisible();
         await expect(page.getByText('Sports Connect')).toBeVisible();
         await expect(page.getByText('Pizza Place')).toBeVisible();
         await page.getByRole('link', { name: /Watch stream/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://youtube.example.test/watch');
+        await page.getByRole('link', { name: /Tournament bracket/ }).click();
+        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://bracket.example.test/official');
         await page.getByRole('link', { name: /Pizza Place/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pizza.example.test');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
@@ -367,6 +373,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('Leaderboards appear after public stat configs and completed tracked games exist.')).toBeVisible();
         await page.getByRole('button', { name: /More/ }).click();
         await expect(page.getByText('Team links')).toBeVisible();
+        await expect(page.getByText('Tournament bracket')).toHaveCount(0);
         await expect(page.getByText('Loading team')).toHaveCount(0);
     });
 });

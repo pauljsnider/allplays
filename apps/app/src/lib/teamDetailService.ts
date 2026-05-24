@@ -82,6 +82,7 @@ export type TeamDetailModel = {
     description: string;
     zip: string;
     leagueUrl: string | null;
+    bracketUrl: string | null;
     streamUrl: string | null;
     websiteUrl: string;
     mediaUrl: string;
@@ -335,6 +336,7 @@ export function buildTeamDetailModel({
       description: cleanString(team?.description),
       zip: cleanString(team?.zip),
       leagueUrl: getFirstUrl(team?.leagueUrl),
+      bracketUrl: getFirstUrl(team?.bracketUrl),
       streamUrl: getStreamUrl(team),
       websiteUrl: getPublicHashUrl('team.html', teamId),
       mediaUrl: getPublicHashUrl('team-media.html', teamId),
