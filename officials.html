@@ -190,18 +190,25 @@
             currentUser = user;
             renderHeader(document.getElementById('header-container'), user);
             try {
-                [currentTeam, currentUserProfile] = await Promise.all([
-                    getTeam(teamId, { includeInactive: true }),
-                    getUserProfile(user.uid)
-                ]);
+                currentUserProfile = await getUserProfile(user.uid);
+            } catch (error) {
+                console.warn('[officials] Could not load user profile; continuing with assignment-only access.', error);
+                currentUserProfile = null;
+            }
+
+            try {
+                currentTeam = await getTeam(teamId, { includeInactive: true });
                 canClaimOpenSlots = isEligibleOpenSlotParticipant(currentUser, currentUserProfile, currentTeam);
                 if (canClaimOpenSlots) {
                     document.getElementById('officials-intro').textContent = 'Review assigned games, respond to pending assignments, or find open officiating slots.';
                 }
-                await refresh();
             } catch (error) {
-                document.getElementById('officials-status').textContent = error.message || 'Could not load officiating access.';
+                console.warn('[officials] Team details are unavailable; continuing with assignment-only access.', error);
+                currentTeam = null;
+                canClaimOpenSlots = false;
             }
+
+            await refresh();
         }, { skipEmailVerificationCheck: true });
     </script>
 </body>
