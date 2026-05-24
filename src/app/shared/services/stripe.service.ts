@@ -1,8 +1,7 @@
-
 // src/app/shared/services/stripe.service.ts
 import { Injectable } from '@angular/core';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { app } from '../../app/firebase-config'; // Adjusted path
+import { app } from '../../firebase-config';
 
 @Injectable({
   providedIn: 'root'
@@ -11,12 +10,12 @@ export class StripeService {
 
   constructor() { }
 
-  async initiateTeamFeeCheckout(teamId: string, teamFeeId: string): Promise<string> {
+  async initiateTeamFeeCheckout(teamId: string, batchId: string, recipientId: string): Promise<string> {
     const functions = getFunctions(app);
     const createCheckoutSession = httpsCallable(functions, 'createStripeTeamFeeCheckout');
 
     try {
-      const result = await createCheckoutSession({ teamId, teamFeeId });
+      const result = await createCheckoutSession({ teamId, batchId, recipientId });
       const data = result.data as { checkoutUrl?: string };
       if (data.checkoutUrl) {
         return data.checkoutUrl;
