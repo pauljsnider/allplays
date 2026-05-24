@@ -198,4 +198,12 @@ describe('live tracker integrity helpers', () => {
     expect(quickSubBody).toContain('persistLiveLineup();');
     expect(queuedSubBody).toContain('persistLiveLineup();');
   });
+
+  it('persists and broadcasts lineup after auto-fill starters', () => {
+    const liveTrackerSource = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
+    const autoFillBody = liveTrackerSource.match(/function autoFillStarters\([\s\S]*?function playerName/)?.[0] || '';
+
+    expect(autoFillBody).toContain('persistLocalTrackerState();');
+    expect(autoFillBody).toContain("broadcastLineupUpdate('Lineup auto-filled');");
+  });
 });
