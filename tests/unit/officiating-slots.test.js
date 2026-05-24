@@ -79,6 +79,15 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain("['pending', 'needs_review'].includes(slot.status)");
     });
 
+    it('loads assigned official games even when private team details are unavailable', () => {
+        const officialsSource = readOfficialsPage();
+
+        expect(officialsSource).not.toContain('[currentTeam, currentUserProfile] = await Promise.all');
+        expect(officialsSource).toContain("console.warn('[officials] Team details are unavailable; continuing with assignment-only access.', error);");
+        expect(officialsSource).toContain('canClaimOpenSlots = false;');
+        expect(officialsSource).toContain('await refresh();');
+    });
+
     it('limits open self-assignment slot claims to eligible team participants', () => {
         const officialsSource = readOfficialsPage();
         const dbSource = readDbSource();
