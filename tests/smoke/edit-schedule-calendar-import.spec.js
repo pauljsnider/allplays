@@ -494,7 +494,7 @@ test.describe('edit schedule imported calendar rows', () => {
         expect(params.get('eventTitle')).toBe('Evening Practice');
     });
 
-    test('suppresses tracked and conflicting imports while rendering cancelled rows without actions', async ({ page }) => {
+    test('suppresses tracked, conflicting, and cancelled imports from upcoming schedule filters', async ({ page }) => {
         await page.addInitScript((state) => {
             window.__editScheduleTestState = state;
             window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
@@ -540,14 +540,11 @@ test.describe('edit schedule imported calendar rows', () => {
         await page.goto(`${serverOrigin}/edit-schedule.html#teamId=team-1`, { waitUntil: 'domcontentloaded' });
 
         const scheduleList = page.locator('#schedule-list');
-        await expect(scheduleList).toContainText('Storm');
-        await expect(scheduleList).toContainText('Cancelled');
+        await expect(scheduleList).toContainText('Existing Opponent');
+        await expect(scheduleList).not.toContainText('Storm');
+        await expect(scheduleList).not.toContainText('Cancelled');
         await expect(scheduleList).not.toContainText('Tigers');
         await expect(scheduleList).not.toContainText('Bears');
-
-        const cancelledRow = scheduleList.locator('div').filter({ hasText: 'Storm' }).first();
-        await expect(cancelledRow).not.toContainText('Track');
-        await expect(cancelledRow).not.toContainText('Plan Practice');
     });
 });
 
