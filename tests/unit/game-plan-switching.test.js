@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { normalizeLineupsForGamePlanPlanner } from '../../js/game-plan-interop.js';
 
 function readGamePlanPage() {
     return readFileSync(new URL('../../game-plan.html', import.meta.url), 'utf8');
@@ -109,6 +110,7 @@ function buildHarness(overrides = {}) {
         console: {
             error: vi.fn()
         },
+        normalizeLineupsForGamePlanPlanner,
         ...overrides
     };
 
@@ -133,6 +135,7 @@ function buildHarness(overrides = {}) {
         const updatePlanSummary = deps.updatePlanSummary;
         const autoSave = deps.autoSave;
         const console = deps.console;
+        const normalizeLineupsForGamePlanPlanner = deps.normalizeLineupsForGamePlanPlanner;
 
         ${createDefaultGamePlanSource}
 
