@@ -4,7 +4,7 @@ import { Capacitor } from '@capacitor/core';
 const desktopQuery = '(min-width: 1024px)';
 
 function readDesktopMatch() {
-  return typeof window !== 'undefined' && window.matchMedia(desktopQuery).matches;
+  return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(desktopQuery).matches;
 }
 
 function readNativeRuntime() {
@@ -16,6 +16,11 @@ export function useShellLayout() {
   const [isNative, setIsNative] = useState(readNativeRuntime);
 
   useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      setIsDesktop(false);
+      setIsNative(readNativeRuntime());
+      return undefined;
+    }
     const media = window.matchMedia(desktopQuery);
     const updateDesktop = () => setIsDesktop(media.matches);
 

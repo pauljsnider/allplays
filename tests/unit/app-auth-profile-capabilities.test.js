@@ -67,6 +67,30 @@ describe('React app auth/profile capability parity', () => {
         ]);
     });
 
+    it('keeps native Google auth on the stable app-session path for iOS and Android', () => {
+        const authService = readProjectFile('apps/app/src/lib/authService.ts');
+        const iosProject = readProjectFile('ios/App/App.xcodeproj/project.pbxproj');
+        const iosEntitlements = readProjectFile('ios/App/App/App.entitlements');
+
+        expectContains(authService, [
+            'getNativeGoogleSignInOptions',
+            "Capacitor.getPlatform?.() === 'android'",
+            'options.useCredentialManager = false',
+            "FirebaseAuthentication.signInWithGoogle(getNativeGoogleSignInOptions())",
+            "'accounts:signInWithIdp'",
+            'Native Google: exchanging token with Firebase Auth REST.'
+        ]);
+        expect(authService).not.toContain('signInWithCredential(auth');
+        expect(authService).not.toContain('Native Google: signing into Firebase Web Auth.');
+        expectContains(iosProject, [
+            'CODE_SIGN_ENTITLEMENTS = App/App.entitlements;'
+        ]);
+        expectContains(iosEntitlements, [
+            'keychain-access-groups',
+            '$(AppIdentifierPrefix)$(CFBundleIdentifier)'
+        ]);
+    });
+
     it('covers accept-invite.html invite redemption, email link completion, account linking, and redirects', () => {
         const legacyInvite = readProjectFile('accept-invite.html');
         const acceptInvite = readProjectFile('apps/app/src/pages/AcceptInvite.tsx');
@@ -177,6 +201,63 @@ describe('React app auth/profile capability parity', () => {
             'createProfileAccessCode',
             'loadProfileAccessCodes',
             'nativeUploadProfilePhoto'
+        ]);
+    });
+
+    it('covers team-chat.html messaging, conversations, media, reactions, targeting, and AI assistant features', () => {
+        const legacyTeamChat = readProjectFile('team-chat.html');
+        const messagesPage = readProjectFile('apps/app/src/pages/Messages.tsx');
+        const chatService = readProjectFile('apps/app/src/lib/chatService.ts');
+        const chatLogic = readProjectFile('apps/app/src/lib/chatLogic.ts');
+
+        expectContains(legacyTeamChat, [
+            'getChatConversations',
+            'subscribeToChatMessages',
+            'postChatMessage',
+            'editChatMessage',
+            'deleteChatMessage',
+            'toggleChatReaction',
+            'uploadChatImage',
+            'deleteUploadedChatAttachments',
+            'updateChatLastRead',
+            'id="recipient-picker"',
+            'id="media-gallery-btn"',
+            '@ALL PLAYS',
+            'SpeechRecognition'
+        ]);
+        expectContains(messagesPage, [
+            'loadChatInbox',
+            'loadChatTeamContext',
+            'subscribeToTeamChatMessages',
+            'sendTeamChatMessage',
+            'editTeamChatMessage',
+            'deleteTeamChatMessage',
+            'toggleTeamChatReaction',
+            'MediaGallerySheet',
+            'AudienceSheet',
+            'ConversationSheet',
+            'Voice input',
+            '@ALL PLAYS'
+        ]);
+        expectContains(chatService, [
+            'getChatConversations',
+            'subscribeToChatMessages',
+            'postChatMessage',
+            'upsertChatConversation',
+            'uploadTeamChatAttachment',
+            'deleteUploadedChatAttachments',
+            'sendAllPlaysChatAnswer',
+            'getGenerativeModel',
+            'nativeUploadChatMedia',
+            'nativePostChatMessage'
+        ]);
+        expectContains(chatLogic, [
+            'formatChatMessageHtml',
+            'normalizeChatReactions',
+            'buildChatAudienceMetadata',
+            'collectThreadMedia',
+            'MAX_CHAT_MEDIA_SIZE',
+            'shouldUpdateChatLastRead'
         ]);
     });
 

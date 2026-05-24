@@ -676,6 +676,87 @@ service cloud.firestore {
       return isSignedIn() && (isOwnerOrAdmin || isParentForTeam(teamId));
     }
 
+    function isSocialVisibility(value) {
+      return value in ['household', 'team', 'friends', 'friends_and_team', 'public_profile'];
+    }
+
+    function isSocialPostType(value) {
+      return value in [
+        'game_recap',
+        'player_moment',
+        'team_media',
+        'practice_packet',
+        'upcoming_game',
+        'achievement',
+        'manual_post'
+      ];
+    }
+
+    function canReadSocialTeamPost(data) {
+      return data.get('teamId', '') is string &&
+             data.get('teamId', '') != '' &&
+             canAccessTeamChat(data.get('teamId', ''));
+    }
+
+    function canModerateSocialPost(data) {
+      return isGlobalAdmin() ||
+             (
+               data.get('teamId', '') is string &&
+               data.get('teamId', '') != '' &&
+               isTeamOwnerOrAdmin(data.get('teamId', ''))
+             );
+    }
+
+    function canReadSocialPost(data) {
+      return isSignedIn() &&
+             data.get('hidden', false) != true &&
+             (
+               data.get('authorId', '') == request.auth.uid ||
+               request.auth.uid in data.get('visibleUserIds', []) ||
+               canReadSocialTeamPost(data) ||
+               isGlobalAdmin()
+             );
+    }
+
+    function isSocialPostCreatePayloadValid(data) {
+      return isSignedIn() &&
+             data.get('authorId', '') == request.auth.uid &&
+             data.get('type', '') is string &&
+             isSocialPostType(data.get('type', '')) &&
+             data.get('visibility', '') is string &&
+             isSocialVisibility(data.get('visibility', '')) &&
+             data.get('title', '') is string &&
+             data.get('title', '').size() > 0 &&
+             data.get('visibleUserIds', []) is list &&
+             request.auth.uid in data.get('visibleUserIds', []) &&
+             data.get('teamIds', []) is list &&
+             data.get('playerIds', []) is list &&
+             data.get('playerNames', []) is list &&
+             data.get('media', []) is list &&
+             data.get('hidden', false) == false &&
+             (
+               !(data.get('visibility', '') in ['team', 'friends_and_team']) ||
+               canReadSocialTeamPost(data)
+             );
+    }
+
+    function canAccessFriendship(data) {
+      return isSignedIn() &&
+             data.get('memberIds', []) is list &&
+             request.auth.uid in data.get('memberIds', []);
+    }
+
+    function isFriendshipCreatePayloadValid(data) {
+      return isSignedIn() &&
+             data.get('requesterId', '') == request.auth.uid &&
+             data.get('recipientId', '') is string &&
+             data.get('recipientId', '') != request.auth.uid &&
+             data.get('memberIds', []) is list &&
+             request.auth.uid in data.get('memberIds', []) &&
+             data.get('recipientId', '') in data.get('memberIds', []) &&
+             data.get('status', '') == 'pending';
+    }
+
 
     function canReadTeamMediaFolder(teamId, folderData) {
       return isTeamOwnerOrAdmin(teamId) ||
@@ -869,6 +950,52 @@ service cloud.firestore {
              offerAfter.seatCountConfirmed <= offerAfter.seatCapacity;
     }
 
+    match /socialPosts/{postId} {
+      allow read: if canReadSocialPost(resource.data);
+      allow create: if isSocialPostCreatePayloadValid(request.resource.data);
+      allow update: if isSignedIn() &&
+                    request.resource.data.get('authorId', resource.data.get('authorId', '')) == resource.data.get('authorId', '') &&
+                    (resource.data.get('authorId', '') == request.auth.uid || canModerateSocialPost(resource.data));
+      allow delete: if isSignedIn() &&
+                    (resource.data.get('authorId', '') == request.auth.uid || canModerateSocialPost(resource.data));
+
+      match /comments/{commentId} {
+        allow read: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
+        allow create: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
+                      request.resource.data.get('authorId', '') == request.auth.uid &&
+                      request.resource.data.get('text', '') is string &&
+                      request.resource.data.get('text', '').size() > 0 &&
+                      request.resource.data.get('hidden', false) == false;
+        allow update, delete: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
+                              (resource.data.get('authorId', '') == request.auth.uid || isGlobalAdmin());
+      }
+
+      match /reactions/{userId} {
+        allow read: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
+        allow create, update: if isOwner(userId) &&
+                              canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
+                              request.resource.data.get('userId', userId) == request.auth.uid;
+        allow delete: if isOwner(userId) &&
+                      canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
+      }
+    }
+
+    match /friendships/{friendshipId} {
+      allow read: if canAccessFriendship(resource.data) || isGlobalAdmin();
+      allow create: if isFriendshipCreatePayloadValid(request.resource.data);
+      allow update: if (canAccessFriendship(resource.data) || isGlobalAdmin()) &&
+                    request.resource.data.get('memberIds', []) == resource.data.get('memberIds', []) &&
+                    request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked'];
+      allow delete: if canAccessFriendship(resource.data) || isGlobalAdmin();
+    }
+
+    match /socialReports/{reportId} {
+      allow create: if isSignedIn() &&
+                    request.resource.data.get('reporterId', '') == request.auth.uid &&
+                    request.resource.data.get('postId', '') is string;
+      allow read, update, delete: if isGlobalAdmin();
+    }
+
     // Users collection - users should only write their own profile
     match /users/{userId} {
       allow read: if true;  // Public profiles
@@ -908,6 +1035,14 @@ service cloud.firestore {
 
       match /notificationDevices/{deviceId} {
         allow read, write: if isOwner(userId) || isGlobalAdmin();
+      }
+
+      match /privateAiMessages/{messageId} {
+        allow read, create, update, delete: if isOwner(userId) || isGlobalAdmin();
+      }
+
+      match /privateAiConversations/{conversationId} {
+        allow read, create, update, delete: if isOwner(userId) || isGlobalAdmin();
       }
 
       match /entitlements/{entitlementId} {
