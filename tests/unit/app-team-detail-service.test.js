@@ -28,6 +28,7 @@ describe('React app team detail model', () => {
                 sport: 'Basketball',
                 photoUrl: 'https://img.example.test/team.png',
                 leagueUrl: 'https://league.example.test',
+                bracketUrl: 'https://bracket.example.test/path',
                 standingsConfig: { enabled: true },
                 registrationSource: { provider: 'Sports Connect', externalTeamId: 'EXT-1' }
             },
@@ -57,6 +58,7 @@ describe('React app team detail model', () => {
         });
 
         expect(model.team.photoUrl).toBe('https://img.example.test/team.png');
+        expect(model.team.bracketUrl).toBe('https://bracket.example.test/path');
         expect(model.team.registrationProvider.map((row) => row.value)).toContain('Sports Connect');
         expect(model.players.find((player) => player.id === 'player-1').photoUrl).toBe('https://img.example.test/player.png');
         expect(model.linkedPlayers.map((player) => player.id)).toEqual(['player-1']);
