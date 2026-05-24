@@ -290,6 +290,7 @@
         import { getTeamAccessInfo } from './js/team-access.js';
         import { createAutoSaveController } from './js/game-plan-autosave.js?v=1';
         import { buildGamePlanIntervals } from './js/game-plan-intervals.js?v=1';
+        import { normalizeLineupsForGamePlanPlanner } from './js/game-plan-interop.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -593,10 +594,10 @@
             gamePlan = game.gamePlan
                 ? {
                     ...baseGamePlan,
-                    ...game.gamePlan,
-                    lineups: { ...(game.gamePlan.lineups || {}) }
+                    ...game.gamePlan
                 }
                 : baseGamePlan;
+            gamePlan.lineups = normalizeLineupsForGamePlanPlanner(gamePlan);
 
             recentAssignments.clear();
             intervalsCache = [];

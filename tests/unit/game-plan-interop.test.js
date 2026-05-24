@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { buildRotationPlanFromGamePlan } from '../../js/game-plan-interop.js';
+import {
+  buildRotationPlanFromGamePlan,
+  normalizeLineupsForGamePlanPlanner
+} from '../../js/game-plan-interop.js';
 
 describe('game plan interop helpers', () => {
   it('reads current game-day lineups shape', () => {
@@ -47,6 +50,54 @@ describe('game plan interop helpers', () => {
     expect(plan).toEqual({
       "H1 7'": { keeper: 'p1' },
       "H1 14'": { keeper: 'p2' }
+    });
+  });
+
+  it('maps Game Day half lineup keys into planner interval keys', () => {
+    const lineups = normalizeLineupsForGamePlanPlanner({
+      numPeriods: 2,
+      periodDuration: 25,
+      subTimes: [7, 14, 21],
+      lineups: {
+        'H1-keeper': 'p1',
+        'H2-striker': 'p2'
+      }
+    });
+
+    expect(lineups).toEqual({
+      '1-7-keeper': 'p1',
+      '2-7-striker': 'p2'
+    });
+  });
+
+  it('lets existing planner keys override older Game Day keys for the same cell', () => {
+    const lineups = normalizeLineupsForGamePlanPlanner({
+      numPeriods: 2,
+      periodDuration: 25,
+      subTimes: [7, 14, 21],
+      lineups: {
+        'H1-keeper': 'old-player',
+        '1-7-keeper': 'new-player'
+      }
+    });
+
+    expect(lineups).toEqual({
+      '1-7-keeper': 'new-player'
+    });
+  });
+
+  it('maps saved Game Day substitution labels into matching planner interval keys', () => {
+    const lineups = normalizeLineupsForGamePlanPlanner({
+      numPeriods: 2,
+      periodDuration: 25,
+      subTimes: [7, 14, 21],
+      lineups: {
+        "H1 14'-keeper": 'p2'
+      }
+    });
+
+    expect(lineups).toEqual({
+      '1-14-keeper': 'p2'
     });
   });
 

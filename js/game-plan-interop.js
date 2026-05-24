@@ -1,3 +1,52 @@
+import { buildGamePlanIntervals } from './game-plan-intervals.js';
+
+function parseCurrentShapeKey(key) {
+  const match = /^([HQ])(\d+)(?: (\d+)')?-(.+)$/.exec(key);
+  if (!match) return null;
+  return {
+    periodNum: Number.parseInt(match[2], 10),
+    time: match[3] ? Number.parseInt(match[3], 10) : null,
+    posId: match[4]
+  };
+}
+
+function plannerKeyForCurrentShapeKey(key, intervals) {
+  const parsed = parseCurrentShapeKey(key);
+  if (!parsed || !Number.isFinite(parsed.periodNum)) return null;
+
+  const periodIntervals = intervals.filter(interval => interval.period === parsed.periodNum);
+  if (periodIntervals.length === 0) return null;
+
+  const interval = parsed.time == null
+    ? periodIntervals[0]
+    : periodIntervals.find(candidate => Number(candidate.time) === parsed.time);
+
+  return interval ? `${interval.key}-${parsed.posId}` : null;
+}
+
+export function normalizeLineupsForGamePlanPlanner(gamePlan) {
+  if (!gamePlan?.lineups || typeof gamePlan.lineups !== 'object') return {};
+
+  const intervals = buildGamePlanIntervals(gamePlan);
+  const normalized = {};
+  const legacyAndOtherEntries = [];
+
+  Object.entries(gamePlan.lineups).forEach(([key, playerId]) => {
+    const plannerKey = plannerKeyForCurrentShapeKey(key, intervals);
+    if (plannerKey) {
+      normalized[plannerKey] = playerId;
+    } else {
+      legacyAndOtherEntries.push([key, playerId]);
+    }
+  });
+
+  legacyAndOtherEntries.forEach(([key, playerId]) => {
+    normalized[key] = playerId;
+  });
+
+  return normalized;
+}
+
 export function buildRotationPlanFromGamePlan(gamePlan) {
   if (!gamePlan?.lineups || typeof gamePlan.lineups !== 'object') return {};
   const plan = {};
