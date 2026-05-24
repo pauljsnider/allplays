@@ -60,7 +60,7 @@ describe('team chat conversations', () => {
         expect(db).toContain("where('participantIds', 'array-contains', user.uid)");
         expect(db).toContain("where('participantIds', 'array-contains', `user:${user.uid}`)");
         expect(db).toContain("where('participantIds', 'array-contains', `email:${normalizedEmail}`)");
-        expect(db).toContain("where('participantRoles', 'array-contains', 'team')");
+        expect(db).not.toContain("where('participantRoles', 'array-contains', 'team')");
         expect(rules).not.toContain("'team' in participantRoles");
     });
 });
