@@ -223,6 +223,27 @@ describe('game plan game switching', () => {
         expect(harness.getState().currentGameId).toBe('game-b');
     });
 
+    it('normalizes saved lineup keys through the loadGame harness dependency', async () => {
+        const { harness } = buildHarness();
+
+        await harness.loadGame({
+            id: 'game-a',
+            opponent: 'Sharks',
+            date: '2026-04-04T19:00:00.000Z',
+            gamePlan: {
+                numPeriods: 2,
+                periodDuration: 25,
+                subTimes: [7, 14, 21],
+                formationId: 'soccer-9v9',
+                lineups: { "H1 7'-keeper": 'player-1' }
+            }
+        });
+
+        expect(harness.getState().gamePlan.lineups).toEqual({
+            '1-7-keeper': 'player-1'
+        });
+    });
+
     it('cancels any pending auto-save when switching games', async () => {
         const { harness, deps } = buildHarness();
 
