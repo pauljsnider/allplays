@@ -1558,14 +1558,30 @@
                      // Email was provided - try to send email invite
                      if (result.existingUser) {
                          const codeSection = document.getElementById('existing-user-code-section');
+                         // Always send a notification/invite email even for existing users
+                         let emailSentForExisting = false;
+                         try {
+                             await sendInviteEmail(email, result.code, 'parent', {
+                                 teamName: result.teamName,
+                                 playerName: result.playerName
+                             });
+                             emailSentForExisting = true;
+                         } catch (_emailError) {
+                             console.warn('Could not send notification email to existing parent:', _emailError);
+                         }
                          if (result.autoLinked) {
+                             const noticeMsg = emailSentForExisting
+                                 ? ` A notification email was also sent to ${email}.`
+                                 : '';
                              document.getElementById('invite-existing-message').textContent =
-                                 `${email} already has an ALL PLAYS account, so they were linked to ${currentInvitePlayer.name} automatically.`;
+                                 `${email} already has an ALL PLAYS account, so they were linked to ${currentInvitePlayer.name} automatically.${noticeMsg}`;
                              if (codeSection) codeSection.classList.add('hidden');
                              await loadRoster();
                          } else {
-                             document.getElementById('invite-existing-message').textContent =
-                                 `${email} already has an ALL PLAYS account. Share the code below if automatic linking did not complete.`;
+                             const emailMsg = emailSentForExisting
+                                 ? `An invite email was sent to ${email}. They can also use the code below to confirm their access:`
+                                 : `${email} already has an ALL PLAYS account. Share the code below if automatic linking did not complete.`;
+                             document.getElementById('invite-existing-message').textContent = emailMsg;
                              document.getElementById('existing-user-code').textContent = result.code;
                              if (codeSection) codeSection.classList.remove('hidden');
                          }

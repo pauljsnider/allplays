@@ -49,4 +49,21 @@ describe('parent invite auto-linking', () => {
         expect(source).toContain("codeSection.classList.add('hidden')");
         expect(source).toContain("from './js/db.js?v=32';");
     });
+
+    it('sends a notification email to existing users even when auto-linked', () => {
+        const source = readFileSync(resolve(process.cwd(), 'edit-roster.html'), 'utf8');
+        // Find the existingUser branch in the invite handler
+        const existingUserIdx = source.indexOf('if (result.existingUser)');
+        expect(existingUserIdx).toBeGreaterThanOrEqual(0);
+        const existingUserBlock = source.slice(existingUserIdx, existingUserIdx + 2000);
+        // sendInviteEmail must be called inside the existingUser branch
+        expect(existingUserBlock).toContain('sendInviteEmail(email, result.code');
+        // Email is attempted before the autoLinked branch check
+        expect(existingUserBlock.indexOf('sendInviteEmail')).toBeLessThan(existingUserBlock.indexOf('if (result.autoLinked)'));
+        // Notification message reflects email sent for auto-linked case
+        expect(existingUserBlock).toContain('emailSentForExisting');
+        expect(existingUserBlock).toContain('A notification email was also sent to');
+        // Non-auto-linked message also reflects email
+        expect(existingUserBlock).toContain('An invite email was sent to');
+    });
 });
