@@ -48,8 +48,8 @@ function goalSportProfileStub({ sport }) {
 
 function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, currentTeamId = 'team-123' }) {
     const source = readEditSchedule();
-    const helpersMatch = source.match(/let pendingTrackGameId = null;[\s\S]*?function handleTrackClick\(gameId\) \{[\s\S]*?\n        \}/);
-    const handlersMatch = source.match(/document\.getElementById\('basketball-tracker-cancel'\)[\s\S]*?window\.location\.href = `track-statsheet\.html#teamId=\$\{currentTeamId\}&gameId=\$\{gameId\}`;\n        \}\);/);
+    const helpersMatch = source.match(/let pendingTrackGameId = null;[\s\S]*?function handleTrackClick\(gameId\) \{[\s\S]*?\n\s+\}(?=\n\n\s+function renderDbGame)/);
+    const handlersMatch = source.match(/document\.getElementById\('basketball-tracker-cancel'\)[\s\S]*?window\.location\.href = `track-statsheet\.html#teamId=\$\{currentTeamId\}&gameId=\$\{gameId\}`;[\s\S]*?\}\);/);
     expect(helpersMatch, 'track choice helpers should exist').toBeTruthy();
     expect(handlersMatch, 'track choice click handlers should exist').toBeTruthy();
 
@@ -144,20 +144,19 @@ describe('edit schedule basketball tracker routing', () => {
     });
 
     it('opens the schedule Track chooser for basketball games and preserves team/game routing', () => {
-        const harness = buildTrackChoiceDomHarness({
-            allConfigs: [{ id: 'basketball-config', baseType: 'Basketball' }],
-            currentTeam: { sport: 'Basketball' },
-            gamesCache: {
-                'game-456': { id: 'game-456', statTrackerConfigId: 'basketball-config' }
-            }
-        });
-
         for (const [buttonId, expectedHref] of [
             ['basketball-tracker-standard', 'track.html#teamId=team-123&gameId=game-456'],
             ['basketball-tracker-beta', 'track-basketball.html#teamId=team-123&gameId=game-456'],
             ['basketball-tracker-live', 'live-tracker.html#teamId=team-123&gameId=game-456'],
             ['basketball-tracker-photo', 'track-statsheet.html#teamId=team-123&gameId=game-456']
         ]) {
+            const harness = buildTrackChoiceDomHarness({
+                allConfigs: [{ id: 'basketball-config', baseType: 'Basketball' }],
+                currentTeam: { sport: 'Basketball' },
+                gamesCache: {
+                    'game-456': { id: 'game-456', statTrackerConfigId: 'basketball-config' }
+                }
+            });
             harness.handleTrackClick('game-456');
             expect(harness.isHidden('basketball-tracker-modal')).toBe(false);
             expect(harness.isHidden('basketball-tracker-beta')).toBe(false);
