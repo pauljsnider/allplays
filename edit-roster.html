@@ -2147,7 +2147,7 @@ EXAMPLES:
                             </div>
                         </div>
                     `;
-                } else if (op.action === 'delete') {
+                } else if (op.action === 'delete' || op.action === 'deactivate') {
                     return `
                         <div class="border border-red-300 bg-red-50 rounded-lg p-3" data-index="${index}">
                             <div class="flex justify-between items-start gap-2">
@@ -2156,6 +2156,22 @@ EXAMPLES:
                                     <div class="text-sm">
                                         Player ID: ${op.playerId}<br>
                                         <span class="text-xs text-gray-600">${op.reason || 'Deactivate from active roster (preserve history)'}</span>
+                                    </div>
+                                </div>
+                                <button onclick="removePlayerOperation(${index})"
+                                    class="text-gray-600 hover:text-gray-800 text-sm font-bold">✕</button>
+                            </div>
+                        </div>
+                    `;
+                } else if (op.action === 'reactivate') {
+                    return `
+                        <div class="border border-emerald-300 bg-emerald-50 rounded-lg p-3" data-index="${index}">
+                            <div class="flex justify-between items-start gap-2">
+                                <div class="flex-1">
+                                    <div class="text-xs font-bold text-emerald-700 uppercase mb-1">▶️ Reactivate</div>
+                                    <div class="text-sm">
+                                        Player ID: ${op.playerId}<br>
+                                        <span class="text-xs text-gray-600">${op.reason || 'Reactivate to active roster'}</span>
                                     </div>
                                 </div>
                                 <button onclick="removePlayerOperation(${index})"
