@@ -458,9 +458,15 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Invites' }).click();
     await expect(page.getByText('Invite codes')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show 1 more' })).toBeVisible();
-    await page.getByPlaceholder('coach@example.com').fill('newcoach@example.com');
-    await page.getByRole('button', { name: 'Generate code' }).click();
+    await expect(page.getByText('Advanced: add recipient label')).toBeVisible();
+    await page.getByRole('button', { name: 'Generate invite link' }).click();
+    await expect(page.getByText('Generated invite link')).toBeVisible();
+    const copyInviteLink = page.getByRole('button', { name: 'Copy invite link' });
+    await expect(copyInviteLink).toBeVisible();
+    await expect(copyInviteLink).toHaveClass(/primary-button/);
+    await expect(page.getByText('Fallback code')).toBeVisible();
     await expect(page.getByText('NEWMVP42')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Copy code' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Security' }).click();
     await expect(page.getByText('Email not verified')).toBeVisible();
@@ -485,6 +491,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     }))).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
         push: 1,
+        accessCodes: [{ userId: 'user-1', email: '', phone: '' }],
         password: ['new-password'],
         reset: ['parent@example.com'],
         signOut: 1
