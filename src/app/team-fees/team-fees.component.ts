@@ -20,7 +20,7 @@ interface TeamFee {
 })
 export class TeamFeesComponent implements OnInit {
   teamFees: TeamFee[] = []; // Populate this from data service
-  isLoadingPayment: boolean = false;
+  pendingPaymentFeeId: string | null = null;
   paymentErrorMessage: string | null = null;
 
   constructor(private stripeService: StripeService) { }
@@ -35,18 +35,22 @@ export class TeamFeesComponent implements OnInit {
     ];
   }
 
-  async handlePayFee(teamId: string, batchId: string, recipientId: string): Promise<void> {
-    this.isLoadingPayment = true;
+  isPaymentLoading(feeId: string): boolean {
+    return this.pendingPaymentFeeId === feeId;
+  }
+
+  async handlePayFee(fee: TeamFee): Promise<void> {
+    this.pendingPaymentFeeId = fee.id;
     this.paymentErrorMessage = null; // Clear previous errors
 
     try {
-      const checkoutUrl = await this.stripeService.initiateTeamFeeCheckout(teamId, batchId, recipientId);
+      const checkoutUrl = await this.stripeService.initiateTeamFeeCheckout(fee.teamId, fee.batchId, fee.recipientId);
       window.location.href = checkoutUrl; // Redirect to Stripe
     } catch (error) {
       console.error('Failed to initiate payment:', error);
       this.paymentErrorMessage = 'Failed to initiate payment. Please try again.';
     } finally {
-      this.isLoadingPayment = false;
+      this.pendingPaymentFeeId = null;
     }
   }
 }
