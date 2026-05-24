@@ -18,3 +18,21 @@ export async function initiateStripeCheckout(params) {
         throw error;
     }
 }
+
+export async function initiateTeamFeeCheckout(params) {
+    try {
+        const functions = getFunctions();
+        const createCheckoutSession = httpsCallable(functions, 'createStripeTeamFeeCheckout');
+        const result = await createCheckoutSession(params);
+
+        if (result && result.data && result.data.checkoutUrl) {
+            return result.data.checkoutUrl;
+        }
+
+        console.error('StripeService: Invalid response from createStripeTeamFeeCheckout', result);
+        throw new Error('Failed to get Stripe checkout URL.');
+    } catch (error) {
+        console.error('StripeService: Error calling createStripeTeamFeeCheckout:', error);
+        throw error;
+    }
+}

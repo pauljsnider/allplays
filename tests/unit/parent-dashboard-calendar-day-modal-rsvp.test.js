@@ -120,7 +120,8 @@ const Blob = deps.Blob;
         .replace("import { mergeAssignmentsWithClaims } from './js/snack-helpers.js?v=1';", 'const { mergeAssignmentsWithClaims } = deps.snackHelpers;')
         .replace("import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';", 'const { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } = deps.parentDashboardRideshareControls;')
         .replace("import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';", 'const { applyRsvpHydration } = deps.rsvpHydration;')
-        .replace(/import\s*\{\s*renderParentTeamFees\s*\}\s*from '\.\/js\/parent-dashboard-fees\.js\?v=\d+';/, 'const { renderParentTeamFees } = deps.parentDashboardFees;')
+        .replace(/import\s*\{[\s\S]*?\}\s*from '\.\/js\/parent-dashboard-fees\.js\?v=\d+';/, 'const { handleParentTeamFeeCheckoutClick, renderParentTeamFees } = deps.parentDashboardFees;')
+        .replace(/import\s*\{\s*initiateTeamFeeCheckout\s*\}\s*from '\.\/js\/stripe-service\.js\?v=\d+';/, 'const { initiateTeamFeeCheckout } = deps.stripeService;')
         .replace("import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';", 'const { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;')
         .replace(/import\s*\{\s*renderFamilyPlanSection\s*\}\s*from '\.\/js\/family-plan\.js\?v=\d+';/, 'const { renderFamilyPlanSection } = deps.familyPlan;')
         .replace(/\binit\(\);\s*$/, `
@@ -304,7 +305,11 @@ function createDeps(submitRecorder) {
             }
         },
         parentDashboardFees: {
+            async handleParentTeamFeeCheckoutClick() {},
             renderParentTeamFees() { return ''; }
+        },
+        stripeService: {
+            async initiateTeamFeeCheckout() {}
         },
         rsvpHydration: {
             applyRsvpHydration(allEvents, teamId, gameId, hydration) {

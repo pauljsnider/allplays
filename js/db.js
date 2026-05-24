@@ -4748,8 +4748,7 @@ export async function getChatConversations(teamId, user = null, { team = null, c
             ] : []),
             ...(normalizedEmail ? [
                 query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'))
-            ] : []),
-            query(conversationsRef, where('participantRoles', 'array-contains', 'team'), orderBy('updatedAt', 'desc'))
+            ] : [])
         ];
     const snapshots = participantQueries.length > 0
         ? await Promise.all(participantQueries.map((conversationQuery) => getDocs(conversationQuery)))

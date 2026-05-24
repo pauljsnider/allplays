@@ -52,8 +52,8 @@ function getFeeBalanceCents(fee) {
 
     const totalCents = getFeeTotalCents(fee);
     const paidCents = getFeePaidCents(fee);
-    if (totalCents === undefined || paidCents === undefined) return undefined;
-    return Math.max(0, Number(totalCents) - Number(paidCents));
+    if (totalCents === undefined) return undefined;
+    return Math.max(0, Number(totalCents) - Number(paidCents || 0));
 }
 
 function getFeeTotalCents(fee) {
@@ -68,18 +68,26 @@ function getFeeCheckoutUrl(fee) {
     return getFirstDefined(fee?.checkoutUrl, fee?.checkoutURL, fee?.paymentLink, fee?.paymentLinkUrl, fee?.paymentUrl);
 }
 
+function getFeeRecipientId(fee) {
+    return getFirstDefined(fee?.recipientId, fee?.feeRecipientId, fee?.id, fee?.playerId, fee?.childId);
+}
+
 function getFeeLedgerEntries(fee) {
     const rawEntries = getFirstDefined(fee?.ledgerEntries, fee?.paymentLedger, fee?.activity, fee?.receipts, fee?.payments, fee?.adjustments);
     return Array.isArray(rawEntries) ? rawEntries.filter(Boolean) : [];
 }
 
 function isPayActionAllowed(fee) {
-    if (!fee?.checkoutUrl) return false;
     if (fee.status === 'paid' || fee.status === 'canceled') return false;
 
     const balanceCents = Number(fee.balanceDueCents);
-    if (Number.isFinite(balanceCents)) return balanceCents > 0;
+    if (!Number.isFinite(balanceCents) || balanceCents <= 0) return false;
+
     return fee.status === 'unpaid' || fee.status === 'partial' || fee.status === 'partially_paid';
+}
+
+function canInitiateCheckout(fee) {
+    return isPayActionAllowed(fee) && !fee.checkoutUrl && fee.teamId && fee.batchId && fee.recipientId;
 }
 
 function formatCents(value) {
@@ -318,7 +326,10 @@ export function normalizeParentFeeRecord(fee) {
         totalAmountCents: getFeeTotalCents(fee),
         paidAmountCents: getFeePaidCents(fee),
         balanceDueCents: getFeeBalanceCents(fee),
-        checkoutUrl: getFeeCheckoutUrl(fee)
+        checkoutUrl: getFeeCheckoutUrl(fee),
+        teamId: fee?.teamId || '',
+        batchId: fee?.batchId || fee?.feeBatchId || '',
+        recipientId: getFeeRecipientId(fee) || ''
     };
 }
 
@@ -355,12 +366,14 @@ export function renderParentTeamFees(fees) {
         const lineItems = renderInvoiceLineItems(fee);
         const installmentSchedule = renderInstallmentSchedule(fee);
         const receiptActivity = renderReceiptActivity(fee);
-        const payLink = isPayActionAllowed(fee)
-            ? `<a class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700" href="${escapeHtml(fee.checkoutUrl)}">Pay</a>`
-            : '';
+        const payAction = fee.checkoutUrl && isPayActionAllowed(fee)
+            ? `<a class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700" href="${escapeHtml(fee.checkoutUrl)}">Pay online</a>`
+            : canInitiateCheckout(fee)
+                ? `<button type="button" data-team-fee-checkout="true" data-team-id="${escapeHtml(fee.teamId)}" data-batch-id="${escapeHtml(fee.batchId)}" data-recipient-id="${escapeHtml(fee.recipientId)}" class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70">Pay online</button>`
+                : '';
 
         return `
-            <div class="rounded-xl border border-gray-200 border-l-4 ${meta.accentClass} bg-white p-4 shadow-sm">
+            <div class="team-fee-card rounded-xl border border-gray-200 border-l-4 ${meta.accentClass} bg-white p-4 shadow-sm">
                 <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div>
                         <h3 class="font-bold text-gray-900">${escapeHtml(fee.title)}</h3>
@@ -371,9 +384,10 @@ export function renderParentTeamFees(fees) {
                     </div>
                     <div class="flex flex-col sm:items-end gap-2">
                         <span class="self-start sm:self-end inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold ${meta.badgeClass}">${meta.label}</span>
-                        ${payLink}
+                        ${payAction}
                     </div>
                 </div>
+                <p data-team-fee-checkout-error class="hidden mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"></p>
                 <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                     <div class="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
                         <div class="text-xs uppercase tracking-wide text-gray-500 font-semibold">Total amount</div>
@@ -399,4 +413,47 @@ export function renderParentTeamFees(fees) {
             </div>
         `;
     }).join('');
+}
+
+export async function handleParentTeamFeeCheckoutClick(event, options = {}) {
+    const button = event?.target?.closest?.('[data-team-fee-checkout="true"]');
+    if (!button) return false;
+
+    const { teamId, batchId, recipientId } = button.dataset || {};
+    const card = button.closest?.('.team-fee-card');
+    const errorEl = card?.querySelector?.('[data-team-fee-checkout-error]');
+    const initiateCheckout = options.initiateCheckout;
+    const locationTarget = options.locationTarget || window.location;
+    const originalText = button.textContent;
+
+    if (typeof initiateCheckout !== 'function') {
+        throw new Error('Team fee checkout handler is not configured.');
+    }
+
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.classList.add('hidden');
+    }
+
+    button.disabled = true;
+    button.textContent = 'Opening checkout...';
+
+    try {
+        const checkoutUrl = await initiateCheckout({ teamId, batchId, recipientId });
+        if (!checkoutUrl) throw new Error('No checkout URL was returned.');
+        if (typeof locationTarget.assign === 'function') {
+            locationTarget.assign(checkoutUrl);
+        } else {
+            locationTarget.href = checkoutUrl;
+        }
+    } catch (error) {
+        if (errorEl) {
+            errorEl.textContent = error?.message || 'Unable to start checkout. Please try again.';
+            errorEl.classList.remove('hidden');
+        }
+        button.disabled = false;
+        button.textContent = originalText;
+    }
+
+    return true;
 }
