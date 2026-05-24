@@ -69,7 +69,7 @@ export function applyPracticeRecurrenceFields({
 
     if (editingPracticeId) {
         RECURRENCE_FIELD_KEYS.forEach((fieldName) => {
-            practiceData[fieldName] = deleteField();
+            delete practiceData[fieldName];
         });
     }
 

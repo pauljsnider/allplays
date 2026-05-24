@@ -27,14 +27,14 @@ describe('edit schedule practice recurrence payload', () => {
         expect(result).toMatchObject({
             title: 'Practice'
         });
-        expect(result.isSeriesMaster).toBe(deleteSentinel);
-        expect(result.recurrence).toBe(deleteSentinel);
-        expect(result.seriesId).toBe(deleteSentinel);
-        expect(result.startTime).toBe(deleteSentinel);
-        expect(result.endTime).toBe(deleteSentinel);
-        expect(result.endDayOffset).toBe(deleteSentinel);
-        expect(result.exDates).toBe(deleteSentinel);
-        expect(result.overrides).toBe(deleteSentinel);
+        expect(result.isSeriesMaster).toBeUndefined();
+        expect(result.recurrence).toBeUndefined();
+        expect(result.seriesId).toBeUndefined();
+        expect(result.startTime).toBeUndefined();
+        expect(result.endTime).toBeUndefined();
+        expect(result.endDayOffset).toBeUndefined();
+        expect(result.exDates).toBeUndefined();
+        expect(result.overrides).toBeUndefined();
     });
 
     it('preserves recurring series metadata when recurrence remains enabled', () => {
