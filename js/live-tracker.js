@@ -2774,6 +2774,8 @@ function autoFillStarters() {
   renderLineup();
   renderLive();
   updateSubsButton();
+  persistLocalTrackerState();
+  broadcastLineupUpdate('Lineup auto-filled');
 }
 
 function playerName(id) {

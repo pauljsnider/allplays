@@ -1,188 +1,2050 @@
-import { Link, useParams } from 'react-router-dom';
-import { useEffect, useState } from 'react';
-import { Bot, ChevronLeft, ChevronRight, Edit3, MessageCircle, MoreHorizontal, Paperclip, Send, ShieldCheck, Smile, Trash2 } from 'lucide-react';
-import { mockMessages, mockTeams } from '../data/mockData';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import {
+  Archive,
+  Bot,
+  Camera,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  Copy,
+  Download,
+  Edit3,
+  ImageIcon,
+  Link2,
+  Loader2,
+  MessageCircle,
+  Mic,
+  MoreVertical,
+  Paperclip,
+  RefreshCw,
+  Search,
+  Send,
+  Share2,
+  ShieldCheck,
+  Smile,
+  Trash2,
+  Users,
+  Video,
+  X
+} from 'lucide-react';
+import {
+  deleteTeamChatMessage,
+  editTeamChatMessage,
+  ensureStaffChatConversation,
+  getChatInboxPreview,
+  loadChatConversations,
+  loadChatInbox,
+  loadChatRecipientOptions,
+  loadChatTeamContext,
+  loadOlderTeamChatMessages,
+  markTeamChatRead,
+  sendAllPlaysChatAnswer,
+  sendTeamChatMessage,
+  subscribeToTeamChatMessages,
+  toggleTeamChatReaction,
+  type ChatConversation,
+  type ChatMessage,
+  type ChatTeam
+} from '../lib/chatService';
+import {
+  DEFAULT_TEAM_CONVERSATION_ID,
+  MAX_CHAT_MEDIA_SIZE,
+  buildChatAudienceMetadata,
+  buildChatMediaShareDetails,
+  chatReactions,
+  collectThreadMedia,
+  extractAllPlaysQuestion,
+  formatChatDay,
+  formatChatMessageHtml,
+  formatChatTime,
+  formatInboxTime,
+  getAudienceSummaryText,
+  getChatMediaDownloadName,
+  getConversationDisplayName,
+  getMessageAttachments,
+  getMessageSenderLabel,
+  getReactionNames,
+  getSortedChatMessages,
+  hasAllPlaysMention,
+  isChatComposerLinkSafe,
+  isDefaultTeamConversation,
+  isStaffConversation,
+  isSafeChatMediaUrl,
+  mergeChatMessageLists,
+  normalizeChatReactions,
+  shouldRetryChatLastReadOnViewReturn,
+  shouldUpdateChatLastRead,
+  type ChatRecipientOption,
+  type ChatTargetType
+} from '../lib/chatLogic';
+import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
+import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
+
+type StatusTone = 'neutral' | 'success' | 'error';
+
+type ChatStatus = {
+  tone: StatusTone;
+  message: string;
+};
+
+type FilePreview = {
+  file: File;
+  url: string;
+};
+
+const allTargetOptions: Array<{ value: ChatTargetType; label: string; description: string }> = [
+  { value: 'full_team', label: 'Full team', description: 'Visible to everyone in this team chat.' },
+  { value: 'staff', label: 'Staff only', description: 'Moves this into a staff conversation.' },
+  { value: 'individuals', label: 'Selected members', description: 'Starts a direct or group conversation.' }
+];
 
 export function Messages({ auth }: { auth: AuthState }) {
   const { teamId } = useParams();
   const { isDesktopWeb } = useShellLayout();
-  const activeTeam = teamId ? mockTeams.find((team) => team.id === teamId) : undefined;
+  const [teams, setTeams] = useState<ChatTeam[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+
+  const refreshInbox = async () => {
+    if (!auth.user) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await loadChatInbox(auth.user);
+      setTeams(result.teams);
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load messages.');
+      setTeams([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshInbox();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user?.uid]);
+
+  const filteredTeams = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return teams;
+    return teams.filter((team) => [
+      team.name,
+      team.sport,
+      getChatInboxPreview(team.lastMessage)
+    ].join(' ').toLowerCase().includes(normalized));
+  }, [query, teams]);
+
+  const activeTeamId = teamId || (isDesktopWeb ? filteredTeams[0]?.id : undefined);
 
   if (isDesktopWeb) {
-    return <DesktopMessages auth={auth} activeTeamId={activeTeam?.id} />;
+    return (
+      <div className="messages-page messages-page-web">
+        <MessagesHeader teams={teams} loading={loading} onRefresh={refreshInbox} />
+        <section className="messages-two-pane mt-4">
+          <aside className="messages-list-pane">
+            <InboxSearch query={query} onChange={setQuery} />
+            <div className="messages-list-scroll">
+              <InboxList teams={filteredTeams} loading={loading} error={error} activeTeamId={activeTeamId || ''} compact />
+            </div>
+          </aside>
+          <div className="messages-chat-pane min-w-0">
+            {activeTeamId ? (
+              <ChatWindow auth={auth} teamId={activeTeamId} inboxTeam={teams.find((team) => team.id === activeTeamId)} embedded />
+            ) : (
+              <EmptyChatSelection />
+            )}
+          </div>
+        </section>
+      </div>
+    );
   }
 
-  if (activeTeam) {
-    return <ChatWindow auth={auth} teamId={activeTeam.id} teamName={activeTeam.name} />;
+  if (activeTeamId) {
+    return <ChatWindow auth={auth} teamId={activeTeamId} inboxTeam={teams.find((team) => team.id === activeTeamId)} />;
   }
 
   return (
     <div className="messages-page space-y-4">
-      <MessagesHeader />
-      <MessageList />
+      <MessagesHeader teams={teams} loading={loading} onRefresh={refreshInbox} />
+      <InboxSearch query={query} onChange={setQuery} />
+      <InboxList teams={filteredTeams} loading={loading} error={error} activeTeamId="" />
     </div>
   );
 }
 
-function DesktopMessages({ auth, activeTeamId }: { auth: AuthState; activeTeamId?: string }) {
-  const selectedTeam = activeTeamId ? mockTeams.find((team) => team.id === activeTeamId) : mockTeams[0];
+function MessagesHeader({ teams, loading, onRefresh }: { teams: ChatTeam[]; loading: boolean; onRefresh: () => void }) {
+  const unread = teams.reduce((total, team) => total + team.unreadCount, 0);
+  const staffTeams = teams.filter((team) => team.canModerate).length;
 
   return (
-    <div className="messages-page messages-page-web space-y-4">
-      <MessagesHeader />
-      <section className="messages-two-pane">
-        <div className="messages-list-pane">
-          <MessageList activeTeamId={selectedTeam?.id} compact />
-        </div>
+    <section className="messages-header app-card p-3 sm:p-4">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          {selectedTeam ? (
-            <ChatWindow auth={auth} teamId={selectedTeam.id} teamName={selectedTeam.name} embedded />
-          ) : (
-            <div className="app-card p-6 text-sm font-semibold text-gray-600">Select a team chat.</div>
-          )}
+          <div className="app-label">Messages</div>
+          <h1 className="mt-1 text-xl font-black text-gray-950 sm:text-2xl">Team chats</h1>
+          <div className="mt-1 text-xs font-bold text-gray-500 sm:text-sm">
+            {teams.length} team{teams.length === 1 ? '' : 's'} · {unread} unread · {staffTeams} staff
+          </div>
         </div>
-      </section>
-    </div>
-  );
-}
-
-function MessagesHeader() {
-  return (
-    <section className="messages-header app-card p-4">
-      <div className="app-label">Messages</div>
-      <h1 className="mt-1 text-2xl font-black text-gray-950">Team chats</h1>
-      <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
-        Opens directly to team conversations, unread state, and a simple reply path. Advanced tools stay attached to the message they affect.
-      </p>
+        <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={onRefresh} aria-label="Refresh messages">
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+        </button>
+      </div>
     </section>
   );
 }
 
-function MessageList({ activeTeamId = '', compact = false }: { activeTeamId?: string; compact?: boolean }) {
+function InboxSearch({ query, onChange }: { query: string; onChange: (value: string) => void }) {
+  return (
+    <label className="app-card flex min-h-11 w-full min-w-0 items-center gap-2 px-3">
+      <Search className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+      <span className="sr-only">Search messages</span>
+      <input
+        value={query}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-w-0 flex-1 border-0 bg-transparent text-base font-semibold text-gray-900 outline-none placeholder:text-gray-400"
+        placeholder="Search team chats"
+      />
+    </label>
+  );
+}
+
+function InboxList({
+  teams,
+  loading,
+  error,
+  activeTeamId,
+  compact = false
+}: {
+  teams: ChatTeam[];
+  loading: boolean;
+  error: string | null;
+  activeTeamId: string;
+  compact?: boolean;
+}) {
+  if (loading) {
+    return (
+      <section className="app-card flex min-h-44 items-center justify-center p-5 text-sm font-bold text-gray-500">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+        Loading team chats...
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="app-card p-5 text-sm font-bold text-rose-700">
+        {error}
+      </section>
+    );
+  }
+
+  if (!teams.length) {
+    return (
+      <section className="app-card p-6 text-center">
+        <MessageCircle className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
+        <div className="mt-3 text-base font-black text-gray-950">No team chats yet</div>
+        <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">Join or create a team to start messaging.</div>
+      </section>
+    );
+  }
+
   return (
     <section className={compact ? 'space-y-2' : 'space-y-3'}>
-      {mockMessages.map((message) => {
-        const active = activeTeamId === message.teamId;
-        return (
-          <Link
-            key={message.teamId}
-            to={`/messages/${message.teamId}`}
-            className={`app-card flex items-center gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${
-              active ? '!border-primary-200 bg-primary-50/40' : ''
-            }`}
-          >
-            <div className="relative flex h-12 w-12 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-              <MessageCircle className="h-6 w-6" aria-hidden="true" />
-              {message.unreadCount ? (
-                <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-black text-white">
-                  {message.unreadCount}
-                </span>
-              ) : null}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <div className="truncate text-base font-black text-gray-950">{message.teamName}</div>
-                <div className="flex-none text-xs font-bold text-gray-500">{message.timeLabel}</div>
-              </div>
-              <div className="mt-1 truncate text-sm font-semibold text-gray-600">
-                <span className="font-black text-gray-700">{message.senderName}:</span> {message.lastMessage}
-              </div>
-            </div>
-            <ChevronRight className="h-5 w-5 flex-none text-gray-400" aria-hidden="true" />
-          </Link>
-        );
-      })}
+      {teams.map((team) => (
+        <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} />
+      ))}
     </section>
   );
 }
 
-function ChatWindow({ auth, teamId, teamName, embedded = false }: { auth: AuthState; teamId: string; teamName: string; embedded?: boolean }) {
-  const [activeMessageActionsId, setActiveMessageActionsId] = useState<string | null>(null);
-  const preview = mockMessages.find((message) => message.teamId === teamId);
-
-  useEffect(() => {
-    setActiveMessageActionsId(null);
-  }, [teamId]);
-
-  const messages = [
-    { id: '1', sender: 'Coach Jamie', body: preview?.lastMessage || 'Welcome to the team chat.', time: '8:12 AM', mine: false },
-    { id: '2', sender: auth.user?.displayName || 'Me', body: 'We can help with snacks and scorebook.', time: '8:18 AM', mine: true },
-    { id: '3', sender: 'ALL PLAYS AI', body: '@assistant can summarize missing RSVPs when the live integration is connected.', time: '8:21 AM', mine: false }
-  ];
+function InboxRow({ team, active, compact }: { team: ChatTeam; active: boolean; compact: boolean }) {
+  const preview = getChatInboxPreview(team.lastMessage);
+  const timeLabel = formatInboxTime(team.lastMessage?.createdAt);
 
   return (
-    <div className={`chat-window space-y-4 ${embedded ? 'chat-window-embedded' : ''}`}>
-      <section className={`${embedded ? '' : 'sticky top-[69px] z-20'} rounded-2xl border border-gray-200 bg-white p-3 shadow-app`}>
-        <div className="flex items-center gap-3">
-          <Link to="/messages" className={`ghost-button !h-10 !min-h-10 !w-10 !p-0 ${embedded ? 'hidden' : ''}`} aria-label="Back to messages">
-            <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-          </Link>
+    <Link
+      to={`/messages/${team.id}`}
+      className={`message-row app-card flex items-center gap-3 p-3 transition hover:border-primary-200 hover:shadow-app-lg ${
+        active ? '!border-primary-200 bg-primary-50/50' : ''
+      }`}
+    >
+      <TeamAvatar team={team} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <div className="truncate text-sm font-black text-gray-950 sm:text-base">{team.name}</div>
+          <div className="flex-none text-[11px] font-bold text-gray-500">{timeLabel}</div>
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span className={`inline-flex flex-none items-center rounded-full border px-1.5 py-0.5 text-[10px] font-black uppercase ${
+            team.canModerate ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-gray-200 bg-gray-50 text-gray-600'
+          }`}>
+            {team.role}
+          </span>
+          <div className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-600 sm:text-sm">{preview}</div>
+        </div>
+      </div>
+      {team.unreadCount > 0 ? (
+        <span className="flex h-6 min-w-6 flex-none items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white">
+          {team.unreadCount > 99 ? '99+' : team.unreadCount}
+        </span>
+      ) : compact ? null : (
+        <ChevronDown className="-rotate-90 h-5 w-5 flex-none text-gray-300" aria-hidden="true" />
+      )}
+    </Link>
+  );
+}
+
+function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
+  return (
+    <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
+      {team.photoUrl ? (
+        <img src={team.photoUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
+      )}
+      {team.unreadCount > 0 ? <span className="absolute right-1 top-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-rose-600" /> : null}
+    </div>
+  );
+}
+
+function EmptyChatSelection() {
+  return (
+    <section className="app-card flex min-h-[520px] items-center justify-center p-6 text-center">
+      <div>
+        <MessageCircle className="mx-auto h-12 w-12 text-gray-300" aria-hidden="true" />
+        <div className="mt-3 text-lg font-black text-gray-950">Select a team chat</div>
+        <div className="mt-1 text-sm font-semibold text-gray-500">Messages, media, reactions, and staff targeting open here.</div>
+      </div>
+    </section>
+  );
+}
+
+function ChatWindow({
+  auth,
+  teamId,
+  inboxTeam,
+  embedded = false
+}: {
+  auth: AuthState;
+  teamId: string;
+  inboxTeam?: ChatTeam;
+  embedded?: boolean;
+}) {
+  const navigate = useNavigate();
+  const { isDesktopWeb } = useShellLayout();
+  const [team, setTeam] = useState<Record<string, any> | null>(inboxTeam || null);
+  const [profile, setProfile] = useState<Record<string, any>>({});
+  const [canModerate, setCanModerate] = useState(inboxTeam?.canModerate || false);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState(DEFAULT_TEAM_CONVERSATION_ID);
+  const [recipientOptions, setRecipientOptions] = useState<ChatRecipientOption[]>([]);
+  const [selectedRecipientTarget, setSelectedRecipientTarget] = useState<ChatTargetType>('full_team');
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
+  const [liveMessages, setLiveMessages] = useState<ChatMessage[]>([]);
+  const [olderMessages, setOlderMessages] = useState<ChatMessage[]>([]);
+  const [liveOldestDoc, setLiveOldestDoc] = useState<unknown | null>(null);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingContext, setLoadingContext] = useState(true);
+  const [loadingMessages, setLoadingMessages] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<ChatStatus | null>(null);
+  const [composerNotice, setComposerNotice] = useState('');
+  const [text, setText] = useState('');
+  const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
+  const [sending, setSending] = useState(false);
+  const [aiThinking, setAiThinking] = useState(false);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(() => voiceRecognition.isNativeRuntime() || voiceRecognition.hasBrowserSupport());
+  const [showConversationSheet, setShowConversationSheet] = useState(false);
+  const [showAudienceSheet, setShowAudienceSheet] = useState(false);
+  const [showMediaGallery, setShowMediaGallery] = useState(false);
+  const [showAttachSheet, setShowAttachSheet] = useState(false);
+  const [showLinkSheet, setShowLinkSheet] = useState(false);
+  const [linkDraft, setLinkDraft] = useState('');
+  const [reactionMessageId, setReactionMessageId] = useState('');
+  const [actionMessageId, setActionMessageId] = useState('');
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [editText, setEditText] = useState('');
+  const messagesRef = useRef<HTMLDivElement | null>(null);
+  const messagesContentRef = useRef<HTMLDivElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const voiceListenerHandlesRef = useRef<VoiceListenerHandle[]>([]);
+  const voiceBaseTextRef = useRef('');
+  const voicePartialRef = useRef('');
+  const nativeVoiceListeningRef = useRef(false);
+  const voiceStopRequestedRef = useRef(false);
+  const initialSnapshotLoadedRef = useRef(false);
+  const pendingScrollRef = useRef(false);
+  const stickToLatestRef = useRef(true);
+  const programmaticScrollRef = useRef(false);
+  const mountedRef = useRef(true);
+  const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
+  const selectedConversation = useMemo(() => (
+    conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null
+  ), [conversations, selectedConversationId]);
+  const audienceMetadata = useMemo(() => buildChatAudienceMetadata({
+    selectedConversation,
+    selectedConversationId,
+    selectedRecipientTarget,
+    selectedRecipientIds
+  }), [selectedConversation, selectedConversationId, selectedRecipientIds, selectedRecipientTarget]);
+  const audienceSummary = useMemo(() => getAudienceSummaryText(audienceMetadata, recipientOptions), [audienceMetadata, recipientOptions]);
+  const mediaEntries = useMemo(() => collectThreadMedia(messages), [messages]);
+  const teamName = team?.name || inboxTeam?.name || 'Team chat';
+
+  const setVoiceDraftTranscript = useCallback((transcript: string) => {
+    const normalizedTranscript = String(transcript || '').trim();
+    if (!normalizedTranscript) return;
+    voicePartialRef.current = normalizedTranscript;
+    const baseText = voiceBaseTextRef.current.trim();
+    setText(`${baseText}${baseText ? ' ' : ''}${normalizedTranscript}`);
+  }, []);
+
+  const removeNativeVoiceListeners = useCallback(async () => {
+    const handles = voiceListenerHandlesRef.current.splice(0);
+    await Promise.all(handles.map((handle) => handle.remove().catch(() => undefined)));
+  }, []);
+
+  const finishNativeVoiceCapture = useCallback(async () => {
+    try {
+      const lastPartial = await voiceRecognition.getLastPartialResult().catch(() => null);
+      const finalTranscript = lastPartial?.text || lastPartial?.matches?.[0] || voicePartialRef.current;
+      if (finalTranscript) {
+        setVoiceDraftTranscript(finalTranscript);
+      }
+    } finally {
+      await removeNativeVoiceListeners();
+      nativeVoiceListeningRef.current = false;
+      voiceStopRequestedRef.current = false;
+      voiceBaseTextRef.current = '';
+      voicePartialRef.current = '';
+      setVoiceListening(false);
+      setComposerNotice((current) => current === 'Listening...' ? '' : current);
+    }
+  }, [removeNativeVoiceListeners, setVoiceDraftTranscript]);
+
+  const scrollToLatest = useCallback((behavior: ScrollBehavior = 'auto') => {
+    if (!mountedRef.current) return;
+    const container = messagesRef.current;
+    if (!container) return;
+
+    programmaticScrollRef.current = true;
+    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    messagesEndRef.current?.scrollIntoView({ block: 'end', behavior });
+    stickToLatestRef.current = true;
+    setShowJumpToLatest(false);
+    window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+    }, 80);
+  }, []);
+
+  const scheduleScrollToLatest = useCallback((behavior: ScrollBehavior = 'auto') => {
+    window.requestAnimationFrame(() => {
+      scrollToLatest(behavior);
+      window.requestAnimationFrame(() => scrollToLatest(behavior));
+      window.setTimeout(() => scrollToLatest(behavior), 120);
+      window.setTimeout(() => scrollToLatest(behavior), 300);
+      window.setTimeout(() => scrollToLatest(behavior), 700);
+    });
+  }, [scrollToLatest]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadContext() {
+      if (!auth.user) return;
+      setLoadingContext(true);
+      setError(null);
+      setStatus(null);
+      setSelectedConversationId(DEFAULT_TEAM_CONVERSATION_ID);
+      setOlderMessages([]);
+      setLiveMessages([]);
+      initialSnapshotLoadedRef.current = false;
+      pendingScrollRef.current = true;
+      stickToLatestRef.current = true;
+      setShowJumpToLatest(false);
+
+      try {
+        const context = await loadChatTeamContext(teamId, auth.user);
+        if (cancelled) return;
+        setTeam(context.team);
+        setProfile(context.profile);
+        setCanModerate(context.canModerate);
+        const loadedConversations = await loadChatConversations(teamId, auth.user, context.team, context.canModerate);
+        if (cancelled) return;
+        setConversations(loadedConversations);
+        setSelectedConversationId((current: string) => (
+          loadedConversations.some((conversation) => conversation.id === current)
+            ? current
+            : DEFAULT_TEAM_CONVERSATION_ID
+        ));
+        if (context.canModerate) {
+          const options = await loadChatRecipientOptions(teamId);
+          if (!cancelled) setRecipientOptions(options);
+        } else {
+          setRecipientOptions([]);
+        }
+      } catch (loadError: any) {
+        if (!cancelled) {
+          setError(loadError?.message || 'Unable to load team chat.');
+        }
+      } finally {
+        if (!cancelled) setLoadingContext(false);
+      }
+    }
+
+    loadContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, teamId]);
+
+  useEffect(() => {
+    if (!team || !auth.user) return undefined;
+    const currentUser = auth.user;
+
+    setLoadingMessages(true);
+    setError(null);
+    setOlderMessages([]);
+    setLiveMessages([]);
+    setLiveOldestDoc(null);
+    setHasMoreMessages(false);
+    initialSnapshotLoadedRef.current = false;
+    pendingScrollRef.current = true;
+    stickToLatestRef.current = true;
+    setShowJumpToLatest(false);
+
+    const subscription = subscribeToTeamChatMessages(
+      teamId,
+      selectedConversationId,
+      (incomingMessages, oldestDoc) => {
+        const isInitialSnapshot = !initialSnapshotLoadedRef.current;
+        const wasNearBottom = isNearBottom(messagesRef.current);
+        setLiveOldestDoc(oldestDoc || incomingMessages[incomingMessages.length - 1]?._doc || null);
+        setLiveMessages(getSortedChatMessages(incomingMessages));
+        setHasMoreMessages(incomingMessages.length >= 50);
+        setLoadingMessages(false);
+        if (isInitialSnapshot || pendingScrollRef.current || wasNearBottom) {
+          pendingScrollRef.current = true;
+          stickToLatestRef.current = true;
+          setShowJumpToLatest(false);
+        } else {
+          stickToLatestRef.current = false;
+          setShowJumpToLatest(true);
+        }
+        initialSnapshotLoadedRef.current = true;
+        maybeMarkRead(currentUser.uid, teamId, true);
+      },
+      (subscribeError) => {
+        setError(subscribeError.message || 'Unable to load chat messages.');
+        setLoadingMessages(false);
+      }
+    );
+
+    return () => {
+      subscription.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user?.uid, selectedConversationId, team, teamId]);
+
+  useEffect(() => {
+    if (!pendingScrollRef.current) return;
+    pendingScrollRef.current = false;
+    scheduleScrollToLatest('auto');
+  }, [messages.length, aiThinking, scheduleScrollToLatest, selectedConversationId]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    const content = messagesContentRef.current;
+    if (!container || !content || typeof ResizeObserver === 'undefined') return undefined;
+
+    const observer = new ResizeObserver(() => {
+      if (stickToLatestRef.current || pendingScrollRef.current || isNearBottom(container)) {
+        scheduleScrollToLatest('auto');
+      }
+    });
+
+    observer.observe(container);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [scheduleScrollToLatest, selectedConversationId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function detectVoiceSupport() {
+      if (voiceRecognition.isNativeRuntime()) {
+        try {
+          const result = await voiceRecognition.available();
+          if (!cancelled) setVoiceSupported(result.available);
+        } catch {
+          if (!cancelled) setVoiceSupported(false);
+        }
+        return;
+      }
+
+      setVoiceSupported(voiceRecognition.hasBrowserSupport());
+    }
+
+    void detectVoiceSupport();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleReturn = () => {
+      if (!auth.user?.uid) return;
+      const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
+      const isWindowFocused = document.hasFocus();
+      if (shouldRetryChatLastReadOnViewReturn({
+        hasCurrentUser: Boolean(auth.user.uid),
+        hasTeamId: Boolean(teamId),
+        isPageVisible,
+        isWindowFocused,
+        hasMessages: messages.length > 0,
+        hasLoadedSnapshot: initialSnapshotLoadedRef.current
+      })) {
+        void markTeamChatRead(auth.user.uid, teamId);
+      }
+    };
+    document.addEventListener('visibilitychange', handleReturn);
+    window.addEventListener('focus', handleReturn);
+    return () => {
+      document.removeEventListener('visibilitychange', handleReturn);
+      window.removeEventListener('focus', handleReturn);
+    };
+  }, [auth.user?.uid, messages.length, teamId]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      filePreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
+      stopVoiceCapture();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const reloadConversations = async () => {
+    if (!auth.user || !team) return;
+    const loadedConversations = await loadChatConversations(teamId, auth.user, team, canModerate);
+    setConversations(loadedConversations);
+    return loadedConversations;
+  };
+
+  const switchConversation = (conversationId: string) => {
+    if (!conversationId || conversationId === selectedConversationId) return;
+    pendingScrollRef.current = true;
+    stickToLatestRef.current = true;
+    setShowJumpToLatest(false);
+    setSelectedConversationId(conversationId);
+    setSelectedRecipientTarget('full_team');
+    setSelectedRecipientIds([]);
+    setReactionMessageId('');
+    setActionMessageId('');
+    setShowConversationSheet(false);
+  };
+
+  const handleAudienceTargetChange = async (target: ChatTargetType) => {
+    setSelectedRecipientTarget(target);
+    if (target !== 'individuals') {
+      setSelectedRecipientIds([]);
+    }
+
+    if (target === 'full_team') {
+      if (!isDefaultTeamConversation(selectedConversationId)) {
+        switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
+      }
+      setShowAudienceSheet(false);
+      return;
+    }
+
+    if (target === 'staff') {
+      if (!auth.user || !team) return;
+      try {
+        const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
+        setConversations((current) => (
+          current.some((conversation) => conversation.id === staffConversation.id)
+            ? current
+            : [...current, staffConversation]
+        ));
+        if (selectedConversationId !== staffConversation.id) {
+          switchConversation(staffConversation.id);
+        }
+        setShowAudienceSheet(false);
+      } catch (staffError: any) {
+        setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
+      }
+    }
+  };
+
+  const loadOlderMessages = async () => {
+    if (loadingOlder || !hasMoreMessages) return;
+    const cursor = olderMessages[0]?._doc || liveOldestDoc;
+    if (!cursor) return;
+    setLoadingOlder(true);
+    try {
+      const batch = await loadOlderTeamChatMessages(teamId, selectedConversationId, cursor);
+      if (batch.length < 50) setHasMoreMessages(false);
+      setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(batch), current));
+    } catch (loadError: any) {
+      setStatus({ tone: 'error', message: loadError?.message || 'Unable to load older messages.' });
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
+  const handleMessagesScroll = () => {
+    if (programmaticScrollRef.current) return;
+    if (!messages.length) {
+      stickToLatestRef.current = true;
+      setShowJumpToLatest(false);
+      return;
+    }
+    const isPinned = isNearBottom(messagesRef.current);
+    stickToLatestRef.current = isPinned;
+    setShowJumpToLatest(!isPinned);
+  };
+
+  const handleFiles = (event: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(event.target.files || []);
+    if (!selectedFiles.length) return;
+    const invalidType = selectedFiles.find((file) => !file.type.startsWith('image/') && !file.type.startsWith('video/'));
+    if (invalidType) {
+      setStatus({ tone: 'error', message: 'Choose image or video files only.' });
+      event.target.value = '';
+      return;
+    }
+    const oversized = selectedFiles.find((file) => file.size > MAX_CHAT_MEDIA_SIZE);
+    if (oversized) {
+      setStatus({ tone: 'error', message: 'Photos and videos must be 5MB or smaller each.' });
+      event.target.value = '';
+      return;
+    }
+    setFilePreviews((current) => [
+      ...current,
+      ...selectedFiles.map((file) => ({ file, url: URL.createObjectURL(file) }))
+    ]);
+    event.target.value = '';
+    setShowAttachSheet(false);
+  };
+
+  const removeFile = (index: number) => {
+    setFilePreviews((current) => {
+      const next = current.filter((_, itemIndex) => itemIndex !== index);
+      current[index] && URL.revokeObjectURL(current[index].url);
+      return next;
+    });
+  };
+
+  const openLinkSheet = () => {
+    setShowAttachSheet(false);
+    setLinkDraft('');
+    setShowLinkSheet(true);
+  };
+
+  const addLinkToComposer = () => {
+    const rawLink = linkDraft.trim();
+    if (!rawLink) return;
+    const href = rawLink.startsWith('www.') ? `https://${rawLink}` : rawLink;
+    if (!isChatComposerLinkSafe(href)) {
+      setStatus({ tone: 'error', message: 'Use a valid http or https link.' });
+      return;
+    }
+    setText((current) => `${current.trim()}${current.trim() ? ' ' : ''}${href}`);
+    setShowLinkSheet(false);
+    setLinkDraft('');
+  };
+
+  const handleSend = async (event?: FormEvent) => {
+    event?.preventDefault();
+    if (!auth.user || !team || sending) return;
+    const trimmed = text.trim();
+    const files = filePreviews.map((preview) => preview.file);
+    if (!trimmed && !files.length) return;
+
+    setSending(true);
+    setStatus(null);
+    setComposerNotice(files.length ? `Uploading ${files.length} attachment${files.length === 1 ? '' : 's'}...` : 'Sending...');
+    stopVoiceCapture();
+    pendingScrollRef.current = true;
+
+    try {
+      const result = await sendTeamChatMessage({
+        teamId,
+        user: auth.user,
+        profile,
+        text: trimmed,
+        files,
+        selectedConversation,
+        selectedConversationId,
+        selectedRecipientTarget,
+        selectedRecipientIds,
+        onProgress: (stage) => {
+          if (stage === 'uploading') {
+            setComposerNotice(`Uploading ${files.length} attachment${files.length === 1 ? '' : 's'}...`);
+          } else {
+            setComposerNotice('Posting message...');
+          }
+        }
+      });
+      setText('');
+      setFilePreviews((current) => {
+        current.forEach((preview) => URL.revokeObjectURL(preview.url));
+        return [];
+      });
+      if (result.createdConversation) {
+        await reloadConversations();
+      }
+      if (result.conversationId !== selectedConversationId) {
+        setSelectedConversationId(result.conversationId);
+      }
+      setSelectedRecipientTarget('full_team');
+      setSelectedRecipientIds([]);
+
+      if (result.wantsAi) {
+        setComposerNotice('Asking ALL PLAYS...');
+        const question = extractAllPlaysQuestion(trimmed);
+        if (!question) {
+          setStatus({ tone: 'error', message: 'Ask a question after @ALL PLAYS.' });
+        } else {
+          setAiThinking(true);
+          try {
+            await sendAllPlaysChatAnswer({
+              teamId,
+              team,
+              user: auth.user,
+              question,
+              selectedConversation,
+              selectedConversationId: result.conversationId,
+              selectedRecipientTarget,
+              selectedRecipientIds
+            });
+          } catch (aiError: any) {
+            setStatus({ tone: 'error', message: aiError?.message || 'ALL PLAYS could not answer. Please try again.' });
+          } finally {
+            setAiThinking(false);
+          }
+        }
+      }
+    } catch (sendError: any) {
+      setStatus({ tone: 'error', message: sendError?.message || 'Failed to send message. Please try again.' });
+    } finally {
+      setComposerNotice('');
+      setSending(false);
+    }
+  };
+
+  const toggleVoiceCapture = async () => {
+    if (voiceListening) {
+      stopVoiceCapture();
+      return;
+    }
+
+    setStatus(null);
+
+    if (voiceRecognition.isNativeRuntime()) {
+      try {
+        const available = await voiceRecognition.available();
+        if (!available.available) {
+          setVoiceSupported(false);
+          setStatus({ tone: 'error', message: 'Voice dictation is not available on this device.' });
+          return;
+        }
+
+        let permissions = await voiceRecognition.checkPermissions();
+        if (permissions.speechRecognition !== 'granted') {
+          permissions = await voiceRecognition.requestPermissions();
+        }
+        if (permissions.speechRecognition !== 'granted') {
+          setStatus({ tone: 'error', message: 'Enable microphone and speech recognition access to dictate messages.' });
+          return;
+        }
+
+        await removeNativeVoiceListeners();
+        voiceStopRequestedRef.current = false;
+        nativeVoiceListeningRef.current = true;
+        voiceBaseTextRef.current = text;
+        voicePartialRef.current = '';
+        setVoiceListening(true);
+        setComposerNotice('Listening...');
+        const partialHandle = await voiceRecognition.addPartialResultsListener((event) => {
+          const transcript = event.accumulatedText || event.accumulated || event.matches?.[0] || '';
+          setVoiceDraftTranscript(transcript);
+        });
+        const stateHandle = await voiceRecognition.addListeningStateListener((event) => {
+          if (event.status === 'stopped' || event.state === 'stopped') {
+            void finishNativeVoiceCapture();
+          }
+        });
+        const errorHandle = await voiceRecognition.addErrorListener((event) => {
+          if (!voiceStopRequestedRef.current) {
+            setStatus({ tone: 'error', message: event.message || 'Voice recognition failed. Try again.' });
+          }
+          void finishNativeVoiceCapture();
+        });
+        voiceListenerHandlesRef.current = [partialHandle, stateHandle, errorHandle];
+        const result = await voiceRecognition.start({
+          language: 'en-US',
+          maxResults: 1,
+          partialResults: true,
+          addPunctuation: true,
+          contextualStrings: ['ALL PLAYS', teamName],
+          popup: false,
+          prompt: 'Speak your message'
+        });
+        setVoiceDraftTranscript(result?.matches?.[0] || '');
+      } catch (voiceError: any) {
+        await removeNativeVoiceListeners();
+        nativeVoiceListeningRef.current = false;
+        setVoiceListening(false);
+        setComposerNotice('');
+        if (!voiceStopRequestedRef.current) {
+          setStatus({ tone: 'error', message: voiceError?.message || 'Voice recognition failed. Try again.' });
+        }
+        voiceStopRequestedRef.current = false;
+      }
+      return;
+    }
+
+    const BrowserSpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!BrowserSpeechRecognition) {
+      setVoiceSupported(false);
+      setStatus({ tone: 'error', message: 'Voice input is not supported in this browser.' });
+      return;
+    }
+    const recognition = new BrowserSpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onresult = (speechEvent: any) => {
+      const transcript = Array.from(speechEvent.results || [])
+        .map((result: any) => result?.[0]?.transcript || '')
+        .join(' ')
+        .trim();
+      setVoiceDraftTranscript(transcript);
+    };
+    recognition.onerror = () => setStatus({ tone: 'error', message: 'Voice recognition failed. Try again.' });
+    recognition.onend = () => {
+      setVoiceListening(false);
+      recognitionRef.current = null;
+      voiceBaseTextRef.current = '';
+      voicePartialRef.current = '';
+      setComposerNotice((current) => current === 'Listening...' ? '' : current);
+    };
+    recognitionRef.current = recognition;
+    voiceBaseTextRef.current = text;
+    voicePartialRef.current = '';
+    setVoiceListening(true);
+    setComposerNotice('Listening...');
+    try {
+      recognition.start();
+    } catch (voiceError: any) {
+      recognitionRef.current = null;
+      setVoiceListening(false);
+      setStatus({ tone: 'error', message: voiceError?.message || 'Voice recognition failed. Try again.' });
+    }
+  };
+
+  const stopVoiceCapture = () => {
+    voiceStopRequestedRef.current = true;
+    if (nativeVoiceListeningRef.current) {
+      void (async () => {
+        try {
+          await voiceRecognition.forceStop({ timeout: 1200 });
+        } catch {
+          try {
+            await voiceRecognition.stop();
+          } catch {
+            // Best effort only.
+          }
+        } finally {
+          await finishNativeVoiceCapture();
+        }
+      })();
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // Best effort only.
+      }
+    }
+    recognitionRef.current = null;
+    setVoiceListening(false);
+    if (!nativeVoiceListeningRef.current) {
+      setComposerNotice((current) => current === 'Listening...' ? '' : current);
+    }
+  };
+
+  const insertAllPlaysMention = () => {
+    setText((current) => {
+      if (hasAllPlaysMention(current)) return current;
+      const triggerPattern = /(^|\s)@\w*$/i;
+      if (triggerPattern.test(current)) {
+        return current.replace(triggerPattern, (_match, prefix) => `${prefix}@ALL PLAYS `);
+      }
+      const spacer = current.trim() ? ' ' : '';
+      return `${current}${spacer}@ALL PLAYS `;
+    });
+  };
+
+  const handleToggleReaction = async (messageId: string, reactionKey: string) => {
+    if (!auth.user) return;
+    try {
+      await toggleTeamChatReaction(teamId, messageId, reactionKey, auth.user.uid, selectedConversationId);
+      setReactionMessageId('');
+    } catch (reactionError: any) {
+      setStatus({ tone: 'error', message: reactionError?.message || 'Failed to update reaction.' });
+    }
+  };
+
+  const handleEdit = (message: ChatMessage) => {
+    setEditingMessage(message);
+    setEditText(message.text || '');
+    setActionMessageId('');
+  };
+
+  const saveEdit = async () => {
+    if (!editingMessage) return;
+    const trimmed = editText.trim();
+    if (!trimmed) {
+      setStatus({ tone: 'error', message: 'Message cannot be empty.' });
+      return;
+    }
+    try {
+      await editTeamChatMessage(teamId, editingMessage.id, trimmed, selectedConversationId);
+      setEditingMessage(null);
+      setEditText('');
+    } catch (editError: any) {
+      setStatus({ tone: 'error', message: editError?.message || 'Failed to edit message.' });
+    }
+  };
+
+  const handleDelete = async (message: ChatMessage) => {
+    setActionMessageId('');
+    if (!window.confirm('Delete this message?')) return;
+    try {
+      await deleteTeamChatMessage(teamId, message.id, selectedConversationId);
+    } catch (deleteError: any) {
+      setStatus({ tone: 'error', message: deleteError?.message || 'Failed to delete message.' });
+    }
+  };
+
+  if (loadingContext) {
+    return (
+      <section className={`chat-window app-card flex min-h-[520px] items-center justify-center p-5 ${embedded ? 'chat-window-embedded' : ''}`}>
+        <Loader2 className="mr-2 h-5 w-5 animate-spin text-primary-600" aria-hidden="true" />
+        <span className="text-sm font-black text-gray-600">Loading team chat...</span>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className={`chat-window app-card p-5 ${embedded ? 'chat-window-embedded' : ''}`}>
+        <div className="text-base font-black text-rose-700">{error}</div>
+        <button type="button" className="secondary-button mt-4" onClick={() => navigate('/messages')}>Back to messages</button>
+      </section>
+    );
+  }
+
+  return (
+    <div className={`chat-window ${embedded ? 'chat-window-embedded' : 'chat-window-mobile'}`}>
+      <section className={`chat-topbar ${embedded ? 'rounded-xl' : 'safe-top sticky top-0'} z-20 border border-gray-200 bg-white/95 px-3 py-3 shadow-app backdrop-blur`}>
+        <div className="flex items-center gap-2">
+          {!embedded ? (
+            <Link to="/messages" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" aria-label="Back to messages">
+              <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+            </Link>
+          ) : null}
+          <TeamAvatar team={{ name: teamName, photoUrl: team?.photoUrl || inboxTeam?.photoUrl, unreadCount: 0 }} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-lg font-black text-gray-950">{teamName}</div>
-            <div className="truncate text-xs font-bold text-gray-500">Team chat · conversations · moderation-ready</div>
+            <div className="truncate text-base font-black text-gray-950">{teamName}</div>
+            <button
+              type="button"
+              className="mt-0.5 flex max-w-full items-center gap-1 text-left text-xs font-bold text-gray-500"
+              onClick={() => setShowConversationSheet(true)}
+            >
+              <span className="truncate">{getConversationDisplayName(selectedConversation, team || {})}</span>
+              <ChevronDown className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
+            </button>
           </div>
-          {auth.isCoach || auth.isAdmin ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-black uppercase tracking-[0.04em] text-emerald-700">
+          {canModerate ? (
+            <span className="hidden items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-black uppercase text-emerald-700 sm:inline-flex">
               <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
               Staff
             </span>
           ) : null}
+          <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={() => setShowMediaGallery(true)} aria-label="Open photos and videos">
+            <ImageIcon className="h-5 w-5" aria-hidden="true" />
+            {mediaEntries.length ? <span className="sr-only">{mediaEntries.length} shared media items</span> : null}
+          </button>
         </div>
+
+        {isDesktopWeb ? (
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+            {conversations.map((conversation) => {
+              const active = conversation.id === selectedConversationId;
+              return (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-black transition ${
+                    active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-primary-50 hover:text-primary-700'
+                  }`}
+                  onClick={() => switchConversation(conversation.id)}
+                >
+                  {getConversationDisplayName(conversation, team || {})}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
-      <section className="app-card p-4">
-        <div className="space-y-3">
-          {messages.map((message) => (
-            <div key={message.id} className={`flex ${message.mine ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[82%] rounded-2xl px-4 py-3 ${message.mine ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-900'}`}>
-                <div className={`text-[11px] font-extrabold uppercase tracking-[0.04em] ${message.mine ? 'text-primary-100' : 'text-gray-500'}`}>{message.sender}</div>
-                <div className="mt-1 text-sm font-semibold leading-6">{message.body}</div>
-                <div className={`mt-1 flex items-center justify-between gap-3 text-[11px] font-bold ${message.mine ? 'text-primary-100' : 'text-gray-500'}`}>
-                  <span>{message.time}</span>
-                  <button
-                    type="button"
-                    className={`inline-flex h-7 w-7 items-center justify-center rounded-full ${message.mine ? 'text-white/90 hover:bg-white/15' : 'text-gray-600 hover:bg-gray-200'}`}
-                    aria-expanded={activeMessageActionsId === message.id}
-                    aria-label={`Message actions for ${message.sender}`}
-                    onClick={() => setActiveMessageActionsId((currentId) => currentId === message.id ? null : message.id)}
-                  >
-                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </div>
-                {activeMessageActionsId === message.id ? (
-                  <div className={`mt-2 flex flex-wrap gap-2 ${message.mine ? 'justify-end' : 'justify-start'}`} aria-label={`Advanced actions for ${message.sender}`}>
-                    <MessageActionButton icon={Bot} label="AI" mine={message.mine} />
-                    <MessageActionButton icon={Smile} label="React" mine={message.mine} />
-                    <MessageActionButton icon={Edit3} label="Edit" mine={message.mine} />
-                    <MessageActionButton icon={Trash2} label="Delete" mine={message.mine} />
-                  </div>
-                ) : null}
+      {status ? <StatusBanner status={status} onClose={() => setStatus(null)} /> : null}
+
+      <section className="chat-body app-card">
+        {hasMoreMessages ? (
+          <div className="border-b border-gray-100 p-2 text-center">
+            <button type="button" className="ghost-button !h-9 !min-h-9 text-xs" onClick={loadOlderMessages} disabled={loadingOlder}>
+              {loadingOlder ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Archive className="h-4 w-4" aria-hidden="true" />}
+              Load older messages
+            </button>
+          </div>
+        ) : null}
+
+        <div ref={messagesRef} className="chat-messages-scroll" onScroll={handleMessagesScroll}>
+          <div ref={messagesContentRef} className="chat-messages-content">
+            {loadingMessages ? (
+              <div className="flex min-h-64 items-center justify-center text-sm font-bold text-gray-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                Loading messages...
               </div>
-            </div>
-          ))}
+            ) : messages.length === 0 && !aiThinking ? (
+              <div className="flex min-h-64 items-center justify-center p-8 text-center">
+                <div>
+                  <MessageCircle className="mx-auto h-12 w-12 text-gray-300" aria-hidden="true" />
+                  <div className="mt-3 text-base font-black text-gray-950">No messages yet</div>
+                  <div className="mt-1 text-sm font-semibold text-gray-500">Send the first update to {teamName}.</div>
+                </div>
+              </div>
+            ) : (
+              <MessageList
+                messages={messages}
+                currentUserId={auth.user?.uid || ''}
+                canModerate={canModerate}
+                actionMessageId={actionMessageId}
+                reactionMessageId={reactionMessageId}
+                onActionMessage={setActionMessageId}
+                onReactionMessage={setReactionMessageId}
+                onToggleReaction={handleToggleReaction}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+              />
+            )}
+            {aiThinking ? <AiThinkingBubble /> : null}
+            <div ref={messagesEndRef} data-testid="chat-bottom-anchor" aria-hidden="true" />
+          </div>
         </div>
+        {showJumpToLatest ? (
+          <button type="button" className="chat-latest-button" onClick={() => scheduleScrollToLatest('smooth')}>
+            <span>Latest</span>
+            <ChevronDown className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
       </section>
 
-      <form className="app-card flex items-center gap-2 p-3" onSubmit={(event) => event.preventDefault()}>
-        <button type="button" className="ghost-button !h-11 !min-h-11 !w-11 !p-0" aria-label="Add attachment">
-          <Paperclip className="h-5 w-5" aria-hidden="true" />
-        </button>
-        <input className="min-h-11 min-w-0 flex-1 rounded-xl border border-gray-200 px-3 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" placeholder={`Message ${teamName}`} />
-        <button type="submit" className="primary-button !h-11 !min-h-11 !w-11 !p-0" aria-label="Send message">
-          <Send className="h-5 w-5" aria-hidden="true" />
-        </button>
-      </form>
+      <Composer
+        teamName={teamName}
+        text={text}
+        filePreviews={filePreviews}
+        sending={sending}
+        composerNotice={composerNotice}
+        aiThinking={aiThinking}
+        voiceListening={voiceListening}
+        voiceSupported={voiceSupported}
+        canModerate={canModerate && isDefaultTeamConversation(selectedConversationId)}
+        audienceSummary={audienceSummary}
+        onTextChange={setText}
+        onSubmit={handleSend}
+        onAttach={() => setShowAttachSheet(true)}
+        onRemoveFile={removeFile}
+        onVoice={toggleVoiceCapture}
+        onAudience={() => setShowAudienceSheet(true)}
+        onMention={insertAllPlaysMention}
+      />
+
+      <input ref={photoInputRef} type="file" className="chat-file-input" accept="image/*" multiple onChange={handleFiles} aria-hidden="true" tabIndex={-1} />
+      <input ref={videoInputRef} type="file" className="chat-file-input" accept="video/*" multiple onChange={handleFiles} aria-hidden="true" tabIndex={-1} />
+
+      {showConversationSheet ? (
+        <ConversationSheet
+          conversations={conversations}
+          team={team || {}}
+          selectedConversationId={selectedConversationId}
+          onSelect={switchConversation}
+          onClose={() => setShowConversationSheet(false)}
+        />
+      ) : null}
+
+      {showAudienceSheet ? (
+        <AudienceSheet
+          selectedTarget={selectedRecipientTarget}
+          selectedRecipientIds={selectedRecipientIds}
+          recipientOptions={recipientOptions}
+          onTargetChange={handleAudienceTargetChange}
+          onRecipientsChange={setSelectedRecipientIds}
+          onClose={() => setShowAudienceSheet(false)}
+        />
+      ) : null}
+
+      {showAttachSheet ? (
+        <AttachSheet
+          onPhoto={() => photoInputRef.current?.click()}
+          onVideo={() => videoInputRef.current?.click()}
+          onLink={openLinkSheet}
+          onMention={insertAllPlaysMention}
+          onClose={() => setShowAttachSheet(false)}
+        />
+      ) : null}
+
+      {showLinkSheet ? (
+        <LinkSheet
+          value={linkDraft}
+          onChange={setLinkDraft}
+          onAdd={addLinkToComposer}
+          onClose={() => setShowLinkSheet(false)}
+        />
+      ) : null}
+
+      {showMediaGallery ? (
+        <MediaGallerySheet mediaEntries={mediaEntries} onClose={() => setShowMediaGallery(false)} onStatus={setStatus} />
+      ) : null}
+
+      {editingMessage ? (
+        <EditMessageModal
+          value={editText}
+          onChange={setEditText}
+          onCancel={() => setEditingMessage(null)}
+          onSave={saveEdit}
+        />
+      ) : null}
     </div>
   );
 }
 
-function MessageActionButton({ icon: Icon, label, mine }: { icon: typeof Bot; label: string; mine: boolean }) {
+function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {
+  const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
+  const isWindowFocused = document.hasFocus();
+  if (shouldUpdateChatLastRead({
+    hasCurrentUser: Boolean(userId),
+    hasTeamId,
+    isPageVisible,
+    isWindowFocused
+  })) {
+    void markTeamChatRead(userId, teamId);
+  }
+}
+
+function isNearBottom(container: HTMLDivElement | null) {
+  if (!container) return true;
+  return container.scrollHeight - container.scrollTop - container.clientHeight <= 96;
+}
+
+function StatusBanner({ status, onClose }: { status: ChatStatus; onClose: () => void }) {
+  const toneClass = status.tone === 'error'
+    ? 'border-rose-200 bg-rose-50 text-rose-700'
+    : status.tone === 'success'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : 'border-primary-200 bg-primary-50 text-primary-700';
   return (
-    <button type="button" className={`inline-flex min-h-8 items-center gap-1 rounded-full border px-3 py-1 text-xs font-black ${mine ? 'border-white/20 bg-white/10 text-white hover:bg-white/20' : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200 hover:text-primary-700'}`}>
-      <Icon className="h-4 w-4" aria-hidden="true" />
-      {label}
-    </button>
+    <div className={`mt-3 flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm font-bold ${toneClass}`}>
+      <span>{status.message}</span>
+      <button type="button" className="rounded-lg p-1" onClick={onClose} aria-label="Close status">
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function MessageList({
+  messages,
+  currentUserId,
+  canModerate,
+  actionMessageId,
+  reactionMessageId,
+  onActionMessage,
+  onReactionMessage,
+  onToggleReaction,
+  onEdit,
+  onDelete
+}: {
+  messages: ChatMessage[];
+  currentUserId: string;
+  canModerate: boolean;
+  actionMessageId: string;
+  reactionMessageId: string;
+  onActionMessage: (messageId: string) => void;
+  onReactionMessage: (messageId: string) => void;
+  onToggleReaction: (messageId: string, reactionKey: string) => void;
+  onEdit: (message: ChatMessage) => void;
+  onDelete: (message: ChatMessage) => void;
+}) {
+  let lastDay = '';
+  return (
+    <div className="space-y-3 p-3 sm:p-4">
+      {messages.map((message, index) => {
+        const day = formatChatDay(message.createdAt);
+        const showDay = day && day !== lastDay;
+        const preferReactionPickerAbove = index >= Math.max(0, messages.length - 2);
+        lastDay = day || lastDay;
+        return (
+          <div key={message.id}>
+            {showDay ? <div className="my-3 text-center text-[11px] font-black uppercase text-gray-400">{day}</div> : null}
+            <MessageBubble
+              message={message}
+              currentUserId={currentUserId}
+              canModerate={canModerate}
+              actionsOpen={actionMessageId === message.id}
+              reactionsOpen={reactionMessageId === message.id}
+              preferReactionPickerAbove={preferReactionPickerAbove}
+              onActionMessage={onActionMessage}
+              onReactionMessage={onReactionMessage}
+              onToggleReaction={onToggleReaction}
+              onEdit={onEdit}
+              onDelete={onDelete}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MessageBubble({
+  message,
+  currentUserId,
+  canModerate,
+  actionsOpen,
+  reactionsOpen,
+  preferReactionPickerAbove,
+  onActionMessage,
+  onReactionMessage,
+  onToggleReaction,
+  onEdit,
+  onDelete
+}: {
+  message: ChatMessage;
+  currentUserId: string;
+  canModerate: boolean;
+  actionsOpen: boolean;
+  reactionsOpen: boolean;
+  preferReactionPickerAbove: boolean;
+  onActionMessage: (messageId: string) => void;
+  onReactionMessage: (messageId: string) => void;
+  onToggleReaction: (messageId: string, reactionKey: string) => void;
+  onEdit: (message: ChatMessage) => void;
+  onDelete: (message: ChatMessage) => void;
+}) {
+  const isAi = message.ai === true;
+  const isOwn = !isAi && message.senderId === currentUserId;
+  const isDeleted = message.deleted === true;
+  const senderLabel = getMessageSenderLabel(message, currentUserId);
+  const attachments = getMessageAttachments(message).filter((attachment: any) => isSafeChatMediaUrl(attachment.url));
+  const reactions = normalizeChatReactions(message);
+  const canEdit = isOwn && !isDeleted && Boolean(message.text);
+  const canDelete = !isAi && !isDeleted && (isOwn || canModerate);
+
+  if (isDeleted) {
+    return (
+      <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+        <div className="max-w-[82%] rounded-2xl bg-gray-100 px-4 py-2 text-sm font-semibold italic text-gray-400">
+          Message removed
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`message-bubble group flex items-end gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+      {!isOwn ? <MessageAvatar message={message} label={senderLabel} /> : null}
+      <div className={`relative max-w-[82%] sm:max-w-[74%] ${isOwn ? 'items-end' : 'items-start'}`}>
+        <div className={`mb-1 flex items-center gap-2 text-[11px] font-bold text-gray-500 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+          {!isOwn ? <span className="truncate">{senderLabel}</span> : null}
+          {message.editedAt ? <span className="italic">(edited)</span> : null}
+          <span>{formatChatTime(message.createdAt)}</span>
+        </div>
+        <div className={`rounded-2xl px-3 py-2 shadow-sm ${
+          isAi
+            ? 'border border-indigo-100 bg-indigo-50 text-gray-900'
+            : isOwn
+              ? 'bg-primary-600 text-white'
+              : 'bg-gray-100 text-gray-900'
+        } ${isOwn ? 'rounded-br-md' : 'rounded-bl-md'}`}>
+          {attachments.length ? <MessageAttachments attachments={attachments} isOwn={isOwn} /> : null}
+          {message.text ? (
+            <div
+              className={`chat-message-html text-sm font-semibold leading-6 ${isOwn ? 'chat-message-html-own' : ''}`}
+              dangerouslySetInnerHTML={{ __html: formatChatMessageHtml(message.text) }}
+            />
+          ) : null}
+        </div>
+        <div className={`chat-reactions-anchor ${isOwn ? 'justify-end' : 'justify-start'}`}>
+          <ReactionPills
+            message={message}
+            currentUserId={currentUserId}
+            reactions={reactions}
+            onToggleReaction={onToggleReaction}
+            onOpenPicker={() => onReactionMessage(reactionsOpen ? '' : message.id)}
+          />
+          {reactionsOpen ? (
+            <div className={`chat-reaction-picker ${preferReactionPickerAbove ? 'chat-reaction-picker-above' : 'chat-reaction-picker-below'} ${isOwn ? 'right-0' : 'left-0'}`}>
+              {chatReactions.map((reaction) => (
+                <button
+                  key={reaction.key}
+                  type="button"
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-lg hover:bg-gray-50"
+                  onClick={() => onToggleReaction(message.id, reaction.key)}
+                  aria-label={reaction.label}
+                >
+                  {reaction.emoji}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        {(canEdit || canDelete) ? (
+          <div className={`mt-1 flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+            <button
+              type="button"
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm"
+              onClick={() => onActionMessage(actionsOpen ? '' : message.id)}
+              aria-label={`Open actions for ${senderLabel}`}
+            >
+              <MoreVertical className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
+        ) : null}
+        {actionsOpen ? (
+          <div className={`absolute z-10 mt-1 min-w-36 rounded-xl border border-gray-200 bg-white p-1 shadow-app-lg ${isOwn ? 'right-0' : 'left-0'}`}>
+            {canEdit ? (
+              <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-bold text-gray-700 hover:bg-gray-50" onClick={() => onEdit(message)}>
+                <Edit3 className="h-4 w-4" aria-hidden="true" />
+                Edit
+              </button>
+            ) : null}
+            {canDelete ? (
+              <button type="button" className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-bold text-rose-700 hover:bg-rose-50" onClick={() => onDelete(message)}>
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                Delete
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {isOwn ? <MessageAvatar message={message} label={senderLabel} /> : null}
+    </div>
+  );
+}
+
+function MessageAvatar({ message, label }: { message: ChatMessage; label: string }) {
+  if (message.ai) {
+    return <img src="./logo_small.png" alt="" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
+  }
+  if (message.senderPhotoUrl) {
+    return <img src={message.senderPhotoUrl} alt="" className="h-8 w-8 rounded-full object-cover" />;
+  }
+  return (
+    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-600">
+      {label.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+function MessageAttachments({ attachments, isOwn }: { attachments: any[]; isOwn: boolean }) {
+  return (
+    <div className={`mb-2 grid gap-2 ${attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+      {attachments.map((attachment, index) => {
+        const label = attachment.name || (attachment.type === 'video' ? 'Chat video' : 'Chat image');
+        if (attachment.type === 'video') {
+          return (
+            <div key={`${attachment.url}-${index}`} className="overflow-hidden rounded-xl border border-gray-200 bg-black">
+              <video controls preload="metadata" className="max-h-72 w-full" src={attachment.url} />
+              <a href={attachment.url} target="_blank" rel="noopener noreferrer" className="block truncate bg-white px-3 py-2 text-xs font-bold text-primary-600">
+                {label}
+              </a>
+            </div>
+          );
+        }
+        return (
+          <a key={`${attachment.url}-${index}`} href={attachment.url} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-xl border border-gray-200">
+            <img src={attachment.url} alt={label} className={`max-h-72 w-full object-cover ${isOwn ? 'bg-primary-500' : 'bg-white'}`} />
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
+function ReactionPills({
+  message,
+  currentUserId,
+  reactions,
+  onToggleReaction,
+  onOpenPicker
+}: {
+  message: ChatMessage;
+  currentUserId: string;
+  reactions: Partial<Record<string, string[]>>;
+  onToggleReaction: (messageId: string, reactionKey: string) => void;
+  onOpenPicker: () => void;
+}) {
+  const hasReactions = Object.values(reactions).some((users) => users && users.length);
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {chatReactions.map((reaction) => {
+        const users = reactions[reaction.key] || [];
+        if (!users.length) return null;
+        const active = users.includes(currentUserId);
+        return (
+          <button
+            key={reaction.key}
+            type="button"
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-black ${
+              active ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-600'
+            }`}
+            title={getReactionNames(users, currentUserId)}
+            onClick={() => onToggleReaction(message.id, reaction.key)}
+          >
+            <span>{reaction.emoji}</span>
+            <span>{users.length}</span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        className={`inline-flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm ${hasReactions ? '' : 'opacity-100 sm:opacity-0 sm:group-hover:opacity-100'}`}
+        onClick={onOpenPicker}
+        aria-label="Add reaction"
+      >
+        <Smile className="h-4 w-4" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function AiThinkingBubble() {
+  return (
+    <div className="flex justify-start gap-2 px-3 pb-4 sm:px-4">
+      <img src="./logo_small.png" alt="" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />
+      <div className="max-w-[78%] rounded-2xl rounded-bl-md border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-bold text-indigo-700">
+        <span className="inline-flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ALL PLAYS is thinking...
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function Composer({
+  teamName,
+  text,
+  filePreviews,
+  sending,
+  composerNotice,
+  aiThinking,
+  voiceListening,
+  voiceSupported,
+  canModerate,
+  audienceSummary,
+  onTextChange,
+  onSubmit,
+  onAttach,
+  onRemoveFile,
+  onVoice,
+  onAudience,
+  onMention
+}: {
+  teamName: string;
+  text: string;
+  filePreviews: FilePreview[];
+  sending: boolean;
+  composerNotice: string;
+  aiThinking: boolean;
+  voiceListening: boolean;
+  voiceSupported: boolean;
+  canModerate: boolean;
+  audienceSummary: string;
+  onTextChange: (value: string) => void;
+  onSubmit: (event?: FormEvent) => void;
+  onAttach: () => void;
+  onRemoveFile: (index: number) => void;
+  onVoice: () => void;
+  onAudience: () => void;
+  onMention: () => void;
+}) {
+  const canSend = Boolean(text.trim() || filePreviews.length) && !sending && !aiThinking;
+  const showMentionQuickAction = /(^|\s)@\w*$/i.test(text) && !hasAllPlaysMention(text);
+  const placeholder = teamName.length > 16 ? 'Message' : `Message ${teamName}`;
+  const attachmentSummary = filePreviews.length
+    ? `${filePreviews.length} attachment${filePreviews.length === 1 ? '' : 's'} ready`
+    : '';
+  const notice = composerNotice || attachmentSummary;
+
+  return (
+    <form className="chat-composer safe-bottom border border-gray-200 bg-white p-2 shadow-app" onSubmit={onSubmit}>
+      {filePreviews.length ? (
+        <div className="chat-attachment-strip">
+          {filePreviews.map((preview, index) => (
+            <div key={preview.url} className="relative h-12 w-12 flex-none overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
+              {preview.file.type.startsWith('video/') ? (
+                <video src={preview.url} className="h-full w-full object-cover" muted playsInline />
+              ) : (
+                <img src={preview.url} alt="" className="h-full w-full object-cover" />
+              )}
+              <button type="button" className="absolute right-1 top-1 rounded-full bg-gray-950/70 p-1 text-white" onClick={() => onRemoveFile(index)} aria-label="Remove attachment">
+                <X className="h-3 w-3" aria-hidden="true" />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {showMentionQuickAction ? (
+        <button type="button" className="mb-2 flex w-full items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-left text-sm font-black text-indigo-700" onMouseDown={(event) => event.preventDefault()} onClick={onMention}>
+          <Bot className="h-4 w-4" aria-hidden="true" />
+          @ALL PLAYS
+        </button>
+      ) : null}
+
+      <div className="chat-composer-input-shell">
+        <textarea
+          value={text}
+          onChange={(event) => onTextChange(event.target.value)}
+          rows={1}
+          maxLength={2000}
+          className="chat-composer-textarea"
+          placeholder={placeholder}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+        <button type="submit" className="chat-composer-send primary-button" disabled={!canSend} aria-label="Send message">
+          {sending || aiThinking ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Send className="h-5 w-5" aria-hidden="true" />}
+        </button>
+      </div>
+
+      <div className="chat-composer-toolbar">
+        <button type="button" className="chat-tool-button" onClick={onAttach} aria-label="Add attachment">
+          <Paperclip className="h-4 w-4" aria-hidden="true" />
+        </button>
+        {voiceSupported ? (
+          <button
+            type="button"
+            className={`chat-tool-button ${voiceListening ? 'chat-tool-button-active' : ''}`}
+            onClick={onVoice}
+            aria-label={voiceListening ? 'Stop voice input' : 'Voice to text'}
+          >
+            <Mic className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
+        {canModerate ? (
+          <button type="button" className="chat-audience-pill" onClick={onAudience}>
+            <Users className="h-4 w-4 flex-none" aria-hidden="true" />
+            <span className="truncate">Audience: {audienceSummary}</span>
+          </button>
+        ) : null}
+        {notice ? (
+          <div className="chat-composer-notice" aria-live="polite">
+            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />}
+            <span className="truncate">{notice}</span>
+          </div>
+        ) : null}
+      </div>
+    </form>
+  );
+}
+
+function ConversationSheet({
+  conversations,
+  team,
+  selectedConversationId,
+  onSelect,
+  onClose
+}: {
+  conversations: ChatConversation[];
+  team: Record<string, any>;
+  selectedConversationId: string;
+  onSelect: (conversationId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet title="Conversations" onClose={onClose}>
+      <div className="space-y-2">
+        {conversations.map((conversation) => {
+          const active = conversation.id === selectedConversationId;
+          const typeLabel = conversation.type === 'direct' ? 'Direct' : conversation.type === 'group' ? 'Group' : 'Team';
+          return (
+            <button
+              key={conversation.id}
+              type="button"
+              className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left ${
+                active ? 'border-primary-200 bg-primary-50' : 'border-gray-200 bg-white'
+              }`}
+              onClick={() => onSelect(conversation.id)}
+            >
+              <MessageCircle className={`h-5 w-5 flex-none ${active ? 'text-primary-600' : 'text-gray-400'}`} aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-black text-gray-950">{getConversationDisplayName(conversation, team)}</span>
+                <span className="mt-0.5 block text-xs font-bold text-gray-500">{typeLabel} conversation</span>
+              </span>
+              {active ? <Check className="h-5 w-5 flex-none text-primary-600" aria-hidden="true" /> : null}
+            </button>
+          );
+        })}
+      </div>
+    </Sheet>
+  );
+}
+
+function AudienceSheet({
+  selectedTarget,
+  selectedRecipientIds,
+  recipientOptions,
+  onTargetChange,
+  onRecipientsChange,
+  onClose
+}: {
+  selectedTarget: ChatTargetType;
+  selectedRecipientIds: string[];
+  recipientOptions: ChatRecipientOption[];
+  onTargetChange: (target: ChatTargetType) => void;
+  onRecipientsChange: (ids: string[]) => void;
+  onClose: () => void;
+}) {
+  const toggleRecipient = (recipientId: string) => {
+    onRecipientsChange(
+      selectedRecipientIds.includes(recipientId)
+        ? selectedRecipientIds.filter((id) => id !== recipientId)
+        : [...selectedRecipientIds, recipientId]
+    );
+  };
+
+  return (
+    <Sheet title="Message audience" onClose={onClose}>
+      <div className="space-y-2">
+        {allTargetOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left ${
+              selectedTarget === option.value ? 'border-primary-200 bg-primary-50' : 'border-gray-200 bg-white'
+            }`}
+            onClick={() => onTargetChange(option.value)}
+          >
+            <span className={`mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full border ${
+              selectedTarget === option.value ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-300'
+            }`}>
+              {selectedTarget === option.value ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+            </span>
+            <span>
+              <span className="block text-sm font-black text-gray-950">{option.label}</span>
+              <span className="mt-0.5 block text-xs font-semibold leading-5 text-gray-500">{option.description}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {selectedTarget === 'individuals' ? (
+        <div className="mt-4 max-h-72 overflow-y-auto rounded-xl border border-gray-200">
+          {recipientOptions.length ? recipientOptions.map((option) => (
+            <label key={option.id} className="flex cursor-pointer items-center gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-gray-300 text-primary-600"
+                checked={selectedRecipientIds.includes(option.id)}
+                onChange={() => toggleRecipient(option.id)}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-black text-gray-800">{option.name}</span>
+                {option.detail ? <span className="block truncate text-xs font-semibold text-gray-500">{option.detail}</span> : null}
+              </span>
+            </label>
+          )) : (
+            <div className="p-3 text-sm font-semibold text-gray-500">No roster or community members are available yet.</div>
+          )}
+        </div>
+      ) : null}
+
+      <button type="button" className="primary-button mt-4 w-full" onClick={onClose}>Done</button>
+    </Sheet>
+  );
+}
+
+function AttachSheet({
+  onPhoto,
+  onVideo,
+  onLink,
+  onMention,
+  onClose
+}: {
+  onPhoto: () => void;
+  onVideo: () => void;
+  onLink: () => void;
+  onMention: () => void;
+  onClose: () => void;
+}) {
+  const actions = [
+    {
+      label: 'Photo',
+      description: 'Choose one or more images.',
+      icon: Camera,
+      tone: 'text-primary-600',
+      onClick: onPhoto
+    },
+    {
+      label: 'Video',
+      description: 'Attach a short clip.',
+      icon: Video,
+      tone: 'text-rose-600',
+      onClick: onVideo
+    },
+    {
+      label: 'Link',
+      description: 'Add a URL to the message.',
+      icon: Link2,
+      tone: 'text-sky-600',
+      onClick: onLink
+    },
+    {
+      label: '@ALL PLAYS',
+      description: 'Ask the team assistant.',
+      icon: Bot,
+      tone: 'text-indigo-600',
+      onClick: onMention
+    }
+  ];
+
+  return (
+    <Sheet title="Add to message" onClose={onClose}>
+      <div className="grid grid-cols-2 gap-2">
+        {actions.map((action) => {
+          const Icon = action.icon;
+          return (
+            <button
+              key={action.label}
+              type="button"
+              className="rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-primary-200 hover:bg-primary-50"
+              onClick={() => {
+                action.onClick();
+                if (action.label !== 'Link') {
+                  onClose();
+                }
+              }}
+            >
+              <Icon className={`h-6 w-6 ${action.tone}`} aria-hidden="true" />
+              <div className="mt-2 text-sm font-black text-gray-950">{action.label}</div>
+              <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">{action.description}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold leading-5 text-gray-500">
+        Photos and videos can be up to 5MB each. Links are added to the message and become clickable after sending.
+      </div>
+    </Sheet>
+  );
+}
+
+function LinkSheet({
+  value,
+  onChange,
+  onAdd,
+  onClose
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onAdd: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet title="Add link" onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onAdd();
+        }}
+      >
+        <label className="block">
+          <span className="app-label">URL</span>
+          <input
+            autoFocus
+            type="text"
+            inputMode="url"
+            className="auth-input mt-2"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="https://example.com"
+          />
+        </label>
+        <div className="mt-4 flex gap-2">
+          <button type="button" className="ghost-button flex-1 justify-center" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary-button flex-1 justify-center">Add link</button>
+        </div>
+      </form>
+    </Sheet>
+  );
+}
+
+function MediaGallerySheet({
+  mediaEntries,
+  onClose,
+  onStatus
+}: {
+  mediaEntries: any[];
+  onClose: () => void;
+  onStatus: (status: ChatStatus | null) => void;
+}) {
+  const copyLink = async (entry: any) => {
+    try {
+      await navigator.clipboard.writeText(entry.url);
+      onStatus({ tone: 'success', message: 'Media link copied.' });
+    } catch {
+      onStatus({ tone: 'error', message: 'Unable to copy media link.' });
+    }
+  };
+
+  const shareEntry = async (entry: any) => {
+    const details = buildChatMediaShareDetails(entry);
+    const result = await sharePublicUrl({
+      title: details.title,
+      text: details.text,
+      url: details.url
+    });
+    if (result === 'shared') onStatus({ tone: 'success', message: 'Share sheet opened.' });
+    if (result === 'copied') onStatus({ tone: 'success', message: 'Share unavailable here. Link copied instead.' });
+    if (result === 'failed') onStatus({ tone: 'error', message: 'Sharing is unavailable in this browser.' });
+  };
+
+  const downloadEntry = (entry: any) => {
+    const link = document.createElement('a');
+    link.href = entry.url;
+    link.download = getChatMediaDownloadName(entry);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  return (
+    <Sheet title="Photos & videos" onClose={onClose} wide>
+      {mediaEntries.length ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {mediaEntries.map((entry, index) => (
+            <article key={`${entry.url}-${index}`} className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+              {entry.type === 'video' ? (
+                <video controls preload="metadata" className="aspect-video w-full bg-black object-cover" src={entry.url} />
+              ) : (
+                <a href={entry.url} target="_blank" rel="noopener noreferrer">
+                  <img src={entry.url} alt={entry.name || 'Chat media'} className="aspect-video w-full object-cover" />
+                </a>
+              )}
+              <div className="p-3">
+                <div className="truncate text-sm font-black text-gray-900">{entry.name || (entry.type === 'video' ? 'Video' : 'Photo')}</div>
+                <div className="mt-1 truncate text-xs font-semibold text-gray-500">{entry.senderName || 'Unknown'}</div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" className="secondary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => shareEntry(entry)}>
+                    <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    Share
+                  </button>
+                  <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => downloadEntry(entry)}>
+                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                    Save
+                  </button>
+                  <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => copyLink(entry)}>
+                    <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                    Copy
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-center text-sm font-semibold text-gray-500">
+          No media shared yet.
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
+function EditMessageModal({
+  value,
+  onChange,
+  onCancel,
+  onSave
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Edit message">
+      <div className="w-full max-w-md rounded-2xl bg-white p-4 shadow-app-lg">
+        <div className="text-lg font-black text-gray-950">Edit message</div>
+        <textarea
+          autoFocus
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          rows={4}
+          maxLength={2000}
+          className="mt-3 w-full resize-none rounded-xl border border-gray-200 p-3 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="ghost-button" onClick={onCancel}>Cancel</button>
+          <button type="button" className="primary-button" onClick={onSave}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Sheet({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`safe-bottom max-h-[88vh] w-full overflow-hidden rounded-t-2xl bg-white shadow-app-lg sm:rounded-2xl ${wide ? 'sm:max-w-4xl' : 'sm:max-w-lg'}`}>
+        <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+          <div className="text-base font-black text-gray-950">{title}</div>
+          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={onClose} aria-label={`Close ${title}`}>
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="max-h-[calc(88vh-64px)] overflow-y-auto p-4">
+          {children}
+        </div>
+      </div>
+    </div>
   );
 }

@@ -1,96 +1,581 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { BarChart3, CalendarDays, ClipboardCheck, LockKeyhole, MessageCircle, Radio, Shield, Ticket, Trophy, Users } from 'lucide-react';
-import { GameCard } from '../components/GameCard';
-import { RoleBadge } from '../components/Badges';
-import { mockGames, mockPlayers, mockTeams } from '../data/mockData';
+import type { LucideIcon } from 'lucide-react';
+import {
+  BarChart3,
+  CalendarDays,
+  CheckCircle2,
+  ChevronRight,
+  DollarSign,
+  ExternalLink,
+  ImageIcon,
+  LinkIcon,
+  Loader2,
+  MapPin,
+  MessageCircle,
+  Radio,
+  Shield,
+  Ticket,
+  Trophy,
+  UserRound,
+  Users
+} from 'lucide-react';
+import { openPublicUrl } from '../lib/publicActions';
+import { getEventDetailPath } from '../lib/homeLogic';
+import { loadParentTeamDetail, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
-export function TeamDetail({ auth }: { auth: AuthState }) {
-  const { teamId } = useParams();
-  const team = mockTeams.find((item) => item.id === teamId);
+type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
 
-  if (!team) {
-    return <Navigate to="/teams" replace />;
+const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
+  { id: 'overview', label: 'Overview', icon: Trophy },
+  { id: 'schedule', label: 'Schedule', icon: CalendarDays },
+  { id: 'roster', label: 'Roster', icon: Users },
+  { id: 'insights', label: 'Insights', icon: BarChart3 },
+  { id: 'more', label: 'More', icon: Ticket }
+];
+
+export function TeamDetail({ auth }: { auth: AuthState }) {
+  const { teamId = '' } = useParams();
+  const [model, setModel] = useState<TeamDetailModel | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [activeTab, setActiveTab] = useState<TeamTab>('overview');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!teamId) return;
+      setLoading(true);
+      setError('');
+      try {
+        const nextModel = await loadParentTeamDetail(teamId, auth.user);
+        if (!cancelled) setModel(nextModel);
+      } catch (loadError: any) {
+        if (!cancelled) {
+          setError(loadError?.message || 'Unable to load this team.');
+          setModel(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, teamId]);
+
+  useEffect(() => {
+    const scroll = () => {
+      try {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch {
+        // jsdom does not implement scrollTo; real browsers and WebViews do.
+      }
+    };
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(scroll);
+    } else {
+      scroll();
+    }
+  }, [teamId]);
+
+  const tabBadges = useMemo(() => ({
+    overview: 0,
+    schedule: model?.upcomingEvents.length || 0,
+    roster: 0,
+    insights: (model?.leaderboards.length || 0) + (model?.trackingSummaries.length || 0),
+    more: model?.sponsors.length || 0
+  }), [model]);
+
+  if (!teamId) return <Navigate to="/teams" replace />;
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <section className="app-card p-5 text-center">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
+          <div className="mt-3 text-sm font-black text-gray-950">Loading team</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">Getting the team photo, roster, schedule, standings, and parent-visible insights.</div>
+        </section>
+      </div>
+    );
   }
 
-  const roster = mockPlayers.filter((player) => player.teamId === team.id);
-  const games = mockGames.filter((game) => game.teamId === team.id);
-  const canAdmin = auth.isCoach || auth.isAdmin || team.role !== 'Parent';
-
-  return (
-    <div className="space-y-4">
-      <section className="app-card p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <div className="app-label">Team</div>
-            <h1 className="mt-1 text-2xl font-black text-gray-950">{team.name}</h1>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <RoleBadge role={team.role} />
-              <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-600">{team.sport}</span>
+  if (error || !model) {
+    return (
+      <div className="space-y-4">
+        <section className="app-card p-5">
+          <div className="flex items-start gap-3">
+            <Shield className="mt-0.5 h-5 w-5 flex-none text-rose-600" aria-hidden="true" />
+            <div>
+              <div className="text-sm font-black text-gray-950">Team unavailable</div>
+              <div className="mt-1 text-sm font-semibold text-gray-600">{error || 'Team not found.'}</div>
+              <Link to="/teams" className="secondary-button mt-3 !min-h-9 text-xs">Back to teams</Link>
             </div>
           </div>
-          <Link to={`/messages/${team.id}`} className="secondary-button">
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="team-detail-page space-y-4">
+      <TeamHero model={model} />
+
+      <section className="app-card p-2">
+        <div className="grid grid-cols-5 gap-1">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const selected = activeTab === tab.id;
+            const badge = tabBadges[tab.id];
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-black transition ${selected ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'}`}
+                onClick={() => setActiveTab(tab.id)}
+                aria-pressed={selected}
+              >
+                <span className="relative">
+                  <Icon className="h-5 w-5" aria-hidden="true" />
+                  {badge > 0 ? <span className={`absolute -right-2 -top-1 min-w-4 rounded-full px-1 text-center text-[9px] leading-4 ${selected ? 'bg-white text-primary-700' : 'bg-primary-600 text-white'}`}>{badge > 9 ? '9+' : badge}</span> : null}
+                </span>
+                <span className="truncate">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
+      {activeTab === 'schedule' ? <ScheduleTab model={model} /> : null}
+      {activeTab === 'roster' ? <RosterTab model={model} /> : null}
+      {activeTab === 'insights' ? <InsightsTab model={model} /> : null}
+      {activeTab === 'more' ? <MoreTab model={model} /> : null}
+    </div>
+  );
+}
+
+function TeamHero({ model }: { model: TeamDetailModel }) {
+  const { team } = model;
+  return (
+    <section className="app-card overflow-hidden">
+      <div className="relative h-32 bg-gray-950 sm:h-44">
+        {team.photoUrl ? (
+          <img src={team.photoUrl} alt="" className="h-full w-full object-cover opacity-90" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#111827_0%,#4338ca_50%,#047857_100%)]">
+            <span className="text-5xl font-black text-white">{getInitials(team.name)}</span>
+          </div>
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-gray-950/75 via-gray-950/10 to-transparent" />
+        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3 text-white">
+          <div className="min-w-0">
+            <div className="text-xs font-black uppercase tracking-[0.06em] text-white/75">Team</div>
+            <h1 className="mt-1 truncate text-2xl font-black leading-tight">{team.name}</h1>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              <span className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-black">{team.sport}</span>
+              {team.zip ? <span className="rounded-full bg-white/15 px-2.5 py-1 text-xs font-black">{team.zip}</span> : null}
+            </div>
+          </div>
+          <Link to={`/messages/${encodeURIComponent(team.id)}`} className="inline-flex min-h-10 flex-none items-center justify-center gap-2 rounded-xl bg-white px-3 text-sm font-black text-gray-950 shadow-sm">
             <MessageCircle className="h-4 w-4" aria-hidden="true" />
             Chat
           </Link>
         </div>
-      </section>
+      </div>
+      <div className="grid grid-cols-3 gap-2 p-3">
+        <SummaryStat icon={Trophy} label="Record" value={formatRecord(model.record)} />
+        <SummaryStat icon={Users} label="Roster" value={String(model.players.length)} />
+        <SummaryStat icon={CalendarDays} label="Upcoming" value={String(model.upcomingEvents.length)} />
+      </div>
+      {team.description ? <p className="border-t border-gray-100 px-4 py-3 text-sm font-semibold leading-6 text-gray-600">{team.description}</p> : null}
+    </section>
+  );
+}
 
-      {canAdmin ? (
-        <section className="app-card p-4">
-          <div className="flex items-center gap-2 text-sm font-black text-primary-800">
-            <Shield className="h-4 w-4" aria-hidden="true" />
-            Admin buttons
-          </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-4">
-            {['Roster', 'Schedule', 'Fees', 'Permissions'].map((label) => (
-              <Link key={label} to={`/capabilities/${label === 'Roster' ? 'edit-roster' : label === 'Schedule' ? 'edit-schedule' : label === 'Fees' ? 'team-fees' : 'edit-team'}`} className="secondary-button justify-center">
-                {label}
-              </Link>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <InfoCard icon={Ticket} title="Team Pass" detail="Registration, access, stream, and sponsor links." />
-        <InfoCard icon={Trophy} title="Record" detail={team.record} />
-        <InfoCard icon={Users} title="Roster size" detail={`${team.rosterSize} players`} />
-        <InfoCard icon={Radio} title="Stream" detail="Livestream link ready for game day." />
-        <InfoCard icon={ClipboardCheck} title="Availability" detail="RSVP settings and reminders." />
-        <InfoCard icon={LockKeyhole} title="Permissions" detail="Team and staff access controls." />
-        <InfoCard icon={BarChart3} title="Analytics" detail="Insights, tracking summaries, leaderboards." />
-        <InfoCard icon={CalendarDays} title="Standings" detail="League and game day standings." />
+function OverviewTab({ model }: { model: TeamDetailModel }) {
+  return (
+    <div className="space-y-4">
+      <section className="grid gap-3 sm:grid-cols-2">
+        <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed games${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} />
+        <InfoCard icon={CalendarDays} title="Next event" value={model.nextEvent ? formatEventDate(model.nextEvent.date) : 'No upcoming'} detail={model.nextEvent ? `${model.nextEvent.title} · ${model.nextEvent.location}` : 'Schedule is clear for now'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} />
+        <InfoCard icon={Users} title="Roster size" value={`${model.players.length}`} detail={`${model.linkedPlayers.length || 0} linked to your account`} />
+        <InfoCard icon={BarChart3} title="Standings" value={getStandingValue(model)} detail={getStandingDetail(model)} href={model.team.leagueUrl || undefined} />
       </section>
 
       <section className="app-card p-4">
-        <h2 className="app-section-title">Roster</h2>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {roster.map((player) => (
-            <Link key={player.id} to={`/players/${player.id}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
-              <div className="text-sm font-black text-gray-950">#{player.number} {player.name}</div>
-              <div className="mt-1 text-xs font-semibold text-gray-500">{player.teamName}</div>
-            </Link>
-          ))}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-black text-gray-950">Parent actions</div>
+            <div className="mt-1 text-xs font-semibold text-gray-500">The high-frequency team workflows are native in the app.</div>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <Link to={`/schedule?teamId=${encodeURIComponent(model.team.id)}&filter=availability`} className="secondary-button justify-center text-xs">
+            Availability
+          </Link>
+          <Link to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} className="secondary-button justify-center text-xs">
+            Team schedule
+          </Link>
+          <Link to={`/messages/${encodeURIComponent(model.team.id)}`} className="secondary-button justify-center text-xs">
+            Team chat
+          </Link>
         </div>
       </section>
 
-      <section className="space-y-3">
-        <h2 className="app-section-title">Schedule</h2>
-        {games.map((game) => (
-          <GameCard key={game.id} game={game} />
-        ))}
+      <TeamPassCard model={model} />
+    </div>
+  );
+}
+
+function ScheduleTab({ model }: { model: TeamDetailModel }) {
+  const events = [...model.upcomingEvents.slice(0, 8), ...model.recentResults.slice(0, 3)];
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-gray-950">Team schedule</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">Games, practices, availability, rideshare, assignments, and packets live in the schedule workflow.</div>
+        </div>
+        <Link to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} className="secondary-button !min-h-9 text-xs">Open</Link>
+      </div>
+      <div className="mt-3 space-y-2">
+        {events.length ? events.map((event) => <TeamEventRow key={`${event.id}-${event.date.toISOString()}`} event={event} teamId={model.team.id} />) : (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team events found.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RosterTab({ model }: { model: TeamDetailModel }) {
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-gray-950">Roster</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">Player photos, numbers, linked-player shortcuts, and profile drill-in.</div>
+        </div>
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.players.length} players</span>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} player={player} />) : (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function InsightsTab({ model }: { model: TeamDetailModel }) {
+  return (
+    <div className="space-y-4">
+      <section className="app-card p-4">
+        <div className="text-sm font-black text-gray-950">Player checklist</div>
+        <div className="mt-0.5 text-xs font-semibold text-gray-500">Public tracking items visible for your linked player.</div>
+        <div className="mt-3 space-y-3">
+          {model.trackingSummaries.length ? model.trackingSummaries.map((summary) => (
+            <div key={summary.playerId} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <div className="flex items-center gap-3">
+                <PlayerPhoto name={summary.playerName} photoUrl={summary.photoUrl} />
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black text-gray-950">{summary.playerName}</div>
+                  <div className="text-xs font-semibold text-gray-500">{summary.items.filter((item) => item.isComplete).length}/{summary.items.length} complete</div>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2">
+                {summary.items.slice(0, 5).map((item) => (
+                  <div key={item.id} className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-black text-gray-900">{item.title}</div>
+                      {item.description ? <div className="line-clamp-1 text-[11px] font-semibold text-gray-500">{item.description}</div> : null}
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black ${item.isComplete ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {item.isComplete ? 'Done' : 'Open'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )) : (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No parent-visible tracking items for your players yet.</div>
+          )}
+        </div>
+      </section>
+
+      <section className="app-card p-4">
+        <div className="text-sm font-black text-gray-950">Leaderboards</div>
+        <div className="mt-0.5 text-xs font-semibold text-gray-500">Public top stats from completed tracked games.</div>
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          {model.leaderboards.length ? model.leaderboards.map((leaderboard) => (
+            <div key={leaderboard.id} className="rounded-xl border border-gray-200 bg-white p-3">
+              <div className="text-sm font-black text-gray-950">{leaderboard.label}</div>
+              <div className="mt-3 space-y-2">
+                {leaderboard.leaders.map((leader) => (
+                  <div key={`${leaderboard.id}-${leader.playerId}`} className="flex items-center gap-3 rounded-lg bg-gray-50 px-3 py-2">
+                    <div className="w-6 text-xs font-black text-gray-500">#{leader.rank}</div>
+                    <PlayerPhoto name={leader.playerName} photoUrl={leader.photoUrl} small />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-black text-gray-950">{leader.playerNumber ? `#${leader.playerNumber} ` : ''}{leader.playerName}</div>
+                    </div>
+                    <div className="text-sm font-black text-primary-700">{leader.formattedValue}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )) : (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Leaderboards appear after public stat configs and completed tracked games exist.</div>
+          )}
+        </div>
       </section>
     </div>
   );
 }
 
-function InfoCard({ icon: Icon, title, detail }: { icon: typeof Ticket; title: string; detail: string }) {
+function MoreTab({ model }: { model: TeamDetailModel }) {
   return (
-    <div className="app-card p-4">
-      <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" />
-      <div className="mt-3 text-sm font-black text-gray-950">{title}</div>
-      <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">{detail}</div>
+    <div className="space-y-4">
+      <section className="app-card p-4">
+        <div className="text-sm font-black text-gray-950">Team links</div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <ExternalAction icon={ExternalLink} label="Website team page" detail="Open the current full team.html page." href={model.team.websiteUrl} />
+          <InternalAction icon={ImageIcon} label="Media albums" detail="Photos, video links, albums, and files." to={`/teams/${encodeURIComponent(model.team.id)}/media`} />
+          <InternalAction icon={DollarSign} label="My fees" detail="Balances, checkout links, installments, and history." to="/parent-tools/fees" />
+          <InternalAction icon={Ticket} label="Registrations" detail="Open published team registration forms." to="/parent-tools/registrations" />
+          {model.team.streamUrl ? <ExternalAction icon={Radio} label="Watch stream" detail="Open the configured team stream." href={model.team.streamUrl} /> : null}
+          {model.team.leagueUrl ? <ExternalAction icon={Trophy} label="League page" detail="Open standings or league registration source." href={model.team.leagueUrl} /> : null}
+        </div>
+      </section>
+
+      {model.team.registrationProvider.length ? (
+        <section className="app-card p-4">
+          <div className="text-sm font-black text-gray-950">Registration provider</div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {model.team.registrationProvider.map((row) => (
+              <div key={row.label} className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+                <div className="text-[11px] font-black uppercase tracking-[0.04em] text-blue-700">{row.label}</div>
+                <div className="mt-1 break-all text-sm font-black text-gray-950">{row.value}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {model.sponsors.length ? (
+        <section className="app-card p-4">
+          <div className="text-sm font-black text-gray-950">Local attractions and sponsors</div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {model.sponsors.map((sponsor) => (
+              <a
+                key={sponsor.id}
+                href={sponsor.websiteUrl || '#'}
+                className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3"
+                onClick={(event) => {
+                  if (!sponsor.websiteUrl) return;
+                  event.preventDefault();
+                  void openPublicUrl(sponsor.websiteUrl);
+                }}
+              >
+                <SponsorImage sponsor={sponsor} />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-black text-gray-950">{sponsor.name}</span>
+                  {sponsor.description ? <span className="line-clamp-1 text-xs font-semibold text-gray-500">{sponsor.description}</span> : null}
+                </span>
+              </a>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
+}
+
+function TeamPassCard({ model }: { model: TeamDetailModel }) {
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <Ticket className="h-5 w-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-gray-950">Team Pass</div>
+          <div className="mt-1 text-sm font-semibold leading-6 text-gray-600">
+            Parents can view team content through their team access. Staff-managed pass setup and checkout stay on the current website until the payment flow is migrated.
+          </div>
+          <button type="button" className="ghost-button mt-3 !min-h-9 text-xs" onClick={() => openPublicUrl(model.team.websiteUrl)}>
+            Open website team page
+            <ExternalLink className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InfoCard({ icon: Icon, title, value, detail, to, href }: { icon: LucideIcon; title: string; value: string; detail: string; to?: string; href?: string }) {
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <Icon className="h-5 w-5 text-primary-600" aria-hidden="true" />
+        {(to || href) ? <ChevronRight className="h-4 w-4 text-gray-300" aria-hidden="true" /> : null}
+      </div>
+      <div className="mt-3 text-xs font-black uppercase tracking-[0.04em] text-gray-500">{title}</div>
+      <div className="mt-1 truncate text-xl font-black text-gray-950">{value}</div>
+      <div className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-gray-600">{detail}</div>
+    </>
+  );
+
+  if (to) return <Link to={to} className="app-card p-4 transition hover:border-primary-200">{body}</Link>;
+  if (href) {
+    return (
+      <a
+        href={href}
+        className="app-card p-4 transition hover:border-primary-200"
+        onClick={(event) => {
+          event.preventDefault();
+          void openPublicUrl(href);
+        }}
+      >
+        {body}
+      </a>
+    );
+  }
+  return <div className="app-card p-4">{body}</div>;
+}
+
+function SummaryStat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50 p-2">
+      <Icon className="h-4 w-4 text-primary-600" aria-hidden="true" />
+      <div className="mt-1 truncate text-sm font-black text-gray-950">{value}</div>
+      <div className="truncate text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
+    </div>
+  );
+}
+
+function TeamEventRow({ event, teamId }: { event: TeamDetailEvent; teamId: string }) {
+  const childId = '';
+  const eventPath = getEventDetailPath({ teamId, id: event.id, childId });
+  return (
+    <Link to={eventPath} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/30">
+      <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-xl bg-gray-100 text-gray-700">
+        <span className="text-[10px] font-black uppercase">{event.date.toLocaleDateString(undefined, { month: 'short' })}</span>
+        <span className="text-lg font-black leading-none">{event.date.getDate()}</span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate text-sm font-black text-gray-950">{event.title}</div>
+          {event.type === 'practice' ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-blue-700">Practice</span> : null}
+        </div>
+        <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-gray-500">
+          <span>{event.date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
+          <span className="truncate">{event.location}</span>
+        </div>
+      </div>
+      {event.homeScore !== null && event.awayScore !== null ? <div className="text-sm font-black text-gray-950">{event.homeScore}-{event.awayScore}</div> : null}
+      <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
+    </Link>
+  );
+}
+
+function PlayerRow({ teamId, player }: { teamId: string; player: TeamDetailPlayer }) {
+  return (
+    <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+      <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-black text-gray-950">{player.number ? `#${player.number} ` : ''}{player.name}</span>
+          {player.isLinked ? <span className="rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">Yours</span> : null}
+        </span>
+        <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{player.position || 'Player profile'}</span>
+      </span>
+      <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
+    </Link>
+  );
+}
+
+function ExternalAction({ icon: Icon, label, detail, href }: { icon: LucideIcon; label: string; detail: string; href: string }) {
+  return (
+    <a
+      href={href}
+      className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
+      onClick={(event) => {
+        event.preventDefault();
+        void openPublicUrl(href);
+      }}
+    >
+      <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-white text-primary-700">
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-black text-gray-950">{label}</span>
+        <span className="line-clamp-1 text-xs font-semibold text-gray-500">{detail}</span>
+      </span>
+      <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+    </a>
+  );
+}
+
+function InternalAction({ icon: Icon, label, detail, to }: { icon: LucideIcon; label: string; detail: string; to: string }) {
+  return (
+    <Link to={to} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+      <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-white text-primary-700">
+        <Icon className="h-5 w-5" aria-hidden="true" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-black text-gray-950">{label}</span>
+        <span className="line-clamp-1 text-xs font-semibold text-gray-500">{detail}</span>
+      </span>
+      <ChevronRight className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
+    </Link>
+  );
+}
+
+function PlayerPhoto({ name, photoUrl, small = false }: { name: string; photoUrl?: string | null; small?: boolean }) {
+  const sizeClass = small ? 'h-8 w-8 text-[10px]' : 'h-11 w-11 text-xs';
+  if (photoUrl) {
+    return <img src={photoUrl} alt="" className={`${sizeClass} flex-none rounded-full object-cover ring-1 ring-gray-200`} loading="lazy" />;
+  }
+  return (
+    <span className={`${sizeClass} flex flex-none items-center justify-center rounded-full bg-gray-900 font-black text-white`}>
+      {getInitials(name)}
+    </span>
+  );
+}
+
+function SponsorImage({ sponsor }: { sponsor: { name: string; imageUrl: string | null } }) {
+  if (sponsor.imageUrl) return <img src={sponsor.imageUrl} alt="" className="h-12 w-12 flex-none rounded-xl object-cover" loading="lazy" />;
+  return (
+    <span className="flex h-12 w-12 flex-none items-center justify-center rounded-xl bg-white text-gray-500">
+      <LinkIcon className="h-5 w-5" aria-hidden="true" />
+    </span>
+  );
+}
+
+function formatRecord(record: TeamDetailModel['record']) {
+  return `${record.wins}-${record.losses}${record.ties ? `-${record.ties}` : ''}`;
+}
+
+function getStandingValue(model: TeamDetailModel) {
+  const row = model.standings.currentRow;
+  if (!row) return model.team.leagueUrl ? 'League link' : 'Not set';
+  return row.record || `${row.w || 0}-${row.l || 0}${row.t ? `-${row.t}` : ''}`;
+}
+
+function getStandingDetail(model: TeamDetailModel) {
+  const row = model.standings.currentRow;
+  if (!row) return model.team.leagueUrl ? 'Open league page for standings' : 'No standings configured';
+  const rank = typeof row.rank === 'number' ? `#${row.rank}` : model.standings.label;
+  return `${rank} · PF ${row.pf || 0} · PA ${row.pa || 0}`;
+}
+
+function formatEventDate(date: Date) {
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function getInitials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'T';
 }
