@@ -51,12 +51,9 @@ export function isUserInConversation(conversation, user = {}, { canModerate = fa
     if (canModerate) return true;
 
     const participantIds = Array.isArray(conversation.participantIds) ? conversation.participantIds : [];
-    const participantRoles = Array.isArray(conversation.participantRoles) ? conversation.participantRoles : [];
     return participantIds.includes(user?.uid) ||
         (user?.uid && participantIds.includes(`user:${user.uid}`)) ||
-
-        (user?.email && participantIds.includes(`email:${String(user.email).toLowerCase()}`)) ||
-        participantRoles.includes('team');
+        (user?.email && participantIds.includes(`email:${String(user.email).toLowerCase()}`));
 }
 
 export function getConversationDisplayName(conversation, team = {}) {

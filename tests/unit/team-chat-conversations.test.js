@@ -45,6 +45,8 @@ describe('team chat conversations', () => {
         const mixedCaseUser = { uid: 'u2', email: 'Parent@Example.com' };
         expect(isUserInConversation({ id: 'group-4', type: 'group', participantIds: ['email:parent@example.com'] }, mixedCaseUser)).toBe(true);
         expect(isUserInConversation({ id: 'group-3', type: 'group', participantIds: [] }, user)).toBe(false);
+        expect(isUserInConversation({ id: 'group-5', type: 'group', participantIds: [], participantRoles: ['team'] }, user)).toBe(false);
+        expect(isUserInConversation({ id: 'direct-1', type: 'direct', participantIds: [], participantRoles: ['team'] }, user)).toBe(false);
         expect(isUserInConversation({ id: 'group-3', type: 'group', participantIds: [] }, user, { canModerate: true })).toBe(true);
         expect(isUserInConversation({ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team' }, user)).toBe(true);
     });
@@ -53,11 +55,12 @@ describe('team chat conversations', () => {
         const rules = readRepoFile('firestore.rules');
         const db = readRepoFile('js/db.js');
 
-        expect(rules).toContain('allow read: if canAccessChatConversation(teamId, resource.data);');
-        expect(rules).toContain('canAccessChatConversation(teamId, request.resource.data) &&');
+        expect(rules).toContain('allow read: if canAccessChatConversation(teamId, conversationId, resource.data);');
+        expect(rules).toContain('canAccessChatConversation(teamId, conversationId, request.resource.data) &&');
         expect(db).toContain("where('participantIds', 'array-contains', user.uid)");
         expect(db).toContain("where('participantIds', 'array-contains', `user:${user.uid}`)");
         expect(db).toContain("where('participantIds', 'array-contains', `email:${normalizedEmail}`)");
-        expect(db).toContain("where('participantRoles', 'array-contains', 'team')");
+        expect(db).not.toContain("where('participantRoles', 'array-contains', 'team')");
+        expect(rules).not.toContain("'team' in participantRoles");
     });
 });
