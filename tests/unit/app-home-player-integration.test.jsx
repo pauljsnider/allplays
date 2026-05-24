@@ -138,6 +138,17 @@ async function clickButton(container, text) {
     await flush();
 }
 
+async function clickLastButton(container, text) {
+    const buttons = Array.from(container.querySelectorAll('button')).filter((candidate) => candidate.textContent.trim() === text);
+    if (!buttons.length) {
+        throw new Error(`Button not found: ${text}`);
+    }
+    await act(async () => {
+        buttons[buttons.length - 1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+}
+
 async function clickLinkByHref(container, href) {
     const link = Array.from(container.querySelectorAll('a')).find((candidate) => candidate.getAttribute('href') === href);
     if (!link) {
@@ -403,13 +414,29 @@ describe('React app Home and player drill-in integration', () => {
         expect(teamLink?.getAttribute('aria-label')).toBe('Open Bears in My Teams');
 
         await clickButton(container, 'Feed');
-        await waitForText(container, 'Shareable ideas');
+        await waitForText(container, 'Quick shares');
         expect(container.textContent).toContain('Jamie Friend');
         expect(container.textContent).toContain('Great ball movement in the second half.');
         expect(Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'))).toEqual(expect.arrayContaining([
             '/players/team-1/player-1',
             '/home?section=friends'
         ]));
+        await clickButton(container, 'Player moment');
+        await waitForText(container, 'What happened?');
+        expect(container.textContent).toContain('Pick one');
+        expect(container.textContent).toContain('Write one short note');
+        expect(container.textContent).toContain('Proud of the effort today.');
+        expect(container.textContent).not.toContain('Post type');
+        expect(container.textContent).not.toContain('Title');
+        await clickButton(container, 'Proud of the effort today.');
+        await clickLastButton(container, 'Post');
+        expect(socialMocks.createSocialPost).toHaveBeenCalledWith(auth.user, expect.objectContaining({
+            type: 'player_moment',
+            title: 'Pat Star moment',
+            caption: 'Proud of the effort today.',
+            teamId: 'team-1',
+            playerIds: ['player-1']
+        }));
 
         await clickButton(container, 'Friends');
         await waitForText(container, 'Needs response');

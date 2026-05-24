@@ -5,9 +5,11 @@ import {
     buildFriendshipId,
     buildSocialHomeModel,
     filterSocialFeedItems,
+    getSocialPostPresetForType,
     getSocialTypeLabel,
     mergeSocialFeedItems,
-    normalizeSocialFriend
+    normalizeSocialFriend,
+    socialPostPresets
 } from '../../apps/app/src/lib/socialLogic.ts';
 
 function event(overrides = {}) {
@@ -163,5 +165,30 @@ describe('React app social logic', () => {
             suggestions: 1
         });
         expect(getSocialTypeLabel('game_recap')).toBe('Game recap');
+    });
+
+    it('defines quick-share presets for the social composer instead of exposing raw post fields', () => {
+        expect(socialPostPresets.map((preset) => preset.id)).toEqual([
+            'player',
+            'game',
+            'photo',
+            'practice',
+            'achievement'
+        ]);
+        expect(getSocialPostPresetForType('player_moment')).toMatchObject({
+            label: 'Player moment',
+            defaultVisibility: 'friends',
+            prefersPlayer: true,
+            suggestions: expect.arrayContaining(['Proud of the effort today.'])
+        });
+        expect(getSocialPostPresetForType('team_media')).toMatchObject({
+            label: 'Photo or video',
+            defaultVisibility: 'friends_and_team',
+            requiresMedia: true
+        });
+        expect(getSocialPostPresetForType('manual_post')).toMatchObject({
+            id: 'player',
+            type: 'player_moment'
+        });
     });
 });

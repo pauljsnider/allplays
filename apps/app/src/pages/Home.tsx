@@ -64,8 +64,10 @@ import {
 import {
   emptySocialHome,
   filterSocialFeedItems,
+  getSocialPostPresetForType,
   getSocialTypeLabel,
   getSocialVisibilityLabel,
+  socialPostPresets,
   socialFeedFilters,
   socialVisibilityOptions,
   type SocialFeedFilter,
@@ -178,6 +180,20 @@ export function Home({ auth }: { auth: AuthState }) {
   const today = new Date();
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
 
+  const openComposer = (type: SocialPostType = 'manual_post') => {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('section', 'feed');
+    nextParams.set('social', 'create');
+    if (type === 'manual_post') {
+      nextParams.delete('type');
+    } else {
+      nextParams.set('type', type);
+    }
+    setActiveSection('feed');
+    setSearchParams(nextParams, { replace: true });
+    setComposerOpen(true);
+  };
+
   const selectSection = (sectionId: HomeSectionId) => {
     setActiveSection(sectionId);
     const nextParams = new URLSearchParams(searchParams);
@@ -289,7 +305,7 @@ export function Home({ auth }: { auth: AuthState }) {
         </section>
       ) : null}
 
-      {!loading && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={() => setComposerOpen(true)} /> : null}
+      {!loading && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} /> : null}
       {!loading && activeSection === 'feed' ? (
         <FeedSection
           social={social}
@@ -297,7 +313,7 @@ export function Home({ auth }: { auth: AuthState }) {
           auth={auth}
           home={home}
           onRefresh={() => refreshSocial()}
-          onOpenComposer={() => setComposerOpen(true)}
+          onOpenComposer={openComposer}
           onStatus={setSocialStatus}
         />
       ) : null}
@@ -316,6 +332,7 @@ export function Home({ auth }: { auth: AuthState }) {
 
       {composerOpen ? (
         <SocialComposerModal
+          key={selectedComposerType}
           home={home}
           social={social}
           initialType={selectedComposerType}
@@ -342,7 +359,7 @@ function TodaySection({
   home: ParentHomeModel;
   social: SocialHomeModel;
   socialLoading: boolean;
-  onOpenComposer: () => void;
+  onOpenComposer: (type?: SocialPostType) => void;
 }) {
   const unreadTeams = home.teams
     .filter((team) => Number(team.unreadCount || 0) > 0)
@@ -616,7 +633,7 @@ function AccessCard({ to, icon: Icon, title, detail, tone }: { to: string; icon:
   );
 }
 
-function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHomeModel; loading: boolean; onOpenComposer: () => void }) {
+function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHomeModel; loading: boolean; onOpenComposer: (type?: SocialPostType) => void }) {
   const previewItems = social.feedItems.slice(0, 2);
   return (
     <section className="home-feed-preview app-card overflow-hidden">
@@ -625,7 +642,7 @@ function HomeFeedPreview({ social, loading, onOpenComposer }: { social: SocialHo
           <div className="app-label">Community</div>
           <h2 className="mt-1 app-section-title">Team feed</h2>
         </div>
-        <button type="button" className="ghost-button !min-h-9 !px-3 text-xs" onClick={onOpenComposer}>
+        <button type="button" className="ghost-button !min-h-9 !px-3 text-xs" onClick={() => onOpenComposer('player_moment')}>
           <Plus className="h-4 w-4" aria-hidden="true" />
           Post
         </button>
@@ -692,7 +709,7 @@ function FeedSection({
   auth: AuthState;
   home: ParentHomeModel;
   onRefresh: () => Promise<void> | void;
-  onOpenComposer: () => void;
+  onOpenComposer: (type?: SocialPostType) => void;
   onStatus: (status: { tone: 'error' | 'success'; message: string } | null) => void;
 }) {
   const [filter, setFilter] = useState<SocialFeedFilter>('all');
@@ -711,7 +728,7 @@ function FeedSection({
             <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={() => onRefresh()} disabled={loading} aria-label="Refresh feed" title="Refresh feed">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
             </button>
-            <button type="button" className="primary-button !min-h-9 !px-3 text-xs" onClick={onOpenComposer}>
+            <button type="button" className="primary-button !min-h-9 !px-3 text-xs" onClick={() => onOpenComposer()}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Post
             </button>
@@ -765,12 +782,21 @@ function FeedSection({
             <section className="rounded-xl border border-primary-100 bg-primary-50 p-3">
               <div className="flex items-center gap-2 text-sm font-black text-primary-900">
                 <Sparkles className="h-4 w-4 text-primary-700" aria-hidden="true" />
-                Shareable ideas
+                Quick shares
               </div>
-              <div className="mt-2 space-y-2 text-xs font-semibold leading-5 text-primary-900/80">
-                <p>Post a game recap after a match report, a player moment from a profile update, or a practice packet reminder before training.</p>
+              <div className="mt-2 grid gap-2">
+                {socialPostPresets.slice(0, 4).map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className="flex min-h-10 items-center justify-between rounded-lg bg-white px-3 text-left text-xs font-black text-primary-900 ring-1 ring-primary-100 transition hover:ring-primary-300"
+                    onClick={() => onOpenComposer(preset.type)}
+                  >
+                    {preset.label}
+                    <ChevronRight className="h-4 w-4 flex-none text-primary-500" aria-hidden="true" />
+                  </button>
+                ))}
               </div>
-              <button type="button" className="mt-3 w-full rounded-lg bg-primary-600 px-3 py-2 text-xs font-black text-white" onClick={onOpenComposer}>Create a moment</button>
             </section>
           </aside>
         </div>
@@ -1182,37 +1208,64 @@ function SocialComposerModal({
   onClose: () => void;
   onSubmit: (input: CreateSocialPostInput) => Promise<void> | void;
 }) {
-  const [type, setType] = useState<SocialPostType>(initialType);
-  const [visibility, setVisibility] = useState<SocialVisibility>(initialType === 'player_moment' || initialType === 'achievement' ? 'friends' : 'team');
+  const initialPreset = getSocialPostPresetForType(initialType);
+  const [presetId, setPresetId] = useState(initialPreset.id);
+  const activePreset = socialPostPresets.find((preset) => preset.id === presetId) || initialPreset;
+  const type = activePreset.type;
+  const [visibility, setVisibility] = useState<SocialVisibility>(activePreset.defaultVisibility);
   const [teamId, setTeamId] = useState(home.teams[0]?.teamId || '');
   const [playerKey, setPlayerKey] = useState(home.players[0] ? `${home.players[0].teamId}::${home.players[0].playerId}` : '');
-  const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState('');
 
-  const selectedTeam = home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null;
-  const selectedPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || null;
+  const selectedPlayer = activePreset.prefersPlayer
+    ? home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || home.players[0] || null
+    : home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || null;
+  const selectedTeam = selectedPlayer
+    ? home.teams.find((team) => team.teamId === selectedPlayer.teamId) || home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null
+    : home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null;
   const suggestedTitle = getComposerSuggestedTitle(type, selectedTeam, selectedPlayer);
   const visibleUserIds = visibility === 'friends' || visibility === 'friends_and_team'
     ? social.friends.map((friend) => friend.userId)
     : [];
+  const subjectLabel = selectedPlayer
+    ? `${selectedPlayer.playerName} · ${selectedPlayer.teamName}`
+    : selectedTeam?.teamName || 'Choose team';
+
+  const selectPreset = (nextPresetId: typeof presetId) => {
+    const nextPreset = socialPostPresets.find((preset) => preset.id === nextPresetId);
+    if (!nextPreset) return;
+    setPresetId(nextPreset.id);
+    setVisibility(nextPreset.defaultVisibility);
+    setLocalError('');
+    if (nextPreset.prefersPlayer && !playerKey && home.players[0]) {
+      setPlayerKey(`${home.players[0].teamId}::${home.players[0].playerId}`);
+      setTeamId(home.players[0].teamId);
+    }
+    if (!nextPreset.prefersPlayer) {
+      setPlayerKey('');
+    }
+  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setLocalError('');
     setSubmitting(true);
     try {
-      const media = mediaFile ? [await uploadSocialPostMedia(selectedTeam?.teamId || teamId, mediaFile)] : [];
-      const finalTitle = title.trim() || suggestedTitle;
-      if (!finalTitle) {
-        throw new Error('Add a title before posting.');
+      if (!caption.trim() && !mediaFile) {
+        throw new Error('Add a short note or attach a photo/video.');
       }
+      if (activePreset.requiresMedia && !mediaFile) {
+        throw new Error('Add a photo or video for this share.');
+      }
+      const media = mediaFile ? [await uploadSocialPostMedia(selectedTeam?.teamId || teamId, mediaFile)] : [];
       await onSubmit({
         type,
         visibility,
-        title: finalTitle,
+        title: suggestedTitle,
         detail: getComposerDetail(type, selectedTeam, selectedPlayer),
         caption: caption.trim(),
         teamId: selectedTeam?.teamId || teamId || null,
@@ -1238,76 +1291,114 @@ function SocialComposerModal({
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
           <div>
             <div className="app-label">Share</div>
-            <h2 className="mt-1 app-section-title">Create a moment</h2>
+            <h2 className="mt-1 app-section-title">What happened?</h2>
           </div>
           <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={onClose} aria-label="Close">×</button>
         </div>
-        <div className="max-h-[72dvh] space-y-3 overflow-y-auto p-4">
+        <div className="max-h-[72dvh] space-y-4 overflow-y-auto p-4">
           {localError ? <Status tone="error" message={localError} /> : null}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Post type</span>
-              <select value={type} onChange={(event) => setType(event.target.value as SocialPostType)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
-                <option value="manual_post">Post</option>
-                <option value="player_moment">Player moment</option>
-                <option value="achievement">Achievement</option>
-                <option value="game_recap">Game recap</option>
-                <option value="team_media">Team media</option>
-                <option value="practice_packet">Practice packet</option>
-                <option value="upcoming_game">Upcoming game</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Audience</span>
-              <select value={visibility} onChange={(event) => setVisibility(event.target.value as SocialVisibility)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
-                {socialVisibilityOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-              </select>
-              <span className="mt-1 block text-xs font-semibold text-gray-500">{socialVisibilityOptions.find((option) => option.id === visibility)?.detail}</span>
-            </label>
+
+          <div>
+            <div className="mb-2 text-xs font-black uppercase tracking-[0.04em] text-gray-500">Pick one</div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {socialPostPresets.map((preset) => {
+                const active = preset.id === activePreset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={`min-h-[82px] rounded-xl border p-2 text-left transition ${active ? 'border-primary-300 bg-primary-50 text-primary-950 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200'}`}
+                    onClick={() => selectPreset(preset.id)}
+                    aria-pressed={active}
+                  >
+                    <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                      <SocialTypeIcon type={preset.type} />
+                    </span>
+                    <span className="mt-2 block text-xs font-black leading-4">{preset.shortLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Team</span>
-              <select value={selectedTeam?.teamId || teamId} onChange={(event) => setTeamId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
-                {home.teams.length ? home.teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>) : <option value="">No team linked</option>}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player</span>
-              <select
-                value={playerKey}
-                onChange={(event) => {
-                  const nextKey = event.target.value;
-                  setPlayerKey(nextKey);
-                  const nextPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === nextKey);
-                  if (nextPlayer?.teamId) setTeamId(nextPlayer.teamId);
-                }}
-                className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-white text-primary-700 ring-1 ring-gray-200">
+                <SocialTypeIcon type={activePreset.type} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-black text-gray-950">{activePreset.label}</div>
+                <div className="mt-0.5 text-xs font-semibold leading-5 text-gray-600">{activePreset.detail}</div>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-gray-700 ring-1 ring-gray-200" onClick={() => setDetailsOpen((value) => !value)}>
+                {subjectLabel}
+              </button>
+              <button type="button" className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-primary-700 ring-1 ring-primary-100" onClick={() => setDetailsOpen((value) => !value)}>
+                {getSocialVisibilityLabel(visibility)}
+              </button>
+            </div>
+          </div>
+
+          {detailsOpen ? (
+            <div className="grid gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Audience</span>
+                <select value={visibility} onChange={(event) => setVisibility(event.target.value as SocialVisibility)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
+                  {socialVisibilityOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Team</span>
+                <select value={selectedTeam?.teamId || teamId} onChange={(event) => setTeamId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
+                  {home.teams.length ? home.teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>) : <option value="">No team linked</option>}
+                </select>
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player</span>
+                <select
+                  value={playerKey}
+                  onChange={(event) => {
+                    const nextKey = event.target.value;
+                    setPlayerKey(nextKey);
+                    const nextPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === nextKey);
+                    if (nextPlayer?.teamId) setTeamId(nextPlayer.teamId);
+                  }}
+                  className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                >
+                  <option value="">Team post</option>
+                  {home.players.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
+                </select>
+              </label>
+            </div>
+          ) : null}
+
+          <label className="block">
+            <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Write one short note</span>
+            <textarea value={caption} onChange={(event) => setCaption(event.target.value)} rows={4} placeholder={activePreset.prompt} className="mt-1 w-full resize-none rounded-xl border border-gray-200 bg-white px-3 py-2 text-base font-semibold leading-6 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
+          </label>
+
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {activePreset.suggestions.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                className="min-h-8 flex-none rounded-full bg-gray-100 px-3 text-xs font-black text-gray-700 transition hover:bg-primary-50 hover:text-primary-800"
+                onClick={() => setCaption(suggestion)}
               >
-                <option value="">Team post</option>
-                {home.players.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
-              </select>
-            </label>
+                {suggestion}
+              </button>
+            ))}
           </div>
 
-          <label className="block">
-            <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Title</span>
-            <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={suggestedTitle} className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
-          </label>
-
-          <label className="block">
-            <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Caption</span>
-            <textarea value={caption} onChange={(event) => setCaption(event.target.value)} rows={4} placeholder="Write the update you want friends or team families to see." className="mt-1 w-full resize-none rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
-          </label>
-
-          <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3">
+          <label className={`flex cursor-pointer items-center gap-3 rounded-xl border border-dashed p-3 ${mediaFile ? 'border-primary-300 bg-primary-50' : 'border-gray-300 bg-gray-50'}`}>
             <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-white text-primary-700 ring-1 ring-gray-200">
               <ImagePlus className="h-5 w-5" aria-hidden="true" />
             </div>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-black text-gray-950">{mediaFile ? mediaFile.name : 'Add photo or video'}</span>
-              <span className="mt-0.5 block text-xs font-semibold text-gray-500">Images and videos use the same upload path as team chat.</span>
+              <span className="block text-sm font-black text-gray-950">{mediaFile ? mediaFile.name : activePreset.requiresMedia ? 'Choose photo or video' : 'Add photo or video'}</span>
+              <span className="mt-0.5 block text-xs font-semibold text-gray-500">{mediaFile ? 'Ready to share.' : 'Optional unless this is a media post.'}</span>
             </span>
             <input type="file" accept="image/*,video/*" className="sr-only" onChange={(event) => setMediaFile(event.target.files?.[0] || null)} />
           </label>
