@@ -3,8 +3,7 @@ import { expect, test } from '@playwright/test';
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
 function appUrl(baseURL, hashPath) {
-    const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL;
-    const url = new URL('/', appBaseURL);
+    const url = new URL('/', baseURL);
     url.hash = hashPath;
     return url.toString();
 }
@@ -12,6 +11,8 @@ function appUrl(baseURL, hashPath) {
 async function mockHomePlayerModules(page) {
     await page.addInitScript(() => {
         window.__playerLoads = [];
+        window.__socialPosts = [];
+        window.__socialUploads = [];
     });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
@@ -208,7 +209,10 @@ async function mockHomePlayerModules(page) {
                         }
                     };
                 }
-                export async function createSocialPost() { return 'post-new'; }
+                export async function createSocialPost(user, input) {
+                    window.__socialPosts.push({ user, input });
+                    return 'post-new';
+                }
                 export async function reactToSocialPost() {}
                 export async function commentOnSocialPost() {}
                 export async function hideSocialPost() {}
@@ -218,8 +222,9 @@ async function mockHomePlayerModules(page) {
                 export async function respondToFriendRequest() {}
                 export async function removeFriend() {}
                 export async function blockFriend() {}
-                export async function uploadSocialPostMedia() {
-                    return { type: 'image', url: 'https://img.example.test/social.png', name: 'social.png', thumbnailUrl: null };
+                export async function uploadSocialPostMedia(teamId, file) {
+                    window.__socialUploads.push({ teamId, name: file?.name || null, type: file?.type || null });
+                    return { type: 'image', url: 'https://img.example.test/social.png', name: file?.name || 'social.png', thumbnailUrl: null };
                 }
             `
         });
@@ -385,11 +390,28 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await expect(page.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]')).toBeVisible();
 
     await page.getByRole('button', { name: 'Feed' }).click();
-    await expect(page.getByText('Shareable ideas')).toBeVisible();
+    await expect(page.getByText('Quick shares')).toBeVisible();
     await expect(page.getByText('Jamie Friend')).toBeVisible();
     await expect(page.getByText('Great ball movement in the second half.')).toBeVisible();
     await expect(page.locator('a[href="#/players/team-1/player-1"]').first()).toBeVisible();
     await expect(page.locator('a[href="#/home?section=friends"]')).toBeVisible();
+    await page.getByRole('button', { name: 'Player moment' }).click();
+    await expect(page.getByRole('heading', { name: 'What happened?' })).toBeVisible();
+    await expect(page.getByText('Pick one')).toBeVisible();
+    await expect(page.getByText('Write one short note')).toBeVisible();
+    await expect(page.getByText('Proud of the effort today.')).toBeVisible();
+    await expect(page.getByText('Post type')).toHaveCount(0);
+    await expect(page.getByText('Title')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Proud of the effort today.' }).click();
+    await page.getByRole('dialog', { name: 'Create social post' }).getByRole('button', { name: 'Post', exact: true }).click();
+    await expect(page.getByText('Posted to your ALL PLAYS feed.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__socialPosts[0]?.input)).toEqual(expect.objectContaining({
+        type: 'player_moment',
+        title: 'Pat Star moment',
+        caption: 'Proud of the effort today.',
+        teamId: 'team-1',
+        playerIds: ['player-1']
+    }));
 
     await page.locator('.home-section-nav').getByRole('button', { name: 'Friends' }).click();
     await expect(page.getByText('Needs response')).toBeVisible();
@@ -447,6 +469,45 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await page.getByRole('button', { name: 'Rules', exact: true }).click();
     await expect(page.getByText('Rules and limits')).toBeVisible();
     await expect(page.getByText('PTS: +$1.00 per pts')).toBeVisible();
+});
+
+test('social photo quick share requires media and posts uploaded media payload', async ({ page, baseURL }) => {
+    await mockHomePlayerModules(page);
+    await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=team_media'), { waitUntil: 'domcontentloaded' });
+
+    const dialog = page.getByRole('dialog', { name: 'Create social post' });
+    await expect(dialog.getByRole('heading', { name: 'What happened?' })).toBeVisible();
+    await expect(dialog.getByText('Photo or video').first()).toBeVisible();
+    await expect(dialog.getByText('Choose photo or video')).toBeVisible();
+    await expect(dialog.getByText('Post type')).toHaveCount(0);
+    await expect(dialog.getByText('Title')).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Post', exact: true }).click();
+    await expect(dialog.getByText('Add a photo or video for this share.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__socialPosts.length)).toBe(0);
+
+    await dialog.locator('input[type="file"]').setInputFiles({
+        name: 'team-photo.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('image-bytes')
+    });
+    await expect(dialog.getByText('team-photo.png').first()).toBeVisible();
+    await dialog.getByRole('button', { name: 'Post', exact: true }).click();
+
+    await expect(page.getByText('Posted to your ALL PLAYS feed.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__socialUploads[0])).toEqual({
+        teamId: 'team-1',
+        name: 'team-photo.png',
+        type: 'image/png'
+    });
+    await expect.poll(() => page.evaluate(() => window.__socialPosts[0]?.input)).toEqual(expect.objectContaining({
+        type: 'team_media',
+        visibility: 'friends_and_team',
+        title: 'Bears team photo',
+        teamId: 'team-1',
+        playerIds: [],
+        media: [{ type: 'image', url: 'https://img.example.test/social.png', name: 'team-photo.png', thumbnailUrl: null }]
+    }));
 });
 
 test('my teams opens from Home data with selected team, player, and chat routes', async ({ page, baseURL }) => {
