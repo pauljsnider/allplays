@@ -19,6 +19,8 @@ describe('edit config schema workflow', () => {
         expect(source).toContain('Import Existing Schema');
         expect(source).toContain('id="import-config-select"');
         expect(source).toContain('Load Into Form');
+        expect(source).toContain('id="team-name-display"');
+        expect(source).toContain("document.getElementById('team-name-display').textContent = team.name;");
         expect(source).toContain('Reset Stats Setup');
         expect(source).toContain('edit-btn');
     });
