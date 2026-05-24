@@ -1,0 +1,129 @@
+name: app-github-pages
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/app-github-pages.yml"
+      - "apps/app/**"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/app-github-pages.yml"
+      - "apps/app/**"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy the staged site to GitHub Pages. Requires Pages source to be GitHub Actions."
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: app-github-pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-pages-bundle:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install app dependencies
+        run: npm ci --prefix apps/app
+
+      - name: Build React app
+        run: npm run app:build
+
+      - name: Stage GitHub Pages bundle
+        run: |
+          set -euo pipefail
+          site_dir="$RUNNER_TEMP/allplays-pages"
+          rm -rf "$site_dir"
+          mkdir -p "$site_dir"
+
+          rsync -a ./ "$site_dir"/ \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.firebase/' \
+            --exclude='.claude/' \
+            --exclude='.playwright-mcp/' \
+            --exclude='.ralph/' \
+            --exclude='.zenflow/' \
+            --exclude='node_modules/' \
+            --exclude='apps/' \
+            --exclude='android/' \
+            --exclude='ios/' \
+            --exclude='functions/' \
+            --exclude='tests/' \
+            --exclude='test-results/' \
+            --exclude='scripts/' \
+            --exclude='src/' \
+            --exclude='_migration/' \
+            --exclude='_project-docs/' \
+            --exclude='_temp/' \
+            --exclude='spec/' \
+            --exclude='docs/' \
+            --exclude='*.md' \
+            --exclude='package.json' \
+            --exclude='package-lock.json' \
+            --exclude='capacitor.config.json' \
+            --exclude='firebase.json' \
+            --exclude='firestore.rules' \
+            --exclude='firestore.indexes.json' \
+            --exclude='storage.rules'
+
+          rm -rf "$site_dir/app"
+          mkdir -p "$site_dir/app"
+          cp -R apps/app/dist/. "$site_dir/app/"
+          touch "$site_dir/.nojekyll"
+
+          echo "Staged legacy site root plus React app at /app/"
+          test -f "$site_dir/index.html"
+          test -f "$site_dir/app/index.html"
+
+      - name: Upload app Pages bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: allplays-pages-with-app
+          path: ${{ runner.temp }}/allplays-pages
+          retention-days: 7
+
+      - name: Upload GitHub Pages artifact
+        if: (github.event_name == 'push' && vars.APP_GITHUB_PAGES_DEPLOY_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.deploy)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/allplays-pages
+
+  deploy:
+    if: (github.event_name == 'push' && vars.APP_GITHUB_PAGES_DEPLOY_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    needs: build-pages-bundle
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
