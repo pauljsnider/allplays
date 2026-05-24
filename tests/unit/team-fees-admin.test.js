@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('team fees admin page routing', () => {
     it('reinitializes when same-page manage links update the hash', () => {
@@ -89,6 +89,15 @@ describe('normalizeTeamFeeDraft', () => {
     });
 });
 
+describe('balance adjustment form copy', () => {
+    it('explains that positive adjustments are credits and negative adjustments are charges', () => {
+        const source = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
+
+        expect(source).toContain('placeholder="20.00 credit or -5.00 charge"');
+        expect(source).toContain('Positive amounts credit the account and reduce what is owed. Negative amounts add a charge.');
+    });
+});
+
 describe('buildManualPaymentUpdate', () => {
     it('should correctly handle missing or invalid currentBalanceCents by defaulting to a high number to prevent premature "paid" status', () => {
         const paymentAmount = '5.00'; // $5.00 payment
@@ -148,6 +157,52 @@ describe('buildManualPaymentUpdate', () => {
         expect(updates.amountPaidCents).toBe(paymentAmountCents); // 500
         expect(updates.remainingBalanceCents).toBe(initialBalanceCents - paymentAmountCents); // 1000 - 500 = 500
         expect(updates.status).toBe('partial');
+    });
+});
+
+describe('buildBalanceAdjustmentUpdate', () => {
+    it('treats positive adjustments as credits that reduce the amount owed', () => {
+        const updates = buildBalanceAdjustmentUpdate({
+            amount: '20.00',
+            note: 'Scholarship credit',
+            actorId: 'admin-1',
+            currentBalanceCents: '15000',
+            currentPaidCents: '0'
+        });
+
+        expect(updates.status).toBe('unpaid');
+        expect(updates.amountDueCents).toBe(13000);
+        expect(updates.remainingBalanceCents).toBe(13000);
+        expect(updates.adjustment).toMatchObject({
+            amountCents: 2000,
+            previousAmountDueCents: 15000,
+            amountDueCents: 13000,
+            note: 'Scholarship credit',
+            adjustedBy: 'admin-1'
+        });
+        expect(updates.ledgerEntries).toEqual([
+            expect.objectContaining({
+                type: 'balance_adjustment',
+                amountCents: 2000,
+                previousAmountDueCents: 15000,
+                amountDueCents: 13000,
+                reason: 'Scholarship credit'
+            })
+        ]);
+    });
+
+    it('treats negative adjustments as charges that increase the amount owed', () => {
+        const updates = buildBalanceAdjustmentUpdate({
+            amount: '-5.00',
+            note: 'Late registration surcharge',
+            actorId: 'admin-1',
+            currentBalanceCents: '15000',
+            currentPaidCents: '0'
+        });
+
+        expect(updates.amountDueCents).toBe(15500);
+        expect(updates.remainingBalanceCents).toBe(15500);
+        expect(updates.adjustment.amountCents).toBe(-500);
     });
 });
 
