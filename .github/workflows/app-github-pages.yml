@@ -2,19 +2,9 @@ name: app-github-pages
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/app-github-pages.yml"
-      - "apps/app/**"
-      - "package.json"
-      - "package-lock.json"
   push:
     branches:
       - master
-    paths:
-      - ".github/workflows/app-github-pages.yml"
-      - "apps/app/**"
-      - "package.json"
-      - "package-lock.json"
   workflow_dispatch:
     inputs:
       deploy:
@@ -40,7 +30,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -92,6 +82,7 @@ jobs:
 
           rm -rf "$site_dir/app"
           mkdir -p "$site_dir/app"
+          test -d apps/app/dist || { echo "Build output not found at apps/app/dist"; exit 1; }
           cp -R apps/app/dist/. "$site_dir/app/"
           touch "$site_dir/.nojekyll"
 
