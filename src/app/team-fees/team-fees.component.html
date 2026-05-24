@@ -10,7 +10,7 @@
     <p>Amount: {{ fee.amount | currency }}</p>
     <p>Status: <span [class.paid]="fee.isPaid" [class.unpaid]="!fee.isPaid">{{ fee.isPaid ? 'Paid' : 'Unpaid' }}</span></p>
 
-    <button *ngIf="!fee.isPaid" (click)="handlePayFee(fee.teamId, fee.id)" [disabled]="isLoadingPayment">
+    <button *ngIf="!fee.isPaid" (click)="handlePayFee(fee.teamId, fee.batchId, fee.recipientId)" [disabled]="isLoadingPayment">
       <span *ngIf="!isLoadingPayment">Pay Team Fee</span>
       <span *ngIf="isLoadingPayment">Initiating Payment...</span>
     </button>
