@@ -1,6 +1,8 @@
 // tests/unit/team-fees-admin.test.js
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('team fees admin page routing', () => {
     it('reinitializes when same-page manage links update the hash', () => {
@@ -13,6 +15,77 @@ describe('team fees admin page routing', () => {
 
         expect(registrations.map(({ eventName }) => eventName)).toEqual(['DOMContentLoaded', 'hashchange']);
         expect(registrations[1].handler).toBe(registrations[0].handler);
+    });
+});
+
+describe('create offline team fee form', () => {
+    it('keeps advanced invoice controls collapsed by default and available after expansion', () => {
+        const source = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
+        const advancedSection = source.match(/<details id="advanced-invoice-details"[\s\S]*?<\/details>/)?.[0];
+
+        expect(advancedSection).toBeTruthy();
+
+        const { document } = new JSDOM(advancedSection).window;
+        const details = document.querySelector('#advanced-invoice-details');
+        const summary = details.querySelector('summary');
+
+        expect(details.hasAttribute('open')).toBe(false);
+        expect(details.open).toBe(false);
+        expect(summary.textContent).toContain('Advanced invoice details');
+        expect(details.querySelector('#add-line-item').textContent).toContain('Add item');
+        expect(details.querySelector('#add-installment').textContent).toContain('Add installment');
+    });
+});
+
+describe('normalizeTeamFeeDraft', () => {
+    const simpleDraft = {
+        title: 'Tournament dues',
+        amount: '25.00',
+        dueDate: '2026-06-01',
+        recipientIds: ['player-1']
+    };
+
+    it('allows a simple offline fee without line items or installments', () => {
+        const draft = normalizeTeamFeeDraft({
+            ...simpleDraft,
+            lineItems: [],
+            installments: []
+        });
+
+        expect(draft).toMatchObject({
+            title: 'Tournament dues',
+            amountCents: 2500,
+            dueDate: '2026-06-01',
+            recipientIds: ['player-1'],
+            lineItems: [],
+            installments: []
+        });
+    });
+
+    it('requires populated line items and installments to match the fee amount', () => {
+        expect(normalizeTeamFeeDraft({
+            ...simpleDraft,
+            lineItems: [{ description: 'Gym rental', amount: '15.00' }, { description: 'Refs', amount: '10.00' }],
+            installments: [{ dueDate: '2026-06-01', amount: '10.00' }, { dueDate: '2026-07-01', amount: '15.00' }]
+        })).toMatchObject({
+            lineItems: [
+                { description: 'Gym rental', amountCents: 1500 },
+                { description: 'Refs', amountCents: 1000 }
+            ],
+            installments: [
+                { dueDate: '2026-06-01', amountCents: 1000 },
+                { dueDate: '2026-07-01', amountCents: 1500 }
+            ]
+        });
+
+        expect(() => normalizeTeamFeeDraft({
+            ...simpleDraft,
+            lineItems: [{ description: 'Gym rental', amount: '10.00' }]
+        })).toThrow('Line items must add up to the total fee amount.');
+        expect(() => normalizeTeamFeeDraft({
+            ...simpleDraft,
+            installments: [{ dueDate: '2026-06-01', amount: '10.00' }]
+        })).toThrow('Installments must add up to the total fee amount.');
     });
 });
 

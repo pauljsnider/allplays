@@ -890,29 +890,6 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
                 </label>
             </div>
 
-            <div class="mt-6 grid gap-4 lg:grid-cols-2">
-                <section class="rounded-2xl border border-gray-200 bg-white p-4">
-                    <div class="flex items-start justify-between gap-3">
-                        <div>
-                            <h2 class="font-bold text-gray-900">Invoice line items <span class="text-sm font-normal text-gray-500">optional</span></h2>
-                            <p class="mt-1 text-sm text-gray-500">Add descriptions and amounts when this fee should look like an invoice. If used, items must total the fee amount.</p>
-                        </div>
-                        <button type="button" id="add-line-item" class="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add item</button>
-                    </div>
-                    <div id="line-items-list" class="mt-4 space-y-3"></div>
-                </section>
-                <section class="rounded-2xl border border-gray-200 bg-white p-4">
-                    <div class="flex items-start justify-between gap-3">
-                        <div>
-                            <h2 class="font-bold text-gray-900">Installment schedule <span class="text-sm font-normal text-gray-500">optional</span></h2>
-                            <p class="mt-1 text-sm text-gray-500">Add due dates and amounts for planned installments. If used, installments must total the fee amount.</p>
-                        </div>
-                        <button type="button" id="add-installment" class="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add installment</button>
-                    </div>
-                    <div id="installments-list" class="mt-4 space-y-3"></div>
-                </section>
-            </div>
-
             <div class="mt-6">
                 <div class="mb-3 flex items-center justify-between gap-3">
                     <h2 class="text-lg font-bold text-gray-900">Recipients</h2>
@@ -920,6 +897,33 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
                 </div>
                 <div class="grid gap-3 md:grid-cols-2">${renderRosterOptions(players)}</div>
             </div>
+
+            <details id="advanced-invoice-details" class="mt-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <summary class="cursor-pointer text-lg font-bold text-gray-900">Advanced invoice details <span class="text-sm font-normal text-gray-500">optional</span></summary>
+                <p class="mt-2 text-sm text-gray-500">Add invoice line items or installment schedules only when this fee needs extra detail. If used, each section must total the fee amount.</p>
+                <div class="mt-4 grid gap-4 lg:grid-cols-2">
+                    <section class="rounded-2xl border border-gray-200 bg-white p-4">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <h2 class="font-bold text-gray-900">Invoice line items <span class="text-sm font-normal text-gray-500">optional</span></h2>
+                                <p class="mt-1 text-sm text-gray-500">Add descriptions and amounts when this fee should look like an invoice. If used, items must total the fee amount.</p>
+                            </div>
+                            <button type="button" id="add-line-item" class="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add item</button>
+                        </div>
+                        <div id="line-items-list" class="mt-4 space-y-3"></div>
+                    </section>
+                    <section class="rounded-2xl border border-gray-200 bg-white p-4">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <h2 class="font-bold text-gray-900">Installment schedule <span class="text-sm font-normal text-gray-500">optional</span></h2>
+                                <p class="mt-1 text-sm text-gray-500">Add due dates and amounts for planned installments. If used, installments must total the fee amount.</p>
+                            </div>
+                            <button type="button" id="add-installment" class="shrink-0 rounded-lg bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Add installment</button>
+                        </div>
+                        <div id="installments-list" class="mt-4 space-y-3"></div>
+                    </section>
+                </div>
+            </details>
 
             <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                 <a href="dashboard.html" class="rounded-xl border border-gray-300 px-5 py-3 text-center font-semibold text-gray-700 hover:bg-gray-50">Cancel</a>
@@ -929,6 +933,7 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
     `;
 
     const form = document.getElementById('team-fee-form');
+    const advancedInvoiceDetails = document.getElementById('advanced-invoice-details');
     const lineItemsList = document.getElementById('line-items-list');
     const installmentsList = document.getElementById('installments-list');
 
@@ -960,6 +965,7 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
 
             const batch = await createTeamFeeBatch(teamId, draft, recipients, user);
             form.reset();
+            advancedInvoiceDetails.open = false;
             lineItemsList.innerHTML = '';
             installmentsList.innerHTML = '';
             showHtmlMessage(renderCreatedTeamFeeBatchSuccess(teamId, batch.id), 'success');
