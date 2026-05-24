@@ -83,13 +83,28 @@
     <script type="module">
         import { getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=32';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
-        import { requireAuth as authRequireAuth } from './js/auth.js?v=15';
+        import { checkAuth } from './js/auth.js?v=15';
 
         renderFooter(document.getElementById('footer-container'));
 
+        function requireSyncedAuth() {
+            return new Promise((resolve, reject) => {
+                let unsubscribe = null;
+                unsubscribe = checkAuth((user) => {
+                    if (unsubscribe) unsubscribe();
+                    if (user) {
+                        resolve(user);
+                    } else {
+                        window.location.href = 'login.html';
+                        reject('Not authenticated');
+                    }
+                });
+            });
+        }
+
         async function init() {
             try {
-                const user = await authRequireAuth();
+                const user = await requireSyncedAuth();
 
                 // Load user profile to get isAdmin flag
                 let profile = null;
