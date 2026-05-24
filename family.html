@@ -136,6 +136,7 @@
               <button id="schedule-filter-past-all" onclick="setScheduleFilter('past-all')" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
             </div>
           </div>
+          <div id="external-calendar-status" class="hidden border-b border-amber-100 bg-amber-50 px-6 py-3 text-sm text-amber-800"></div>
           <div id="schedule-calendar-nav" class="hidden px-6 py-3 border-b border-gray-100 bg-white flex items-center justify-center gap-4">
             <button onclick="navScheduleMonth(-1)" class="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium">&larr; Prev</button>
             <span id="schedule-calendar-month-label" class="text-base font-bold text-gray-900"></span>
@@ -186,6 +187,7 @@
     let scheduleCalendarMonth = new Date().getMonth();
     let scheduleCalendarYear = new Date().getFullYear();
     let activeDayModal = null;
+    let externalCalendarFailures = [];
 
     window.setScheduleView = setScheduleView;
     window.setScheduleFilter = setScheduleFilter;
@@ -248,8 +250,10 @@
 
       // Load schedule
       const extraCalendarUrls = Array.isArray(token.extraCalendarUrls) ? token.extraCalendarUrls : [];
+      externalCalendarFailures = [];
       const events = await buildCombinedSchedule(children, extraCalendarUrls);
       allScheduleEvents = events;
+      renderExternalCalendarStatus();
 
       initPlayerFilter(children);
       setScheduleFilter('upcoming-all');
@@ -347,6 +351,44 @@
       `).join('');
     }
 
+    function getCalendarFailureLabel(url, fallback = 'External calendar') {
+      try {
+        const parsed = new URL(url);
+        return parsed.hostname || fallback;
+      } catch (_) {
+        return fallback;
+      }
+    }
+
+    function recordExternalCalendarFailure({ url, label }) {
+      if (!url) return;
+      const key = String(url);
+      if (externalCalendarFailures.some(item => item.url === key)) return;
+      externalCalendarFailures.push({
+        url: key,
+        label: label || getCalendarFailureLabel(key)
+      });
+    }
+
+    function renderExternalCalendarStatus() {
+      const statusEl = document.getElementById('external-calendar-status');
+      if (!statusEl) return;
+      if (!externalCalendarFailures.length) {
+        statusEl.classList.add('hidden');
+        statusEl.textContent = '';
+        return;
+      }
+      const labels = externalCalendarFailures
+        .map(item => item.label || getCalendarFailureLabel(item.url))
+        .filter(Boolean);
+      const uniqueLabels = [...new Set(labels)];
+      const sourceText = uniqueLabels.length
+        ? ` (${uniqueLabels.slice(0, 2).join(', ')}${uniqueLabels.length > 2 ? ` +${uniqueLabels.length - 2} more` : ''})`
+        : '';
+      statusEl.textContent = `Some external calendars could not be loaded${sourceText}. Events saved in ALL PLAYS are still shown.`;
+      statusEl.classList.remove('hidden');
+    }
+
     async function buildCombinedSchedule(children, extraCalendarUrls = []) {
       if (!children || children.length === 0) return [];
 
@@ -441,7 +483,11 @@
               const calendarEvents = await fetchAndParseCalendar(calendarUrl);
               return { calendarEvents };
             } catch (err) {
-              console.error('[family] Error fetching calendar:', calendarUrl, err);
+              console.warn('[family] Error fetching calendar:', calendarUrl, err);
+              recordExternalCalendarFailure({
+                url: calendarUrl,
+                label: team.name || teamChildren[0]?.teamName || getCalendarFailureLabel(calendarUrl)
+              });
               return { calendarEvents: [] };
             }
           }));
@@ -500,6 +546,10 @@
             return calendarEvents;
           } catch (err) {
             console.warn('[family] Error fetching extra calendar:', calUrl, err);
+            recordExternalCalendarFailure({
+              url: calUrl,
+              label: getCalendarFailureLabel(calUrl)
+            });
             return [];
           }
         }));
@@ -786,6 +836,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
             </svg>
             <p class="text-gray-500">No events in this filter.</p>
+            ${externalCalendarFailures.length ? '<p class="mt-2 text-sm text-amber-700">Some external calendars could not be loaded, so this schedule may be incomplete.</p>' : ''}
           </div>
         `;
         return;
