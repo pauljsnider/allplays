@@ -441,7 +441,7 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
     const priorBalanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : 0;
     const paid = Number(currentPaidCents);
     const amountPaidCents = Number.isFinite(paid) ? Math.max(0, paid) : 0;
-    const amountDueCents = Math.max(0, priorBalanceCents + adjustmentCents);
+    const amountDueCents = Math.max(0, priorBalanceCents - adjustmentCents);
     const remainingBalanceCents = Math.max(0, amountDueCents - amountPaidCents);
     const status = normalizeLedgerStatus(amountDueCents, amountPaidCents);
     const ledgerEntry = {
@@ -814,7 +814,8 @@ function renderRecipients(container, countEl, recipients) {
                         </form>
                         <form data-action="adjust" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
                             <div class="text-xs font-bold uppercase tracking-wide text-gray-500">Adjust balance</div>
-                            <input name="amount" type="number" step="0.01" placeholder="-10.00 or 5.00" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Balance adjustment amount">
+                            <input name="amount" type="number" step="0.01" placeholder="20.00 credit or -5.00 charge" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Balance adjustment amount">
+                            <p class="text-xs text-gray-500">Positive amounts credit the account and reduce what is owed. Negative amounts add a charge.</p>
                             <input name="note" type="text" required placeholder="Required reason" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Adjustment reason">
                             <button class="w-full rounded-lg bg-amber-600 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-700">Save adjustment</button>
                         </form>
