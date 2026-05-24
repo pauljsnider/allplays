@@ -3,7 +3,8 @@ import { expect, test } from '@playwright/test';
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
 function appUrl(baseURL, hashPath) {
-    const url = new URL('/', baseURL);
+    const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL;
+    const url = new URL('/', appBaseURL);
     url.hash = hashPath;
     return url.toString();
 }
@@ -199,6 +200,16 @@ async function mockMessagesModules(page, options = {}) {
 
                 export async function markTeamChatRead(userId, teamId) {
                     window.__chatCalls.reads.push({ userId, teamId });
+                }
+
+                export async function uploadTeamChatAttachment(teamId, file) {
+                    return {
+                        id: 'attachment-' + file.name,
+                        name: file.name,
+                        type: file.type || 'application/octet-stream',
+                        size: file.size || 0,
+                        url: 'https://media.example.test/' + file.name
+                    };
                 }
             `
         });

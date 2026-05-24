@@ -66,14 +66,11 @@ const changedFiles = new Set(
         .map((line) => line.trim())
         .filter(Boolean)
 );
-const diffText = execGit(['diff', '--unified=0', diffBase]);
+const changedRules = CRITICAL_RULES.filter((rule) => changedFiles.has(rule.changedFile));
 
 const failures = [];
-for (const rule of CRITICAL_RULES) {
-    if (!changedFiles.has(rule.changedFile)) {
-        continue;
-    }
-
+for (const rule of changedRules) {
+    const diffText = execGit(['diff', '--unified=0', diffBase, '--', rule.changedFile]);
     const matches = diffText.match(rule.requiredPattern) || [];
     if (matches.length === 0) {
         failures.push(rule.failure);
