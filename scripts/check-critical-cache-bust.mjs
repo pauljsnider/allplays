@@ -32,8 +32,25 @@ function execGit(args) {
     return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
 
+function hasCommitRef(ref) {
+    try {
+        execGit(['rev-parse', '--verify', `${ref}^{commit}`]);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 function isShallowRepository() {
     return execGit(['rev-parse', '--is-shallow-repository']) === 'true';
+}
+
+function getPullRequestMergeBase() {
+    if (!hasCommitRef('HEAD^1') || !hasCommitRef('HEAD^2')) {
+        return null;
+    }
+
+    return 'HEAD^1';
 }
 
 function refreshBaseRef(baseRef) {
@@ -52,6 +69,11 @@ function getDiffBase() {
     const baseRef = process.env.GITHUB_BASE_REF;
 
     if (eventName === 'pull_request' && baseRef) {
+        const mergeBase = getPullRequestMergeBase();
+        if (mergeBase) {
+            return `${mergeBase}...HEAD`;
+        }
+
         refreshBaseRef(baseRef);
         return `origin/${baseRef}...HEAD`;
     }
@@ -66,14 +88,11 @@ const changedFiles = new Set(
         .map((line) => line.trim())
         .filter(Boolean)
 );
-const diffText = execGit(['diff', '--unified=0', diffBase]);
+const changedRules = CRITICAL_RULES.filter((rule) => changedFiles.has(rule.changedFile));
 
 const failures = [];
-for (const rule of CRITICAL_RULES) {
-    if (!changedFiles.has(rule.changedFile)) {
-        continue;
-    }
-
+for (const rule of changedRules) {
+    const diffText = execGit(['diff', '--unified=0', diffBase, '--', rule.changedFile]);
     const matches = diffText.match(rule.requiredPattern) || [];
     if (matches.length === 0) {
         failures.push(rule.failure);
