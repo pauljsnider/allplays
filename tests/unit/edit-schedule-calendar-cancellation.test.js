@@ -26,4 +26,14 @@ describe('edit schedule calendar cancellation handling', () => {
 
         expect(helperSource).toContain("replace(/\\[(?:CANCELED|CANCELLED)\\]\\s*/gi, '')");
     });
+
+    it('excludes cancelled calendar and DB events from upcoming schedule filters', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain("return event?.isCancelled === true || status === 'cancelled' || status === 'canceled';");
+        expect(source).toContain('const isUpcomingScheduleEvent = (event) => event.date >= cutoff && !isCancelledScheduleEvent(event);');
+        expect(source).toContain("filteredEvents = filteredEvents.filter(event => isUpcomingScheduleEvent(event));");
+        expect(source).toContain("filteredEvents = filteredEvents.filter(event => !event.isPractice && isUpcomingScheduleEvent(event));");
+        expect(source).toContain("filteredEvents = filteredEvents.filter(event => event.isPractice && isUpcomingScheduleEvent(event));");
+    });
 });

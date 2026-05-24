@@ -2185,26 +2185,31 @@
             // Sort by date
             allEvents.sort((a, b) => a.date - b.date);
 
-            const hiddenPracticeCount = allEvents.filter(event => event.isPractice && !event.isCancelled).length;
-            console.log('Aggregated events', { total: allEvents.length, hiddenPracticeCount, showPractices });
-
             const now = new Date();
             const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+            const isCancelledScheduleEvent = (event) => {
+                const status = String(event?.status || '').toLowerCase();
+                return event?.isCancelled === true || status === 'cancelled' || status === 'canceled';
+            };
+            const isUpcomingScheduleEvent = (event) => event.date >= cutoff && !isCancelledScheduleEvent(event);
+
+            const hiddenPracticeCount = allEvents.filter(event => event.isPractice && !isCancelledScheduleEvent(event)).length;
+            console.log('Aggregated events', { total: allEvents.length, hiddenPracticeCount, showPractices });
 
             // Filter by practice checkbox + schedule view
             const forcePracticeVisibility = scheduleViewFilter === 'upcoming-practices';
             let filteredEvents = allEvents.filter(event => {
-                if (event.isPractice && !event.isCancelled && !showPractices && !forcePracticeVisibility) return false;
+                if (event.isPractice && !isCancelledScheduleEvent(event) && !showPractices && !forcePracticeVisibility) return false;
                 return true;
             });
             if (scheduleViewFilter === 'upcoming-all') {
-                filteredEvents = filteredEvents.filter(event => event.date >= cutoff);
+                filteredEvents = filteredEvents.filter(event => isUpcomingScheduleEvent(event));
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-games') {
-                filteredEvents = filteredEvents.filter(event => !event.isPractice && event.date >= cutoff);
+                filteredEvents = filteredEvents.filter(event => !event.isPractice && isUpcomingScheduleEvent(event));
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'upcoming-practices') {
-                filteredEvents = filteredEvents.filter(event => event.isPractice && event.date >= cutoff);
+                filteredEvents = filteredEvents.filter(event => event.isPractice && isUpcomingScheduleEvent(event));
                 filteredEvents.sort((a, b) => a.date - b.date);
             } else if (scheduleViewFilter === 'past-all') {
                 filteredEvents = filteredEvents.filter(event => event.date < cutoff);
