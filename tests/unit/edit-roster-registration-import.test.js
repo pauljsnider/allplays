@@ -323,6 +323,19 @@ describe('registration roster import planning', () => {
     });
 });
 
+describe('bulk AI roster update wiring', () => {
+    it('instructs AI roster parsing to update likely existing players instead of duplicating them', () => {
+        const source = readEditRoster();
+
+        expect(source).toContain('Current player records: ${JSON.stringify(playersContext)}');
+        expect(source).toContain('Compare each extracted player to the current player records before choosing an action');
+        expect(source).toContain('Use action="update" with playerId and changes when an extracted player matches an existing player by the same number, same normalized name, or a likely name/number correction');
+        expect(source).toContain('Use action="add" with player object only when no reasonable current player match exists');
+        expect(source).toContain('Never add a second active player for a likely update to an existing player');
+        expect(source).not.toContain('For each player, create an operation with action="add"');
+    });
+});
+
 describe('registration roster import wiring', () => {
     it('shows the manual re-import action and routes through the shared helper', () => {
         const source = readEditRoster();

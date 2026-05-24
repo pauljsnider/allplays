@@ -77,6 +77,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     return new Date(today.getFullYear(), today.getMonth(), 1);
   });
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  const [desktopAdvancedControlsOpen, setDesktopAdvancedControlsOpen] = useState(false);
 
   const refreshSchedule = async () => {
     if (!auth.user) return;
@@ -288,14 +289,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
                 Refresh
               </button>
-              <button type="button" className="secondary-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={handleExport}>
-                <Download className="h-4 w-4" aria-hidden="true" />
-                .ics
-              </button>
-              <button type="button" className="secondary-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={handleCopyAgenda}>
-                <Copy className="h-4 w-4" aria-hidden="true" />
-                Copy agenda
-              </button>
+              {!isDesktopWeb ? (
+                <>
+                  <button type="button" className="secondary-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={handleExport}>
+                    <Download className="h-4 w-4" aria-hidden="true" />
+                    .ics
+                  </button>
+                  <button type="button" className="secondary-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={handleCopyAgenda}>
+                    <Copy className="h-4 w-4" aria-hidden="true" />
+                    Copy agenda
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
 
@@ -370,7 +375,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onTimeRangeChange={setTimeRange}
               onRefresh={refreshSchedule}
               onExport={handleExport}
+              advancedControlsOpen={desktopAdvancedControlsOpen}
+              onAdvancedControlsOpenChange={setDesktopAdvancedControlsOpen}
               onCopyAgenda={handleCopyAgenda}
+              onResetFilters={() => {
+                setFilter('upcoming-all');
+                setView('list');
+                setSelectedPlayerId('');
+                setSelectedTeamId('');
+                setTimeRange('all');
+              }}
             />
             <ScheduleActionQueue events={visibleEvents} />
           </aside>
@@ -529,7 +543,7 @@ function ScheduleNextUpCard({ event }: { event: ParentScheduleEvent | null }) {
   );
 }
 
-function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, timeRange, children, teamOptions, loading, insights, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda }: {
+function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, timeRange, children, teamOptions, loading, insights, advancedControlsOpen, onFilterChange, onViewChange, onPlayerChange, onTeamChange, onTimeRangeChange, onRefresh, onExport, onCopyAgenda, onAdvancedControlsOpenChange, onResetFilters }: {
   filter: ParentScheduleFilter;
   view: ScheduleViewMode;
   selectedPlayerId: string;
@@ -539,6 +553,7 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
   teamOptions: ParentScheduleTeamOption[];
   loading: boolean;
   insights: ScheduleWebInsights;
+  advancedControlsOpen: boolean;
   onFilterChange: (filter: ParentScheduleFilter) => void;
   onViewChange: (view: ScheduleViewMode) => void;
   onPlayerChange: (playerId: string) => void;
@@ -547,7 +562,14 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
   onRefresh: () => void;
   onExport: () => void;
   onCopyAgenda: () => void;
+  onAdvancedControlsOpenChange: (open: boolean) => void;
+  onResetFilters: () => void;
 }) {
+  const filterLabel = filterOptions.find((option) => option.value === filter)?.label || 'Schedule';
+  const rangeLabel = timeRangeOptions.find((option) => option.value === timeRange)?.label || 'All';
+  const teamLabel = teamOptions.find((team) => team.teamId === selectedTeamId)?.teamName || 'All teams';
+  const playerLabel = children.find((child) => child.playerId === selectedPlayerId)?.playerName || 'All players';
+
   return (
     <section className="app-card schedule-control-panel p-4">
       <div className="flex items-center justify-between gap-2">
@@ -560,6 +582,65 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
         </button>
       </div>
 
+      <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3">
+        <div className="app-label">Active filters</div>
+        <div className="mt-1 text-sm font-black text-gray-950">{filterLabel} · {rangeLabel} · {teamLabel} · {playerLabel}</div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            className="secondary-button w-full"
+            onClick={() => onAdvancedControlsOpenChange(!advancedControlsOpen)}
+            aria-expanded={advancedControlsOpen}
+          >
+            Filters and views
+          </button>
+          <button type="button" className="ghost-button w-full" onClick={onResetFilters}>
+            Reset
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <Segment active={view === 'list'} onClick={() => onViewChange('list')} icon={ListChecks} label="List" />
+        <Segment active={view === 'calendar'} onClick={() => onViewChange('calendar')} icon={CalendarDays} label="Calendar" />
+        <Segment active={view === 'packets'} onClick={() => onViewChange('packets')} icon={ClipboardCheck} label="Packets" />
+      </div>
+
+      <div className="mt-4 space-y-2" aria-label="Primary schedule filters">
+        {filterOptions.map((option) => (
+          <ScheduleFilterButton
+            key={option.value}
+            option={option}
+            active={filter === option.value}
+            onClick={() => onFilterChange(option.value)}
+            fullWidth
+          />
+        ))}
+      </div>
+
+      <label className="mt-4 block">
+        <span className="app-label">Player</span>
+        <select aria-label="Player" className="auth-input mt-1 min-h-10 truncate !px-3 !py-2 text-sm font-black" value={selectedPlayerId} onChange={(event) => onPlayerChange(event.target.value)}>
+          <option value="">All Players</option>
+          {children.map((child) => (
+            <option key={`${child.teamId}-${child.playerId}`} value={child.playerId}>{child.playerName}</option>
+          ))}
+        </select>
+      </label>
+
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button type="button" className="secondary-button w-full" onClick={onExport}>
+          <Download className="h-4 w-4" aria-hidden="true" />
+          .ics
+        </button>
+        <button type="button" className="secondary-button w-full" onClick={onCopyAgenda}>
+          <Copy className="h-4 w-4" aria-hidden="true" />
+          Copy agenda
+        </button>
+      </div>
+
+      {advancedControlsOpen ? (
+        <>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <Segment active={view === 'list'} onClick={() => onViewChange('list')} icon={ListChecks} label="List" />
         <Segment active={view === 'compact'} onClick={() => onViewChange('compact')} icon={ListChecks} label="Compact" />
@@ -628,6 +709,8 @@ function ScheduleWebControls({ filter, view, selectedPlayerId, selectedTeamId, t
         <ScheduleInsightMini label="Tasks" value={insights.openAssignments} />
         <ScheduleInsightMini label="Ride asks" value={insights.rideRequests} />
       </div>
+        </>
+      ) : null}
     </section>
   );
 }

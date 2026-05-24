@@ -189,7 +189,7 @@
                 <div id="team-fees-card" class="hidden bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden mb-6">
                     <div class="p-6 border-b border-gray-100 bg-gray-50">
                         <h2 class="text-xl font-bold text-gray-900">Team Fees</h2>
-                        <p class="text-xs text-gray-500 mt-1">Payment is handled offline until online payments are supported.</p>
+                        <p class="text-xs text-gray-500 mt-1">Review team fees and pay eligible balances online.</p>
                     </div>
                     <div id="team-fees-list" class="p-6 space-y-4"></div>
                 </div>
@@ -410,7 +410,8 @@
         import { mergeAssignmentsWithClaims } from './js/snack-helpers.js?v=1';
         import { resolveSelectedRideChildId, getRideOfferUiState, createRideRequestHandlers } from './js/parent-dashboard-rideshare-controls.js?v=1';
         import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';
-        import { renderParentTeamFees } from './js/parent-dashboard-fees.js?v=4';
+        import { handleParentTeamFeeCheckoutClick, renderParentTeamFees } from './js/parent-dashboard-fees.js?v=5';
+        import { initiateTeamFeeCheckout } from './js/stripe-service.js?v=1';
         import { renderFamilyPlanSection } from './js/family-plan.js?v=2';
         import { buildAvailabilityNoteRows, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';
 
@@ -1515,6 +1516,12 @@
                 });
 
                 initShareLinkControls();
+                document.getElementById('team-fees-list')?.addEventListener('click', (event) => {
+                    handleParentTeamFeeCheckoutClick(event, {
+                        initiateCheckout: initiateTeamFeeCheckout,
+                        locationTarget: window.location
+                    });
+                });
 
                 const [data] = await Promise.all([
                     getParentDashboardData(user.uid),

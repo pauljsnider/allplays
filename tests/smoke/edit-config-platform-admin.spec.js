@@ -107,7 +107,7 @@ export function checkAuth(callback) {
 
 const TEAM_ADMIN_BANNER_STUB = `
 export function renderTeamAdminBanner(container, { team, teamId, active = 'stats', unreadCount = 2, accessLevel = 'full', exitUrl = 'dashboard.html' } = {}) {
-    container.innerHTML = '<div data-testid="team-admin-banner"><span id="team-name-display">Team A</span>' + '|' + active + '|' + unreadCount + '</div>';
+    container.innerHTML = '<div data-testid="team-admin-banner"><span data-testid="team-admin-banner-name">Team A</span>' + '|' + active + '|' + unreadCount + '</div>';
 }
 `;
 
