@@ -1214,7 +1214,7 @@ function SocialComposerModal({
   const type = activePreset.type;
   const [visibility, setVisibility] = useState<SocialVisibility>(activePreset.defaultVisibility);
   const [teamId, setTeamId] = useState(home.teams[0]?.teamId || '');
-  const [playerKey, setPlayerKey] = useState(home.players[0] ? `${home.players[0].teamId}::${home.players[0].playerId}` : '');
+  const [playerKey, setPlayerKey] = useState(initialPreset.prefersPlayer && home.players[0] ? `${home.players[0].teamId}::${home.players[0].playerId}` : '');
   const [caption, setCaption] = useState('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -1255,11 +1255,11 @@ function SocialComposerModal({
     setLocalError('');
     setSubmitting(true);
     try {
-      if (!caption.trim() && !mediaFile) {
-        throw new Error('Add a short note or attach a photo/video.');
-      }
       if (activePreset.requiresMedia && !mediaFile) {
         throw new Error('Add a photo or video for this share.');
+      }
+      if (!caption.trim() && !mediaFile) {
+        throw new Error('Add a short note or attach a photo/video.');
       }
       const media = mediaFile ? [await uploadSocialPostMedia(selectedTeam?.teamId || teamId, mediaFile)] : [];
       await onSubmit({

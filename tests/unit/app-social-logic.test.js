@@ -191,4 +191,22 @@ describe('React app social logic', () => {
             type: 'player_moment'
         });
     });
+
+    it('keeps social composer presets complete and aligned to parent-safe defaults', () => {
+        const presetByType = Object.fromEntries(socialPostPresets.map((preset) => [preset.type, preset]));
+
+        expect(Object.keys(presetByType)).toEqual([
+            'player_moment',
+            'game_recap',
+            'team_media',
+            'practice_packet',
+            'achievement'
+        ]);
+        expect(socialPostPresets.every((preset) => preset.prompt && preset.suggestions.length >= 3)).toBe(true);
+        expect(socialPostPresets.filter((preset) => preset.requiresMedia).map((preset) => preset.type)).toEqual(['team_media']);
+        expect(presetByType.player_moment).toMatchObject({ defaultVisibility: 'friends', prefersPlayer: true });
+        expect(presetByType.achievement).toMatchObject({ defaultVisibility: 'friends', prefersPlayer: true });
+        expect(presetByType.game_recap).toMatchObject({ defaultVisibility: 'friends_and_team', prefersPlayer: false });
+        expect(presetByType.practice_packet).toMatchObject({ defaultVisibility: 'team', prefersPlayer: false });
+    });
 });

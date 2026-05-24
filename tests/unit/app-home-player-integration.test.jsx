@@ -160,6 +160,23 @@ async function clickLinkByHref(container, href) {
     await flush();
 }
 
+async function attachComposerFile(container, fileName = 'social.png') {
+    const input = container.querySelector('input[type="file"]');
+    if (!input) {
+        throw new Error('File input not found');
+    }
+    const file = new File(['image-bytes'], fileName, { type: 'image/png' });
+    Object.defineProperty(input, 'files', {
+        configurable: true,
+        value: [file]
+    });
+    await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    return file;
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
     window.requestAnimationFrame = (callback) => {
@@ -485,6 +502,65 @@ describe('React app Home and player drill-in integration', () => {
         expect(container.textContent).toContain('PTS: +$1.00 per pts');
         expect(container.textContent).toContain('Max earned per game');
         expect(window.scrollTo).toHaveBeenCalled();
+    });
+
+    it('requires media for photo quick shares and submits a compact media post payload', async () => {
+        const { container } = await renderApp('/home?section=feed&social=create&type=team_media');
+        await waitForText(container, 'What happened?');
+
+        expect(container.textContent).toContain('Photo or video');
+        expect(container.textContent).toContain('Choose photo or video');
+        expect(container.textContent).toContain('Optional unless this is a media post.');
+
+        await clickLastButton(container, 'Post');
+        await waitForText(container, 'Add a photo or video for this share.');
+        expect(socialMocks.uploadSocialPostMedia).not.toHaveBeenCalled();
+        expect(socialMocks.createSocialPost).not.toHaveBeenCalled();
+
+        await attachComposerFile(container, 'team-photo.png');
+        expect(container.textContent).toContain('team-photo.png');
+        await clickLastButton(container, 'Post');
+
+        expect(socialMocks.uploadSocialPostMedia).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            name: 'team-photo.png',
+            type: 'image/png'
+        }));
+        expect(socialMocks.createSocialPost).toHaveBeenCalledWith(auth.user, expect.objectContaining({
+            type: 'team_media',
+            visibility: 'friends_and_team',
+            title: 'Bears team photo',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerIds: [],
+            media: [expect.objectContaining({ url: 'https://img.example.test/social.png' })],
+            visibleUserIds: ['friend-1']
+        }));
+    });
+
+    it('keeps advanced audience and subject controls tucked behind composer chips', async () => {
+        const { container } = await renderApp('/home?section=feed&social=create&type=practice_packet');
+        await waitForText(container, 'What happened?');
+
+        expect(container.textContent).toContain('Practice update');
+        expect(container.textContent).toContain('Bears');
+        expect(container.textContent).toContain('Team');
+        expect(container.textContent).not.toContain('Audience');
+
+        await clickButton(container, 'Team');
+        await waitForText(container, 'Audience');
+        expect(container.textContent).toContain('Player');
+
+        await clickButton(container, 'Practice packet is ready.');
+        await clickLastButton(container, 'Post');
+        expect(socialMocks.createSocialPost).toHaveBeenCalledWith(auth.user, expect.objectContaining({
+            type: 'practice_packet',
+            visibility: 'team',
+            title: 'Bears practice packet',
+            caption: 'Practice packet is ready.',
+            teamId: 'team-1',
+            route: '/schedule?teamId=team-1',
+            visibleUserIds: []
+        }));
     });
 
     it('keeps the current player profile subview after saves refresh player data', async () => {
