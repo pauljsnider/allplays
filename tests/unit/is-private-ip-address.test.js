@@ -71,6 +71,15 @@ describe('isPrivateIpAddress', () => {
     expect(isPrivateIpAddress('feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')).toBe(true);
   });
 
+  it('should validate IPv4-mapped IPv6 addresses by embedded IPv4 address', () => {
+    expect(isPrivateIpAddress('::ffff:127.0.0.1')).toBe(true);
+    expect(isPrivateIpAddress('::ffff:10.0.0.1')).toBe(true);
+    expect(isPrivateIpAddress('::ffff:192.168.1.1')).toBe(true);
+    expect(isPrivateIpAddress('::ffff:169.254.169.254')).toBe(true);
+    expect(isPrivateIpAddress('::ffff:7f00:1')).toBe(true);
+    expect(isPrivateIpAddress('::ffff:8.8.8.8')).toBe(false);
+  });
+
   // Invalid IP addresses
   it('should return true for invalid IP addresses', () => {
     expect(isPrivateIpAddress('invalid-ip')).toBe(true);

@@ -3,6 +3,34 @@ const https = require('node:https');
 const dns = require('node:dns').promises;
 const net = require('node:net');
 
+function getIpv4MappedAddress(ip) {
+  const normalized = ip.toLowerCase();
+  const mappedPrefixes = ['::ffff:', '0:0:0:0:0:ffff:'];
+  const prefix = mappedPrefixes.find((candidate) => normalized.startsWith(candidate));
+  if (!prefix) {
+    return null;
+  }
+
+  const embedded = normalized.slice(prefix.length);
+  if (net.isIP(embedded) === 4) {
+    return embedded;
+  }
+
+  const hextets = embedded.split(':');
+  if (hextets.length !== 2 || hextets.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) {
+    return null;
+  }
+
+  const first = Number.parseInt(hextets[0], 16);
+  const second = Number.parseInt(hextets[1], 16);
+  return [
+    (first >> 8) & 255,
+    first & 255,
+    (second >> 8) & 255,
+    second & 255,
+  ].join('.');
+}
+
 let _http = require('node:http');
 let _https = require('node:https');
 
@@ -27,6 +55,11 @@ function isPrivateIpAddress(ip) {
     if (parts[0] === 192 && parts[1] === 168) return true;
     if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
     return false;
+  }
+
+  const mappedIpv4Address = getIpv4MappedAddress(ip);
+  if (mappedIpv4Address) {
+    return isPrivateIpAddress(mappedIpv4Address);
   }
 
   const normalized = ip.toLowerCase();
