@@ -82,12 +82,13 @@ describe('TeamFeesComponent checkout flow', () => {
       value: { location: { href: 'https://allplays.test/team-fees' } }
     });
 
-    expect(template).toContain('[disabled]="isPaymentLoading(fee.id)"');
+    expect(template).toContain('[disabled]="isPaymentPending()"');
     expect(template).toContain('*ngIf="isPaymentLoading(fee.id)"');
 
     const checkoutPromise = component.handlePayFee(selectedFee);
 
     expect(component.pendingPaymentFeeId).toBe(selectedFee.id);
+    expect(component.isPaymentPending()).toBe(true);
     expect(component.isPaymentLoading(selectedFee.id)).toBe(true);
     expect(component.isPaymentLoading(otherUnpaidFee.id)).toBe(false);
 
@@ -96,6 +97,41 @@ describe('TeamFeesComponent checkout flow', () => {
 
     expect(component.pendingPaymentFeeId).toBeNull();
     expect(component.paymentErrorMessage).toBeNull();
+
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: originalWindow
+    });
+  });
+
+  it('ignores overlapping checkout attempts while another fee payment is pending', async () => {
+    component.ngOnInit();
+    const [selectedFee, otherUnpaidFee] = component.teamFees.filter((fee) => !fee.isPaid);
+    let resolveCheckout: (checkoutUrl: string) => void = () => undefined;
+    stripeService.initiateTeamFeeCheckout.mockReturnValue(new Promise((resolve) => {
+      resolveCheckout = resolve;
+    }));
+    const originalWindow = globalThis.window;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { href: 'https://allplays.test/team-fees' } }
+    });
+
+    const checkoutPromise = component.handlePayFee(selectedFee);
+    await component.handlePayFee(otherUnpaidFee);
+
+    expect(stripeService.initiateTeamFeeCheckout).toHaveBeenCalledTimes(1);
+    expect(stripeService.initiateTeamFeeCheckout).toHaveBeenCalledWith('teamA', 'batch1', 'recipient1');
+    expect(component.pendingPaymentFeeId).toBe(selectedFee.id);
+    expect(component.isPaymentPending()).toBe(true);
+    expect(component.isPaymentLoading(selectedFee.id)).toBe(true);
+    expect(component.isPaymentLoading(otherUnpaidFee.id)).toBe(false);
+
+    resolveCheckout('https://checkout.stripe.com/team-fee-session');
+    await checkoutPromise;
+
+    expect(component.pendingPaymentFeeId).toBeNull();
+    expect(component.isPaymentPending()).toBe(false);
 
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -114,6 +150,7 @@ describe('TeamFeesComponent checkout flow', () => {
     expect(consoleError).toHaveBeenCalledWith('Failed to initiate payment:', expect.any(Error));
     expect(stripeService.initiateTeamFeeCheckout).toHaveBeenCalledWith('teamA', 'batch1', 'recipient1');
     expect(component.pendingPaymentFeeId).toBeNull();
+    expect(component.isPaymentPending()).toBe(false);
     expect(component.isPaymentLoading(selectedFee.id)).toBe(false);
     expect(component.isPaymentLoading(otherUnpaidFee.id)).toBe(false);
     expect(component.paymentErrorMessage).toBe('Failed to initiate payment. Please try again.');

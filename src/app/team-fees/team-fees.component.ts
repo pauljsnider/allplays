@@ -39,7 +39,15 @@ export class TeamFeesComponent implements OnInit {
     return this.pendingPaymentFeeId === feeId;
   }
 
+  isPaymentPending(): boolean {
+    return this.pendingPaymentFeeId !== null;
+  }
+
   async handlePayFee(fee: TeamFee): Promise<void> {
+    if (this.isPaymentPending()) {
+      return;
+    }
+
     this.pendingPaymentFeeId = fee.id;
     this.paymentErrorMessage = null; // Clear previous errors
 
