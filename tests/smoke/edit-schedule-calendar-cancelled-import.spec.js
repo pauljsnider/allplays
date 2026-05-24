@@ -51,7 +51,7 @@ export async function createOfficiatingAssignmentNotificationRecords() { return 
 `;
 
 const UTILS_STUB = `
-function futureDate(daysFromNow, hour, minute) {
+function relativeDate(daysFromNow, hour, minute) {
     const date = new Date();
     date.setUTCDate(date.getUTCDate() + daysFromNow);
     date.setUTCHours(hour, minute, 0, 0);
@@ -61,7 +61,7 @@ function futureDate(daysFromNow, hour, minute) {
 const calendarEvents = [
     {
         uid: 'cancelled-game-1',
-        dtstart: futureDate(7, 18, 0),
+        dtstart: relativeDate(-7, 18, 0),
         summary: 'Wildcats vs Cancelled Lions',
         location: 'Field 1',
         status: 'CANCELLED',
@@ -69,7 +69,7 @@ const calendarEvents = [
     },
     {
         uid: 'cancelled-practice-1',
-        dtstart: futureDate(8, 17, 30),
+        dtstart: relativeDate(-8, 17, 30),
         summary: '[CANCELED] Team Practice',
         location: 'Main Gym',
         isPractice: true
@@ -329,12 +329,16 @@ async function mockEditScheduleDependencies(page) {
     await page.route('**/js/schedule-csv-import.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SCHEDULE_CSV_IMPORT_STUB }));
 }
 
-test('cancelled imported calendar events stay visible but hide track and plan actions', async ({ page, baseURL }) => {
+test('past cancelled imported calendar events stay visible but hide track and plan actions', async ({ page, baseURL }) => {
     await mockEditScheduleDependencies(page);
     const issues = createBootIssueCollector(page, { baseURL });
 
     await page.goto(buildUrl(baseURL, '/edit-schedule.html#teamId=team-1'), { waitUntil: 'domcontentloaded' });
     await expect(page.locator('#schedule-list')).toBeVisible();
+    await expect(page.locator('#schedule-list')).not.toContainText('Cancelled Lions');
+    await expect(page.locator('#schedule-list')).not.toContainText('Team Practice');
+
+    await page.getByRole('button', { name: 'Past Events' }).click();
 
     const cancelledGameRow = page.locator('#schedule-list > div', { hasText: 'Cancelled Lions' });
     const cancelledPracticeRow = page.locator('#schedule-list > div', { hasText: 'Team Practice' });
