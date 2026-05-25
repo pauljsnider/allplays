@@ -33,7 +33,7 @@ export function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
     return normalizedStats;
 }
 
-export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId = {}, columns = [], statTrackerConfig = {} } = {}) {
+export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId = {}, columns = [], statTrackerConfig = {}, includeTimeMs = false } = {}) {
     const safePlayers = Array.isArray(players) ? players : [];
     const safeStatsByPlayerId = playerStatsByPlayerId && typeof playerStatsByPlayerId === 'object'
         ? playerStatsByPlayerId
@@ -43,26 +43,41 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
         const playerStats = safeStatsByPlayerId[player.id] || {};
 
         const normalizedStats = buildNormalizedPlayerStats(playerStats, columns);
+        // If we are including timeMs, ensure the internal 'time' accumulator is not persisted as a stat.
+        if (includeTimeMs && normalizedStats.time !== undefined) {
+            delete normalizedStats.time;
+        }
         const { publicStats, privateStats } = splitPlayerStatsByVisibility(statTrackerConfig, normalizedStats);
+
+        const playerNumber = player.number ?? player.num ?? '';
+        const publicData = {
+            playerName: player.name,
+            playerNumber,
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'standard-tracker-finish',
+            stats: publicStats
+        };
+        const privateData = Object.keys(privateStats).length > 0 ? {
+            playerName: player.name,
+            playerNumber,
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'standard-tracker-finish',
+            stats: privateStats
+        } : null;
+
+        if (includeTimeMs) {
+            publicData.timeMs = Number(playerStats.time) || 0;
+            if (privateData) {
+                privateData.timeMs = Number(playerStats.time) || 0;
+            }
+        }
 
         return {
             playerId: player.id,
-            publicData: {
-                playerName: player.name,
-                playerNumber: player.number,
-                participated: true,
-                participationStatus: 'appeared',
-                participationSource: 'standard-tracker-finish',
-                stats: publicStats
-            },
-            privateData: Object.keys(privateStats).length > 0 ? {
-                playerName: player.name,
-                playerNumber: player.number,
-                participated: true,
-                participationStatus: 'appeared',
-                participationSource: 'standard-tracker-finish',
-                stats: privateStats
-            } : null
+            publicData,
+            privateData
         };
     });
 }
@@ -86,7 +101,8 @@ export async function commitStandardTrackerFinishData({
     opponentStats = {},
     maxPrimaryBatchWrites = STANDARD_TRACKER_MAX_PRIMARY_BATCH_WRITES,
     maxEventBatchWrites = STANDARD_TRACKER_MAX_EVENT_BATCH_WRITES,
-    maxAggregatedStatsBatchWrites = STANDARD_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES
+    maxAggregatedStatsBatchWrites = STANDARD_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES,
+    includeTimeMs = false
 } = {}) {
     const safeGameLog = Array.isArray(gameLog) ? gameLog : [];
     const legacyPrimaryBatchWriteCount = safeGameLog.length + 1;
@@ -94,7 +110,8 @@ export async function commitStandardTrackerFinishData({
         players,
         playerStatsByPlayerId,
         columns,
-        statTrackerConfig
+        statTrackerConfig,
+        includeTimeMs
     });
 
     const eventBatchSizes = [];
@@ -123,9 +140,9 @@ export async function commitStandardTrackerFinishData({
         const eventRef = doc(db, `teams/${teamId}/games/${gameId}/events`, buildFinishEventDocumentId(eventIndex));
         eventBatch.set(eventRef, {
             text: entry.text,
-            gameTime: entry.time,
+            gameTime: entry.time ?? entry.clock,
             period: entry.period,
-            timestamp: entry.timestamp || Date.now(),
+            timestamp: entry.timestamp || entry.ts || Date.now(),
             type: entry.undoData?.type || 'game_log',
             playerId: entry.undoData?.playerId || null,
             statKey: entry.undoData?.statKey || null,

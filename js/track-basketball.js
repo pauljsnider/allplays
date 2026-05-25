@@ -8,6 +8,8 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai
 import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=3';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
+import { commitStandardTrackerFinishData } from './track-finish.js?v=2';
+import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=2';
 import { hasScorekeepingTeamAccess } from './team-access.js?v=2';
 
 let currentTeamId = null;
@@ -656,44 +658,7 @@ async function saveAndComplete() {
   const sendEmail = els.finishSendEmail?.checked;
 
   try {
-    const batch = writeBatch(db);
-
-    // 1. Write all game log events
-    state.log.forEach(entry => {
-      const eventRef = doc(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
-      batch.set(eventRef, {
-        text: entry.text,
-        gameTime: entry.clock,
-        period: entry.period,
-        timestamp: entry.ts || Date.now(),
-        type: entry.undoData?.type || 'game_log',
-        playerId: entry.undoData?.playerId || null,
-        statKey: entry.undoData?.statKey || null,
-        value: entry.undoData?.value || null,
-        isOpponent: entry.undoData?.isOpponent || false,
-        createdBy: currentUser.uid
-      });
-    });
-
-    // 2. Write aggregated stats for each player
-    roster.forEach(player => {
-      const statsObj = {};
-      (currentConfig?.columns || []).forEach(col => {
-        const key = col.toLowerCase();
-        statsObj[key] = state.stats[player.id]?.[key] || 0;
-      });
-      // Always include fouls
-      statsObj.fouls = state.stats[player.id]?.fouls || 0;
-      const statsRef = doc(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, player.id);
-      batch.set(statsRef, {
-        playerName: player.name,
-        playerNumber: player.num,
-        stats: statsObj,
-        timeMs: state.stats[player.id]?.time || 0
-      });
-    });
-
-    // 3. Build opponentStats in same shape as track.html
+    // 1. Build opponentStats in same shape as track.html
     const opponentStats = {};
     state.opp.forEach(opp => {
       opponentStats[opp.id] = {
@@ -708,17 +673,26 @@ async function saveAndComplete() {
       opponentStats[opp.id].fouls = opp.stats?.fouls || 0;
     });
 
-    // 4. Update game doc
-    const gameRef = doc(db, `teams/${currentTeamId}/games`, currentGameId);
-    batch.update(gameRef, {
-      homeScore: finalHome,
-      awayScore: finalAway,
+    // 2. Persist events, aggregated stats, and the completed game update in chunks.
+    await commitStandardTrackerFinishData({
+      db,
+      writeBatch,
+      doc,
+      collection,
+      teamId: currentTeamId,
+      gameId: currentGameId,
+      currentUserUid: currentUser.uid,
+      gameLog: state.log,
+      players: roster,
+      playerStatsByPlayerId: state.stats,
+      columns: currentConfig?.columns || [],
+      statTrackerConfig: currentConfig,
+      finalHome,
+      finalAway,
       summary,
-      status: 'completed',
-      opponentStats
+      opponentStats,
+      includeTimeMs: true
     });
-
-    await batch.commit();
     isFinishing = true;
 
     if (sendEmail) {
@@ -784,6 +758,8 @@ async function startStop() {
         await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
+        const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
+        await Promise.all(privateStatsSnap.docs.map(d => deleteDoc(d.ref)));
         // Reset game doc scores/opponent stats to avoid mixing old data
         await updateGame(currentTeamId, currentGameId, { homeScore: 0, awayScore: 0, opponentStats: {} });
       }
@@ -1411,6 +1387,16 @@ async function init() {
       if (typeof d.data().timeMs === 'number') {
         state.stats[d.id].time = d.data().timeMs;
       }
+    });
+
+    const privateStatsSnapshot = currentConfig
+        ? await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`))
+        : { forEach: () => {} }; // Dummy object if no config to avoid errors
+
+    privateStatsSnapshot.forEach(d => {
+        if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
+        const existing = d.data().stats || {};
+        Object.assign(state.stats[d.id], existing);
     });
 
     // Recalculate home score if needed based on points column
