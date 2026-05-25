@@ -4,28 +4,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ALL PLAYS is a sports team management and live stat tracking web application. It's a static HTML + JavaScript app using Firebase as the backend, hosted on GitHub Pages.
+ALL PLAYS is a sports team management and live stat tracking product. The legacy website is static HTML + JavaScript using Firebase as the backend. The new ALL PLAYS app is a React/TypeScript + Capacitor app in `apps/app`, hosted on the website at `/app/` and packaged for iOS/Android.
 
 **Key Features:** Team management, roster management, live game stat tracking, game replays, team chat, parent dashboards, AI-powered game summaries.
 
 ## Tech Stack
 
-- **Frontend:** HTML5, JavaScript (ES Modules), Tailwind CSS (CDN)
+- **Legacy frontend:** HTML5, JavaScript (ES Modules), Tailwind CSS (CDN)
+- **App frontend:** React, TypeScript, Vite, Tailwind, Capacitor
 - **Backend:** Firebase (Auth, Firestore, Storage, Vertex AI/GenAI)
-- **Hosting:** GitHub Pages (static)
-- **No build step** - Direct ES module imports in browser
+- **Hosting:** GitHub Pages for `allplays.ai`; Firebase Hosting preview channels for PRs
+- **Native:** Capacitor iOS and Android projects in `ios/` and `android/`
 
 ## Local Development
 
 ```bash
-# Option 1: Python
+# Legacy static site
 python3 -m http.server 8000
 
-# Option 2: Node
+# Legacy static site alternative
 npx http-server .
+
+# React/Capacitor app
+npm run app:dev
+npm run app:build
+
+# Native sync/build checks
+npm run mobile:sync
+npm run mobile:build:ios
+npm run mobile:build:android
 ```
 
-Open `http://localhost:8000` in your browser.
+Open legacy pages at `http://localhost:8000`. Open the React app at `http://localhost:5174`.
 
 ## Testing
 
@@ -53,6 +63,7 @@ Playwright tests against a live static server. Cover page boot, interactive flow
 
 ### What to write
 - **New JS module** → unit test for exported functions.
+- **New React app helper** → unit test in `tests/unit/` and focused app smoke coverage when it changes a route or user flow.
 - **New static page** → unit test (structure + JS wiring) + smoke spec (boot + interactions).
 - **Bug fix** → regression unit test that fails before the fix.
 
@@ -75,6 +86,15 @@ Playwright tests against a live static server. Cover page boot, interactive flow
 - `drill-constants.js` - Practice drill library data (categories, skill levels)
 - `global-search.js` - Cross-entity search functionality
 - `vendor/` - Firebase SDK bundles (ES Module format): app, auth, firestore, storage, ai
+
+### React/Capacitor App (`apps/app/`)
+- `src/pages/` - App routes for auth, home, schedule, messages, teams, player details, profile, private AI, and parent tools
+- `src/components/` - Shared app shell, navigation, cards, and form UI
+- `src/lib/` - Shared app data services, Firebase adapters, native adapters, and feature helpers
+- `vite.config.ts` - Uses `base: './'` so the production build works under `/app/`
+- `capacitor.config.json` - Uses `apps/app/dist` as the native WebView bundle
+
+Keep app feature logic shared across web/iOS/Android. Use thin Capacitor adapters for native auth, push, share, media, and dictation behavior.
 
 ### Two Firebase Projects
 1. **Main project** (`game-flow-c6311`): Auth, Firestore, business logic
@@ -158,7 +178,8 @@ See `AGENTS.md` for commit message style (short, imperative, sentence-case) and 
 4. **Activation codes:** Required for signup (no open registration)
 5. **Public API keys:** Firebase keys are public; security is via Firestore rules
 6. **Mobile-first:** Tracker pages optimized for phone screens
-7. **Vanilla JS:** No React/Vue - direct DOM manipulation with querySelector
+7. **Legacy pages:** Use vanilla JS and direct DOM manipulation
+8. **React app:** Follow the existing `apps/app` component and helper patterns; avoid forking feature logic by platform
 
 ## Deployment
 
@@ -170,4 +191,8 @@ firebase deploy --only firestore:rules
 firebase deploy --only hosting
 ```
 
-GitHub Pages: Push to master branch, enable Pages in repo settings.
+GitHub Pages: `.github/workflows/app-github-pages.yml` stages the legacy root site plus the React app under `/app/` with `scripts/stage-pages-bundle.mjs`.
+
+Firebase previews: `.github/workflows/deploy-preview.yml` deploys a staged preview bundle so PR preview URLs include `/app/`.
+
+Production smoke: `post-deploy-smoke` and `scheduled-prod-smoke` check the legacy site plus the deployed `/app/` boot route.
