@@ -12,7 +12,9 @@ function toNumber(value) {
 }
 
 function hasScore(game) {
-    return toNumber(game?.homeScore) !== null && toNumber(game?.awayScore) !== null;
+    const homeScore = toNumber(game?.homeScore);
+    const awayScore = toNumber(game?.awayScore);
+    return homeScore !== null && awayScore !== null && (homeScore !== 0 || awayScore !== 0);
 }
 
 function isRecentResultCandidate(game) {

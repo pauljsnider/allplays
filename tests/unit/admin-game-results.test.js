@@ -10,6 +10,7 @@ describe('admin recent game results', () => {
     it('filters to completed or scored games and sorts newest first', () => {
         const rows = buildRecentGameResultsRows([
             { id: 'scheduled', teamId: 'team-1', teamName: 'Blue', opponent: 'Gold', status: 'scheduled', date: ts('2026-01-03T12:00:00Z') },
+            { id: 'default-score', teamId: 'team-1', teamName: 'Blue', opponent: 'Yellow', status: 'scheduled', homeScore: 0, awayScore: 0, date: ts('2026-01-05T12:00:00Z') },
             { id: 'old', teamId: 'team-2', teamName: 'Red', opponent: 'Green', status: 'completed', homeScore: 1, awayScore: 2, date: ts('2026-01-01T12:00:00Z') },
             { id: 'new', teamId: 'team-3', teamName: 'White', opponent: 'Black', status: 'scheduled', homeScore: 4, awayScore: 3, date: ts('2026-01-04T12:00:00Z') },
             { id: 'middle', teamId: 'team-4', teamName: 'Gray', opponent: 'Orange', status: 'completed', date: ts('2026-01-02T12:00:00Z') }
