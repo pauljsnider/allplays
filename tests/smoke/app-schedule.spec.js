@@ -828,6 +828,7 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
     const mobileRows = page.locator('.schedule-list > a');
+    await page.waitForSelector('.schedule-list > a');
     await expect(mobileRows).toHaveCount(20);
     await expect(page.getByText('Showing 20 of 25 events')).toBeVisible();
     await page.getByRole('button', { name: 'Show 5 more' }).click();
