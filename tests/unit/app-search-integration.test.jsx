@@ -26,10 +26,15 @@ const publicActionMocks = vi.hoisted(() => ({
     openPublicUrl: vi.fn()
 }));
 
+const helpMocks = vi.hoisted(() => ({
+    searchHelpKnowledge: vi.fn()
+}));
+
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
 
 import { AppShell } from '../../apps/app/src/components/AppShell.tsx';
 import { resetAppSearchCacheForTests } from '../../apps/app/src/lib/searchService.ts';
@@ -121,7 +126,7 @@ async function pressDialogKey(container, key) {
 }
 
 async function fillSearch(container, value) {
-    const input = container.querySelector('input[aria-label="Search teams, players, actions"]');
+    const input = container.querySelector('input[aria-label="Search teams, players, actions, help"]');
     if (!input) throw new Error('Search input not found');
     await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
@@ -162,6 +167,7 @@ beforeEach(() => {
             firestorePlayer('teams/team-private/players/player-2', { name: 'Pat Secret', number: '10' })
         ]
     });
+    helpMocks.searchHelpKnowledge.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -187,6 +193,31 @@ describe('React app shell search', () => {
 
         await clickButton(container, '#9 Pat Star');
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-1/player-1');
+    });
+
+    it('renders help matches and opens help URLs through the public URL adapter', async () => {
+        helpMocks.searchHelpKnowledge.mockReturnValue([{
+            id: 'account-password-reset',
+            title: 'Reset a password',
+            file: 'help-account.html',
+            url: 'https://allplays.ai/help-account.html',
+            roles: ['parent'],
+            summary: 'Recover account access.',
+            snippet: 'Use password reset when a parent cannot sign in.',
+            score: 42
+        }]);
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'password reset');
+
+        expect(container.textContent).toContain('Help');
+        expect(container.textContent).toContain('Reset a password');
+        expect(container.textContent).toContain('Use password reset when a parent cannot sign in.');
+        expect(container.textContent).toContain('parent');
+
+        await pressDialogKey(container, 'Enter');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/help-account.html');
     });
 
     it('opens website-only search actions through the public URL adapter', async () => {
