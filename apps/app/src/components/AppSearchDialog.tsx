@@ -33,6 +33,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
   const results = useMemo(() => computeAppSearchResults({ queryText: query, auth, teams, players }), [auth, players, query, teams]);
+  const helpResults = results.help ?? [];
 
   useEffect(() => {
     if (!open) return;
@@ -151,7 +152,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       : results.teams.length === 0
         ? 'No matching teams'
         : '';
-  const helpStatus = query.trim().length >= 2 && results.help.length === 0
+  const helpStatus = query.trim().length >= 2 && helpResults.length === 0
     ? 'No matching help articles'
     : '';
   const playersStatus = playersLoading
@@ -229,7 +230,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
             <SearchSection
               title="Help"
-              items={results.help}
+              items={helpResults}
               activeIndex={activeIndex}
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
@@ -241,7 +242,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               title="Players"
               items={results.players}
               activeIndex={activeIndex}
-              offset={results.actions.length + results.teams.length + results.help.length}
+              offset={results.actions.length + results.teams.length + helpResults.length}
               status={playersStatus}
               statusTone={playersError ? 'error' : 'neutral'}
               onOpen={openResult}

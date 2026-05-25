@@ -118,7 +118,6 @@ async function mockSearchModules(page) {
                     return {
                         actions: matchedActions,
                         teams: matchedTeams,
-                        help: [],
                         players: matchedPlayers,
                         flat: [...matchedActions, ...matchedTeams, ...matchedPlayers]
                     };
