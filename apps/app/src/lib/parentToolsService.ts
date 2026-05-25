@@ -1,6 +1,7 @@
 import {
   createFamilyShareToken,
   createParentMembershipRequest,
+  createRegistrationCheckoutSession,
   createTeamMediaLink,
   getPlayers,
   getTeam,
@@ -15,7 +16,7 @@ import {
   revokeFamilyShareToken,
   updateFamilyShareTokenCalendars,
   uploadTeamMediaFile,
-  uploadTeamMediaPhoto,
+  uploadTeamMediaPhoto
 } from '../../../../js/db.js';
 import {
   formatParentFeeAmount,
