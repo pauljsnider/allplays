@@ -98,9 +98,44 @@ jobs:
       - name: Sync iOS project
         run: npx cap sync ios
 
+      - name: Resolve iOS package dependencies
+        run: |
+          run_with_retry() {
+            attempt=1
+            delay=20
+            until "$@"; do
+              if [ "$attempt" -ge 3 ]; then
+                return 1
+              fi
+              echo "Attempt $attempt failed. Retrying in ${delay}s..."
+              attempt=$((attempt + 1))
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
+          run_with_retry xcodebuild \
+            -resolvePackageDependencies \
+            -project ios/App/App.xcodeproj \
+            -scheme App
+
       - name: Build iOS simulator app
         run: |
-          xcodebuild \
+          run_with_retry() {
+            attempt=1
+            delay=20
+            until "$@"; do
+              if [ "$attempt" -ge 3 ]; then
+                return 1
+              fi
+              echo "Attempt $attempt failed. Retrying in ${delay}s..."
+              attempt=$((attempt + 1))
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
+          run_with_retry xcodebuild \
             -project ios/App/App.xcodeproj \
             -scheme App \
             -configuration Debug \
