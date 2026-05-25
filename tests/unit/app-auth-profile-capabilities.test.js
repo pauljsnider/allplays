@@ -205,6 +205,19 @@ describe('React app auth/profile capability parity', () => {
         ]);
     });
 
+    it('reloads current team preferences before turning on game-day alerts', () => {
+        const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
+        const turnOnStart = profilePage.indexOf('const turnOnGameDayAlerts = async () => {');
+        const turnOnEnd = profilePage.indexOf('  const sendPasswordReset = async () => {');
+        const turnOnGameDayAlerts = profilePage.slice(turnOnStart, turnOnEnd);
+
+        expect(turnOnGameDayAlerts).toContain('const teamId = selectedTeamId;');
+        expect(turnOnGameDayAlerts).toContain('const currentPreferences = await loadNotificationPreferences(user.uid, teamId);');
+        expect(turnOnGameDayAlerts).toContain('...currentPreferences,');
+        expect(turnOnGameDayAlerts).not.toContain('...notificationPreferences,');
+        expect(turnOnGameDayAlerts).toContain('saveNotificationPreferences(user.uid, teamId, nextPreferences)');
+    });
+
     it('covers team-chat.html messaging, conversations, media, reactions, targeting, and AI assistant features', () => {
         const legacyTeamChat = readProjectFile('team-chat.html');
         const messagesPage = readProjectFile('apps/app/src/pages/Messages.tsx');

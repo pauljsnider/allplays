@@ -317,17 +317,20 @@ export function Profile({ auth }: { auth: AuthState }) {
       return;
     }
 
+    const teamId = selectedTeamId;
+
     setBusy('game-day-alerts');
     setNotificationStatus(null);
 
-    const nextPreferences = normalizeNotificationPreferences({
-      ...notificationPreferences,
-      ...gameDayDefaultPreferences
-    });
-
     try {
+      const currentPreferences = await loadNotificationPreferences(user.uid, teamId);
+      const nextPreferences = normalizeNotificationPreferences({
+        ...currentPreferences,
+        ...gameDayDefaultPreferences
+      });
+
       await enablePushNotificationsForUser(user.uid);
-      const saved = await saveNotificationPreferences(user.uid, selectedTeamId, nextPreferences);
+      const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
       setNotificationPreferences(saved);
       setNotificationStatus({ message: 'Game-day alerts are on for this team.', tone: 'success' });
     } catch (error: any) {
