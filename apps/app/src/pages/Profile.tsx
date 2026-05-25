@@ -49,6 +49,10 @@ type Status = {
 type ProfileSectionId = 'account' | 'alerts' | 'invites' | 'security';
 
 const emptyPreferences = normalizeNotificationPreferences(null);
+const gameDayDefaultPreferences: Pick<NotificationPreferences, 'liveScore' | 'schedule'> = {
+  liveScore: true,
+  schedule: true
+};
 const collapsedInviteCount = 3;
 const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
   { id: 'account', label: 'Account' },
@@ -307,20 +311,30 @@ export function Profile({ auth }: { auth: AuthState }) {
     }
   };
 
-  const enablePush = async () => {
-    if (!user) {
-      setNotificationStatus({ message: 'No signed-in user is loaded.', tone: 'error' });
+  const turnOnGameDayAlerts = async () => {
+    if (!user || !selectedTeamId) {
+      setNotificationStatus({ message: 'Select a team first.', tone: 'error' });
       return;
     }
 
-    setBusy('push');
+    const teamId = selectedTeamId;
+
+    setBusy('game-day-alerts');
     setNotificationStatus(null);
 
     try {
+      const currentPreferences = await loadNotificationPreferences(user.uid, teamId);
+      const nextPreferences = normalizeNotificationPreferences({
+        ...currentPreferences,
+        ...gameDayDefaultPreferences
+      });
+
       await enablePushNotificationsForUser(user.uid);
-      setNotificationStatus({ message: 'Push is enabled on this device.', tone: 'success' });
+      const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
+      setNotificationPreferences(saved);
+      setNotificationStatus({ message: 'Game-day alerts are on for this team.', tone: 'success' });
     } catch (error: any) {
-      setNotificationStatus({ message: error?.message || 'Failed to enable push notifications.', tone: 'error' });
+      setNotificationStatus({ message: error?.message || 'Failed to turn on game-day alerts.', tone: 'error' });
     } finally {
       setBusy('');
     }
@@ -522,7 +536,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         </div>
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Per-team alerts for live chat, score updates, and schedule changes.</p>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">
+        <div className="mt-4 grid gap-3">
           <label className="block">
             <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Team</span>
             <select className="auth-input" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
@@ -532,25 +546,32 @@ export function Profile({ auth }: { auth: AuthState }) {
               ))}
             </select>
           </label>
-          <button type="button" className="secondary-button self-end" onClick={enablePush} disabled={busy === 'push'}>
-            {busy === 'push' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-            Enable push
-          </button>
+          <div className="rounded-2xl border border-primary-100 bg-primary-50 p-3">
+            <div className="text-sm font-black text-primary-900">Game-day alerts</div>
+            <p className="mt-1 text-sm font-semibold leading-6 text-primary-800">One tap enables push on this device and turns on schedule changes and live score updates for the selected team.</p>
+            <button type="button" className="primary-button mt-3" onClick={turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId}>
+              {busy === 'game-day-alerts' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+              Turn on game-day alerts
+            </button>
+          </div>
         </div>
 
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          <PreferenceToggle label="Live Chat" checked={notificationPreferences.liveChat} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveChat: checked }))} />
-          <PreferenceToggle label="Live Score" checked={notificationPreferences.liveScore} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveScore: checked }))} />
-          <PreferenceToggle label="Schedule Changes" checked={notificationPreferences.schedule} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, schedule: checked }))} />
-        </div>
+        <details className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
+          <summary className="cursor-pointer text-sm font-black text-gray-700">Customize alerts</summary>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <PreferenceToggle label="Live Chat" checked={notificationPreferences.liveChat} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveChat: checked }))} />
+            <PreferenceToggle label="Live Score" checked={notificationPreferences.liveScore} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveScore: checked }))} />
+            <PreferenceToggle label="Schedule Changes" checked={notificationPreferences.schedule} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, schedule: checked }))} />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId}>
+              {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+              Save preferences
+            </button>
+          </div>
+        </details>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId}>
-            {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-            Save preferences
-          </button>
-          <StatusMessage status={notificationStatus} />
-        </div>
+        <StatusMessage status={notificationStatus} className="mt-3 block" />
       </section>
       ) : null}
 
