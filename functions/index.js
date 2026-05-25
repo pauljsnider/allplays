@@ -253,15 +253,15 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
 
+    if (registration.paymentStatus === 'paid') {
+      return { released: false, reason: 'already-paid' };
+    }
+
     const registrationUpdate = {
       ...statusUpdate,
       updatedAt: now
     };
 
-    if (registration.paymentStatus === 'paid') {
-      transaction.set(registrationRef, registrationUpdate, { merge: true });
-      return { released: false, reason: 'already-paid' };
-    }
     if (registration.registrationCapacityReleased === true) {
       transaction.set(registrationRef, registrationUpdate, { merge: true });
       return { released: false, reason: 'already-released' };

@@ -599,4 +599,22 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
         expect(functionsSource).toContain('shouldProcessRegistrationCheckoutEvent(event)');
     });
+
+    it('does not write cancellation state before returning for paid registrations', () => {
+        const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
+        const releaseStart = functionsSource.indexOf('async function releaseRegistrationCheckoutCapacity');
+        const releaseEnd = functionsSource.indexOf('async function getUserForEligibility');
+        const releaseBody = functionsSource.slice(releaseStart, releaseEnd);
+        const paidGuardIndex = releaseBody.indexOf("if (registration.paymentStatus === 'paid')");
+        const registrationUpdateIndex = releaseBody.indexOf('const registrationUpdate =');
+        const paidReturnIndex = releaseBody.indexOf("return { released: false, reason: 'already-paid' };");
+        const firstRegistrationWriteAfterPaidGuard = releaseBody.indexOf('transaction.set(registrationRef', paidGuardIndex);
+
+        expect(releaseStart).toBeGreaterThanOrEqual(0);
+        expect(releaseEnd).toBeGreaterThan(releaseStart);
+        expect(paidGuardIndex).toBeGreaterThanOrEqual(0);
+        expect(paidReturnIndex).toBeGreaterThan(paidGuardIndex);
+        expect(registrationUpdateIndex).toBeGreaterThan(paidReturnIndex);
+        expect(firstRegistrationWriteAfterPaidGuard).toBeGreaterThan(registrationUpdateIndex);
+    });
 });
