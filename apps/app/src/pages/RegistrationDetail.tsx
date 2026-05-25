@@ -51,6 +51,11 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
           setForm(null);
           return;
         }
+        if (nextForm.onlineCheckout) {
+          setError('This registration requires online checkout. Please use the checkout link from registrations.');
+          setForm(null);
+          return;
+        }
         setForm(nextForm);
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         setSelectedOptionId((current) => current || initialOptions[0]?.id || '');
@@ -81,6 +86,10 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
   const submit = async (event: SyntheticEvent) => {
     event.preventDefault();
     if (!form || saving) return;
+    if (form.onlineCheckout) {
+      setError('This registration requires online checkout. Please use the checkout link from registrations.');
+      return;
+    }
 
     const currentParticipant = collectFieldValues(formRef.current, 'participant', participant);
     const currentGuardian = collectFieldValues(formRef.current, 'guardian', guardian);

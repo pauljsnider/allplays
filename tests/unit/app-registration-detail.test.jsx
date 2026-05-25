@@ -249,4 +249,32 @@ describe('RegistrationDetail page', () => {
     await waitForText(container, 'Option is full and not accepting waitlist registrations.');
     expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
   });
+
+  it('blocks deep-linked online checkout forms from offline submission', async () => {
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        description: 'Skills week',
+        season: 'Summer',
+        feeLabel: '$75.00',
+        paymentNotice: 'Online payment required.',
+        onlineCheckout: true,
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+        url: '/registration.html?teamId=team-1&formId=form-1',
+      },
+    ]);
+
+    const { container } = await renderRegistrationDetail();
+
+    await waitForText(container, 'This registration requires online checkout. Please use the checkout link from registrations.');
+    expect(container.textContent).toContain('Registration unavailable');
+    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+  });
 });
