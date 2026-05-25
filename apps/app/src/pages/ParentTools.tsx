@@ -720,6 +720,10 @@ function RegistrationCard({ card }: { card: ParentRegistrationCard }) {
           <ExternalLink className="h-4 w-4" aria-hidden="true" />
           Legacy form
         </button>
+        <button type="button" className="secondary-button justify-center text-xs sm:col-span-2" onClick={() => sharePublicUrl({ title: card.programName, text: `${card.teamName} registration`, url: card.url })}>
+          <Share2 className="h-4 w-4" aria-hidden="true" />
+          Share
+        </button>
       </div>
     </section>
   );
