@@ -118,6 +118,7 @@ async function mockSearchModules(page) {
                     return {
                         actions: matchedActions,
                         teams: matchedTeams,
+                        help: [],
                         players: matchedPlayers,
                         flat: [...matchedActions, ...matchedTeams, ...matchedPlayers]
                     };
@@ -135,7 +136,7 @@ test.describe('app global search', () => {
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
         await page.getByRole('button', { name: 'Search' }).click();
-        await expect(page.getByRole('dialog', { name: 'Search teams, players, and actions' })).toBeVisible();
+        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
         await expect.poll(async () => {
             const box = await page.getByTestId('app-search-panel').boundingBox();
             return Math.round(box?.y || 0);
@@ -148,7 +149,7 @@ test.describe('app global search', () => {
         await expect(page.getByText('Bears')).toBeVisible();
         await expect(page.getByText('Type at least 2 characters to search players')).toBeVisible();
 
-        await page.getByLabel('Search teams, players, actions').fill('pat');
+        await page.getByLabel('Search teams, players, actions, help').fill('pat');
         await expect(page.getByText('#9 Pat Star')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['pat']);
         await page.getByRole('button', { name: /#9 Pat Star/ }).click();
@@ -161,26 +162,26 @@ test.describe('app global search', () => {
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
         await page.getByRole('button', { name: 'Search' }).click();
-        await page.getByLabel('Search teams, players, actions').fill('p');
+        await page.getByLabel('Search teams, players, actions, help').fill('p');
         await expect(page.getByText('Type at least 2 characters to search players')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual([]);
 
-        await page.getByLabel('Search teams, players, actions').fill('zzzz');
+        await page.getByLabel('Search teams, players, actions, help').fill('zzzz');
         await expect(page.getByText('No matching teams')).toBeVisible();
         await expect(page.getByText('No matching players')).toBeVisible();
         await expect(page.getByText('No results')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['zzzz']);
 
-        await page.getByLabel('Search teams, players, actions').fill('error');
+        await page.getByLabel('Search teams, players, actions, help').fill('error');
         await expect(page.getByText('Player search unavailable for this account.')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['zzzz', 'error']);
 
         await page.keyboard.press('Escape');
-        await expect(page.getByRole('dialog', { name: 'Search teams, players, and actions' })).toBeHidden();
+        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeHidden();
 
         await page.getByRole('button', { name: 'Search' }).click();
         await page.getByRole('button', { name: 'Close search' }).click();
-        await expect(page.getByRole('dialog', { name: 'Search teams, players, and actions' })).toBeHidden();
+        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeHidden();
     });
 });
 
@@ -192,8 +193,8 @@ test.describe('desktop app global search', () => {
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
         await page.getByRole('button', { name: 'Search' }).click();
-        await expect(page.getByRole('dialog', { name: 'Search teams, players, and actions' })).toBeVisible();
-        await page.getByLabel('Search teams, players, actions').fill('rock');
+        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+        await page.getByLabel('Search teams, players, actions, help').fill('rock');
         await expect(page.getByRole('button', { name: /Rockets/ })).toBeVisible();
         await page.getByRole('button', { name: /Rockets/ }).click();
         await expect(page).toHaveURL(/#\/teams\/team-2$/);
@@ -208,7 +209,7 @@ test.describe('desktop app global search', () => {
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
         await page.getByRole('button', { name: 'Search' }).click();
-        await page.getByLabel('Search teams, players, actions').fill('my');
+        await page.getByLabel('Search teams, players, actions, help').fill('my');
         await expect(page.getByRole('button', { name: /My Teams/ })).toBeVisible();
         await page.keyboard.press('Enter');
         await expect(page).toHaveURL(/#\/teams$/);
