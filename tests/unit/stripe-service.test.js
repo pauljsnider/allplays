@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { initiateStripeCheckout, initiateTeamFeeCheckout } from '../../js/stripe-service.js';
+import { cancelStripeRegistrationCheckout, initiateStripeCheckout, initiateTeamFeeCheckout } from '../../js/stripe-service.js';
 
 const mockInnerCallable = vi.fn();
 
@@ -51,6 +51,19 @@ describe('Stripe Service', () => {
 
         await expect(initiateStripeCheckout({ registrationId: 'reg-789' })).rejects.toThrow('Failed to get Stripe checkout URL.');
         expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'createStripeRegistrationCheckout');
+    });
+
+    it('cancels registration checkout and returns release status', async () => {
+        mockInnerCallable.mockResolvedValueOnce({
+            data: { released: true }
+        });
+        const params = { teamId: 'team-1', formId: 'form-1', registrationId: 'reg-123' };
+
+        const result = await cancelStripeRegistrationCheckout(params);
+
+        expect(result).toEqual({ released: true });
+        expect(httpsCallable).toHaveBeenCalledWith(expect.any(Object), 'cancelStripeRegistrationCheckout');
+        expect(mockInnerCallable).toHaveBeenCalledWith(params);
     });
 
     it('initiates team fee checkout and returns a URL', async () => {

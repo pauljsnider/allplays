@@ -342,6 +342,8 @@ describe('public registration flow', () => {
         expect(page).toContain('return { status: \'pending\', registrationId: registrationRef.id };');
         expect(page).toContain('return { status: placement.status, registrationId: registrationRef.id };');
         expect(page).toContain("paymentLoadingState.classList.add('hidden');");
+        expect(page).toContain('cancelStripeRegistrationCheckout({ teamId, formId, registrationId });');
+        expect(page).toContain('releaseCancelledStripeRegistration(cancelledRegistrationId)');
         expect(page).toContain('runTransaction(db, async (transaction)');
         expect(page).toContain('decideRegistrationPlacement');
         expect(page).toContain('registrationCapacityUpdateId: registrationRef.id');
@@ -587,11 +589,32 @@ describe('public registration flow', () => {
         const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
 
         expect(functionsSource).toContain('exports.createStripeRegistrationCheckout');
+        expect(functionsSource).toContain('exports.cancelStripeRegistrationCheckout');
+        expect(functionsSource).toContain('releaseRegistrationCheckoutCapacity');
+        expect(functionsSource).toContain("registrationCapacityReleased: true");
         expect(functionsSource).toContain("product: 'registration'");
         expect(functionsSource).toContain('getRegistrationCheckoutAmountCents(registration)');
         expect(functionsSource).toContain("form.paymentSettings?.onlineCheckoutEnabled !== true");
         expect(functionsSource).toContain("checkoutStatus: 'open'");
         expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
         expect(functionsSource).toContain('shouldProcessRegistrationCheckoutEvent(event)');
+    });
+
+    it('does not write cancellation state before returning for paid registrations', () => {
+        const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
+        const releaseStart = functionsSource.indexOf('async function releaseRegistrationCheckoutCapacity');
+        const releaseEnd = functionsSource.indexOf('async function getUserForEligibility');
+        const releaseBody = functionsSource.slice(releaseStart, releaseEnd);
+        const paidGuardIndex = releaseBody.indexOf("if (registration.paymentStatus === 'paid')");
+        const registrationUpdateIndex = releaseBody.indexOf('const registrationUpdate =');
+        const paidReturnIndex = releaseBody.indexOf("return { released: false, reason: 'already-paid' };");
+        const firstRegistrationWriteAfterPaidGuard = releaseBody.indexOf('transaction.set(registrationRef', paidGuardIndex);
+
+        expect(releaseStart).toBeGreaterThanOrEqual(0);
+        expect(releaseEnd).toBeGreaterThan(releaseStart);
+        expect(paidGuardIndex).toBeGreaterThanOrEqual(0);
+        expect(paidReturnIndex).toBeGreaterThan(paidGuardIndex);
+        expect(registrationUpdateIndex).toBeGreaterThan(paidReturnIndex);
+        expect(firstRegistrationWriteAfterPaidGuard).toBeGreaterThan(registrationUpdateIndex);
     });
 });
