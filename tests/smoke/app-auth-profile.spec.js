@@ -295,6 +295,14 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return { going: 1, maybe: 0, notGoing: 0, notResponded: 0 };
                 }
 
+                export async function updateGameScore(teamId, gameId, score, user) {
+                    return {
+                        homeScore: Number(score?.homeScore ?? 0),
+                        awayScore: Number(score?.awayScore ?? 0),
+                        scoreUpdatedBy: user?.uid || null
+                    };
+                }
+
                 export async function createParentScheduleRideOffer() {}
                 export async function requestParentScheduleRideSpot() {}
                 export async function cancelParentScheduleRideRequest() {}

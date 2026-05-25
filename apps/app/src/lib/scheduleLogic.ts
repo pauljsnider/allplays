@@ -109,6 +109,7 @@ export type ParentScheduleEvent = {
   liveStatus?: string | null;
   homeScore?: number | null;
   awayScore?: number | null;
+  canUpdateScore?: boolean;
   isHome?: boolean | null;
   kitColor?: string | null;
   arrivalTime?: Date | null;
