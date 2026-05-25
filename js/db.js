@@ -4853,6 +4853,30 @@ export async function sendTeamEmail(teamId, {
     return result.data;
 }
 
+export async function createRegistrationCheckoutSession(
+    teamId,
+    formId,
+    registrationId,
+    selectedOptionId,
+    paymentPlanId,
+    quantity,
+    amountCents,
+    currency
+) {
+    const callable = httpsCallable(functions, 'createStripeRegistrationCheckout');
+    const result = await callable({
+        teamId,
+        formId,
+        registrationId,
+        selectedOptionId,
+        paymentPlanId,
+        quantity,
+        amountCents,
+        currency
+    });
+    return result.data;
+}
+
 export async function getSentTeamEmails(teamId, { limit = 25 } = {}) {
     const emailsRef = collection(db, 'teams', teamId, 'teamEmails');
     const snapshot = await getDocs(query(emailsRef, orderBy('sentAt', 'desc'), limitQuery(limit)));
