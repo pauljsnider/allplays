@@ -148,8 +148,20 @@ function normalizeRegistrationCheckoutInput(data = {}) {
   };
 }
 
+function normalizeRegistrationCheckoutCancelInput(data = {}) {
+  return {
+    teamId: normalizeFirestoreId(data.teamId, 'teamId'),
+    formId: normalizeFirestoreId(data.formId, 'formId'),
+    registrationId: normalizeFirestoreId(data.registrationId, 'registrationId')
+  };
+}
+
 function buildRegistrationRef({ teamId, formId, registrationId }) {
   return firestore.doc(`teams/${teamId}/registrationForms/${formId}/registrations/${registrationId}`);
+}
+
+function buildRegistrationFormRef({ teamId, formId }) {
+  return firestore.doc(`teams/${teamId}/registrationForms/${formId}`);
 }
 
 function buildRegistrationCheckoutUrls(appUrl, input) {
@@ -215,6 +227,77 @@ function buildRegistrationRefFromStripeSession(session = {}) {
     teamId: normalizeFirestoreId(metadata.teamId, 'teamId'),
     formId: normalizeFirestoreId(metadata.formId, 'formId'),
     registrationId: normalizeFirestoreId(metadata.registrationId, 'registrationId')
+  });
+}
+
+async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
+  const formRef = buildRegistrationFormRef(input);
+  const registrationRef = buildRegistrationRef(input);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  return firestore.runTransaction(async (transaction) => {
+    const [formSnap, registrationSnap] = await Promise.all([
+      transaction.get(formRef),
+      transaction.get(registrationRef)
+    ]);
+    if (!formSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration form not found.');
+    }
+    if (!registrationSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration not found.');
+    }
+
+    const form = formSnap.data() || {};
+    const registration = registrationSnap.data() || {};
+    if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
+    }
+
+    if (registration.paymentStatus === 'paid') {
+      return { released: false, reason: 'already-paid' };
+    }
+
+    const registrationUpdate = {
+      ...statusUpdate,
+      updatedAt: now
+    };
+
+    if (registration.registrationCapacityReleased === true) {
+      transaction.set(registrationRef, registrationUpdate, { merge: true });
+      return { released: false, reason: 'already-released' };
+    }
+    if (registration.checkoutStatus !== 'open' && registration.paymentStatus !== 'checkout_open') {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not open.');
+    }
+
+    const selectedOption = registration.selectedOption || {};
+    const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();
+    const counts = form.registrationOptionCounts || {};
+    const optionCounts = countKey ? counts[countKey] || {} : {};
+    const updates = {};
+    let released = false;
+
+    if (countKey && registration.status === 'pending') {
+      updates[`registrationOptionCounts.${countKey}.enrolled`] = Math.max(0, Number(optionCounts.enrolled || 0) - 1);
+      released = true;
+    } else if (countKey && registration.status === 'waitlisted') {
+      updates[`registrationOptionCounts.${countKey}.waitlisted`] = Math.max(0, Number(optionCounts.waitlisted || 0) - 1);
+      released = true;
+    }
+
+    if (released) {
+      updates.registrationCapacityUpdateId = input.registrationId;
+      updates.updatedAt = now;
+      transaction.update(formRef, updates);
+    }
+
+    transaction.set(registrationRef, {
+      ...registrationUpdate,
+      registrationCapacityReleased: true,
+      capacityReleasedAt: now
+    }, { merge: true });
+
+    return { released };
   });
 }
 
@@ -1360,6 +1443,20 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   return { checkoutUrl: session.url, sessionId: session.id };
 });
 
+exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data) => {
+  let input;
+  try {
+    input = normalizeRegistrationCheckoutCancelInput(data || {});
+  } catch (error) {
+    throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout cancellation request.');
+  }
+
+  return releaseRegistrationCheckoutCapacity(input, {
+    checkoutStatus: 'cancelled',
+    paymentStatus: 'checkout_cancelled'
+  });
+});
+
 exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('Method not allowed');
@@ -1395,14 +1492,22 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
       const receivedAt = admin.firestore.FieldValue.serverTimestamp();
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const registrationRef = buildRegistrationRefFromStripeSession(session);
+      const registrationInput = normalizeRegistrationCheckoutCancelInput(session.metadata || {});
+      const formRef = buildRegistrationFormRef(registrationInput);
 
       await firestore.runTransaction(async (transaction) => {
         const eventSnap = await transaction.get(eventRef);
         if (eventSnap.exists) return;
 
-        const registrationSnap = await transaction.get(registrationRef);
+        const [registrationSnap, formSnap] = await Promise.all([
+          transaction.get(registrationRef),
+          transaction.get(formRef)
+        ]);
         if (!registrationSnap.exists) {
           throw new Error('Registration not found for Stripe webhook.');
+        }
+        if (!formSnap.exists) {
+          throw new Error('Registration form not found for Stripe webhook.');
         }
 
         if (shouldMarkRegistrationPaidFromEvent(event)) {
@@ -1417,12 +1522,34 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             updatedAt: receivedAt
           }, { merge: true });
         } else {
+          const form = formSnap.data() || {};
+          const registration = registrationSnap.data() || {};
+          const selectedOption = registration.selectedOption || {};
+          const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();
+          const counts = form.registrationOptionCounts || {};
+          const optionCounts = countKey ? counts[countKey] || {} : {};
+          const shouldReleaseCapacity = registration.registrationCapacityReleased !== true && registration.paymentStatus !== 'paid' && countKey;
+          if (shouldReleaseCapacity && registration.status === 'pending') {
+            transaction.update(formRef, {
+              [`registrationOptionCounts.${countKey}.enrolled`]: Math.max(0, Number(optionCounts.enrolled || 0) - 1),
+              registrationCapacityUpdateId: registrationInput.registrationId,
+              updatedAt: receivedAt
+            });
+          } else if (shouldReleaseCapacity && registration.status === 'waitlisted') {
+            transaction.update(formRef, {
+              [`registrationOptionCounts.${countKey}.waitlisted`]: Math.max(0, Number(optionCounts.waitlisted || 0) - 1),
+              registrationCapacityUpdateId: registrationInput.registrationId,
+              updatedAt: receivedAt
+            });
+          }
           transaction.set(registrationRef, {
             checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
             paymentStatus: event.type === 'checkout.session.expired' ? 'checkout_expired' : 'payment_failed',
             stripeCheckoutSessionId: session.id || null,
             stripePaymentStatus: session.payment_status || 'unpaid',
             stripeEventId: event.id,
+            registrationCapacityReleased: true,
+            capacityReleasedAt: receivedAt,
             updatedAt: receivedAt
           }, { merge: true });
         }
