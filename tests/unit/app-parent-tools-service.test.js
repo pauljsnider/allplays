@@ -265,7 +265,7 @@ describe('React app parent tools service', () => {
 
         const result = await submitOfflineRegistration(teamId, formId, registrationRecord);
 
-        expect(result).toEqual({ success: true, status: 'pending', registrationId: expect.any(String) });
+        expect(result).toEqual({ success: true, status: 'pending', registrationId: expect.any(String), feeSnapshot: expect.any(Object) });
         expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(1);
 
         // Verify that updateDoc was called on the formRef with updated counts
@@ -345,7 +345,7 @@ describe('React app parent tools service', () => {
 
         const result = await submitOfflineRegistration(teamId, formId, registrationRecord);
 
-        expect(result).toEqual({ success: true, status: 'waitlisted', registrationId: expect.any(String) });
+        expect(result).toEqual({ success: true, status: 'waitlisted', registrationId: expect.any(String), feeSnapshot: expect.any(Object) });
         expect(dbMocks.updateDoc).toHaveBeenCalledWith(
             expect.objectContaining({ path: `teams/${teamId}/registrationForms/${formId}` }),
             expect.objectContaining({
@@ -661,6 +661,8 @@ describe('React app parent tools service', () => {
     });
 
     it('throws error if required fields are missing for checkout', async () => {
+        const mockCheckoutUrl = 'https://checkout.stripe.com/mock-session-123';
+        dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: mockCheckoutUrl });
         await expect(initiateRegistrationCheckout('', 'f', 'r', 'o', 'p', 1, 100, 'USD'))
             .rejects.toThrow('Missing required fields for checkout.');
         await expect(initiateRegistrationCheckout('t', '', 'r', 'o', 'p', 1, 100, 'USD'))
@@ -668,7 +670,7 @@ describe('React app parent tools service', () => {
         await expect(initiateRegistrationCheckout('t', 'f', '', 'o', 'p', 1, 100, 'USD'))
             .rejects.toThrow('Missing required fields for checkout.');
         await expect(initiateRegistrationCheckout('t', 'f', 'r', '', 'p', 1, 100, 'USD'))
-            .rejects.toThrow('Missing required fields for checkout.');
+            .resolves.toEqual({ success: true, checkoutUrl: mockCheckoutUrl });
         await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', '', 1, 100, 'USD'))
             .rejects.toThrow('Missing required fields for checkout.');
         await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 0, 100, 'USD'))
