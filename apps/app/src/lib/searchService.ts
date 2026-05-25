@@ -9,14 +9,15 @@ import {
   limit
 } from '../../../../js/firebase.js';
 import { loadParentHome } from './homeService';
-import type { AuthState, AuthUser } from './types';
+import { searchHelpKnowledge } from './helpKnowledgeService';
+import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
 
 let cachedTeams: AppSearchTeam[] | null = null;
 let cachedTeamsLoadedAt = 0;
 
-export type AppSearchKind = 'action' | 'team' | 'player' | 'social';
+export type AppSearchKind = 'action' | 'team' | 'player' | 'social' | 'help';
 
 export type AppSearchItem = {
   id: string;
@@ -25,6 +26,8 @@ export type AppSearchItem = {
   subtitle: string;
   route?: string;
   href?: string;
+  roles?: string[];
+  snippet?: string;
 };
 
 export type AppSearchTeam = {
@@ -46,6 +49,13 @@ export type AppSearchPlayer = AppSearchItem & {
   kind: 'player';
   teamId: string;
   playerId: string;
+};
+
+export type AppSearchHelp = AppSearchItem & {
+  kind: 'help';
+  href: string;
+  roles: string[];
+  snippet: string;
 };
 
 export function normalizeSearchQuery(queryText: string) {
@@ -181,7 +191,7 @@ export function computeAppSearchResults({
   players
 }: {
   queryText: string;
-  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'>;
+  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>;
   teams: AppSearchTeam[];
   players: AppSearchPlayer[];
 }) {
@@ -196,12 +206,15 @@ export function computeAppSearchResults({
   const matchedTeams = tokens.length === 0
     ? teamItems.slice(0, 20)
     : rankSearchItems(teamItems, tokens).slice(0, 20);
+  const matchedHelp = buildAppSearchHelpResults(queryText, auth);
+  const matchedPlayers = players.slice(0, 20);
 
   return {
     actions: matchedActions,
     teams: matchedTeams,
-    players: players.slice(0, 20),
-    flat: [...matchedActions, ...matchedTeams, ...players.slice(0, 20)]
+    help: matchedHelp,
+    players: matchedPlayers,
+    flat: [...matchedActions, ...matchedTeams, ...matchedHelp, ...matchedPlayers]
   };
 }
 
@@ -333,6 +346,38 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
     .sort((a, b) => (b.score - a.score) || (a.item.title.length - b.item.title.length))
     .slice(0, 20)
     .map((entry) => entry.item);
+}
+
+function buildAppSearchHelpResults(
+  queryText: string,
+  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>
+): AppSearchHelp[] {
+  const normalized = normalizeSearchQuery(queryText);
+  if (normalized.length < 2) return [];
+
+  return searchHelpKnowledge({
+    query: queryText,
+    roles: getSearchHelpRoles(auth),
+    limit: 5
+  }).map((result) => ({
+    id: `help:${result.id}`,
+    kind: 'help' as const,
+    title: result.title,
+    subtitle: result.snippet || result.summary,
+    href: result.url,
+    roles: result.roles,
+    snippet: result.snippet
+  }));
+}
+
+function getSearchHelpRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
+  const roles = new Set<UserRole>();
+  (auth.roles || auth.user?.roles || []).forEach((role) => roles.add(role));
+  if (auth.isAdmin || auth.user?.isAdmin) roles.add('admin');
+  if (auth.isPlatformAdmin) roles.add('platformAdmin');
+  if (auth.isParent) roles.add('parent');
+  if (auth.isCoach) roles.add('coach');
+  return [...roles];
 }
 
 export function resetAppSearchCacheForTests() {
