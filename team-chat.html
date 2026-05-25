@@ -2059,7 +2059,9 @@
             }
 
             const query = value.slice(atPos + 1, cursorPos);
-            if (query.includes(' ') || query.length > 20) {
+            const normalizedQuery = query.toLowerCase();
+            const supportedMention = 'all plays';
+            if (query.length > supportedMention.length || !supportedMention.startsWith(normalizedQuery)) {
                 hideMentionMenu();
                 return;
             }
