@@ -4,6 +4,8 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronLeft,
+  Copy,
+  Download,
   ExternalLink,
   File,
   ImageIcon,
@@ -11,10 +13,11 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Share2,
   Upload,
   Video
 } from 'lucide-react';
-import { openPublicUrl } from '../lib/publicActions';
+import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import {
   addParentTeamMediaLink,
   loadTeamMediaForApp,
@@ -226,7 +229,16 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           {activeFolder?.visibility ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase text-gray-700">{activeFolder.visibility}</span> : null}
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {activeFolder?.items.length ? activeFolder.items.map((item) => <MediaItemCard key={item.id} item={item} />) : (
+          {activeFolder?.items.length ? activeFolder.items.map((item) => (
+            <MediaItemCard
+              key={item.id}
+              item={item}
+              onStatus={(tone, statusMessage) => {
+                setError(tone === 'error' ? statusMessage : '');
+                setMessage(tone === 'success' ? statusMessage : '');
+              }}
+            />
+          )) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No media in this album yet.</div>
           )}
         </div>
@@ -235,11 +247,44 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   );
 }
 
-function MediaItemCard({ item }: { item: TeamMediaItem }) {
+function MediaItemCard({ item, onStatus }: { item: TeamMediaItem; onStatus: (tone: 'error' | 'success', message: string) => void }) {
   const Icon = getItemIcon(item);
   const isPhoto = item.type === 'photo';
+  const title = item.title || 'Team media';
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(item.url);
+      onStatus('success', 'Media link copied.');
+    } catch {
+      onStatus('error', 'Unable to copy media link.');
+    }
+  };
+
+  const shareItem = async () => {
+    const result = await sharePublicUrl({
+      title,
+      text: `Check out ${title}`,
+      url: item.url
+    });
+    if (result === 'shared') onStatus('success', 'Share sheet opened.');
+    if (result === 'copied') onStatus('success', 'Share unavailable here. Link copied instead.');
+    if (result === 'failed') onStatus('error', 'Sharing is unavailable in this browser.');
+  };
+
+  const downloadItem = () => {
+    const link = document.createElement('a');
+    link.href = item.url;
+    link.download = getMediaDownloadName(item);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
   return (
-    <button type="button" className="group overflow-hidden rounded-xl border border-gray-200 bg-white text-left transition hover:border-primary-200 hover:shadow-app" onClick={() => openPublicUrl(item.url)}>
+    <article className="overflow-hidden rounded-xl border border-gray-200 bg-white transition hover:border-primary-200 hover:shadow-app">
       <div className="aspect-video bg-gray-100">
         {isPhoto ? (
           <img src={item.url} alt="" className="h-full w-full object-cover" loading="lazy" />
@@ -249,13 +294,37 @@ function MediaItemCard({ item }: { item: TeamMediaItem }) {
           </div>
         )}
       </div>
-      <div className="flex items-center gap-2 p-3">
-        <Icon className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-sm font-black text-gray-950">{item.title}</span>
-        <ExternalLink className="h-4 w-4 flex-none text-gray-300 transition group-hover:text-primary-600" aria-hidden="true" />
+      <div className="p-3">
+        <div className="flex items-center gap-2">
+          <Icon className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-sm font-black text-gray-950">{title}</span>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className="secondary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => openPublicUrl(item.url)}>
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            Open
+          </button>
+          <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={shareItem}>
+            <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+            Share
+          </button>
+          <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={downloadItem}>
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            Save
+          </button>
+          <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={copyLink}>
+            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+            Copy
+          </button>
+        </div>
       </div>
-    </button>
+    </article>
   );
+}
+
+function getMediaDownloadName(item: TeamMediaItem) {
+  const baseName = String(item.title || item.id || 'team-media').trim() || 'team-media';
+  return baseName.replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'team-media';
 }
 
 function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
