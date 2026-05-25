@@ -465,7 +465,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(copyInviteLink).toBeVisible();
     await expect(copyInviteLink).toHaveClass(/primary-button/);
     await expect(page.getByText('Fallback code')).toBeVisible();
-    await expect(page.getByText('NEWMVP42')).toBeVisible();
+    await expect(page.getByText('NEWMVP42', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Copy code' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Security' }).click();
