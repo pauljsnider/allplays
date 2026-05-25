@@ -33,6 +33,18 @@ export function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
     return normalizedStats;
 }
 
+function hasTrackedPlayerActivity(playerStats = {}, normalizedStats = {}, includeTimeMs = false) {
+    const hasStatActivity = Object.entries(normalizedStats || {}).some(([key, value]) => {
+        if (includeTimeMs && String(key).toLowerCase() === 'time') return false;
+        return Number(value) !== 0;
+    });
+
+    if (hasStatActivity) return true;
+    if (!includeTimeMs) return true;
+
+    return (Number(playerStats.time) || 0) > 0;
+}
+
 export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId = {}, columns = [], statTrackerConfig = {}, includeTimeMs = false } = {}) {
     const safePlayers = Array.isArray(players) ? players : [];
     const safeStatsByPlayerId = playerStatsByPlayerId && typeof playerStatsByPlayerId === 'object'
@@ -43,6 +55,7 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
         const playerStats = safeStatsByPlayerId[player.id] || {};
 
         const normalizedStats = buildNormalizedPlayerStats(playerStats, columns);
+        const playerAppeared = hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs);
         // If we are including timeMs, ensure the internal 'time' accumulator is not persisted as a stat.
         if (includeTimeMs && normalizedStats.time !== undefined) {
             delete normalizedStats.time;
@@ -50,20 +63,20 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
         const { publicStats, privateStats } = splitPlayerStatsByVisibility(statTrackerConfig, normalizedStats);
 
         const playerNumber = player.number ?? player.num ?? '';
-        const publicData = {
+        const baseParticipationData = {
             playerName: player.name,
             playerNumber,
-            participated: true,
-            participationStatus: 'appeared',
+            participated: playerAppeared,
+            participationStatus: playerAppeared ? 'appeared' : 'did-not-appear',
             participationSource: 'standard-tracker-finish',
+            ...(playerAppeared ? {} : { didNotPlay: true })
+        };
+        const publicData = {
+            ...baseParticipationData,
             stats: publicStats
         };
         const privateData = Object.keys(privateStats).length > 0 ? {
-            playerName: player.name,
-            playerNumber,
-            participated: true,
-            participationStatus: 'appeared',
-            participationSource: 'standard-tracker-finish',
+            ...baseParticipationData,
             stats: privateStats
         } : null;
 
