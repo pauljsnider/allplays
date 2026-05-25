@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume } from '../../js/track-live-state.js';
 
 describe('track live state helpers', () => {
@@ -156,5 +157,16 @@ describe('track live state helpers', () => {
       currentPeriod: 'Q3',
       wasRunning: true
     });
+  });
+
+  it('wires Cancel Game to clear public live state for scheduled live games', () => {
+    const trackLiveHtml = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
+    const cancelGameBody = trackLiveHtml.match(/async function cancelGame\(\) \{([\s\S]*?)\n        function updateTimer\(\)/)?.[1] || '';
+
+    expect(cancelGameBody).toContain('games/${currentGameId}/liveEvents');
+    expect(cancelGameBody).toContain('buildTrackLiveResetUpdate');
+    expect(cancelGameBody).toContain("status: 'scheduled'");
+    expect(cancelGameBody).toContain('liveBaseballState');
+    expect(cancelGameBody).not.toContain("currentGame.status !== 'scheduled'");
   });
 });
