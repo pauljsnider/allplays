@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem // Add this new import
-} from './db.js?v=32';
+} from './db.js?v=33';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -30,7 +30,7 @@ import {
     isSupportedTeamMediaImage,
     isTeamMediaDocument,
     sortByMediaOrder
-} from './team-media-utils.js?v=2';
+} from './team-media-utils.js?v=3';
 
 const state = {
     teamId: '',
@@ -591,7 +591,7 @@ els.uploadForm.addEventListener('submit', async (event) => {
         uploadFile: uploadTeamMediaPhoto,
         nounSingular: 'photo',
         nounPlural: 'photos',
-        unsupportedMessage: 'Unsupported file type. Choose an image.'
+        unsupportedMessage: 'Choose an image file that is 10 MB or smaller.'
     });
     if (uploadedCount > 0) els.photoFiles.value = '';
 });
@@ -618,7 +618,7 @@ els.fileUploadForm.addEventListener('submit', async (event) => {
         uploadFile: uploadTeamMediaFile,
         nounSingular: 'file',
         nounPlural: 'files',
-        unsupportedMessage: 'Unsupported file type. Choose a PDF, Office document, text file, or CSV.'
+        unsupportedMessage: 'Choose a supported document file that is 10 MB or smaller.'
     });
     if (uploadedCount > 0) els.mediaFiles.value = '';
 });
