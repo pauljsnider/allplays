@@ -776,6 +776,14 @@ function ChatWindow({
     const files = filePreviews.map((preview) => preview.file);
     if (!trimmed && !files.length) return;
 
+    const hasEmptySelectedAudience = selectedRecipientTarget === 'individuals'
+      && selectedRecipientIds.map((id) => String(id || '').trim()).filter(Boolean).length === 0;
+    if (hasEmptySelectedAudience) {
+      setStatus({ tone: 'error', message: 'Choose at least one selected member before sending.' });
+      setShowAudienceSheet(true);
+      return;
+    }
+
     setSending(true);
     setStatus(null);
     setComposerNotice(files.length ? `Uploading ${files.length} attachment${files.length === 1 ? '' : 's'}...` : 'Sending...');
@@ -1748,6 +1756,7 @@ function AudienceSheet({
         : [...selectedRecipientIds, recipientId]
     );
   };
+  const needsSelectedRecipient = selectedTarget === 'individuals' && selectedRecipientIds.length === 0;
 
   return (
     <Sheet title="Message audience" onClose={onClose}>
@@ -1775,27 +1784,34 @@ function AudienceSheet({
       </div>
 
       {selectedTarget === 'individuals' ? (
-        <div className="mt-4 max-h-72 overflow-y-auto rounded-xl border border-gray-200">
-          {recipientOptions.length ? recipientOptions.map((option) => (
-            <label key={option.id} className="flex cursor-pointer items-center gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-gray-300 text-primary-600"
-                checked={selectedRecipientIds.includes(option.id)}
-                onChange={() => toggleRecipient(option.id)}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-black text-gray-800">{option.name}</span>
-                {option.detail ? <span className="block truncate text-xs font-semibold text-gray-500">{option.detail}</span> : null}
-              </span>
-            </label>
-          )) : (
-            <div className="p-3 text-sm font-semibold text-gray-500">No roster or community members are available yet.</div>
-          )}
-        </div>
+        <>
+          <div className="mt-4 max-h-72 overflow-y-auto rounded-xl border border-gray-200">
+            {recipientOptions.length ? recipientOptions.map((option) => (
+              <label key={option.id} className="flex cursor-pointer items-center gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-gray-300 text-primary-600"
+                  checked={selectedRecipientIds.includes(option.id)}
+                  onChange={() => toggleRecipient(option.id)}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-black text-gray-800">{option.name}</span>
+                  {option.detail ? <span className="block truncate text-xs font-semibold text-gray-500">{option.detail}</span> : null}
+                </span>
+              </label>
+            )) : (
+              <div className="p-3 text-sm font-semibold text-gray-500">No roster or community members are available yet.</div>
+            )}
+          </div>
+          {needsSelectedRecipient ? (
+            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+              Choose at least one selected member, or switch back to Full team.
+            </div>
+          ) : null}
+        </>
       ) : null}
 
-      <button type="button" className="primary-button mt-4 w-full" onClick={onClose}>Done</button>
+      <button type="button" className="primary-button mt-4 w-full" onClick={onClose} disabled={needsSelectedRecipient}>Done</button>
     </Sheet>
   );
 }
