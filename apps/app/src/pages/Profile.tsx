@@ -381,11 +381,6 @@ export function Profile({ auth }: { auth: AuthState }) {
       return;
     }
 
-    if (!inviteEmail.trim() && !invitePhone.trim()) {
-      setInviteStatus({ message: 'Enter an email or phone number.', tone: 'error' });
-      return;
-    }
-
     setBusy('invite');
     setInviteStatus(null);
 
@@ -648,14 +643,18 @@ export function Profile({ auth }: { auth: AuthState }) {
         </div>
 
         <form className="mt-4 space-y-3" onSubmit={createInviteCode}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <input className="auth-input" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="coach@example.com" />
-            <input className="auth-input" type="tel" value={invitePhone} onChange={(event) => setInvitePhone(event.target.value)} placeholder="(555) 123-4567" />
-          </div>
+          <details className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <summary className="cursor-pointer text-sm font-black text-gray-700">Advanced: add recipient label</summary>
+            <p className="mt-2 text-xs font-semibold leading-5 text-gray-500">Optional only. Use these fields to annotate invite history; the app does not send the invite.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <input className="auth-input" type="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="coach@example.com" aria-label="Invite email label" />
+              <input className="auth-input" type="tel" value={invitePhone} onChange={(event) => setInvitePhone(event.target.value)} placeholder="(555) 123-4567" aria-label="Invite phone label" />
+            </div>
+          </details>
           <div className="flex flex-wrap items-center gap-2">
             <button type="submit" className="primary-button" disabled={busy === 'invite'}>
-              {busy === 'invite' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
-              Generate code
+              {busy === 'invite' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
+              Generate invite link
             </button>
             <StatusMessage status={inviteStatus} />
           </div>
@@ -663,18 +662,22 @@ export function Profile({ auth }: { auth: AuthState }) {
 
         {generatedCode ? (
           <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-            <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-emerald-700">Generated code</div>
+            <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-emerald-700">Generated invite link</div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <code className="rounded-lg bg-white px-4 py-2 text-2xl font-black tracking-widest text-gray-950">{generatedCode}</code>
-              <button type="button" className="secondary-button" onClick={() => copyText(generatedCode, 'Code copied')}>
-                <Copy className="h-4 w-4" aria-hidden="true" />
-                Copy
-              </button>
-              <button type="button" className="secondary-button" onClick={() => copyText(signupLink, 'Link copied')}>
+              <button type="button" className="primary-button" onClick={() => copyText(signupLink, 'Link copied')}>
                 <Link2 className="h-4 w-4" aria-hidden="true" />
-                Copy link
+                Copy invite link
               </button>
+              <span className="break-all rounded-lg bg-white px-3 py-2 text-sm font-bold text-gray-700">{signupLink}</span>
               {copyStatus ? <span className="text-sm font-black text-emerald-700">{copyStatus}</span> : null}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm font-bold text-gray-600">
+              <span>Fallback code</span>
+              <code className="rounded-lg bg-white px-3 py-1.5 text-lg font-black tracking-widest text-gray-950">{generatedCode}</code>
+              <button type="button" className="ghost-button" onClick={() => copyText(generatedCode, 'Code copied')}>
+                <Copy className="h-4 w-4" aria-hidden="true" />
+                Copy code
+              </button>
             </div>
           </div>
         ) : null}

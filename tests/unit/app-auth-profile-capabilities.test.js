@@ -187,7 +187,7 @@ describe('React app auth/profile capability parity', () => {
             'Email not verified',
             'Set a password',
             'Send password reset',
-            'Generate code',
+            'Generate invite link',
             'Show fewer codes',
             'Sign out'
         ]);
