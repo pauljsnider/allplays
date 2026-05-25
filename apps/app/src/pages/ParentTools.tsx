@@ -26,6 +26,7 @@ import {
   getAppleCalendarFeedUrl,
   getGoogleCalendarFeedUrl,
   getPrivateTeamCalendarFeedUrl,
+  initiateParentTeamFeeCheckout,
   loadFamilyShareModel,
   loadParentAccessModel,
   loadParentAccessPlayers,
@@ -260,6 +261,8 @@ function FeesTool({ auth }: { auth: AuthState }) {
   const [filter, setFilter] = useState<'open' | 'all' | 'paid'>('open');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [payingFeeId, setPayingFeeId] = useState('');
+  const [feeErrors, setFeeErrors] = useState<Record<string, string>>({});
 
   const refresh = async () => {
     setLoading(true);
@@ -286,6 +289,23 @@ function FeesTool({ auth }: { auth: AuthState }) {
 
   const openCount = fees.filter((fee) => !['paid', 'canceled', 'cancelled'].includes(String(fee.status || '').toLowerCase())).length;
   const balanceCents = visibleFees.reduce((sum, fee) => sum + Number(fee.balanceDueCents ?? fee.amountDueCents ?? 0), 0);
+  const payFee = async (fee: ParentFeeAppRecord) => {
+    const feeKey = getFeeCardKey(fee);
+    setPayingFeeId(feeKey);
+    setFeeErrors((current) => ({ ...current, [feeKey]: '' }));
+    try {
+      if (fee.checkoutUrl) {
+        await openPublicUrl(String(fee.checkoutUrl));
+        return;
+      }
+      const checkout = await initiateParentTeamFeeCheckout(String(fee.teamId || ''), String(fee.batchId || ''), String(fee.recipientId || ''));
+      await openPublicUrl(checkout.checkoutUrl);
+    } catch (payError: any) {
+      setFeeErrors((current) => ({ ...current, [feeKey]: payError?.message || 'Unable to open checkout. Please try again.' }));
+    } finally {
+      setPayingFeeId('');
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -308,13 +328,20 @@ function FeesTool({ auth }: { auth: AuthState }) {
       {error ? <Status tone="error" message={error} /> : null}
       {loading ? <LoadingBlock label="Loading fees" /> : (
         <div className="grid gap-3 lg:grid-cols-2">
-          {visibleFees.length ? visibleFees.map((fee) => <FeeCard key={`${fee.teamId || 'team'}-${fee.id || fee.title}`} fee={fee} />) : (
+          {visibleFees.length ? visibleFees.map((fee) => {
+            const feeKey = getFeeCardKey(fee);
+            return <FeeCard key={feeKey} fee={fee} onPay={payFee} paying={payingFeeId === feeKey} error={feeErrors[feeKey] || ''} />;
+          }) : (
             <EmptyState icon={DollarSign} title="No fees in this view" detail="Paid and canceled items are available under All." />
           )}
         </div>
       )}
     </div>
   );
+}
+
+function getFeeCardKey(fee: ParentFeeAppRecord) {
+  return `${fee.teamId || 'team'}-${fee.batchId || 'batch'}-${fee.recipientId || fee.id || fee.title || 'fee'}`;
 }
 
 function CalendarTool({ auth }: { auth: AuthState }) {
@@ -647,7 +674,7 @@ function AccessRequestCard({ request }: { request: ParentAccessRequest }) {
   );
 }
 
-function FeeCard({ fee }: { fee: ParentFeeAppRecord }) {
+function FeeCard({ fee, onPay, paying, error }: { fee: ParentFeeAppRecord; onPay: (fee: ParentFeeAppRecord) => void | Promise<void>; paying: boolean; error: string }) {
   return (
     <section className="app-card p-4">
       <div className="flex items-start justify-between gap-3">
@@ -666,11 +693,12 @@ function FeeCard({ fee }: { fee: ParentFeeAppRecord }) {
       {fee.installments.length ? <FeeDetailList title="Installments" rows={fee.installments} /> : null}
       {fee.ledgerEntries.length ? <FeeDetailList title="Payments and adjustments" rows={fee.ledgerEntries} /> : null}
       {fee.canPay ? (
-        <button type="button" className="primary-button mt-3 w-full" onClick={() => openPublicUrl(String(fee.checkoutUrl))}>
-          <ExternalLink className="h-4 w-4" aria-hidden="true" />
-          Pay fee
+        <button type="button" className="primary-button mt-3 w-full" onClick={() => onPay(fee)} disabled={paying}>
+          {paying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ExternalLink className="h-4 w-4" aria-hidden="true" />}
+          {paying ? 'Opening checkout' : 'Pay fee'}
         </button>
       ) : null}
+      {error ? <div className="mt-2 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700">{error}</div> : null}
     </section>
   );
 }

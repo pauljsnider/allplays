@@ -13,6 +13,7 @@ const serviceMocks = vi.hoisted(() => ({
     getCalendarEventShareText: vi.fn((event) => `${event.teamName} ${event.title || event.opponent}`),
     getGoogleCalendarFeedUrl: vi.fn((url) => `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(url)}`),
     getPrivateTeamCalendarFeedUrl: vi.fn(),
+    initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
     loadParentAccessModel: vi.fn(),
     loadParentAccessPlayers: vi.fn(),
@@ -173,6 +174,7 @@ beforeEach(() => {
         teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
     });
     serviceMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue('https://feed.example.test/team-1.ics');
+    serviceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://pay.example.test/created-fee' });
     serviceMocks.loadFamilyShareModel.mockResolvedValue({
         children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
         tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [] }]
@@ -237,6 +239,7 @@ describe('React app parent tools integration', () => {
         expect(container.textContent).toContain('Line items');
         await clickButton(container, 'Pay fee');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/fee');
+        expect(serviceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
 
         await clickButton(container, 'Calendar');
         await waitForText(container, 'Calendar tools');
@@ -274,6 +277,69 @@ describe('React app parent tools integration', () => {
             title: 'Hustle Award',
             url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
         }));
+    });
+
+    it('creates a team fee checkout session when no checkout URL exists', async () => {
+        serviceMocks.loadParentFeesForApp.mockResolvedValueOnce([{
+            id: 'fee-2',
+            title: 'Tournament fee',
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
+            teamName: 'Bears',
+            playerName: 'Pat Star',
+            status: 'unpaid',
+            amountLabel: '$75',
+            dueLabel: 'Jul 1',
+            statusLabel: 'Open',
+            balanceDueCents: 7500,
+            checkoutUrl: '',
+            canPay: true,
+            checkoutInitiatable: true,
+            paymentAction: 'createCheckout',
+            lineItems: [],
+            installments: [],
+            ledgerEntries: []
+        }]);
+
+        const { container } = await renderParentTools('/parent-tools/fees');
+        await waitForText(container, 'Tournament fee');
+        await clickButton(container, 'Pay fee');
+
+        expect(serviceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/created-fee');
+    });
+
+    it('shows an inline fee checkout error without leaving Parent Tools', async () => {
+        serviceMocks.loadParentFeesForApp.mockResolvedValueOnce([{
+            id: 'fee-3',
+            title: 'Camp fee',
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
+            teamName: 'Bears',
+            playerName: 'Pat Star',
+            status: 'partial',
+            amountLabel: '$50',
+            dueLabel: 'Jul 15',
+            statusLabel: 'Open',
+            balanceDueCents: 5000,
+            checkoutUrl: '',
+            canPay: true,
+            checkoutInitiatable: true,
+            paymentAction: 'createCheckout',
+            lineItems: [],
+            installments: [],
+            ledgerEntries: []
+        }]);
+        serviceMocks.initiateParentTeamFeeCheckout.mockRejectedValueOnce(new Error('Stripe session failed.'));
+
+        const { container } = await renderParentTools('/parent-tools/fees');
+        await waitForText(container, 'Camp fee');
+        await clickButton(container, 'Pay fee');
+
+        expect(container.textContent).toContain('Stripe session failed.');
+        expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
     it('loads team media, uploads photos/files, adds links, and opens media items', async () => {
