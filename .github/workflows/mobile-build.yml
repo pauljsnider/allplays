@@ -1,0 +1,145 @@
+name: mobile-build
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/mobile-build.yml"
+      - "apps/app/**"
+      - "android/**"
+      - "ios/**"
+      - "capacitor.config.json"
+      - "package.json"
+      - "package-lock.json"
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/mobile-build.yml"
+      - "apps/app/**"
+      - "android/**"
+      - "ios/**"
+      - "capacitor.config.json"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-debug:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install app dependencies
+        run: npm ci --prefix apps/app
+
+      - name: Build React app
+        run: npm run app:build
+
+      - name: Sync Android project
+        run: npx cap sync android
+
+      - name: Build Android debug APK
+        working-directory: android
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Upload Android debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: allplays-android-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+
+  ios-simulator:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install app dependencies
+        run: npm ci --prefix apps/app
+
+      - name: Build React app
+        run: npm run app:build
+
+      - name: Sync iOS project
+        run: npx cap sync ios
+
+      - name: Resolve iOS package dependencies
+        run: |
+          run_with_retry() {
+            attempt=1
+            delay=20
+            until "$@"; do
+              if [ "$attempt" -ge 3 ]; then
+                return 1
+              fi
+              echo "Attempt $attempt failed. Retrying in ${delay}s..."
+              attempt=$((attempt + 1))
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
+          run_with_retry xcodebuild \
+            -resolvePackageDependencies \
+            -project ios/App/App.xcodeproj \
+            -scheme App
+
+      - name: Build iOS simulator app
+        run: |
+          run_with_retry() {
+            attempt=1
+            delay=20
+            until "$@"; do
+              if [ "$attempt" -ge 3 ]; then
+                return 1
+              fi
+              echo "Attempt $attempt failed. Retrying in ${delay}s..."
+              attempt=$((attempt + 1))
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
+          run_with_retry xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
