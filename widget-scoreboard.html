@@ -110,6 +110,9 @@
             const liveClass = isLive(game) ? 'bg-red-100 text-red-700' : isCompleted(game) ? 'bg-gray-100 text-gray-700' : 'bg-emerald-100 text-emerald-700';
             const homeScore = Number.isFinite(Number(game.homeScore)) ? Number(game.homeScore) : 0;
             const awayScore = Number.isFinite(Number(game.awayScore)) ? Number(game.awayScore) : 0;
+            const teamScore = game.isHome === false ? awayScore : homeScore;
+            const opponentScore = game.isHome === false ? homeScore : awayScore;
+            const scoreLabel = typeof game.isHome === 'boolean' ? 'team - opponent' : 'home - away';
             const showScore = isLive(game) || isCompleted(game);
             return `
                 <article class="p-4 hover:bg-gray-50 transition">
@@ -123,7 +126,7 @@
                             ${game.location ? `<p class="text-xs text-gray-500 truncate mt-1">${escapeHtml(game.location)}</p>` : ''}
                         </div>
                         <div class="flex items-center gap-3 flex-shrink-0">
-                            ${showScore ? `<div class="text-right font-mono"><div class="text-2xl font-black text-gray-900">${homeScore} - ${awayScore}</div><div class="text-[10px] text-gray-500 uppercase tracking-wide">score</div></div>` : ''}
+                            ${showScore ? `<div class="text-right font-mono"><div class="text-2xl font-black text-gray-900">${teamScore} - ${opponentScore}</div><div class="text-[10px] text-gray-500 uppercase tracking-wide">${scoreLabel}</div></div>` : ''}
                             ${url ? `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-xs font-semibold text-primary-600 hover:text-primary-700">Details</a>` : ''}
                         </div>
                     </div>

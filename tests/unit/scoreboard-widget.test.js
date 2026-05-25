@@ -28,6 +28,15 @@ describe('scoreboard widget embed', () => {
         expect(source).toContain('.filter((game) => game._date && (isLive(game) || game._date >= now || (isCompleted(game) && game._date >= recentCutoff)))');
         expect(source).not.toContain('|| !isCompleted(game) || isLive(game)');
         expect(source).toContain('function renderGame(game)');
+        expect(source).toContain('const teamScore = game.isHome === false ? awayScore : homeScore;');
+        expect(source).toContain('const opponentScore = game.isHome === false ? homeScore : awayScore;');
+        expect(source).toContain("const scoreLabel = typeof game.isHome === 'boolean' ? 'team - opponent' : 'home - away';");
+        expect(source).toContain('${teamScore} - ${opponentScore}');
+        expect(source).toContain('${scoreLabel}');
+        expect(source).toContain('team - opponent');
+        expect(source).toContain('home - away');
+        expect(source).not.toContain('tracking-wide">team - opponent</div>');
+        expect(source).not.toContain('${homeScore} - ${awayScore}');
         expect(source).toContain('live-game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}');
         expect(source).toContain('function clearRefreshTimer()');
         expect(source).toContain("window.addEventListener('pagehide', clearRefreshTimer);");
