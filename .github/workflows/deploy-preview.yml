@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -46,7 +46,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -90,7 +90,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -98,6 +98,17 @@ jobs:
 
       - name: Install app dependencies
         run: npm ci --prefix apps/app
+
+      - name: Build React app
+        run: npm run app:build
+
+      - name: Stage Firebase preview bundle
+        run: |
+          site_dir="$RUNNER_TEMP/firebase-preview-site"
+          config_file="$GITHUB_WORKSPACE/.firebase-preview.generated.json"
+          node scripts/stage-pages-bundle.mjs "$site_dir"
+          node scripts/write-firebase-hosting-config.mjs "$site_dir" "$config_file"
+          echo "FIREBASE_PREVIEW_CONFIG=$config_file" >> "$GITHUB_ENV"
 
       - name: Configure Firebase service account
         run: |
@@ -139,7 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           log_file="$RUNNER_TEMP/firebase-preview-deploy.log"
-          npx firebase-tools@14.25.0 hosting:channel:deploy pr-${{ github.event.pull_request.number }} --project game-flow-c6311 --expires 7d --non-interactive | tee "$log_file"
+          npx firebase-tools@14.25.0 hosting:channel:deploy pr-${{ github.event.pull_request.number }} --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive | tee "$log_file"
           preview_url="$(grep -Eo 'https://[^ ]+' "$log_file" | tail -n1)"
           if [ -z "$preview_url" ]; then
             echo "Failed to extract preview URL from Firebase deploy output." >&2

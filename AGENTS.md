@@ -4,20 +4,32 @@
 - Root HTML pages (e.g., `index.html`, `dashboard.html`, `track.html`) are entry points for screens and flows.
 - Shared frontend logic lives in `js/` as ES modules (e.g., `js/auth.js`, `js/db.js`, `js/utils.js`).
 - Global styling is in `css/`, images and logos in `img/`.
+- The React/TypeScript app lives in `apps/app/` and is packaged for web at `/app/` plus iOS/Android through Capacitor.
+- Native Capacitor shells live in `ios/` and `android/`; keep native edits thin and put shared app logic in `apps/app/src/`.
 - Product specs and feature notes are kept in `spec/` and `_project-docs/`.
 - Firebase configuration and rules are in `firebase.json`, `firestore.rules`, and `firestore.indexes.json`.
 
 ## Build, Test, and Development Commands
-This is a static site; run any local static server from repo root:
+Legacy HTML site:
 - `python3 -m http.server` — quick local server on port 8000.
 - `npx http-server .` — alternative Node-based server.
-Open `http://localhost:8000` (or the printed port) and navigate to the HTML page you’re working on.
+
+React/Capacitor app:
+- `npm run app:dev` — Vite dev server for `apps/app` on port 5174.
+- `npm run app:build` — TypeScript check and Vite production build.
+- `npm run mobile:sync` — build the React app and sync Capacitor assets/plugins.
+- `npm run mobile:build:ios` — local iOS simulator build.
+- `npm run mobile:build:android` — local Android debug build.
+
+Open legacy pages at `http://localhost:8000`. Open the app locally at `http://localhost:5174`.
 
 ## Coding Style & Naming Conventions
-- Indentation: 4 spaces; use semicolons and ES module imports.
+- Legacy HTML/JS indentation: 4 spaces; use semicolons and ES module imports.
+- React app indentation follows the existing `apps/app` TypeScript/JSX style; keep shared behavior in reusable `apps/app/src/lib` helpers.
 - Naming: `camelCase` for variables/functions, `PascalCase` for classes (when used).
 - Keep DOM IDs and data keys consistent with HTML names (e.g., `admin-email` ↔ `#admin-email`).
 - Prefer small, focused functions in `js/` modules; reuse helpers in `js/utils.js`.
+- Do not duplicate feature logic separately for web, iOS, and Android. Put app feature behavior in `apps/app/src/` and use Capacitor adapters only for native capabilities.
 
 ## Testing Guidelines
 
@@ -43,6 +55,7 @@ The repo has two automated test tiers:
 
 ### What to write for each change
 - **New JS module:** unit test covering the exported functions and error branches.
+- **New React app helper:** unit test in `tests/unit/` and focused Playwright smoke when it changes a user flow.
 - **New static HTML page:** unit test checking structure, data attributes, JS wiring, and internal link targets; smoke test checking boot, key selectors, and interactive behaviors.
 - **Bug fix:** add a regression unit test that fails before the fix and passes after.
 - **UI flow change:** update or extend the relevant smoke spec.
@@ -61,3 +74,5 @@ HTML test pages in the repo root (`test-foul-tracking.html`, `test-pr-changes.ht
 - Admin access is controlled by the `isAdmin` field in Firestore; don’t bypass it client-side.
 - Update Firebase web config in `js/firebase.js` and `js/firebase-images.js` when changing projects.
 - Ensure Auth authorized domains include local dev and the deployed host.
+- Public Firebase config in app/native bundles is expected; do not commit service account keys, private API keys, provisioning profiles, or signing certificates.
+- GitHub Pages deployment uses `.github/workflows/app-github-pages.yml` and `scripts/stage-pages-bundle.mjs` to publish the legacy site root plus the React build under `/app/`.
