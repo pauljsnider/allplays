@@ -25,6 +25,7 @@ const scheduleMocks = vi.hoisted(() => ({
         confirmed: 0,
         isFull: false
     })),
+    updateGameScore: vi.fn(),
     updateParentScheduleRideRequestStatus: vi.fn()
 }));
 
@@ -147,6 +148,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
     scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleMocks.updateGameScore.mockResolvedValue({ homeScore: 5, awayScore: 2, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
         id: 'user-1__player-1',
         parentUserId: 'user-1',
@@ -272,5 +274,69 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(shareCall.title).toBe('Bears vs. Falcons match report');
         expect(shareCall.url).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
         expect(shareCall.clipboardText).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+    });
+
+    it('lets authorized staff adjust and save the live score from the game hub', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [
+                event({
+                    homeScore: 4,
+                    awayScore: 2,
+                    canUpdateScore: true
+                })
+            ]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+
+        await clickButton(container, 'Home score up');
+        expect(container.textContent).toContain('Unsaved score changes');
+        await clickButton(container, 'Save score');
+
+        expect(scheduleMocks.updateGameScore).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            { homeScore: 5, awayScore: 2 },
+            auth.user
+        );
+        await waitForText(container, 'Score saved.');
+        expect(container.textContent).toContain('5-2');
+    });
+
+    it('keeps score controls hidden for read-only schedule viewers', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ homeScore: 4, awayScore: 2, canUpdateScore: false })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Game hub');
+
+        expect(container.textContent).toContain('4-2');
+        expect(container.textContent).not.toContain('Live score');
+        expect(container.textContent).not.toContain('Save score');
+    });
+
+    it('leaves edited scores visible when saving the live score fails', async () => {
+        scheduleMocks.updateGameScore.mockRejectedValue(new Error('Permission denied'));
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ homeScore: 4, awayScore: 2, canUpdateScore: true })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+
+        await clickButton(container, 'Away score up');
+        await clickButton(container, 'Save score');
+
+        await waitForText(container, 'Permission denied');
+        expect(container.textContent).toContain('4-3');
+        expect(container.textContent).toContain('Unsaved score changes');
     });
 });
