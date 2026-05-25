@@ -30,7 +30,7 @@ describe('team media page wiring', () => {
         expect(source).toContain('state.actionInFlight = false;');
     });
 
-    it('keeps media reads member-scoped and writes admin-scoped', () => {
+    it('keeps media reads member-scoped and uploads explicitly approved', () => {
         const rules = fs.readFileSync(path.join(repoRoot, 'firestore.rules'), 'utf8');
         expect(rules).toContain('match /mediaFolders/{folderId}');
         expect(rules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
@@ -39,6 +39,8 @@ describe('team media page wiring', () => {
         expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
         expect(rules).toContain("folderData.get('visibility', 'team') == 'team'");
         expect(rules).toContain("get(folderPath).data.get('visibility', 'team') == 'team'");
+        expect(rules).toContain("teamId in get(userPath).data.get('teamMediaUploadTeamIds', [])");
+        expect(rules).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
     });
 
     it('configures team-scoped storage rules for album photos', () => {
@@ -47,6 +49,9 @@ describe('team media page wiring', () => {
 
         expect(firebaseJson.storage.rules).toBe('storage.rules');
         expect(storageRules).toContain('match /team-media/{teamId}/{folderId}/{userId}/{fileName}');
+        expect(storageRules).toContain('canCreateTeamMediaUpload(teamId, folderId)');
+        expect(storageRules).toContain("teamId in firestore.get(userPath).data.get('teamMediaUploadTeamIds', [])");
+        expect(storageRules).toContain('canUploadTeamMediaFolder(teamId, folderId)');
         expect(storageRules).toContain('isAllowedTeamMediaUploadType(request.resource.contentType)');
         expect(storageRules).toContain('application/pdf');
         expect(storageRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');

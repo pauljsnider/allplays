@@ -84,13 +84,20 @@ export function canViewTeamMediaFolder(folder, accessLevel) {
     return accessLevel === 'parent' && canReadTeamMediaAlbum(folder, false);
 }
 
+export function hasTeamMediaUploadGrant(user, teamId) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!user || !normalizedTeamId) return false;
+
+    return (Array.isArray(user.teamMediaUploadTeamIds) && user.teamMediaUploadTeamIds.includes(normalizedTeamId)) ||
+        (Array.isArray(user.mediaUploadTeamIds) && user.mediaUploadTeamIds.includes(normalizedTeamId));
+}
+
 export function canContributeTeamMedia(user, team) {
     if (!user || !team) return false;
     if (hasFullTeamAccess(user, team)) return true;
     const teamId = String(team.id || '').trim();
     if (!teamId) return false;
-    return (Array.isArray(user.parentTeamIds) && user.parentTeamIds.includes(teamId)) ||
-        (Array.isArray(user.parentOf) && user.parentOf.some((parentLink) => parentLink?.teamId === teamId));
+    return hasTeamMediaUploadGrant(user, teamId);
 }
 
 export function isSupportedTeamMediaVideoUrl(value) {

@@ -9,7 +9,7 @@ describe('team media Firestore rules', () => {
         expect(rules).toContain('match /mediaItems/{itemId}');
     });
 
-    it('limits reads to visible albums while preserving controlled photo uploads', () => {
+    it('limits reads to visible albums while preserving approved member uploads', () => {
         const mediaRulesStart = rules.indexOf('match /mediaFolders/{folderId}');
         const mediaRulesEnd = rules.indexOf('// Chat messages subcollection', mediaRulesStart);
         const mediaRules = rules.slice(mediaRulesStart, mediaRulesEnd);
@@ -18,6 +18,10 @@ describe('team media Firestore rules', () => {
         expect(mediaRules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
         expect(mediaRules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
         expect(mediaRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
+        expect(rules).toContain("teamId in get(userPath).data.get('teamMediaUploadTeamIds', [])");
+        expect(rules).toContain("teamId in get(userPath).data.get('mediaUploadTeamIds', [])");
+        expect(rules).toContain('return hasTeamMediaUploadGrant(teamId) &&');
+        expect(rules).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
         expect(rules).toContain("data.type in ['photo', 'file']");
         expect(rules).toContain('isAllowedTeamMediaUploadType(data.mimeType)');
         expect(mediaRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId);');

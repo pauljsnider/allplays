@@ -773,6 +773,22 @@ service cloud.firestore {
               get(folderPath).data.get('visibility', 'team') == 'team');
     }
 
+    function hasTeamMediaUploadGrant(teamId) {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return isSignedIn() &&
+             exists(userPath) &&
+             (teamId in get(userPath).data.get('teamMediaUploadTeamIds', []) ||
+              teamId in get(userPath).data.get('mediaUploadTeamIds', []));
+    }
+
+    function canUploadTeamMediaFolder(teamId, folderId) {
+      let folderPath = /databases/$(database)/documents/teams/$(teamId)/mediaFolders/$(folderId);
+      return folderId is string &&
+             folderId.size() > 0 &&
+             exists(folderPath) &&
+             get(folderPath).data.get('visibility', 'team') == 'team';
+    }
+
     function isAllowedTeamMediaUploadType(mimeType) {
       return mimeType.matches('image/.*') ||
              mimeType in [
@@ -789,7 +805,7 @@ service cloud.firestore {
     }
 
     function isTeamMediaUploadCreate(teamId, data) {
-      return canAccessTeamChat(teamId) &&
+      return hasTeamMediaUploadGrant(teamId) &&
              data.keys().hasAll([
                'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'deleted', 'createdAt', 'updatedAt'
@@ -798,8 +814,7 @@ service cloud.firestore {
                'folderId', 'title', 'fileName', 'type', 'url', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'order', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
-             data.folderId is string &&
-             data.folderId.size() > 0 &&
+             canUploadTeamMediaFolder(teamId, data.folderId) &&
              data.type in ['photo', 'file'] &&
              data.url is string &&
              data.storagePath is string &&
