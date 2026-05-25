@@ -15,6 +15,7 @@ import {
   setParentScheduleRideOfferStatus,
   submitParentScheduleRsvp,
   summarizeParentScheduleRideOffers,
+  updateGameScore,
   updateParentScheduleRideRequestStatus,
   type RideOfferInput,
   type ParentPracticePacket,
@@ -175,6 +176,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
         ? { ...event, assignments }
+        : event
+    )));
+  }, [decodedEventId, decodedTeamId]);
+
+  const handleScoreUpdated = useCallback((homeScore: number, awayScore: number) => {
+    setEvents((current) => current.map((event) => (
+      event.teamId === decodedTeamId && event.id === decodedEventId
+        ? { ...event, homeScore, awayScore }
         : event
     )));
   }, [decodedEventId, decodedTeamId]);
@@ -341,7 +350,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} /> : null}
+        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} /> : null}
       </div>
     </div>
   );
@@ -1282,11 +1291,12 @@ function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease
   );
 }
 
-function GameHubSection({ auth, event, childEvents }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[] }) {
+function GameHubSection({ auth, event, childEvents, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
   const isPractice = event.type === 'practice';
+  const canUpdateScore = Boolean(!isPractice && event.isDbGame && event.canUpdateScore && auth.user);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
 
   const sharePublicDestination = async (destination: { title: string; text: string; url?: string; label: string }) => {
@@ -1335,6 +1345,8 @@ function GameHubSection({ auth, event, childEvents }: { auth: AuthState; event: 
             {scoreLabel ? <div className="flex-none text-right text-2xl font-black tabular-nums text-gray-950">{scoreLabel}</div> : null}
           </div>
 
+          {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
+
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {hubDestinations.map((destination) => (
               <GameHubDestinationCard
@@ -1355,6 +1367,84 @@ function GameHubSection({ auth, event, childEvents }: { auth: AuthState; event: 
       {shareStatus ? <Status tone={shareStatus.startsWith('Unable') ? 'error' : 'success'} message={shareStatus} /> : null}
       {!isPractice ? <GameReportSections event={event} /> : null}
     </section>
+  );
+}
+
+function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+  const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
+  const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
+  const [homeScore, setHomeScore] = useState(savedHomeScore);
+  const [awayScore, setAwayScore] = useState(savedAwayScore);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    setHomeScore(savedHomeScore);
+    setAwayScore(savedAwayScore);
+  }, [event.eventKey, savedHomeScore, savedAwayScore]);
+
+  const dirty = homeScore !== savedHomeScore || awayScore !== savedAwayScore;
+  const adjust = (side: 'home' | 'away', delta: number) => {
+    const setter = side === 'home' ? setHomeScore : setAwayScore;
+    setter((current) => Math.max(0, current + delta));
+    setStatus(null);
+  };
+
+  const saveScore = async () => {
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const payload = await updateGameScore(event.teamId, event.id, { homeScore, awayScore }, auth.user);
+      const nextHomeScore = Number(payload.homeScore ?? homeScore);
+      const nextAwayScore = Number(payload.awayScore ?? awayScore);
+      onScoreUpdated(nextHomeScore, nextAwayScore);
+      setStatus({ tone: 'success', message: 'Score saved.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save score.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className={`mt-3 rounded-2xl border p-3 ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Live score</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-600">{dirty ? 'Unsaved score changes' : 'Saved score controls'}</div>
+        </div>
+        <div className="rounded-full bg-white px-3 py-1 text-xl font-black tabular-nums text-gray-950 shadow-sm">{homeScore}-{awayScore}</div>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <ScoreStepper label="Home" value={homeScore} onDecrease={() => adjust('home', -1)} onIncrease={() => adjust('home', 1)} disabled={saving} />
+        <ScoreStepper label="Away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving} />
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <button
+          type="button"
+          className="primary-button min-h-11 px-4 text-sm"
+          onClick={saveScore}
+          disabled={saving || !dirty}
+        >
+          {saving ? 'Saving score' : 'Save score'}
+        </button>
+        {status ? <span className={`text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function ScoreStepper({ label, value, onDecrease, onIncrease, disabled }: { label: string; value: number; onDecrease: () => void; onIncrease: () => void; disabled: boolean }) {
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-2">
+      <div className="mb-2 text-center text-xs font-black uppercase tracking-[0.04em] text-gray-500">{label}</div>
+      <div className="flex items-center justify-center gap-3">
+        <button type="button" className="min-h-11 min-w-11 rounded-full border border-gray-200 text-xl font-black text-gray-700 disabled:opacity-40" onClick={onDecrease} disabled={disabled || value <= 0} aria-label={`${label} score down`}>−</button>
+        <div className="min-w-12 text-center text-3xl font-black tabular-nums text-gray-950">{value}</div>
+        <button type="button" className="min-h-11 min-w-11 rounded-full border border-gray-200 text-xl font-black text-gray-700 disabled:opacity-40" onClick={onIncrease} disabled={disabled} aria-label={`${label} score up`}>+</button>
+      </div>
+    </div>
   );
 }
 

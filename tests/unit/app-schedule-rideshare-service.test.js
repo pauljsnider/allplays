@@ -18,7 +18,8 @@ const dbMocks = vi.hoisted(() => ({
     cancelRideRequest: vi.fn(),
     releaseAssignmentClaim: vi.fn(),
     submitRsvpForPlayer: vi.fn(),
-    upsertPracticePacketCompletion: vi.fn()
+    upsertPracticePacketCompletion: vi.fn(),
+    updateGame: vi.fn()
 }));
 
 const profileMocks = vi.hoisted(() => ({
