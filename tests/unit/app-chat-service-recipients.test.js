@@ -131,10 +131,12 @@ describe('React app chat recipient service', () => {
         });
         dbMocks.getUserTeamsWithAccess.mockResolvedValue([
             { id: 'team-coach', name: 'Bears', sport: 'Basketball', adminEmails: ['parent@example.com'] },
+            { id: 'team-inactive-admin', name: 'Inactive Admin', sport: 'Soccer', adminEmails: ['parent@example.com'], active: false },
             { id: 'team-denied', name: 'Hidden team', sport: 'Soccer' }
         ]);
         dbMocks.getParentTeams.mockResolvedValue([
-            { id: 'team-parent', name: 'Zebras', sport: 'Soccer' }
+            { id: 'team-parent', name: 'Zebras', sport: 'Soccer' },
+            { id: 'team-inactive-parent', name: 'Inactive Parent', sport: 'Soccer', active: false }
         ]);
         dbMocks.getUnreadChatCounts.mockResolvedValue({
             'team-parent': 2,
@@ -160,6 +162,8 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.getUserTeamsWithAccess).toHaveBeenCalledWith('user-1', 'parent@example.com');
         expect(dbMocks.getParentTeams).toHaveBeenCalledWith('user-1');
         expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-coach', 'team-parent']);
+        expect(dbMocks.canAccessTeamChat).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'team-inactive-admin' }));
+        expect(dbMocks.canAccessTeamChat).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'team-inactive-parent' }));
         expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({
             uid: 'user-1',
             parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }]
