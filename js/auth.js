@@ -161,6 +161,10 @@ function clearPendingActivationCode() {
     }
 }
 
+function getStringArray(value) {
+    return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : undefined;
+}
+
 // Shared function to process Google auth result (used by both popup and redirect flows)
 async function processGoogleAuthResult(result, activationCode = null) {
     console.log('[Google Auth] Processing result for user:', result.user.email);
@@ -353,8 +357,10 @@ export function checkAuth(callback, options = {}) {
                     }
                     if (profile.isAdmin) user.isAdmin = true;
                     if (profile.parentOf) user.parentOf = profile.parentOf;
-                    if (Array.isArray(profile.teamMediaUploadTeamIds)) user.teamMediaUploadTeamIds = profile.teamMediaUploadTeamIds;
-                    if (Array.isArray(profile.mediaUploadTeamIds)) user.mediaUploadTeamIds = profile.mediaUploadTeamIds;
+                    const teamMediaUploadTeamIds = getStringArray(profile.teamMediaUploadTeamIds);
+                    const mediaUploadTeamIds = getStringArray(profile.mediaUploadTeamIds);
+                    if (teamMediaUploadTeamIds) user.teamMediaUploadTeamIds = teamMediaUploadTeamIds;
+                    if (mediaUploadTeamIds) user.mediaUploadTeamIds = mediaUploadTeamIds;
 
                     // Auto-migrate: ensure parentTeamIds and parentPlayerKeys are in sync with parentOf
                     if (Array.isArray(profile.parentOf) && profile.parentOf.length > 0) {

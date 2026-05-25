@@ -35,6 +35,22 @@ describe('React app auth/profile capability parity', () => {
         expect(appRoutes).not.toContain('if (auth.loading) {');
     });
 
+    it('hydrates team media upload grants into app auth users', () => {
+        const authService = readProjectFile('apps/app/src/lib/authService.ts');
+        const types = readProjectFile('apps/app/src/lib/types.ts');
+
+        expectContains(types, [
+            'teamMediaUploadTeamIds?: string[];',
+            'mediaUploadTeamIds?: string[];'
+        ]);
+        expectContains(authService, [
+            'teamMediaUploadTeamIds: Array.isArray(profile.teamMediaUploadTeamIds)',
+            "profile.teamMediaUploadTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')",
+            'mediaUploadTeamIds: Array.isArray(profile.mediaUploadTeamIds)',
+            "profile.mediaUploadTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')"
+        ]);
+    });
+
     it('covers login.html sign-in, sign-up, Google, activation code, and password reset features', () => {
         const legacyLogin = readProjectFile('login.html');
         const authPage = readProjectFile('apps/app/src/pages/AuthPage.tsx');

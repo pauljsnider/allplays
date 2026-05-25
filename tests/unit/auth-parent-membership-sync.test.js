@@ -41,11 +41,45 @@ vi.mock('../../js/admin-invite.js?v=4', () => ({
 }));
 
 const { checkAuth } = await import('../../js/auth.js');
+const { canContributeTeamMedia } = await import('../../js/team-media-utils.js');
 
 describe('auth parent membership sync', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         firebaseMocks.auth.currentUser = null;
+    });
+
+    it('preserves team media upload grants on the signed-in user profile', async () => {
+        const user = {
+            uid: 'parent-1',
+            email: 'parent@example.com'
+        };
+        const callback = vi.fn();
+
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            roles: ['parent'],
+            parentOf: [{ teamId: 'team-1', playerId: 'player-9' }],
+            teamMediaUploadTeamIds: ['team-1', 42],
+            mediaUploadTeamIds: ['legacy-team', null]
+        });
+        dbMocks.listMyParentMembershipRequests.mockResolvedValue([]);
+        dbMocks.getUserTeams.mockResolvedValue([]);
+        firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => {
+            await handler(user);
+            return vi.fn();
+        });
+
+        await checkAuth(callback);
+
+        const hydratedUser = callback.mock.calls[0][0];
+        expect(hydratedUser).toEqual(expect.objectContaining({
+            teamMediaUploadTeamIds: ['team-1'],
+            mediaUploadTeamIds: ['legacy-team']
+        }));
+        expect(canContributeTeamMedia(hydratedUser, { id: 'team-1', ownerId: 'coach-1', adminEmails: [] })).toBe(true);
+        expect(canContributeTeamMedia(hydratedUser, { id: 'legacy-team', ownerId: 'coach-1', adminEmails: [] })).toBe(true);
+        expect(canContributeTeamMedia(hydratedUser, { id: 'other-team', ownerId: 'coach-1', adminEmails: [] })).toBe(false);
     });
 
     it('self-syncs approved parent membership requests into the signed-in user profile', async () => {

@@ -32,7 +32,7 @@ describe('team media entry point', () => {
         expect(pageHtml).toContain('image files up to 10 MB each');
         expect(pageHtml).toContain('CSVs up to 10 MB each');
         expect(pageHtml).toContain('Save video link');
-        expect(pageJs).toContain("import { checkAuth } from './auth.js?v=14';");
+        expect(pageJs).toContain("import { checkAuth } from './auth.js?v=15';");
         expect(pageJs).toMatch(/from '\.\/db\.js\?v=\d+';/);
         expect(pageJs).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(pageJs).toContain('state.canManage = canManageTeamMedia(user, state.team);');
