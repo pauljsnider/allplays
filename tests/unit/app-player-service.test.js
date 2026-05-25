@@ -13,6 +13,7 @@ const dbMocks = vi.hoisted(() => ({
     listCertificatesForPlayer: vi.fn(),
     saveAthleteProfile: vi.fn(),
     updatePlayerProfile: vi.fn(),
+    uploadAthleteProfileMedia: vi.fn(),
     uploadPlayerPhoto: vi.fn()
 }));
 
@@ -156,6 +157,14 @@ beforeEach(() => {
     dbMocks.inviteCoParentToAthlete.mockResolvedValue({ id: 'invite-1', code: 'ABC12345', teamName: 'Bears', playerName: 'Pat Star', existingUser: false });
     dbMocks.saveAthleteProfile.mockResolvedValue({ id: 'profile-1', athlete: { name: 'Pat Star' }, privacy: 'public' });
     dbMocks.updatePlayerProfile.mockResolvedValue(undefined);
+    dbMocks.uploadAthleteProfileMedia.mockResolvedValue({
+        url: 'https://example.test/headshot.jpg',
+        storagePath: 'athlete-profile-media/user-1/profile-1/headshot.jpg',
+        mimeType: 'image/jpeg',
+        sizeBytes: 8,
+        uploadedAtMs: 1234,
+        mediaType: 'image'
+    });
     dbMocks.uploadPlayerPhoto.mockResolvedValue('https://example.test/new-photo.jpg');
     dbMocks.getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball' }]);
     dbMocks.getPlayerTrackingStatuses.mockResolvedValue([{ playerId: 'player-1', itemId: 'item-1', status: 'complete' }]);
@@ -344,6 +353,51 @@ describe('React app parent player detail service', () => {
             selectedSeasonKeys: ['team-1::player-1']
         }, { profileId: 'profile-1' });
         expect(savedProfile.shareUrl).toBe('https://allplays.ai/athlete-profile.html?profileId=profile-1');
+    });
+
+    it('uploads athlete profile headshots before saving and supports linked-photo reset', async () => {
+        const file = new File(['headshot'], 'headshot.jpg', { type: 'image/jpeg' });
+
+        await saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profileId: 'profile-1',
+            profilePhotoFile: file,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: [],
+                profilePhoto: { url: 'https://example.test/old.jpg' }
+            }
+        });
+
+        expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', 'profile-1', file, { kind: 'profile-photo' });
+        expect(dbMocks.saveAthleteProfile).toHaveBeenLastCalledWith('user-1', expect.objectContaining({
+            profilePhoto: expect.objectContaining({ url: 'https://example.test/headshot.jpg' }),
+            selectedSeasonKeys: ['team-1::player-1']
+        }), { profileId: 'profile-1' });
+
+        await saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profileId: 'profile-1',
+            resetProfilePhoto: true,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: [],
+                profilePhoto: { url: 'https://example.test/old.jpg' }
+            }
+        });
+
+        expect(dbMocks.saveAthleteProfile).toHaveBeenLastCalledWith('user-1', expect.objectContaining({
+            profilePhoto: null,
+            selectedSeasonKeys: ['team-1::player-1']
+        }), { profileId: 'profile-1' });
     });
 
     it('saves incentive rules under the parent account', async () => {
