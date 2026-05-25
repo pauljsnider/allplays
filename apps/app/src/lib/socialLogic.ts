@@ -31,6 +31,8 @@ export type SocialFeedFilter = 'all' | 'friends' | 'teams' | 'players' | 'highli
 
 export type FriendshipStatus = 'none' | 'pending' | 'accepted' | 'declined' | 'removed' | 'blocked';
 
+export type SocialPostPresetId = 'player' | 'game' | 'photo' | 'practice' | 'achievement';
+
 export type SocialMedia = {
   type: 'image' | 'video';
   url: string;
@@ -106,6 +108,100 @@ export const socialVisibilityOptions: Array<{ id: SocialVisibility; label: strin
   { id: 'household', label: 'Household', detail: 'Visible to linked family only.' },
   { id: 'public_profile', label: 'Public profile', detail: 'Only for opted-in athlete/profile shares.' }
 ];
+
+export const socialPostPresets: Array<{
+  id: SocialPostPresetId;
+  type: SocialPostType;
+  label: string;
+  shortLabel: string;
+  detail: string;
+  prompt: string;
+  defaultVisibility: SocialVisibility;
+  prefersPlayer: boolean;
+  requiresMedia?: boolean;
+  suggestions: string[];
+}> = [
+  {
+    id: 'player',
+    type: 'player_moment',
+    label: 'Player moment',
+    shortLabel: 'Moment',
+    detail: 'Share a quick highlight for one player.',
+    prompt: 'What stood out today?',
+    defaultVisibility: 'friends',
+    prefersPlayer: true,
+    suggestions: [
+      'Proud of the effort today.',
+      'Big improvement this week.',
+      'Great teamwork in a big moment.'
+    ]
+  },
+  {
+    id: 'game',
+    type: 'game_recap',
+    label: 'Game recap',
+    shortLabel: 'Recap',
+    detail: 'Post a short team update after a game.',
+    prompt: 'How did the game go?',
+    defaultVisibility: 'friends_and_team',
+    prefersPlayer: false,
+    suggestions: [
+      'Hard fought game today.',
+      'Great team win today.',
+      'Lots to build on from this one.'
+    ]
+  },
+  {
+    id: 'photo',
+    type: 'team_media',
+    label: 'Photo or video',
+    shortLabel: 'Media',
+    detail: 'Add a photo or video with a caption.',
+    prompt: 'Add a caption for the photo or video.',
+    defaultVisibility: 'friends_and_team',
+    prefersPlayer: false,
+    requiresMedia: true,
+    suggestions: [
+      'Photos from today.',
+      'Team energy was great.',
+      'A few moments worth saving.'
+    ]
+  },
+  {
+    id: 'practice',
+    type: 'practice_packet',
+    label: 'Practice update',
+    shortLabel: 'Practice',
+    detail: 'Call out a packet, drill, or focus area.',
+    prompt: 'What should families know before practice?',
+    defaultVisibility: 'team',
+    prefersPlayer: false,
+    suggestions: [
+      'Practice packet is ready.',
+      'Focus work for the week is posted.',
+      'Good reps coming up at practice.'
+    ]
+  },
+  {
+    id: 'achievement',
+    type: 'achievement',
+    label: 'Achievement',
+    shortLabel: 'Achievement',
+    detail: 'Celebrate a milestone or season best.',
+    prompt: 'What milestone should be celebrated?',
+    defaultVisibility: 'friends',
+    prefersPlayer: true,
+    suggestions: [
+      'Milestone unlocked.',
+      'New season best.',
+      'A moment worth celebrating.'
+    ]
+  }
+];
+
+export function getSocialPostPresetForType(type: SocialPostType) {
+  return socialPostPresets.find((preset) => preset.type === type) || socialPostPresets[0];
+}
 
 export function emptySocialHome(): SocialHomeModel {
   return {
