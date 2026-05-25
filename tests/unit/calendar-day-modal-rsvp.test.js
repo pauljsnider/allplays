@@ -116,8 +116,8 @@ const Blob = deps.Blob;
             'const { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;'
         )
         .replace(
-            "import { printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=1';",
-            'const { printSchedule, promptSchedulePrintOptions } = deps.schedulePrint;'
+            "import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';",
+            'const { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } = deps.schedulePrint;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');
 }
@@ -396,6 +396,7 @@ function createDeps(submitRecorder, overrides = {}) {
             }
         },
         schedulePrint: {
+            getDefaultSchedulePrintOptions() { return {}; },
             printSchedule() {},
             promptSchedulePrintOptions() { return null; }
         },
