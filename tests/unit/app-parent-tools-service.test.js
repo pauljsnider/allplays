@@ -119,6 +119,10 @@ const scheduleMocks = vi.hoisted(() => ({
     loadParentSchedule: vi.fn()
 }));
 
+const stripeMocks = vi.hoisted(() => ({
+    initiateTeamFeeCheckout: vi.fn()
+}));
+
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
@@ -127,6 +131,7 @@ vi.mock('../../js/team-media-utils.js', () => mediaMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../js/stripe-service.js', () => stripeMocks);
 
 import {
     addParentTeamMediaLink,
@@ -154,7 +159,10 @@ import {
     updateParentFamilyShareCalendars,
     uploadParentTeamMediaFile,
     uploadParentTeamMediaPhoto,
-    initiateRegistrationCheckout
+    initiateRegistrationCheckout,
+    initiateParentTeamFeeCheckout,
+    canInitiateParentTeamFeeCheckout,
+    isParentTeamFeePayActionAllowed
 } from '../../apps/app/src/lib/parentToolsService.ts';
 
 const user = {
@@ -438,7 +446,7 @@ describe('React app parent tools service', () => {
             {
                 id: 'fee-1',
                 title: 'Dues',
-                status: 'open',
+                status: 'unpaid',
                 amountDueCents: 12000,
                 balanceDueCents: 12000,
                 checkoutUrl: 'https://pay.example.test/open',
@@ -457,11 +465,37 @@ describe('React app parent tools service', () => {
             dueLabel: 'No due date',
             statusLabel: 'Open',
             canPay: true,
+            checkoutInitiatable: false,
+            paymentAction: 'checkoutUrl',
             lineItems: [{ title: 'Season', amountCents: 10000 }],
             installments: [{ label: 'Deposit', amountCents: 5000 }],
             ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
         });
         expect(fees[1].canPay).toBe(false);
+    });
+
+    it('marks unpaid team fees without checkout URLs as initiatable only when identifiers exist', async () => {
+        dbMocks.listParentTeamFeeRecipients.mockResolvedValue([
+            { id: 'missing-team', title: 'Missing team', status: 'unpaid', balanceDueCents: 1500, batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'paid', title: 'Paid', status: 'paid', balanceDueCents: 1500, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'partial', title: 'Partial', status: 'partial', balanceDueCents: 2500, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'zero', title: 'Zero', status: 'unpaid', balanceDueCents: 0, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }
+        ]);
+
+        const fees = await loadParentFeesForApp(user);
+        const partialFee = fees.find((fee) => fee.id === 'partial');
+
+        expect(partialFee).toMatchObject({
+            canPay: true,
+            checkoutInitiatable: true,
+            paymentAction: 'createCheckout'
+        });
+        expect(fees.find((fee) => fee.id === 'missing-team').canPay).toBe(false);
+        expect(fees.find((fee) => fee.id === 'paid').canPay).toBe(false);
+        expect(fees.find((fee) => fee.id === 'zero').canPay).toBe(false);
+        expect(canInitiateParentTeamFeeCheckout(partialFee)).toBe(true);
+        expect(isParentTeamFeePayActionAllowed({ status: 'partially_paid', balanceDueCents: 1 })).toBe(true);
+        expect(isParentTeamFeePayActionAllowed({ status: 'open', balanceDueCents: 1 })).toBe(false);
     });
 
     it('loads schedule tools and builds escaped ICS content', async () => {
@@ -684,6 +718,23 @@ describe('React app parent tools service', () => {
     it('throws error if checkout URL is not returned from backend', async () => {
         dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: null });
         await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 1, 100, 'USD'))
+            .rejects.toThrow('Failed to get checkout URL.');
+    });
+
+    it('initiates Stripe checkout for team fees and requires a returned URL', async () => {
+        stripeMocks.initiateTeamFeeCheckout.mockResolvedValue('https://checkout.stripe.test/team-fee');
+
+        await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1')).resolves.toEqual({
+            success: true,
+            checkoutUrl: 'https://checkout.stripe.test/team-fee'
+        });
+        expect(stripeMocks.initiateTeamFeeCheckout).toHaveBeenCalledWith({ teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' });
+
+        await expect(initiateParentTeamFeeCheckout('', 'batch-1', 'recipient-1'))
+            .rejects.toThrow('Missing required fields for team fee checkout.');
+
+        stripeMocks.initiateTeamFeeCheckout.mockResolvedValueOnce('');
+        await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
             .rejects.toThrow('Failed to get checkout URL.');
     });
 });
