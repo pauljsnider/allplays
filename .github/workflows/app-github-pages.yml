@@ -43,52 +43,7 @@ jobs:
         run: npm run app:build
 
       - name: Stage GitHub Pages bundle
-        run: |
-          set -euo pipefail
-          site_dir="$RUNNER_TEMP/allplays-pages"
-          rm -rf "$site_dir"
-          mkdir -p "$site_dir"
-
-          rsync -a ./ "$site_dir"/ \
-            --exclude='.git/' \
-            --exclude='.github/' \
-            --exclude='.firebase/' \
-            --exclude='.claude/' \
-            --exclude='.playwright-mcp/' \
-            --exclude='.ralph/' \
-            --exclude='.zenflow/' \
-            --exclude='node_modules/' \
-            --exclude='apps/' \
-            --exclude='android/' \
-            --exclude='ios/' \
-            --exclude='functions/' \
-            --exclude='tests/' \
-            --exclude='test-results/' \
-            --exclude='scripts/' \
-            --exclude='src/' \
-            --exclude='_migration/' \
-            --exclude='_project-docs/' \
-            --exclude='_temp/' \
-            --exclude='spec/' \
-            --exclude='docs/' \
-            --exclude='*.md' \
-            --exclude='package.json' \
-            --exclude='package-lock.json' \
-            --exclude='capacitor.config.json' \
-            --exclude='firebase.json' \
-            --exclude='firestore.rules' \
-            --exclude='firestore.indexes.json' \
-            --exclude='storage.rules'
-
-          rm -rf "$site_dir/app"
-          mkdir -p "$site_dir/app"
-          test -d apps/app/dist || { echo "Build output not found at apps/app/dist"; exit 1; }
-          cp -R apps/app/dist/. "$site_dir/app/"
-          touch "$site_dir/.nojekyll"
-
-          echo "Staged legacy site root plus React app at /app/"
-          test -f "$site_dir/index.html"
-          test -f "$site_dir/app/index.html"
+        run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
 
       - name: Upload app Pages bundle artifact
         uses: actions/upload-artifact@v4

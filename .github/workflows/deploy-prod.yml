@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -42,7 +42,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -84,7 +84,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -92,6 +92,17 @@ jobs:
 
       - name: Install app dependencies
         run: npm ci --prefix apps/app
+
+      - name: Build React app
+        run: npm run app:build
+
+      - name: Stage Firebase production bundle
+        run: |
+          site_dir="$RUNNER_TEMP/firebase-prod-site"
+          config_file="$GITHUB_WORKSPACE/.firebase-prod.generated.json"
+          node scripts/stage-pages-bundle.mjs "$site_dir"
+          node scripts/write-firebase-hosting-config.mjs "$site_dir" "$config_file"
+          echo "FIREBASE_PROD_CONFIG=$config_file" >> "$GITHUB_ENV"
 
       - name: Install Functions dependencies
         run: npm ci --prefix functions
@@ -103,4 +114,4 @@ jobs:
           echo "GOOGLE_APPLICATION_CREDENTIALS=$credentials_file" >> "$GITHUB_ENV"
 
       - name: Deploy Firebase production
-        run: npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --non-interactive
+        run: npx firebase-tools@14.25.0 deploy --only hosting,firestore:rules,firestore:indexes,functions --project game-flow-c6311 --config "$FIREBASE_PROD_CONFIG" --non-interactive

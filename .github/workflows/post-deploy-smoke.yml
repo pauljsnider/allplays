@@ -4,6 +4,7 @@ on:
   workflow_run:
     workflows:
       - deploy-prod
+      - app-github-pages
     types:
       - completed
 
@@ -25,7 +26,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -41,6 +42,7 @@ jobs:
         run: npx playwright test --config=playwright.smoke.config.js --reporter=line
         env:
           SMOKE_BASE_URL: https://allplays.ai
+          SMOKE_APP_BOOT_URL: https://allplays.ai/app/
           SMOKE_SUITE: production
           SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}
