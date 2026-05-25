@@ -474,6 +474,24 @@ describe('React app messages integration', () => {
         }));
     });
 
+    it('blocks selected member sends until at least one recipient is checked', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Audience: Full team');
+        await click(container, 'Selected members');
+
+        expect(container.textContent).toContain('Choose at least one selected member, or switch back to Full team.');
+        expect(buttonByText(container, 'Done').disabled).toBe(true);
+
+        const textarea = container.querySelector('textarea');
+        await setFieldValue(textarea, 'This should stay targeted.');
+        await click(container, 'Send message');
+
+        expect(container.textContent).toContain('Choose at least one selected member before sending.');
+        expect(container.textContent).toContain('Message audience');
+        expect(chatMocks.sendTeamChatMessage).not.toHaveBeenCalled();
+    });
+
     it('opens photo, video, and link actions from the attachment button', async () => {
         const { container } = await renderMessages('/messages/team-1');
 

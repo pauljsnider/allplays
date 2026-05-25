@@ -759,6 +759,11 @@ export async function sendTeamChatMessage({
   selectedRecipientIds: string[];
   onProgress?: (stage: 'uploading' | 'posting') => void;
 }) {
+  if (selectedRecipientTarget === 'individuals'
+    && (selectedRecipientIds || []).map((id) => String(id || '').trim()).filter(Boolean).length === 0) {
+    throw new Error('Choose at least one selected member before sending.');
+  }
+
   const attachments: ChatAttachment[] = [];
   try {
     for (const file of files) {

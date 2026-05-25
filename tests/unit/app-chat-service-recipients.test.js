@@ -268,6 +268,28 @@ describe('React app chat recipient service', () => {
         });
     });
 
+    it('rejects empty selected-member targeting before falling back to full team', async () => {
+        const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
+        await expect(sendTeamChatMessage({
+            teamId: 'team-1',
+            user: {
+                uid: 'user-1',
+                email: 'parent@example.com',
+                displayName: 'Pat Parent'
+            },
+            profile: {},
+            text: 'Private update',
+            files: [],
+            selectedConversation: null,
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'individuals',
+            selectedRecipientIds: []
+        })).rejects.toThrow('Choose at least one selected member before sending.');
+
+        expect(dbMocks.postChatMessage).not.toHaveBeenCalled();
+        expect(dbMocks.upsertChatConversation).not.toHaveBeenCalled();
+    });
+
     it('cleans uploaded chat media if the message write fails', async () => {
         const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
         const uploadedPhoto = {
