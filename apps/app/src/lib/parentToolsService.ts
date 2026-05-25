@@ -15,7 +15,8 @@ import {
   revokeFamilyShareToken,
   updateFamilyShareTokenCalendars,
   uploadTeamMediaFile,
-  uploadTeamMediaPhoto
+  uploadTeamMediaPhoto,
+  createRegistrationCheckoutSession
 } from '../../../../js/db.js';
 import {
   formatParentFeeAmount,
@@ -531,6 +532,38 @@ function toMillis(value: unknown) {
 
 function compactString(value: unknown) {
   return String(value || '').trim();
+}
+
+export async function initiateRegistrationCheckout(
+  teamId: string,
+  formId: string,
+  registrationId: string,
+  selectedOptionId: string,
+  paymentPlanId: string,
+  quantity: number,
+  amountCents: number,
+  currency: string
+): Promise<{ success: true, checkoutUrl: string }> {
+  if (!teamId || !formId || !registrationId || !selectedOptionId || !paymentPlanId || !quantity || !amountCents || !currency) {
+    throw new Error('Missing required fields for checkout.');
+  }
+
+  const result = await createRegistrationCheckoutSession(
+    teamId,
+    formId,
+    registrationId,
+    selectedOptionId,
+    paymentPlanId,
+    quantity,
+    amountCents,
+    currency
+  );
+
+  if (!result?.checkoutUrl) {
+    throw new Error('Failed to get checkout URL.');
+  }
+
+  return { success: true, checkoutUrl: result.checkoutUrl };
 }
 
 export function getCalendarEventShareText(event: ParentScheduleEvent) {
