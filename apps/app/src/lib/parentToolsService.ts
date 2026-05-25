@@ -16,7 +16,6 @@ import {
   updateFamilyShareTokenCalendars,
   uploadTeamMediaFile,
   uploadTeamMediaPhoto,
-  createRegistrationCheckoutSession
 } from '../../../../js/db.js';
 import {
   formatParentFeeAmount,
