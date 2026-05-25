@@ -34,6 +34,7 @@ const registrationMocks = vi.hoisted(() => ({
     calculateRegistrationFeeSnapshot: vi.fn((form) => ({ finalAmountDueCents: form.finalAmountDueCents ?? 0 })),
     getActiveRegistrationOptions: vi.fn((form) => form.options || []),
     getRegistrationPaymentNotice: vi.fn((form) => form.paymentNotice || ''),
+    getPaymentPlanChoices: vi.fn(() => [{ id: 'pay_full', type: 'pay_full', title: 'Pay in full' }]),
     hasOnlineRegistrationCheckout: vi.fn((form) => Boolean(form.checkoutUrl)),
     normalizeRegistrationForm: vi.fn((form, context) => ({
         ...form,
@@ -97,6 +98,7 @@ import {
     loadParentCertificates,
     loadParentFeesForApp,
     loadParentRegistrations,
+    loadParentRegistrationDetail,
     loadTeamMediaForApp,
     revokeParentFamilyShare,
     submitParentAccessRequest,
@@ -277,6 +279,31 @@ describe('React app parent tools service', () => {
             'https://allplays.ai/registration.html?teamId=team-1&formId=team-1-open',
             'https://allplays.ai/registration.html?teamId=team-coach&formId=team-coach-open'
         ]));
+    });
+
+    it('loads a linked registration detail model for in-app review', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
+        dbMocks.listTeamRegistrationForms.mockResolvedValue([
+            {
+                id: 'form-1',
+                programName: 'Summer Camp',
+                status: 'published',
+                finalAmountDueCents: 12000,
+                checkoutUrl: 'https://pay.example.test/camp',
+                options: [{ id: 'opt-1', title: 'Full Day' }],
+                paymentNotice: 'Online checkout available.'
+            }
+        ]);
+
+        await expect(loadParentRegistrationDetail(user, 'team-1', 'form-1')).resolves.toMatchObject({
+            teamName: 'Bears',
+            isPublished: true,
+            onlineCheckout: true,
+            legacyUrl: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1',
+            feeSnapshot: { finalAmountDueCents: 12000 },
+            options: [{ id: 'opt-1', title: 'Full Day' }],
+            paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }]
+        });
     });
 
     it('loads published certificates for linked players', async () => {
