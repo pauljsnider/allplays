@@ -1,36 +1,147 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertCircle, ChevronLeft, ExternalLink, Loader2, RefreshCw, Ticket } from 'lucide-react';
+import * as parentToolsService from '../lib/parentToolsService';
+import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Send, Ticket, type LucideIcon } from 'lucide-react';
 import { openPublicUrl } from '../lib/publicActions';
-import { loadParentRegistrationDetail, type ParentRegistrationDetailModel } from '../lib/parentToolsService';
+import type { ParentRegistrationCard, ParentRegistrationDetailModel } from '../lib/parentToolsService';
+import {
+  calculateRegistrationFeeSnapshot,
+  decideRegistrationPlacement,
+  getActiveRegistrationOptions,
+  getPaymentPlanChoices,
+  requiresRegistrationOption
+} from '../../../../js/registration-flow.js';
 import type { AuthState } from '../lib/types';
+
+type FieldErrors = Record<string, string>;
 
 export function RegistrationDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', formId = '' } = useParams();
-  const [model, setModel] = useState<ParentRegistrationDetailModel | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<ParentRegistrationCard | null>(null);
   const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [participant, setParticipant] = useState<Record<string, string>>({});
+  const [guardian, setGuardian] = useState<Record<string, string>>({});
+  const [waiverAccepted, setWaiverAccepted] = useState(false);
+  const [selectedOptionId, setSelectedOptionId] = useState('');
+  const [quantity, setQuantity] = useState(1);
+  const [selectedPaymentPlanId, setSelectedPaymentPlanId] = useState('pay_full');
+  const [reloadKey, setReloadKey] = useState(0);
+  const formRef = useRef<HTMLFormElement | null>(null);
 
-  const refresh = async () => {
-    setLoading(true);
+  useEffect(() => {
+    let cancelled = false;
+    async function refresh() {
+      setLoading(true);
+      setError('');
+      setMessage('');
+      try {
+        const nextForm = await loadRegistrationForm(auth.user, teamId, formId);
+        if (cancelled) return;
+        if (!nextForm) {
+          setError('Registration form not found or not active.');
+          setForm(null);
+          return;
+        }
+        if (nextForm.isPublished === false) {
+          setError('This linked registration form is not published right now.');
+          setForm(null);
+          return;
+        }
+        if (nextForm.onlineCheckout && !(nextForm as any).allowOnlineCheckoutReview) {
+          setError('This registration requires online checkout. Please use the checkout link from registrations.');
+          setForm(null);
+          return;
+        }
+        setForm(nextForm);
+        const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
+        setSelectedOptionId((current) => current || initialOptions[0]?.id || '');
+      } catch (loadError: any) {
+        if (!cancelled) setError(loadError?.message || 'Unable to load registration form.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void refresh();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user?.uid, teamId, formId, reloadKey]);
+
+  const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
+  const paymentPlanChoices: any[] = useMemo(() => form ? (form.paymentPlans || getPaymentPlanChoices(form)) : [], [form]);
+  const selectedOption = activeOptions.find((option) => option.id === selectedOptionId) || null;
+  const placement = useMemo(() => {
+    if (!form || !requiresRegistrationOption(form) || !selectedOptionId) return null;
+    return decideRegistrationPlacement({ form, selectedOptionId, counts: form.registrationOptionCounts || {} });
+  }, [form, selectedOptionId]);
+  const feeSnapshot = useMemo(() => form ? (form.feeSnapshot || calculateRegistrationFeeSnapshot(form, { quantity, now: new Date() })) : null, [form, quantity]);
+
+  const updateParticipant = (fieldId: string, value: string) => setParticipant((current) => ({ ...current, [fieldId]: value }));
+  const updateGuardian = (fieldId: string, value: string) => setGuardian((current) => ({ ...current, [fieldId]: value }));
+
+  const submit = async (event: SyntheticEvent) => {
+    event.preventDefault();
+    if (!form || saving) return;
+    if (form.onlineCheckout) {
+      setError('This registration requires online checkout. Please use the checkout link from registrations.');
+      return;
+    }
+
+    const currentParticipant = collectFieldValues(formRef.current, 'participant', participant);
+    const currentGuardian = collectFieldValues(formRef.current, 'guardian', guardian);
+    const currentWaiverAccepted = Boolean((formRef.current?.querySelector('[data-waiver-field]') as HTMLInputElement | null)?.checked ?? waiverAccepted);
+    const currentSelectedOptionId = String((formRef.current?.querySelector('[data-selected-option]') as HTMLSelectElement | null)?.value || selectedOptionId);
+    const currentQuantity = Math.max(1, Number((formRef.current?.querySelector('[data-quantity-field]') as HTMLInputElement | null)?.value || quantity) || 1);
+    const currentSelectedPaymentPlanId = String((formRef.current?.querySelector('[data-payment-plan]') as HTMLSelectElement | null)?.value || selectedPaymentPlanId);
+    const currentSelectedOption = activeOptions.find((option) => option.id === currentSelectedOptionId) || selectedOption;
+    const currentPlacement = placement;
+    setParticipant(currentParticipant);
+    setGuardian(currentGuardian);
+    setWaiverAccepted(currentWaiverAccepted);
+    setSelectedOptionId(currentSelectedOptionId);
+    setQuantity(currentQuantity);
+    setSelectedPaymentPlanId(currentSelectedPaymentPlanId);
+
+    const nextErrors = validate(form, currentParticipant, currentGuardian, currentWaiverAccepted, currentSelectedOptionId, currentQuantity, currentSelectedPaymentPlanId);
+    setFieldErrors(nextErrors);
     setError('');
+    setMessage('');
+    if (Object.keys(nextErrors).length) return;
+    if (currentPlacement?.status === 'blocked') {
+      setError(currentPlacement.message || 'This registration option is not available.');
+      return;
+    }
+
+    setSaving(true);
     try {
-      setModel(await loadParentRegistrationDetail(auth.user, teamId, formId));
-    } catch (loadError: any) {
-      setModel(null);
-      setError(loadError?.message || 'Unable to load this registration.');
+      const result = await parentToolsService.submitOfflineRegistration(form.teamId, form.id, {
+        participant: currentParticipant,
+        guardian: currentGuardian,
+        waiverAccepted: currentWaiverAccepted,
+        selectedOption: currentSelectedOption,
+        selectedOptionId: currentSelectedOptionId,
+        selectedPaymentPlanId: currentSelectedPaymentPlanId,
+        quantity: currentQuantity,
+        feeSnapshot: calculateRegistrationFeeSnapshot(form, { quantity: currentQuantity, now: new Date() })
+      });
+      setMessage(result.status === 'waitlisted'
+        ? 'Registration submitted. You have been added to the waitlist.'
+        : 'Registration submitted. Your registration is pending review.');
+    } catch (submitError: any) {
+      setError(submitError?.code === 'option-full'
+        ? submitError.message
+        : submitError?.message || 'Registration could not be submitted. Please try again.');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
-  useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, teamId, formId]);
-
-  const quantity = 1;
-  const feeLabel = useMemo(() => model ? formatMoney(model.feeSnapshot.finalAmountDueCents, model.form.currency) : '', [model]);
+  if (loading) return <LoadingBlock label="Loading registration" />;
+  if (!form) return <EmptyState icon={Ticket} title="Registration unavailable" detail={error || 'This registration form could not be loaded.'} actionLabel={error ? 'Retry' : ''} onAction={error ? () => setReloadKey((current) => current + 1) : undefined} />;
 
   return (
     <div className="space-y-3">
@@ -40,12 +151,12 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
           <div className="min-w-0 flex-1">
-            <div className="app-label">Registration review</div>
-            <h1 className="truncate text-xl font-black leading-tight text-gray-950">{model?.form.programName || 'Registration'}</h1>
-            <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{model?.teamName || 'Review linked team registration details before submitting.'}</p>
+            <div className="app-label">Registration</div>
+            <h1 className="truncate text-xl font-black leading-tight text-gray-950">{form.programName}</h1>
+            <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{form.teamName}{form.season ? ` - ${form.season}` : ''}</p>
           </div>
-          {model ? (
-            <button type="button" className="secondary-button !min-h-9 text-xs" onClick={() => openPublicUrl(model.legacyUrl)}>
+          {form.url ? (
+            <button type="button" className="secondary-button !min-h-9 text-xs" onClick={() => openPublicUrl(form.url)}>
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
               Legacy form
             </button>
@@ -53,160 +164,196 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      {loading ? <LoadingBlock label="Loading registration" /> : null}
-      {!loading && error ? <ErrorBlock message={error} onRetry={refresh} /> : null}
-      {!loading && !error && model && !model.isPublished ? <UnavailableBlock legacyUrl={model.legacyUrl} onRetry={refresh} /> : null}
+      {message ? <Status tone="success" message={message} /> : null}
+      {error ? <Status tone="error" message={error} /> : null}
+      {placement ? <Status tone={placement.status === 'blocked' ? 'error' : 'success'} message={placement.status === 'waitlisted' ? 'This option is full. Submitting will add you to the waitlist.' : placement.status === 'pending' ? 'This option has capacity. Submitting creates a pending registration.' : placement.message || 'This option is not available.'} /> : null}
 
-      {!loading && !error && model?.isPublished ? (
-        <div className="space-y-3">
-          <section className="app-card p-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-                <Ticket className="h-5 w-5" aria-hidden="true" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-black text-gray-950">{model.form.programName}</div>
-                <div className="mt-0.5 text-xs font-semibold text-gray-500">{model.teamName}{model.form.season ? ` - ${model.form.season}` : ''}</div>
-                {model.form.description ? <p className="mt-2 text-sm font-semibold leading-5 text-gray-600">{model.form.description}</p> : null}
-              </div>
-            </div>
-          </section>
+      <section className="app-card p-4">
+        <form ref={formRef} className="grid gap-4" onSubmit={submit}>
+          <FieldGroup title="Participant information" fields={form.participantFields || []} values={participant} errors={fieldErrors} prefix="participant" onChange={updateParticipant} disabled={saving} />
+          <FieldGroup title="Guardian information" fields={form.guardianFields || []} values={guardian} errors={fieldErrors} prefix="guardian" onChange={updateGuardian} disabled={saving} />
 
-          <FieldSet title="Participant information" fields={model.form.participantFields} prefix="participant" />
-          <FieldSet title="Guardian information" fields={model.form.guardianFields} prefix="guardian" />
-
-          {model.form.waiverText ? (
-            <section className="app-card p-4">
-              <h2 className="text-sm font-black text-gray-950">Waiver</h2>
-              <div className="mt-2 max-h-44 overflow-auto whitespace-pre-wrap rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold leading-5 text-gray-700">{model.form.waiverText}</div>
-              <label className="mt-3 flex items-start gap-2 text-sm font-bold text-gray-700">
-                <input type="checkbox" className="mt-1" disabled />
-                <span>I have reviewed and agree to the waiver terms.</span>
+          {activeOptions.length ? (
+            <fieldset className="grid gap-2">
+              <legend className="text-sm font-black text-gray-950">Registration options</legend>
+              <label className="min-w-0">
+                <span className="app-label">Registration option</span>
+                <select className="auth-input mt-1" data-selected-option value={selectedOptionId} onChange={(event) => setSelectedOptionId(event.target.value)} disabled={saving}>
+                  <option value="">Select an option</option>
+                  {activeOptions.map((option) => <option key={option.id} value={option.id}>{option.title}</option>)}
+                </select>
               </label>
-            </section>
+              {selectedOption ? <div className="text-xs font-semibold text-gray-500">{formatOptionAvailability(selectedOption, form.registrationOptionCounts || {})}</div> : null}
+              {fieldErrors.selectedOption ? <InlineError message={fieldErrors.selectedOption} /> : null}
+            </fieldset>
           ) : null}
 
-          {model.options.length ? (
-            <section className="app-card p-4">
-              <fieldset>
-                <legend className="text-sm font-black text-gray-950">Registration options</legend>
-                <div className="mt-3 space-y-2">
-                  {model.options.map((option) => (
-                    <label key={option.id} className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
-                      <input type="radio" name="registrationOptionId" className="mt-1" disabled />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-black text-gray-900">{option.title}</span>
-                        {option.description ? <span className="mt-1 block text-xs font-semibold text-gray-600">{option.description}</span> : null}
-                        <span className="mt-1 block text-xs font-black text-primary-700">{formatCapacityLabel(option, model.form.registrationOptionCounts)}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-            </section>
-          ) : null}
+          <label className="min-w-0">
+            <span className="app-label">Quantity</span>
+            <input className="auth-input mt-1" data-quantity-field type="number" min="1" value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} disabled={saving} />
+            {fieldErrors.quantity ? <InlineError message={fieldErrors.quantity} /> : null}
+          </label>
 
-          <section className="app-card p-4">
-            <h2 className="text-sm font-black text-gray-950">Fee summary</h2>
-            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-              <MetricCard label="Quantity" value={String(quantity)} />
-              <MetricCard label="Due now" value={feeLabel} />
-              <MetricCard label="Checkout" value={model.onlineCheckout ? 'Stripe' : 'Not configured'} />
+          <label className="min-w-0">
+            <span className="app-label">Payment plan</span>
+            <select className="auth-input mt-1" data-payment-plan value={selectedPaymentPlanId} onChange={(event) => setSelectedPaymentPlanId(event.target.value)} disabled={saving}>
+              {paymentPlanChoices.map((plan) => <option key={plan.id} value={plan.id}>{plan.title}</option>)}
+            </select>
+            {fieldErrors.paymentPlan ? <InlineError message={fieldErrors.paymentPlan} /> : null}
+          </label>
+
+          {form.waiverText ? (
+            <div className="space-y-2">
+              <h2 className="text-sm font-black text-gray-950">Waiver</h2>
+              <div className="max-h-36 overflow-y-auto rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs font-semibold leading-5 text-gray-600">{form.waiverText}</div>
+              <label className="flex items-start gap-2 text-sm font-semibold text-gray-700">
+                <input type="checkbox" className="mt-1" data-waiver-field checked={waiverAccepted} onChange={(event) => setWaiverAccepted(event.target.checked)} disabled={saving} />
+                <span>I accept the waiver.</span>
+              </label>
+              {fieldErrors.waiver ? <InlineError message={fieldErrors.waiver} /> : null}
             </div>
-            {model.paymentNotice ? <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-semibold text-blue-800">{model.paymentNotice}</div> : null}
-          </section>
-
-          {model.paymentPlans.length ? (
-            <section className="app-card p-4">
-              <fieldset>
-                <legend className="text-sm font-black text-gray-950">Payment plan</legend>
-                <div className="mt-3 space-y-2">
-                  {model.paymentPlans.map((plan) => (
-                    <label key={plan.id} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-800">
-                      <input type="radio" name="paymentPlanId" defaultChecked={plan.id === 'pay_full'} disabled />
-                      <span>{plan.title}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-            </section>
           ) : null}
 
-          <button type="button" className="primary-button w-full" disabled>Submit registration coming soon</button>
-        </div>
-      ) : null}
+          {feeSnapshot ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-black text-gray-900">Total due: {formatMoney(feeSnapshot.finalAmountDueCents, form.currency)}</div> : null}
+
+          <button type="button" className="primary-button" onClick={submit} disabled={saving || Boolean(message)}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
+            Submit registration
+          </button>
+        </form>
+      </section>
     </div>
   );
 }
 
-function FieldSet({ title, fields, prefix }: { title: string; fields: Array<Record<string, any>>; prefix: string }) {
+function collectFieldValues(formElement: HTMLFormElement | null, group: string, fallback: Record<string, string>) {
+  const values = { ...fallback };
+  formElement?.querySelectorAll(`[data-field-group="${group}"]`).forEach((field) => {
+    const input = field as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+    const fieldId = input.getAttribute('data-field-id');
+    if (fieldId) values[fieldId] = input.value;
+  });
+  return values;
+}
+
+function validate(form: ParentRegistrationCard, participant: Record<string, string>, guardian: Record<string, string>, waiverAccepted: boolean, selectedOptionId: string, quantity: number, selectedPaymentPlanId: string) {
+  const errors: FieldErrors = {};
+  (form.participantFields || []).forEach((field: any) => {
+    if (field.required && !String(participant[field.id] || '').trim()) errors[`participant.${field.id}`] = `${field.label} is required.`;
+  });
+  (form.guardianFields || []).forEach((field: any) => {
+    if (field.required && !String(guardian[field.id] || '').trim()) errors[`guardian.${field.id}`] = `${field.label} is required.`;
+  });
+  if (requiresRegistrationOption(form) && !selectedOptionId) errors.selectedOption = 'Select a registration option.';
+  if (!Number.isFinite(quantity) || quantity < 1) errors.quantity = 'Quantity must be at least 1.';
+  if (!selectedPaymentPlanId) errors.paymentPlan = 'Select a payment plan.';
+  if (form.waiverText && !waiverAccepted) errors.waiver = 'Accept the waiver to submit.';
+  return errors;
+}
+
+async function loadRegistrationForm(user: any, teamId: string, formId: string): Promise<ParentRegistrationCard | null> {
+  try {
+    const loadDetail = (parentToolsService as any).loadParentRegistrationDetail;
+    if (typeof loadDetail === 'function') {
+      const detail: ParentRegistrationDetailModel = await loadDetail(user, teamId, formId);
+      return {
+        ...detail.form,
+        id: formId,
+        teamId,
+        teamName: detail.teamName,
+        programName: detail.form.programName || 'Registration',
+        description: detail.form.description || '',
+        season: detail.form.season || '',
+        currency: detail.form.currency || 'USD',
+        feeLabel: detail.feeSnapshot?.finalAmountDueCents ? formatMoney(detail.feeSnapshot.finalAmountDueCents, detail.form.currency) : '',
+        paymentNotice: detail.paymentNotice || '',
+        onlineCheckout: detail.onlineCheckout,
+        url: detail.legacyUrl,
+        options: detail.options || detail.form.options || [],
+        registrationOptionCounts: detail.form.registrationOptionCounts || {},
+        feeSnapshot: detail.feeSnapshot,
+        paymentPlans: detail.paymentPlans || [],
+        isPublished: detail.isPublished,
+        allowOnlineCheckoutReview: true
+      };
+    }
+  } catch (error: any) {
+    if (!String(error?.message || '').includes('loadParentRegistrationDetail')) throw error;
+  }
+
+  const forms = await parentToolsService.loadParentRegistrations(user);
+  return forms.find((candidate: ParentRegistrationCard) => candidate.teamId === teamId && candidate.id === formId) || null;
+}
+
+function FieldGroup({ title, fields, values, errors, prefix, onChange, disabled }: { title: string; fields: any[]; values: Record<string, string>; errors: FieldErrors; prefix: string; onChange: (fieldId: string, value: string) => void; disabled: boolean }) {
+  if (!fields.length) return null;
   return (
-    <section className="app-card p-4">
+    <div className="grid gap-3">
       <h2 className="text-sm font-black text-gray-950">{title}</h2>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        {fields.length ? fields.map((field) => <FieldPreview key={field.id} field={field} prefix={prefix} />) : <div className="text-sm font-semibold text-gray-500">No custom fields configured.</div>}
-      </div>
-    </section>
+      {fields.map((field) => {
+        const errorKey = `${prefix}.${field.id}`;
+        return (
+          <label key={field.id} htmlFor={`${prefix}-${field.id}`} className="min-w-0">
+            <span className="app-label">{field.label}{field.required ? ' *' : ''}</span>
+            {field.type === 'textarea' ? (
+              <textarea id={`${prefix}-${field.id}`} className="auth-input mt-1 min-h-24" data-field-group={prefix} data-field-id={field.id} value={values[field.id] || ''} onChange={(event) => onChange(field.id, event.target.value)} disabled={disabled} />
+            ) : field.type === 'select' ? (
+              <select id={`${prefix}-${field.id}`} className="auth-input mt-1" data-field-group={prefix} data-field-id={field.id} value={values[field.id] || ''} onChange={(event) => onChange(field.id, event.target.value)} disabled={disabled}>
+                <option value="">Select</option>
+                {(field.options || []).map((option: string) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            ) : (
+              <input id={`${prefix}-${field.id}`} className="auth-input mt-1" data-field-group={prefix} data-field-id={field.id} type={field.type || 'text'} value={values[field.id] || ''} onChange={(event) => onChange(field.id, event.target.value)} disabled={disabled} />
+            )}
+            {errors[errorKey] ? <InlineError message={errors[errorKey]} /> : null}
+          </label>
+        );
+      })}
+    </div>
   );
 }
 
-function FieldPreview({ field, prefix }: { field: Record<string, any>; prefix: string }) {
-  const id = `${prefix}-${field.id}`;
-  const label = `${field.label}${field.required ? ' *' : ''}`;
+function InlineError({ message }: { message: string }) {
+  return <div className="mt-1 text-xs font-bold text-rose-700">{message}</div>;
+}
+
+function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
+  const Icon = tone === 'error' ? AlertCircle : CheckCircle2;
   return (
-    <label htmlFor={id} className={field.type === 'textarea' ? 'sm:col-span-2' : ''}>
-      <span className="app-label">{label}</span>
-      {field.type === 'textarea' ? (
-        <textarea id={id} className="auth-input mt-1 min-h-24 resize-none" disabled />
-      ) : field.type === 'select' ? (
-        <select id={id} className="auth-input mt-1" disabled>
-          <option value="">Choose {field.label}</option>
-          {(field.options || []).map((option: string) => <option key={option} value={option}>{option}</option>)}
-        </select>
-      ) : (
-        <input id={id} type={field.type || 'text'} className="auth-input mt-1" disabled />
-      )}
-    </label>
+    <div className={`flex items-start gap-2 rounded-xl border p-3 text-sm font-semibold ${tone === 'error' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+      <Icon className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+      <span>{message}</span>
+    </div>
   );
 }
 
 function LoadingBlock({ label }: { label: string }) {
-  return <div className="app-card flex items-center justify-center gap-2 p-6 text-sm font-black text-gray-600"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />{label}</div>;
-}
-
-function ErrorBlock({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <section className="app-card p-4">
-      <div className="flex items-start gap-3 rounded-xl border border-rose-100 bg-rose-50 p-3 text-sm font-bold text-rose-800"><AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />{message}</div>
-      <button type="button" className="secondary-button mt-3" onClick={onRetry}><RefreshCw className="h-4 w-4" aria-hidden="true" />Retry</button>
+    <section className="app-card p-6 text-center">
+      <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">{label}</div>
     </section>
   );
 }
 
-function UnavailableBlock({ legacyUrl, onRetry }: { legacyUrl: string; onRetry: () => void }) {
+function EmptyState({ icon: Icon, title, detail, actionLabel, onAction }: { icon: LucideIcon; title: string; detail: string; actionLabel?: string; onAction?: () => void }) {
   return (
-    <section className="app-card p-4">
-      <h2 className="text-sm font-black text-gray-950">Registration unavailable</h2>
-      <p className="mt-1 text-sm font-semibold text-gray-600">This linked registration form is not published right now.</p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" className="secondary-button" onClick={onRetry}><RefreshCw className="h-4 w-4" aria-hidden="true" />Retry</button>
-        <button type="button" className="secondary-button" onClick={() => openPublicUrl(legacyUrl)}><ExternalLink className="h-4 w-4" aria-hidden="true" />Legacy form</button>
-      </div>
-    </section>
+    <div className="app-card p-5 text-center">
+      <Icon className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-950">{title}</div>
+      <div className="mt-1 text-xs font-semibold text-gray-500">{detail}</div>
+      {actionLabel && onAction ? <button type="button" className="secondary-button mx-auto mt-3 text-xs" onClick={onAction}>{actionLabel}</button> : null}
+    </div>
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
-  return <div className="rounded-xl border border-gray-200 bg-gray-50 p-3"><div className="text-[10px] font-black uppercase tracking-[0.04em] text-gray-500">{label}</div><div className="mt-1 truncate text-sm font-black text-gray-950">{value}</div></div>;
-}
-
-function formatCapacityLabel(option: Record<string, any>, counts: Record<string, any> = {}) {
-  const count = counts[option.countKey] || counts[option.id] || {};
+function formatOptionAvailability(option: any, counts: Record<string, any>) {
+  const count = counts[option.countKey || option.id] || {};
+  const capacity = Number(option.capacityLimit || option.capacity || 0);
   const enrolled = Number(count.enrolled || 0);
-  if (!option.capacityLimit) return option.waitlistEnabled ? 'Open, waitlist available' : 'Open';
-  const remaining = Math.max(0, Number(option.capacityLimit) - enrolled);
-  if (remaining > 0) return `${remaining} spot${remaining === 1 ? '' : 's'} left`;
-  return option.waitlistEnabled ? 'Full, waitlist available' : 'Full';
+  if (!capacity) return option.description || 'Registration option available';
+  const remaining = Math.max(0, capacity - enrolled);
+  return `${remaining} ${remaining === 1 ? 'spot' : 'spots'} left`;
 }
 
 function formatMoney(cents: number, currency = 'USD') {
