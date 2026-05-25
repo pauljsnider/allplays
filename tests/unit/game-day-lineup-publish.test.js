@@ -165,7 +165,7 @@ describe('game-day page wiring', () => {
   it('normalizes the visible game-day period when a saved lineup reloads', () => {
     const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-    expect(source).toContain("import { getPeriodsForFormation, normalizeActivePeriod, sortSubstitutionPeriods } from './js/game-day-periods.js?v=1';");
+    expect(source).toContain("import { getPeriodsForFormation, normalizeActivePeriod, sortSubstitutionPeriods } from './js/game-day-periods.js?v=2';");
     expect(source).toContain('state.activePeriodGD = normalizeActivePeriod(periods, state.activePeriodGD);');
   });
 

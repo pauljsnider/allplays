@@ -1,7 +1,8 @@
 import { buildGamePlanIntervals } from './game-plan-intervals.js';
+import { getPeriodPrefixForFormation } from './game-day-periods.js';
 
 function parseCurrentShapeKey(key) {
-  const match = /^([HQ])(\d+)(?: (\d+)')?-(.+)$/.exec(key);
+  const match = /^([HQI])(\d+)(?: (\d+)')?-(.+)$/.exec(key);
   if (!match) return null;
   return {
     periodNum: Number.parseInt(match[2], 10),
@@ -51,10 +52,10 @@ export function buildRotationPlanFromGamePlan(gamePlan) {
   if (!gamePlan?.lineups || typeof gamePlan.lineups !== 'object') return {};
   const plan = {};
   const numPeriods = Number.parseInt(gamePlan?.numPeriods, 10) || 2;
-  const periodPrefix = numPeriods === 4 ? 'Q' : 'H';
+  const periodPrefix = getPeriodPrefixForFormation(gamePlan);
 
   Object.entries(gamePlan.lineups).forEach(([key, playerId]) => {
-    const currentMatch = /^([HQ]\d+(?: \d+')?)-(.+)$/.exec(key);
+    const currentMatch = /^([HQI]\d+(?: \d+')?)-(.+)$/.exec(key);
     if (currentMatch) {
       const period = currentMatch[1];
       const posId = currentMatch[2];
