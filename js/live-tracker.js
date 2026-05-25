@@ -9,7 +9,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=3';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
-import { buildPersistedResumeClockState, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=4';
+import { buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=6';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
@@ -2092,6 +2092,32 @@ async function startStop() {
   persistLocalTrackerState();
 }
 
+function addElapsedPlayingTimeToActiveLineup(elapsedMs) {
+  const safeElapsed = Math.max(0, Number(elapsedMs) || 0);
+  if (!safeElapsed) return;
+  state.onCourt.forEach(id => {
+    if (!state.stats[id]) state.stats[id] = statDefaults(currentConfig.columns);
+    state.stats[id].time += safeElapsed;
+  });
+}
+
+function resumeRunningClock() {
+  if (state.running) return;
+  state.running = true;
+  if (els.startStop) {
+    els.startStop.textContent = 'Pause';
+    els.startStop.classList.remove('bg-emerald-600', 'border-emerald-700');
+    els.startStop.classList.add('bg-red-600', 'border-red-700');
+  }
+  if (state.tick) clearInterval(state.tick);
+  state.lastTick = performance.now();
+  state.tick = setInterval(tick, 500);
+  liveState.lastClockSyncAt = Date.now();
+  addLog('Game clock resumed after reconnect');
+  syncClockToGameDoc();
+  persistLocalTrackerState();
+}
+
 function tick() {
   if (!state.running) return;
   const now = performance.now();
@@ -2911,6 +2937,7 @@ async function init() {
 
     const persistedLocalTrackerState = readPersistedLiveTrackerState(window.localStorage, teamId, gameId);
     let resumedLiveEventLog = [];
+    let resumeClockState = null;
     let shouldResume = true;
     const hasOpponentStats = !!(game.opponentStats && Object.keys(game.opponentStats).length > 0);
 
@@ -3000,7 +3027,7 @@ async function init() {
         resumedLiveEventLog = buildResumeLogFromLiveEvents(liveEvents);
         const resumedFromPersistedData = hasScores || hasLiveFlag || hasOpponentStats || hasAggregatedStats || liveEvents.length > 0;
         state.scoreLogIsComplete = !resumedFromPersistedData;
-        const resumeClockState = deriveResumeClockState(
+        resumeClockState = deriveResumeClockState(
           liveEvents,
           { period: state.period, clock: state.clock },
           buildPersistedResumeClockState(currentGame)
@@ -3099,6 +3126,14 @@ async function init() {
       applyPersistedLocalTrackerState(persistedLocalTrackerState);
     }
 
+    if (shouldResume && resumeClockState?.restored) {
+      state.period = resumeClockState.period;
+      state.clock = resumeClockState.clock;
+      addElapsedPlayingTimeToActiveLineup(buildResumeLineupElapsedMs(resumeClockState, {
+        localStateSavedAt: liveState.restoredLocalTrackerState ? liveState.restoredLocalTrackerStateAt : null
+      }));
+    }
+
     if (shouldResume && state.log.length === 0 && resumedLiveEventLog.length > 0) {
       state.log = resumedLiveEventLog;
       state.scoreLogIsComplete = true;
@@ -3134,6 +3169,9 @@ async function init() {
       .catch(err => console.warn('Failed to sync initial lineup:', err));
     if (currentGame.liveStatus === 'live') {
       await startLiveBroadcast();
+    }
+    if (shouldResume && resumeClockState?.running) {
+      resumeRunningClock();
     }
     if (liveState.eventQueue.length > 0 && window.navigator?.onLine !== false) {
       scheduleRetry({ resetBackoff: true });

@@ -70,6 +70,48 @@ describe('live tracker resume clock state', () => {
     expect(result.clock).toBe(187000);
   });
 
+  it('restores a running persisted game clock with elapsed wall-clock time', () => {
+    const result = deriveResumeClockState(
+      [
+        { period: 'Q2', gameClockMs: 61000, createdAt: { toMillis: () => 1000 } }
+      ],
+      { period: 'Q1', clock: 0 },
+      buildPersistedResumeClockState({
+        liveClockPeriod: 'Q2',
+        liveClockMs: 65000,
+        liveClockRunning: true,
+        liveClockUpdatedAt: { toMillis: () => 10000 }
+      }),
+      { now: () => 25000 }
+    );
+
+    expect(result.restored).toBe(true);
+    expect(result.running).toBe(true);
+    expect(result.period).toBe('Q2');
+    expect(result.clock).toBe(80000);
+    expect(result.elapsedWhileRunningMs).toBe(15000);
+  });
+
+  it('does not add elapsed wall-clock time for a paused persisted game clock', () => {
+    const result = deriveResumeClockState(
+      [],
+      { period: 'Q1', clock: 0 },
+      buildPersistedResumeClockState({
+        liveClockPeriod: 'Q2',
+        liveClockMs: 65000,
+        liveClockRunning: false,
+        liveClockUpdatedAt: { toMillis: () => 10000 }
+      }),
+      { now: () => 25000 }
+    );
+
+    expect(result.restored).toBe(true);
+    expect(result.running).toBe(false);
+    expect(result.period).toBe('Q2');
+    expect(result.clock).toBe(65000);
+    expect(result.elapsedWhileRunningMs).toBe(0);
+  });
+
   it('restores using period/clock progression when timestamps are unavailable', () => {
     const result = deriveResumeClockState([
       { period: 'Q1', gameClockMs: 30000 },
