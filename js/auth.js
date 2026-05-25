@@ -353,6 +353,8 @@ export function checkAuth(callback, options = {}) {
                     }
                     if (profile.isAdmin) user.isAdmin = true;
                     if (profile.parentOf) user.parentOf = profile.parentOf;
+                    if (Array.isArray(profile.teamMediaUploadTeamIds)) user.teamMediaUploadTeamIds = profile.teamMediaUploadTeamIds;
+                    if (Array.isArray(profile.mediaUploadTeamIds)) user.mediaUploadTeamIds = profile.mediaUploadTeamIds;
 
                     // Auto-migrate: ensure parentTeamIds and parentPlayerKeys are in sync with parentOf
                     if (Array.isArray(profile.parentOf) && profile.parentOf.length > 0) {
