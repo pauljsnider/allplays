@@ -124,19 +124,27 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
         setMessage('Registration submitted. You have been added to the waitlist.');
         return;
       }
-      if (form.onlineCheckout && Number(currentFeeSnapshot.finalAmountDueCents || 0) > 0) {
-        const checkout = await parentToolsService.initiateRegistrationCheckout(
-          form.teamId,
-          form.id,
-          result.registrationId,
-          currentSelectedOptionId,
-          currentSelectedPaymentPlanId,
-          currentQuantity,
-          currentFeeSnapshot.finalAmountDueCents,
-          currentFeeSnapshot.currency || form.currency || 'USD'
-        );
-        await openPublicUrl(checkout.checkoutUrl);
-        setMessage('Registration submitted. Opening Stripe checkout.');
+      const serverFeeSnapshot = (result as any)?.feeSnapshot || (result as any)?.registration?.feeSnapshot || null;
+      const checkoutFeeSnapshot = serverFeeSnapshot || currentFeeSnapshot;
+      if (form.onlineCheckout && Number(checkoutFeeSnapshot.finalAmountDueCents || 0) > 0) {
+        try {
+          const checkout = await parentToolsService.initiateRegistrationCheckout(
+            form.teamId,
+            form.id,
+            result.registrationId,
+            requiresRegistrationOption(form) ? currentSelectedOptionId : currentSelectedOptionId || '',
+            currentSelectedPaymentPlanId,
+            currentQuantity,
+            checkoutFeeSnapshot.finalAmountDueCents,
+            checkoutFeeSnapshot.currency || form.currency || 'USD'
+          );
+          await openPublicUrl(checkout.checkoutUrl);
+          setMessage('Registration submitted. Opening Stripe checkout.');
+        } catch (checkoutError: any) {
+          setError(checkoutError?.message
+            ? `Registration created, but checkout could not be opened. ${checkoutError.message}`
+            : 'Registration created, but checkout could not be opened. Please check your email for the payment link.');
+        }
         return;
       }
       setMessage('Registration submitted. Your registration is pending review.');
