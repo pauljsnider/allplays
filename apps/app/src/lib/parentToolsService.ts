@@ -27,6 +27,7 @@ import {
 import {
   calculateRegistrationFeeSnapshot,
   getActiveRegistrationOptions,
+  getPaymentPlanChoices,
   getRegistrationPaymentNotice,
   hasOnlineRegistrationCheckout,
   normalizeRegistrationForm
@@ -94,6 +95,18 @@ export type ParentRegistrationCard = {
   onlineCheckout: boolean;
   options: Array<Record<string, any>>;
   url: string;
+};
+
+export type ParentRegistrationDetailModel = {
+  teamName: string;
+  isPublished: boolean;
+  onlineCheckout: boolean;
+  legacyUrl: string;
+  form: Record<string, any>;
+  options: Array<Record<string, any>>;
+  feeSnapshot: Record<string, any>;
+  paymentNotice: string;
+  paymentPlans: Array<Record<string, any>>;
 };
 
 export type ParentCalendarTeam = {
@@ -350,6 +363,46 @@ export async function loadParentCertificates(user: AuthUser | null): Promise<Par
     const bTime = toMillis(b.updatedAt || b.createdAt);
     return bTime - aTime;
   });
+}
+
+export async function loadParentRegistrationDetail(
+  user: AuthUser | null,
+  teamId: string,
+  formId: string
+): Promise<ParentRegistrationDetailModel> {
+  if (!user?.uid || !teamId || !formId) {
+    throw new Error('Team and form are required.');
+  }
+  if (!getLinkedTeamIds(user).includes(teamId)) {
+    throw new Error('Registration is not linked to your family.');
+  }
+  const [team, forms] = await Promise.all([
+    Promise.resolve(getTeam(teamId)).catch(() => null),
+    Promise.resolve(listTeamRegistrationForms(teamId)).catch(() => [])
+  ]);
+
+  const form = forms.find((f: any) => f.id === formId);
+  if (!form) throw new Error('Registration form not found.');
+  if (!team) throw new Error('Team not found.');
+
+  const normalizedForm = normalizeRegistrationForm(form, { teamId, formId });
+  const feeSnapshot = calculateRegistrationFeeSnapshot(normalizedForm, { now: new Date() });
+  const paymentPlans = getPaymentPlanChoices(normalizedForm);
+  const paymentNotice = getRegistrationPaymentNotice(normalizedForm);
+  const onlineCheckout = hasOnlineRegistrationCheckout(normalizedForm);
+  const legacyUrl = getRegistrationUrl(teamId, formId);
+
+  return {
+    teamName: compactString(team.name) || 'Team',
+    isPublished: normalizedForm.published && normalizedForm.status !== 'closed' && normalizedForm.status !== 'archived',
+    onlineCheckout,
+    legacyUrl,
+    form: normalizedForm,
+    options: getActiveRegistrationOptions(normalizedForm, normalizedForm.registrationOptionCounts || {}),
+    feeSnapshot,
+    paymentNotice,
+    paymentPlans
+  };
 }
 
 export async function loadTeamMediaForApp(user: AuthUser | null, teamId: string): Promise<TeamMediaModel> {

@@ -258,7 +258,9 @@ describe('React app parent tools integration', () => {
 
         await clickButton(container, 'Register');
         await waitForText(container, 'Summer Camp');
-        await clickButton(container, 'Open');
+        const reviewLink = Array.from(container.querySelectorAll('a')).find((link) => link.textContent.trim() === 'Review');
+        expect(reviewLink?.getAttribute('href')).toBe('/parent-tools/registrations/team-1/form-1');
+        await clickButton(container, 'Legacy form');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
 
         await clickButton(container, 'Awards');
