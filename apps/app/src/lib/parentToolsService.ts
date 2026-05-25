@@ -26,6 +26,7 @@ import {
   normalizeParentFeeRecord,
   sortParentFeeRecords
 } from '../../../../js/parent-dashboard-fees.js';
+import { initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
 import {
   buildPendingRegistrationRecord,
   calculateRegistrationFeeSnapshot,
@@ -83,6 +84,8 @@ export type ParentFeeAppRecord = Record<string, any> & {
   dueLabel: string;
   statusLabel: string;
   canPay: boolean;
+  checkoutInitiatable: boolean;
+  paymentAction: 'checkoutUrl' | 'createCheckout' | '';
   lineItems: Array<Record<string, any>>;
   installments: Array<Record<string, any>>;
   ledgerEntries: Array<Record<string, any>>;
@@ -275,6 +278,19 @@ export async function loadParentFeesForApp(user: AuthUser | null): Promise<Paren
   if (!user?.uid) return [];
   const rawFees = await Promise.resolve(listParentTeamFeeRecipients(user.uid, user.parentOf || []));
   return sortParentFeeRecords(rawFees || []).map((fee: any) => toParentFeeAppRecord(fee));
+}
+
+export async function initiateParentTeamFeeCheckout(teamId: string, batchId: string, recipientId: string): Promise<{ success: true, checkoutUrl: string }> {
+  if (!teamId || !batchId || !recipientId) {
+    throw new Error('Missing required fields for team fee checkout.');
+  }
+
+  const checkoutUrl = await initiateTeamFeeCheckout({ teamId, batchId, recipientId });
+  if (!checkoutUrl) {
+    throw new Error('Failed to get checkout URL.');
+  }
+
+  return { success: true, checkoutUrl };
 }
 
 export async function loadParentCalendarTools(user: AuthUser | null) {
@@ -547,16 +563,40 @@ function normalizeAccessRequest(request: any): ParentAccessRequest {
 function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
   const normalized = normalizeParentFeeRecord(fee);
   const meta = getParentFeeStatusMeta(normalized.status);
+  const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(normalized) && Boolean(normalized.checkoutUrl);
+  const checkoutInitiatable = canInitiateParentTeamFeeCheckout(normalized);
   return {
     ...normalized,
     amountLabel: formatParentFeeAmount(normalized),
     dueLabel: formatParentFeeDueDate(normalized.dueDate),
     statusLabel: meta.label,
-    canPay: Boolean(normalized.checkoutUrl && !['paid', 'canceled'].includes(normalized.status) && Number(normalized.balanceDueCents ?? 1) > 0),
+    canPay: canOpenCheckoutUrl || checkoutInitiatable,
+    checkoutInitiatable,
+    paymentAction: canOpenCheckoutUrl ? 'checkoutUrl' : checkoutInitiatable ? 'createCheckout' : '',
     lineItems: getArrayField(normalized, ['lineItems', 'invoiceLineItems', 'invoiceItems', 'items']),
     installments: getArrayField(normalized, ['installments', 'installmentSchedule', 'paymentSchedule', 'scheduledPayments']),
     ledgerEntries: getArrayField(normalized, ['ledgerEntries', 'paymentLedger', 'activity', 'receipts', 'payments', 'adjustments'])
   };
+}
+
+export function isParentTeamFeePayActionAllowed(fee: any) {
+  const status = compactString(fee?.status).toLowerCase();
+  if (status === 'paid' || status === 'canceled' || status === 'cancelled') return false;
+
+  const balanceCents = Number(fee?.balanceDueCents);
+  if (!Number.isFinite(balanceCents) || balanceCents <= 0) return false;
+
+  return true;
+}
+
+export function canInitiateParentTeamFeeCheckout(fee: any) {
+  return Boolean(
+    isParentTeamFeePayActionAllowed(fee)
+    && !fee?.checkoutUrl
+    && compactString(fee?.teamId)
+    && compactString(fee?.batchId)
+    && compactString(fee?.recipientId)
+  );
 }
 
 function toRegistrationCard(team: any, form: any): ParentRegistrationCard | null {
