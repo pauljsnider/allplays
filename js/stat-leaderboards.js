@@ -6,10 +6,7 @@ function slugifyStatId(value) {
 }
 
 function normalizeStoredStatKey(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '');
+  return slugifyStatId(value);
 }
 
 function normalizeLabel(value, fallback = 'Stat') {
