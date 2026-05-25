@@ -6,6 +6,7 @@ import {
   getPlayers,
   getPublicTrackingItems,
   getTeam,
+  deleteAthleteProfileMediaByPath,
   inviteCoParentToAthlete,
   listAthleteProfilesForParent,
   listCertificatesForPlayer,
@@ -327,14 +328,26 @@ export async function saveParentAthleteProfileDraft({
   assertLinkedParent(user, teamId, playerId);
   const seasonKey = buildParentSeasonKey(teamId, playerId);
   const workingProfileId = profileId || createLocalId('profile');
-  const profilePhoto = profilePhotoFile
-    ? await uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' })
-    : (resetProfilePhoto ? null : draft.profilePhoto);
-  const saved = await saveAthleteProfile(user!.uid, {
-    ...draft,
-    profilePhoto,
-    selectedSeasonKeys: [seasonKey]
-  }, { profileId: workingProfileId });
+  let uploadedProfilePhoto: Record<string, any> | null = null;
+  if (profilePhotoFile) {
+    validateImageFile(profilePhotoFile);
+    uploadedProfilePhoto = await uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' });
+  }
+  const profilePhoto = uploadedProfilePhoto || (resetProfilePhoto ? null : draft.profilePhoto);
+
+  let saved;
+  try {
+    saved = await saveAthleteProfile(user!.uid, {
+      ...draft,
+      profilePhoto,
+      selectedSeasonKeys: [seasonKey]
+    }, { profileId: workingProfileId });
+  } catch (error) {
+    if (uploadedProfilePhoto?.storagePath) {
+      await deleteAthleteProfileMediaByPath(uploadedProfilePhoto.storagePath).catch(() => undefined);
+    }
+    throw error;
+  }
   return {
     profile: saved,
     shareUrl: buildAthleteProfileShareUrl(getLegacyOrigin(), saved.id),

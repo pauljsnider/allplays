@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
+    deleteAthleteProfileMediaByPath: vi.fn(),
     getAggregatedStatsForPlayer: vi.fn(),
     getGames: vi.fn(),
     getPlayerPrivateProfile: vi.fn(),
@@ -156,6 +157,7 @@ beforeEach(() => {
     }]);
     dbMocks.inviteCoParentToAthlete.mockResolvedValue({ id: 'invite-1', code: 'ABC12345', teamName: 'Bears', playerName: 'Pat Star', existingUser: false });
     dbMocks.saveAthleteProfile.mockResolvedValue({ id: 'profile-1', athlete: { name: 'Pat Star' }, privacy: 'public' });
+    dbMocks.deleteAthleteProfileMediaByPath.mockResolvedValue(undefined);
     dbMocks.updatePlayerProfile.mockResolvedValue(undefined);
     dbMocks.uploadAthleteProfileMedia.mockResolvedValue({
         url: 'https://example.test/headshot.jpg',
@@ -398,6 +400,49 @@ describe('React app parent player detail service', () => {
             profilePhoto: null,
             selectedSeasonKeys: ['team-1::player-1']
         }), { profileId: 'profile-1' });
+    });
+
+    it('rejects invalid athlete profile headshots before upload', async () => {
+        const file = new File(['not image'], 'headshot.txt', { type: 'text/plain' });
+
+        await expect(saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profileId: 'profile-1',
+            profilePhotoFile: file,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: []
+            }
+        })).rejects.toThrow('Player photos must be image files.');
+
+        expect(dbMocks.uploadAthleteProfileMedia).not.toHaveBeenCalled();
+        expect(dbMocks.saveAthleteProfile).not.toHaveBeenCalled();
+    });
+
+    it('cleans up uploaded athlete profile headshots when saving the profile fails', async () => {
+        const file = new File(['headshot'], 'headshot.jpg', { type: 'image/jpeg' });
+        dbMocks.saveAthleteProfile.mockRejectedValueOnce(new Error('profile save failed'));
+
+        await expect(saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profileId: 'profile-1',
+            profilePhotoFile: file,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: []
+            }
+        })).rejects.toThrow('profile save failed');
+
+        expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', 'profile-1', file, { kind: 'profile-photo' });
+        expect(dbMocks.deleteAthleteProfileMediaByPath).toHaveBeenCalledWith('athlete-profile-media/user-1/profile-1/headshot.jpg');
     });
 
     it('saves incentive rules under the parent account', async () => {
