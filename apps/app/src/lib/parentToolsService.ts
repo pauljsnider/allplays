@@ -586,7 +586,7 @@ export function isParentTeamFeePayActionAllowed(fee: any) {
   const balanceCents = Number(fee?.balanceDueCents);
   if (!Number.isFinite(balanceCents) || balanceCents <= 0) return false;
 
-  return status === 'unpaid' || status === 'partial' || status === 'partially_paid';
+  return true;
 }
 
 export function canInitiateParentTeamFeeCheckout(fee: any) {

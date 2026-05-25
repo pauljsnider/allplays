@@ -479,23 +479,35 @@ describe('React app parent tools service', () => {
             { id: 'missing-team', title: 'Missing team', status: 'unpaid', balanceDueCents: 1500, batchId: 'batch-1', recipientId: 'recipient-1' },
             { id: 'paid', title: 'Paid', status: 'paid', balanceDueCents: 1500, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
             { id: 'partial', title: 'Partial', status: 'partial', balanceDueCents: 2500, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'adjusted', title: 'Adjusted', status: 'adjusted', balanceDueCents: 3000, checkoutUrl: 'https://pay.example.test/adjusted', teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'adjusted-zero', title: 'Adjusted zero', status: 'adjusted', balanceDueCents: 0, checkoutUrl: 'https://pay.example.test/adjusted-zero', teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
             { id: 'zero', title: 'Zero', status: 'unpaid', balanceDueCents: 0, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }
         ]);
 
         const fees = await loadParentFeesForApp(user);
         const partialFee = fees.find((fee) => fee.id === 'partial');
 
+        const adjustedFee = fees.find((fee) => fee.id === 'adjusted');
+
         expect(partialFee).toMatchObject({
             canPay: true,
             checkoutInitiatable: true,
             paymentAction: 'createCheckout'
         });
+        expect(adjustedFee).toMatchObject({
+            canPay: true,
+            checkoutInitiatable: false,
+            paymentAction: 'checkoutUrl'
+        });
         expect(fees.find((fee) => fee.id === 'missing-team').canPay).toBe(false);
         expect(fees.find((fee) => fee.id === 'paid').canPay).toBe(false);
+        expect(fees.find((fee) => fee.id === 'adjusted-zero').canPay).toBe(false);
         expect(fees.find((fee) => fee.id === 'zero').canPay).toBe(false);
         expect(canInitiateParentTeamFeeCheckout(partialFee)).toBe(true);
         expect(isParentTeamFeePayActionAllowed({ status: 'partially_paid', balanceDueCents: 1 })).toBe(true);
-        expect(isParentTeamFeePayActionAllowed({ status: 'open', balanceDueCents: 1 })).toBe(false);
+        expect(isParentTeamFeePayActionAllowed({ status: 'adjusted', balanceDueCents: 1 })).toBe(true);
+        expect(isParentTeamFeePayActionAllowed({ status: 'open', balanceDueCents: 1 })).toBe(true);
+        expect(isParentTeamFeePayActionAllowed({ status: 'adjusted', balanceDueCents: 0 })).toBe(false);
     });
 
     it('loads schedule tools and builds escaped ICS content', async () => {
