@@ -9,7 +9,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
 import { canApplySubstitution, applySubstitution } from './live-tracker-integrity.js?v=3';
 import { hydrateOpponentStats } from './live-tracker-opponent-stats.js?v=1';
-import { buildPersistedResumeClockState, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=5';
+import { buildPersistedResumeClockState, buildResumeLineupElapsedMs, buildResumeLogFromLiveEvents, deriveResumeClockState } from './live-tracker-resume.js?v=6';
 import { restoreLiveLineup } from './live-tracker-lineup.js?v=1';
 import { resolveFinalScore } from './live-tracker-email.js?v=2';
 import { buildLiveResetEvent } from './live-tracker-reset.js?v=1';
@@ -3129,7 +3129,9 @@ async function init() {
     if (shouldResume && resumeClockState?.restored) {
       state.period = resumeClockState.period;
       state.clock = resumeClockState.clock;
-      addElapsedPlayingTimeToActiveLineup(resumeClockState.elapsedWhileRunningMs);
+      addElapsedPlayingTimeToActiveLineup(buildResumeLineupElapsedMs(resumeClockState, {
+        localStateSavedAt: liveState.restoredLocalTrackerState ? liveState.restoredLocalTrackerStateAt : null
+      }));
     }
 
     if (shouldResume && state.log.length === 0 && resumedLiveEventLog.length > 0) {
