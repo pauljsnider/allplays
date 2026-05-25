@@ -17,6 +17,7 @@ import {
   uploadTeamMediaFile,
   uploadTeamMediaPhoto
 } from '../../../../js/db.js';
+import { db, doc, collection, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
 import {
   formatParentFeeAmount,
   formatParentFeeDueDate,
@@ -25,12 +26,15 @@ import {
   sortParentFeeRecords
 } from '../../../../js/parent-dashboard-fees.js';
 import {
+  buildPendingRegistrationRecord,
   calculateRegistrationFeeSnapshot,
+  decideRegistrationPlacement,
   getActiveRegistrationOptions,
   getPaymentPlanChoices,
   getRegistrationPaymentNotice,
   hasOnlineRegistrationCheckout,
-  normalizeRegistrationForm
+  normalizeRegistrationForm,
+  requiresRegistrationOption
 } from '../../../../js/registration-flow.js';
 import {
   canContributeTeamMedia,
@@ -83,7 +87,7 @@ export type ParentFeeAppRecord = Record<string, any> & {
   ledgerEntries: Array<Record<string, any>>;
 };
 
-export type ParentRegistrationCard = {
+export type ParentRegistrationCard = Record<string, any> & {
   id: string;
   teamId: string;
   teamName: string;
@@ -163,6 +167,66 @@ export function getLegacyUrl(path: string, params: Record<string, string> = {}, 
 
 export function getFamilyShareUrl(tokenId: string) {
   return getLegacyUrl('family.html', { token: tokenId });
+}
+
+export async function submitOfflineRegistration(teamId: string, formId: string, submission: Record<string, any>) {
+  if (!teamId || !formId || !submission) throw new Error('Registration submission is incomplete.');
+
+  const formRef = doc(db, 'teams', teamId, 'registrationForms', formId);
+  const registrationRef = doc(collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations'));
+
+  return runTransaction(db, async (transaction: any) => {
+    const formSnap = await transaction.get(formRef);
+    if (!formSnap.exists()) throw new Error('Registration form could not be found.');
+
+    const formData = formSnap.data() || {};
+    const latestForm = normalizeRegistrationForm(formData, { teamId, formId });
+    let status = 'pending';
+    let selectedOption = submission.selectedOption || null;
+    let feeSnapshot = submission.feeSnapshot || calculateRegistrationFeeSnapshot(latestForm, { quantity: submission.quantity || 1, now: new Date() });
+
+    if (requiresRegistrationOption(latestForm)) {
+      const placement = decideRegistrationPlacement({
+        form: latestForm,
+        selectedOptionId: submission.selectedOptionId || submission.selectedOption?.id,
+        counts: formData.registrationOptionCounts || {}
+      });
+      if (placement.status === 'blocked') {
+        const error = new Error(placement.message || 'Registration option is not available.');
+        (error as any).code = placement.reason === 'option-full' ? 'option-full' : 'invalid-option';
+        throw error;
+      }
+      const selectedCountKey = placement.selectedOption.countKey;
+      const optionCounts = formData.registrationOptionCounts || null;
+      if (!optionCounts || typeof optionCounts !== 'object' || !optionCounts[selectedCountKey] || typeof optionCounts[selectedCountKey] !== 'object') {
+        throw new Error('Registration form capacity tracking is not properly configured.');
+      }
+      const countPath = `registrationOptionCounts.${selectedCountKey}`;
+      transaction.update(formRef, {
+        [`${countPath}.enrolled`]: placement.nextCounts.enrolled,
+        [`${countPath}.waitlisted`]: placement.nextCounts.waitlisted,
+        registrationCapacityUpdateId: registrationRef.id,
+        updatedAt: serverTimestamp()
+      });
+      status = placement.status;
+      selectedOption = placement.selectedOption;
+      feeSnapshot = calculateRegistrationFeeSnapshot(latestForm, { quantity: submission.quantity || 1, now: new Date() });
+    }
+
+    transaction.set(registrationRef, buildPendingRegistrationRecord({
+      form: latestForm,
+      participant: submission.participant,
+      guardian: submission.guardian,
+      waiverAccepted: submission.waiverAccepted,
+      selectedOption,
+      selectedPaymentPlanId: submission.selectedPaymentPlanId,
+      status,
+      feeSnapshot,
+      now: serverTimestamp()
+    }));
+
+    return { success: true, status, registrationId: registrationRef.id };
+  });
 }
 
 export function getRegistrationUrl(teamId: string, formId: string) {
@@ -497,6 +561,7 @@ function toRegistrationCard(team: any, form: any): ParentRegistrationCard | null
   if (!normalized.published || normalized.status === 'closed' || normalized.status === 'archived') return null;
   const feeSnapshot = calculateRegistrationFeeSnapshot(normalized, { now: new Date() });
   return {
+    ...normalized,
     id: normalized.id,
     teamId: normalized.teamId,
     teamName: compactString(team.name) || 'Team',
