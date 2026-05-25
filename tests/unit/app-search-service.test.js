@@ -18,9 +18,14 @@ const firebaseMocks = vi.hoisted(() => ({
     limit: vi.fn((count) => ({ type: 'limit', count }))
 }));
 
+const helpMocks = vi.hoisted(() => ({
+    searchHelpKnowledge: vi.fn()
+}));
+
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
+vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
 
 import {
     buildAppSearchActions,
@@ -55,6 +60,7 @@ function firestorePlayer(path, data) {
 beforeEach(() => {
     vi.clearAllMocks();
     resetAppSearchCacheForTests();
+    helpMocks.searchHelpKnowledge.mockReturnValue([]);
 });
 
 describe('React app search service', () => {
@@ -142,6 +148,59 @@ describe('React app search service', () => {
         expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'social-feed', 'find-friends', 'create-social-post', 'profile']);
         expect(defaultResults.teams).toHaveLength(20);
         expect(defaultResults.players).toHaveLength(20);
+    });
+
+    it('adds limited help results for meaningful queries without changing app result ordering', () => {
+        helpMocks.searchHelpKnowledge.mockReturnValue([{
+            id: 'account-password-reset',
+            title: 'Reset a password',
+            file: 'help-account.html',
+            url: 'https://allplays.ai/help-account.html',
+            roles: ['parent', 'coach'],
+            summary: 'Recover account access.',
+            snippet: 'Use password reset when a parent or coach cannot sign in.',
+            score: 42
+        }]);
+
+        const shortResults = computeAppSearchResults({
+            queryText: 'p',
+            auth,
+            teams: [{ id: 'team-1', name: 'Panthers', sport: 'Basketball', isPublic: true }],
+            players: []
+        });
+        expect(shortResults.help).toEqual([]);
+        expect(helpMocks.searchHelpKnowledge).not.toHaveBeenCalled();
+
+        const results = computeAppSearchResults({
+            queryText: 'password reset',
+            auth,
+            teams: [{ id: 'team-1', name: 'Password Reset Rockets', sport: 'Basketball', isPublic: true }],
+            players: [{
+                id: 'player:team-1:player-1',
+                kind: 'player',
+                title: 'Reset Runner',
+                subtitle: 'Password Reset Rockets',
+                route: '/players/team-1/player-1',
+                teamId: 'team-1',
+                playerId: 'player-1'
+            }]
+        });
+
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
+            query: 'password reset',
+            roles: ['parent'],
+            limit: 5
+        });
+        expect(results.help).toEqual([{
+            id: 'help:account-password-reset',
+            kind: 'help',
+            title: 'Reset a password',
+            subtitle: 'Use password reset when a parent or coach cannot sign in.',
+            href: 'https://allplays.ai/help-account.html',
+            roles: ['parent', 'coach'],
+            snippet: 'Use password reset when a parent or coach cannot sign in.'
+        }]);
+        expect(results.flat.map((item) => item.kind)).toEqual(['team', 'help', 'player']);
     });
 
     it('loads public/current-site teams and merges private teams from app access', async () => {
