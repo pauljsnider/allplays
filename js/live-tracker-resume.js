@@ -47,6 +47,8 @@ export function buildPersistedResumeClockState(game) {
     return {
         liveClockPeriod: game?.liveClockPeriod,
         liveClockMs: game?.liveClockMs,
+        liveClockRunning: game?.liveClockRunning,
+        liveClockUpdatedAt: game?.liveClockUpdatedAt,
         period: game?.period,
         gameClockMs: game?.gameClockMs,
         clock: game?.clock
@@ -128,7 +130,27 @@ export function buildResumeLogFromLiveEvents(liveEvents = [], { now = () => Date
         .map(({ __resumeOrder, __resumeCreatedAtMs, ...entry }) => entry);
 }
 
-export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', clock: 0 }, persistedClockState = null) {
+export function buildResumeLineupElapsedMs(resumeClockState, { localStateSavedAt = null } = {}) {
+    const elapsedWhileRunningMs = Math.max(0, Number(resumeClockState?.elapsedWhileRunningMs) || 0);
+    if (!elapsedWhileRunningMs) return 0;
+
+    if (localStateSavedAt == null) return elapsedWhileRunningMs;
+
+    const localSavedAtMs = toMillis(localStateSavedAt);
+    if (!Number.isFinite(localSavedAtMs)) return 0;
+
+    const resumeEvaluatedAtMs = Number(resumeClockState?.resumeEvaluatedAtMs);
+    if (!Number.isFinite(resumeEvaluatedAtMs)) return 0;
+
+    const persistedUpdatedAtMs = Number(resumeClockState?.persistedUpdatedAtMs);
+    const elapsedStartMs = Number.isFinite(persistedUpdatedAtMs)
+        ? Math.max(persistedUpdatedAtMs, localSavedAtMs)
+        : localSavedAtMs;
+
+    return Math.max(0, resumeEvaluatedAtMs - elapsedStartMs);
+}
+
+export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', clock: 0 }, persistedClockState = null, { now = () => Date.now() } = {}) {
     const fallbackPeriod = defaults?.period || 'Q1';
     const fallbackClock = Number.isFinite(defaults?.clock) ? defaults.clock : 0;
     const persistedPeriod = [
@@ -140,16 +162,37 @@ export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', cl
         persistedClockState?.gameClockMs ??
         persistedClockState?.clock
     );
+    const persistedUpdatedAtMs = toMillis(persistedClockState?.liveClockUpdatedAt);
+    const persistedRunning = persistedClockState?.liveClockRunning === true;
+    const resumeEvaluatedAtMs = now();
+    const elapsedWhileRunningMs = (
+        persistedRunning &&
+        Number.isFinite(persistedUpdatedAtMs)
+    )
+        ? Math.max(0, resumeEvaluatedAtMs - persistedUpdatedAtMs)
+        : 0;
     const persistedState = (
         persistedPeriod &&
         Number.isFinite(persistedClock) &&
         persistedClock >= 0
     )
-        ? { period: persistedPeriod, clock: persistedClock, restored: true }
+        ? {
+            period: persistedPeriod,
+            clock: persistedClock + elapsedWhileRunningMs,
+            restored: true,
+            running: persistedRunning,
+            elapsedWhileRunningMs,
+            persistedUpdatedAtMs,
+            resumeEvaluatedAtMs
+        }
         : null;
 
+    if (persistedState?.running) {
+        return persistedState;
+    }
+
     if (!Array.isArray(liveEvents) || liveEvents.length === 0) {
-        return persistedState || { period: fallbackPeriod, clock: fallbackClock, restored: false };
+        return persistedState || { period: fallbackPeriod, clock: fallbackClock, restored: false, running: false, elapsedWhileRunningMs: 0 };
     }
 
     const candidates = liveEvents
@@ -168,7 +211,7 @@ export function deriveResumeClockState(liveEvents, defaults = { period: 'Q1', cl
         .filter(Boolean);
 
     if (!candidates.length) {
-        return persistedState || { period: fallbackPeriod, clock: fallbackClock, restored: false };
+        return persistedState || { period: fallbackPeriod, clock: fallbackClock, restored: false, running: false, elapsedWhileRunningMs: 0 };
     }
 
     const withTimestamp = candidates.filter(item => Number.isFinite(item.createdAtMs));
