@@ -371,7 +371,46 @@ describe('React app parent tools integration', () => {
         await submitForm(container, 'Add link');
         expect(serviceMocks.addParentTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
 
-        await clickButton(container, 'Tipoff');
+        expect(container.textContent).toContain('Tipoff');
+        expect(container.textContent).toContain('Open');
+        expect(container.textContent).toContain('Share');
+        expect(container.textContent).toContain('Save');
+        expect(container.textContent).toContain('Copy');
+
+        await clickButton(container, 'Open');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://img.example.test/tipoff.jpg');
+
+        publicActionMocks.sharePublicUrl.mockResolvedValueOnce('copied');
+        await clickButton(container, 'Share');
+        expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Tipoff',
+            url: 'https://img.example.test/tipoff.jpg'
+        }));
+        expect(container.textContent).toContain('Share unavailable here. Link copied instead.');
+
+        const originalCreateElement = document.createElement.bind(document);
+        const downloadClick = vi.fn();
+        const downloadRemove = vi.fn();
+        let downloadLink;
+        vi.spyOn(document, 'createElement').mockImplementation((tagName, options) => {
+            if (String(tagName).toLowerCase() === 'a') {
+                downloadLink = originalCreateElement('a');
+                downloadLink.click = downloadClick;
+                downloadLink.remove = downloadRemove;
+                return downloadLink;
+            }
+            return originalCreateElement(tagName, options);
+        });
+        await clickButton(container, 'Save');
+        expect(downloadLink.href).toBe('https://img.example.test/tipoff.jpg');
+        expect(downloadLink.download).toBe('tipoff');
+        expect(downloadLink.rel).toBe('noopener noreferrer');
+        expect(downloadClick).toHaveBeenCalled();
+        expect(downloadRemove).toHaveBeenCalled();
+        document.createElement.mockRestore();
+
+        await clickButton(container, 'Copy');
+        expect(navigator.clipboard.writeText).toHaveBeenCalledWith('https://img.example.test/tipoff.jpg');
+        expect(container.textContent).toContain('Media link copied.');
     });
 });
