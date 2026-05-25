@@ -35,6 +35,7 @@ export type AppSearchTeam = {
   city?: string | null;
   state?: string | null;
   isPublic?: boolean;
+  active?: boolean;
   ownerId?: string | null;
   adminEmails?: string[];
   photoUrl?: string | null;
@@ -226,6 +227,7 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
   if (homeTeamsResult.status === 'fulfilled' && homeTeamsResult.value) {
     (homeTeamsResult.value.teams || []).forEach((team: any) => {
       if (!team?.teamId) return;
+      if (team.active === false) return;
       const existing = teamsById.get(team.teamId);
       teamsById.set(team.teamId, {
         ...existing,
@@ -236,6 +238,7 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
         city: existing?.city || '',
         state: existing?.state || '',
         isPublic: existing?.isPublic,
+        active: team.active ?? existing?.active,
         ownerId: existing?.ownerId,
         adminEmails: existing?.adminEmails || [],
         photoUrl: team.photoUrl || existing?.photoUrl || null,
@@ -365,6 +368,7 @@ function normalizeTeams(teams: any[]): AppSearchTeam[] {
       city: cleanString(team?.city),
       state: cleanString(team?.state),
       isPublic: team?.isPublic,
+      active: team?.active,
       ownerId: cleanString(team?.ownerId),
       adminEmails: Array.isArray(team?.adminEmails) ? team.adminEmails : [],
       photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl)
@@ -374,6 +378,7 @@ function normalizeTeams(teams: any[]): AppSearchTeam[] {
 
 function canUserDiscoverTeamInAppSearch(team: AppSearchTeam, user: AuthUser | null) {
   if (!team) return false;
+  if (team.active === false) return false;
   if (team.fromAppAccess) return true;
   if (team.isPublic !== false) return true;
   if (!user) return false;
