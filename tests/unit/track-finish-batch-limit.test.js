@@ -220,6 +220,40 @@ describe('standard tracker finish batch limits', () => {
         ]);
     });
 
+    it('preserves beta basketball finish event clocks, jersey numbers, and playing time', async () => {
+        const harness = createFirestoreHarness();
+
+        await commitStandardTrackerFinishData({
+            db: harness.db,
+            writeBatch: harness.writeBatch,
+            doc: harness.doc,
+            collection: harness.collection,
+            teamId: 'team-1',
+            gameId: 'game-1',
+            currentUserUid: 'coach-1',
+            gameLog: [{ text: 'Ava made a basket', clock: '03:21', period: 'Q4', ts: 99 }],
+            players: [{ id: 'p1', name: 'Ava', num: '23' }],
+            playerStatsByPlayerId: { p1: { pts: 2, fouls: 1, time: 123000 } },
+            columns: ['PTS', 'FOULS'],
+            finalHome: 44,
+            finalAway: 40,
+            summary: 'Finished cleanly.',
+            opponentStats: {},
+            includeTimeMs: true
+        });
+
+        expect(harness.batches[0].operations[0].data).toMatchObject({
+            gameTime: '03:21',
+            timestamp: 99
+        });
+        expect(harness.batches[1].operations[0].data).toMatchObject({
+            playerName: 'Ava',
+            playerNumber: '23',
+            timeMs: 123000,
+            stats: expect.objectContaining({ pts: 2, fouls: 1 })
+        });
+    });
+
     it('rejects when a secondary aggregated stats batch fails after primary commit', async () => {
         const statsBatchFailure = new Error('Secondary aggregated stats batch failed');
         const harness = createFirestoreHarness({
@@ -254,6 +288,19 @@ describe('standard tracker finish batch limits', () => {
         expect(harness.batches[1].operations).toHaveLength(450);
         expect(harness.batches[2].operations).toHaveLength(450);
         expect(harness.batches.some((batch) => batch.operations.some((op) => op.type === 'update'))).toBe(false);
+    });
+
+    it('wires the beta basketball tracker finish path through the tested finish helper', () => {
+        const source = readFileSync(new URL('../../js/track-basketball.js', import.meta.url), 'utf8');
+        const saveAndCompleteIndex = source.indexOf('async function saveAndComplete()');
+        const helperAwaitIndex = source.indexOf('await commitStandardTrackerFinishData({', saveAndCompleteIndex);
+        const catchIndex = source.indexOf('} catch (error) {', helperAwaitIndex);
+
+        expect(source).toContain("import { commitStandardTrackerFinishData } from './track-finish.js?v=2';");
+        expect(helperAwaitIndex).toBeGreaterThan(saveAndCompleteIndex);
+        expect(source.indexOf('includeTimeMs: true', helperAwaitIndex)).toBeGreaterThan(helperAwaitIndex);
+        expect(source.indexOf('const batch = writeBatch(db);', saveAndCompleteIndex)).toBe(-1);
+        expect(catchIndex).toBeGreaterThan(helperAwaitIndex);
     });
 
     it('wires the production track.html submit path through the tested finish helper before success-only side effects', () => {
