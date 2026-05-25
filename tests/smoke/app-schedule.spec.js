@@ -399,6 +399,14 @@ async function mockScheduleModules(page, options = {}) {
                     window.__scheduleCalls.rideshare.push({ action: 'status', offerId: offer.id, status });
                 }
 
+                export async function loadStaffRsvpReminderPreview() {
+                    return { missingPlayerCount: 0, eligibleEmailCount: 0, players: [] };
+                }
+
+                export async function sendStaffRsvpReminder() {
+                    return { missingPlayerCount: 0, eligibleEmailCount: 0, emailSentCount: 0, players: [] };
+                }
+
                 export function summarizeParentScheduleRideOffers(offers) {
                     return summarizeRideOffers(offers);
                 }

@@ -312,6 +312,14 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export async function releaseParentScheduleAssignmentClaim() {}
                 export async function markParentPracticePacketComplete() {}
 
+                export async function loadStaffRsvpReminderPreview() {
+                    return { missingPlayerCount: 0, eligibleEmailCount: 0, players: [] };
+                }
+
+                export async function sendStaffRsvpReminder() {
+                    return { missingPlayerCount: 0, eligibleEmailCount: 0, emailSentCount: 0, players: [] };
+                }
+
                 export function summarizeParentScheduleRideOffers() {
                     return { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false };
                 }
