@@ -43,6 +43,10 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
         const playerStats = safeStatsByPlayerId[player.id] || {};
 
         const normalizedStats = buildNormalizedPlayerStats(playerStats, columns);
+        // If we are including timeMs, ensure the internal 'time' accumulator is not persisted as a stat.
+        if (includeTimeMs && normalizedStats.time !== undefined) {
+            delete normalizedStats.time;
+        }
         const { publicStats, privateStats } = splitPlayerStatsByVisibility(statTrackerConfig, normalizedStats);
 
         const playerNumber = player.number ?? player.num ?? '';

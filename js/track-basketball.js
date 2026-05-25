@@ -9,6 +9,7 @@ import { getApp } from './vendor/firebase-app.js';
 import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=3';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { commitStandardTrackerFinishData } from './track-finish.js?v=2';
+import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=2';
 import { hasScorekeepingTeamAccess } from './team-access.js?v=2';
 
 let currentTeamId = null;
@@ -757,6 +758,8 @@ async function startStop() {
         await Promise.all(eventsSnap.docs.map(d => deleteDoc(d.ref)));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
         await Promise.all(statsSnap.docs.map(d => deleteDoc(d.ref)));
+        const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
+        await Promise.all(privateStatsSnap.docs.map(d => deleteDoc(d.ref)));
         // Reset game doc scores/opponent stats to avoid mixing old data
         await updateGame(currentTeamId, currentGameId, { homeScore: 0, awayScore: 0, opponentStats: {} });
       }
@@ -1384,6 +1387,16 @@ async function init() {
       if (typeof d.data().timeMs === 'number') {
         state.stats[d.id].time = d.data().timeMs;
       }
+    });
+
+    const privateStatsSnapshot = currentConfig
+        ? await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`))
+        : { forEach: () => {} }; // Dummy object if no config to avoid errors
+
+    privateStatsSnapshot.forEach(d => {
+        if (!state.stats[d.id]) state.stats[d.id] = statDefaults(currentConfig.columns);
+        const existing = d.data().stats || {};
+        Object.assign(state.stats[d.id], existing);
     });
 
     // Recalculate home score if needed based on points column
