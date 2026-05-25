@@ -5,6 +5,16 @@ const dbMocks = vi.hoisted(() => ({
     createFamilyShareToken: vi.fn(),
     createParentMembershipRequest: vi.fn(),
     createTeamMediaLink: vi.fn(),
+    db: { _is_mock_db_instance: true }, // Mock db instance for runTransaction
+    doc: vi.fn((db, path, ...segments) => ({
+        path: `${path}/${segments.join('/')}`,
+        id: segments[segments.length - 1] || 'mock-id',
+    })),
+    collection: vi.fn((db, path) => ({ path })),
+    getDoc: vi.fn(),
+    updateDoc: vi.fn(),
+    setDoc: vi.fn(),
+    runTransaction: vi.fn(),
     getPlayers: vi.fn(),
     getTeam: vi.fn(),
     getTeamMediaFolders: vi.fn(),
@@ -21,6 +31,24 @@ const dbMocks = vi.hoisted(() => ({
     uploadTeamMediaPhoto: vi.fn()
 }));
 
+const firebaseMocks = vi.hoisted(() => {
+    let nextDocId = 1;
+    return {
+        db: { _is_mock_db_instance: true },
+        serverTimestamp: vi.fn(() => ({ _serverTimestamp: true })),
+        collection: vi.fn((db, ...segments) => ({ path: segments.join('/') })),
+        doc: vi.fn((dbOrCollection, ...segments) => {
+            if (segments.length === 0) {
+                const id = `registration-${nextDocId++}`;
+                return { id, path: `${dbOrCollection.path}/${id}` };
+            }
+            const id = String(segments[segments.length - 1] || 'mock-id');
+            return { id, path: segments.join('/') };
+        }),
+        runTransaction: vi.fn()
+    };
+});
+
 const feeMocks = vi.hoisted(() => ({
     formatParentFeeAmount: vi.fn((fee) => `$${Number(fee.amountDueCents || 0) / 100}`),
     formatParentFeeDueDate: vi.fn((value) => value || 'No due date'),
@@ -30,7 +58,20 @@ const feeMocks = vi.hoisted(() => ({
 }));
 
 const registrationMocks = vi.hoisted(() => ({
+    buildPendingRegistrationRecord: vi.fn((submission) => ({
+        teamId: submission.form.teamId,
+        formId: submission.form.id,
+        participant: submission.participant,
+        guardian: submission.guardian,
+        waiverAccepted: submission.waiverAccepted,
+        selectedOption: submission.selectedOption,
+        paymentPlan: { id: submission.selectedPaymentPlanId || 'pay_full' },
+        status: submission.status || 'pending',
+        feeSnapshot: submission.feeSnapshot,
+        submittedAt: submission.now
+    })),
     calculateRegistrationFeeSnapshot: vi.fn((form) => ({ finalAmountDueCents: form.finalAmountDueCents ?? 0 })),
+    requiresRegistrationOption: vi.fn(() => true),
     getActiveRegistrationOptions: vi.fn((form) => form.options || []),
     getRegistrationPaymentNotice: vi.fn((form) => form.paymentNotice || ''),
     getPaymentPlanChoices: vi.fn(() => [{ id: 'pay_full', type: 'pay_full', title: 'Pay in full' }]),
@@ -45,7 +86,13 @@ const registrationMocks = vi.hoisted(() => ({
         programName: form.programName || 'Registration',
         description: form.description || '',
         season: form.season || ''
-    }))
+    })),
+    decideRegistrationPlacement: vi.fn((params) => ({
+        status: 'pending',
+        message: 'Placement pending',
+        selectedOption: params.selectedOptionId ? { id: params.selectedOptionId, countKey: params.selectedOptionId } : null,
+        nextCounts: { enrolled: 1, waitlisted: 0 },
+    })),
 }));
 
 const mediaMocks = vi.hoisted(() => ({
@@ -67,6 +114,7 @@ const scheduleMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
 vi.mock('../../js/team-media-utils.js', () => mediaMocks);
@@ -94,6 +142,7 @@ import {
     loadParentRegistrationDetail,
     loadTeamMediaForApp,
     revokeParentFamilyShare,
+    submitOfflineRegistration,
     submitParentAccessRequest,
     updateParentFamilyShareCalendars,
     uploadParentTeamMediaFile,
@@ -152,6 +201,220 @@ describe('React app parent tools service', () => {
         ]);
         await submitParentAccessRequest('team-a', 'player-1', 'Guardian');
         expect(dbMocks.createParentMembershipRequest).toHaveBeenCalledWith('team-a', 'player-1', 'Guardian');
+    });
+
+    it('submits an offline registration with capacity and waitlist handling', async () => {
+        const teamId = 'team-1';
+        const formId = 'form-1';
+        const registrationRecord = {
+            participant: { name: 'Test Participant' },
+            guardian: { name: 'Test Guardian' },
+            waiverAccepted: true,
+            selectedOption: { id: 'opt-1', countKey: 'opt-1-key' },
+            selectedPaymentPlanId: 'pay_full',
+            submittedAt: new Date(),
+        };
+
+        const mockForm = {
+            id: formId,
+            teamId,
+            programName: 'Summer Camp',
+            registrationOptions: [
+                { id: 'opt-1', countKey: 'opt-1-key', capacityLimit: 10, waitlistEnabled: true, active: true },
+            ],
+            registrationOptionCounts: {
+                'opt-1-key': { enrolled: 9, waitlisted: 0 },
+            },
+        };
+
+        dbMocks.getDoc.mockImplementation((docRef) => {
+            if (docRef.path.includes(`teams/${teamId}/registrationForms/${formId}`)) {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => mockForm,
+                    id: formId,
+                });
+            }
+            return Promise.resolve({ exists: () => false, data: () => null });
+        });
+
+        // Mock runTransaction
+        firebaseMocks.runTransaction.mockImplementation(async (db, updateFunction) => {
+            const mockTransaction = {
+                get: (docRef) => dbMocks.getDoc(docRef),
+                update: dbMocks.updateDoc,
+                set: dbMocks.setDoc,
+            };
+            return updateFunction(mockTransaction);
+        });
+
+        registrationMocks.decideRegistrationPlacement.mockReturnValue({
+            status: 'pending',
+            message: 'Placement pending',
+            selectedOption: { id: 'opt-1', countKey: 'opt-1-key' },
+            nextCounts: { enrolled: 10, waitlisted: 0 },
+        });
+
+        const result = await submitOfflineRegistration(teamId, formId, registrationRecord);
+
+        expect(result).toEqual({ success: true, status: 'pending', registrationId: expect.any(String) });
+        expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(1);
+
+        // Verify that updateDoc was called on the formRef with updated counts
+        expect(dbMocks.updateDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: `teams/${teamId}/registrationForms/${formId}` }),
+            expect.objectContaining({
+                'registrationOptionCounts.opt-1-key.enrolled': 10,
+                'registrationOptionCounts.opt-1-key.waitlisted': 0,
+                registrationCapacityUpdateId: expect.any(String),
+                updatedAt: { _serverTimestamp: true },
+            })
+        );
+
+        // Verify that setDoc was called to add the new registration record
+        expect(dbMocks.setDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: expect.stringContaining(`teams/${teamId}/registrationForms/${formId}/registrations/`) }),
+            expect.objectContaining({
+                participant: registrationRecord.participant,
+                guardian: registrationRecord.guardian,
+                waiverAccepted: true,
+                selectedOption: expect.objectContaining({ id: 'opt-1' }),
+                status: 'pending',
+            })
+        );
+    });
+
+    it('handles waitlisted placement correctly', async () => {
+        const teamId = 'team-1';
+        const formId = 'form-1';
+        const registrationRecord = {
+            participant: { name: 'Test Participant' },
+            guardian: { name: 'Test Guardian' },
+            waiverAccepted: true,
+            selectedOption: { id: 'opt-1', countKey: 'opt-1-key' },
+            selectedPaymentPlanId: 'pay_full',
+            submittedAt: new Date(),
+        };
+
+        const mockForm = {
+            id: formId,
+            teamId,
+            programName: 'Summer Camp',
+            registrationOptions: [
+                { id: 'opt-1', countKey: 'opt-1-key', capacityLimit: 10, waitlistEnabled: true, active: true },
+            ],
+            registrationOptionCounts: {
+                'opt-1-key': { enrolled: 10, waitlisted: 0 }, // Form is full
+            },
+        };
+
+        dbMocks.getDoc.mockImplementation((docRef) => {
+            if (docRef.path.includes(`teams/${teamId}/registrationForms/${formId}`)) {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => mockForm,
+                    id: formId,
+                });
+            }
+            return Promise.resolve({ exists: () => false, data: () => null });
+        });
+
+        firebaseMocks.runTransaction.mockImplementation(async (db, updateFunction) => {
+            const mockTransaction = {
+                get: (docRef) => dbMocks.getDoc(docRef),
+                update: dbMocks.updateDoc,
+                set: dbMocks.setDoc,
+            };
+            return updateFunction(mockTransaction);
+        });
+
+        registrationMocks.decideRegistrationPlacement.mockReturnValue({
+            status: 'waitlisted',
+            message: 'Placement waitlisted',
+            selectedOption: { id: 'opt-1', countKey: 'opt-1-key' },
+            nextCounts: { enrolled: 10, waitlisted: 1 },
+        });
+
+        const result = await submitOfflineRegistration(teamId, formId, registrationRecord);
+
+        expect(result).toEqual({ success: true, status: 'waitlisted', registrationId: expect.any(String) });
+        expect(dbMocks.updateDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: `teams/${teamId}/registrationForms/${formId}` }),
+            expect.objectContaining({
+                'registrationOptionCounts.opt-1-key.enrolled': 10,
+                'registrationOptionCounts.opt-1-key.waitlisted': 1,
+                registrationCapacityUpdateId: expect.any(String),
+                updatedAt: { _serverTimestamp: true },
+            })
+        );
+        expect(dbMocks.setDoc).toHaveBeenCalledWith(
+            expect.any(Object),
+            expect.objectContaining({
+                participant: registrationRecord.participant,
+                guardian: registrationRecord.guardian,
+                waiverAccepted: true,
+                selectedOption: expect.objectContaining({ id: 'opt-1' }),
+                status: 'waitlisted',
+            })
+        );
+    });
+
+    it('throws an error if placement is blocked', async () => {
+        const teamId = 'team-1';
+        const formId = 'form-1';
+        const registrationRecord = {
+            participant: { name: 'Test Participant' },
+            guardian: { name: 'Test Guardian' },
+            waiverAccepted: true,
+            selectedOption: { id: 'opt-2', countKey: 'opt-2-key' }, // Option without waitlist
+            selectedPaymentPlanId: 'pay_full',
+            submittedAt: new Date(),
+        };
+
+        const mockForm = {
+            id: formId,
+            teamId,
+            programName: 'Summer Camp',
+            registrationOptions: [
+                { id: 'opt-2', countKey: 'opt-2-key', capacityLimit: 10, waitlistEnabled: false, active: true },
+            ],
+            registrationOptionCounts: {
+                'opt-2-key': { enrolled: 10, waitlisted: 0 }, // Form is full, no waitlist
+            },
+        };
+
+        dbMocks.getDoc.mockImplementation((docRef) => {
+            if (docRef.path.includes(`teams/${teamId}/registrationForms/${formId}`)) {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => mockForm,
+                    id: formId,
+                });
+            }
+            return Promise.resolve({ exists: () => false, data: () => null });
+        });
+
+        firebaseMocks.runTransaction.mockImplementation(async (db, updateFunction) => {
+            const mockTransaction = {
+                get: (docRef) => dbMocks.getDoc(docRef),
+                update: dbMocks.updateDoc,
+                set: dbMocks.setDoc,
+            };
+            return updateFunction(mockTransaction);
+        });
+
+        registrationMocks.decideRegistrationPlacement.mockReturnValue({
+            status: 'blocked',
+            message: 'Option is full and not accepting waitlist registrations.',
+            selectedOption: { id: 'opt-2', countKey: 'opt-2-key' },
+            nextCounts: { enrolled: 10, waitlisted: 0 },
+        });
+
+        await expect(submitOfflineRegistration(teamId, formId, registrationRecord)).rejects.toThrow(
+            'Option is full and not accepting waitlist registrations.'
+        );
+        expect(dbMocks.updateDoc).not.toHaveBeenCalled();
+        expect(dbMocks.setDoc).not.toHaveBeenCalled();
     });
 
     it('normalizes fee records with parent-dashboard status, detail, and checkout data', async () => {
