@@ -109,6 +109,17 @@ PTS=pts|visibility=public|scope=player|topStat=true
     });
   });
 
+  it('preserves punctuation in public stat keys during visibility splitting', () => {
+    const config = normalizeStatTrackerConfig({
+      columns: ['AST/TO', 'FG%']
+    });
+
+    expect(splitPlayerStatsByVisibility(config, { 'AST/TO': 3, 'FG%': 47 })).toEqual({
+      publicStats: { 'ast/to': 3, 'fg%': 47 },
+      privateStats: {}
+    });
+  });
+
   it('builds grouped public leaderboards with derived metrics and ranking direction', () => {
     const config = normalizeStatTrackerConfig({
       name: 'Advanced Hoops',

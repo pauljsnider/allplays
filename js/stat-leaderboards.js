@@ -5,6 +5,13 @@ function slugifyStatId(value) {
     .replace(/[^a-z0-9_]+/g, '');
 }
 
+function normalizeStoredStatKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '');
+}
+
 function normalizeLabel(value, fallback = 'Stat') {
   const trimmed = String(value || '').trim();
   return trimmed || fallback;
@@ -189,11 +196,12 @@ export function splitPlayerStatsByVisibility(config = {}, stats = {}) {
   const privateStats = {};
 
   Object.entries(stats || {}).forEach(([key, value]) => {
-    const normalizedKey = slugifyStatId(key);
-    if (privateStatIds.has(normalizedKey)) {
-      privateStats[normalizedKey] = value;
-    } else {
-      publicStats[normalizedKey || key] = value;
+    const privateKey = slugifyStatId(key);
+    const publicKey = normalizeStoredStatKey(key);
+    if (privateStatIds.has(privateKey)) {
+      privateStats[privateKey] = value;
+    } else if (publicKey) {
+      publicStats[publicKey] = value;
     }
   });
 
