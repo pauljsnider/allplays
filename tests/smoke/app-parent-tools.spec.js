@@ -223,6 +223,9 @@ async function mockParentToolsModules(page) {
                         }]
                     };
                 }
+                export async function createTeamMediaAlbumForApp() {
+                    return 'folder-2';
+                }
                 export async function uploadParentTeamMediaPhoto(teamId, folderId, file) {
                     window.__mediaUploads.push({ type: 'photo', teamId, folderId, name: file.name });
                     return 'photo-2';
