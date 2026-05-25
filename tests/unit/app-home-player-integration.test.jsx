@@ -160,6 +160,23 @@ async function clickLinkByHref(container, href) {
     await flush();
 }
 
+async function attachAthleteHeadshotFile(container, fileName = 'headshot.png', type = 'image/png') {
+    const input = container.querySelector('.athlete-profile-editor input[type="file"]');
+    if (!input) {
+        throw new Error('Athlete headshot input not found');
+    }
+    const file = new File(['headshot-bytes'], fileName, { type });
+    Object.defineProperty(input, 'files', {
+        configurable: true,
+        value: [file]
+    });
+    await act(async () => {
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+    return file;
+}
+
 async function attachComposerFile(container, fileName = 'social.png') {
     const input = container.querySelector('input[type="file"]');
     if (!input) {
@@ -183,6 +200,8 @@ beforeEach(() => {
         callback(0);
         return 0;
     };
+    window.URL.createObjectURL = vi.fn((file) => `blob:${file.name}`);
+    window.URL.revokeObjectURL = vi.fn();
     window.scrollTo = vi.fn();
 
     const nextEvent = event({ id: 'game-next', opponent: 'Falcons' });
@@ -352,7 +371,7 @@ beforeEach(() => {
 
     playerMocks.loadParentPlayerDetail.mockResolvedValue({
         child: { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' },
-        player: { id: 'player-1', name: 'Pat Star', teamId: 'team-1', teamName: 'Bears', number: '9', photoUrl: '' },
+        player: { id: 'player-1', name: 'Pat Star', teamId: 'team-1', teamName: 'Bears', number: '9', photoUrl: 'https://example.test/linked-season.jpg' },
         team: { id: 'team-1', name: 'Bears', sport: 'basketball' },
         events: [statEvent, nextEvent, practice],
         nextEvent,
@@ -389,7 +408,18 @@ beforeEach(() => {
             unpaidCents: 1200
         },
         athleteProfile: {
-            profile: { id: 'profile-1', athlete: { name: 'Pat Star', headline: '2028 Guard' }, bio: { position: 'Guard' }, privacy: 'public', seasons: [{ teamId: 'team-1', playerId: 'player-1' }] },
+            profile: {
+                id: 'profile-1',
+                athlete: { name: 'Pat Star', headline: '2028 Guard' },
+                bio: { position: 'Guard' },
+                privacy: 'public',
+                seasons: [{ teamId: 'team-1', playerId: 'player-1' }],
+                profilePhotoUrl: 'https://example.test/custom-headshot.jpg',
+                profilePhotoPath: 'athlete-profile-media/user-1/profile-1/custom.jpg',
+                profilePhotoMimeType: 'image/jpeg',
+                profilePhotoSizeBytes: 42,
+                profilePhotoUploadedAtMs: 1234
+            },
             shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
             builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-1&playerId=player-1&profileId=profile-1'
         }
@@ -572,19 +602,33 @@ describe('React app Home and player drill-in integration', () => {
         await waitForText(container, 'Athlete Profile Builder');
         expect(buttonByText(container, 'Athlete Profile').getAttribute('aria-pressed')).toBe('true');
 
+        expect(container.textContent).toContain('Custom athlete profile headshot');
+        await attachAthleteHeadshotFile(container, 'new-headshot.png');
+        expect(container.textContent).toContain('New headshot selected. Save to publish it.');
         await clickButton(container, 'Save Athlete Profile');
         await waitForText(container, 'Saved');
         expect(playerMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
             user: auth.user,
             teamId: 'team-1',
             playerId: 'player-1',
-            profileId: 'profile-1'
+            profileId: 'profile-1',
+            profilePhotoFile: expect.objectContaining({ name: 'new-headshot.png', type: 'image/png' }),
+            resetProfilePhoto: false
         }));
         expect(playerMocks.loadParentPlayerDetail).toHaveBeenCalledTimes(2);
         expect(buttonByText(container, 'Athlete Profile').getAttribute('aria-pressed')).toBe('true');
         expect(container.textContent).toContain('Athlete Profile Builder');
         expect(container.textContent).not.toContain('Parents can update the player photo');
         expect(container.textContent).not.toContain('Loading player');
+
+        await attachAthleteHeadshotFile(container, 'notes.txt', 'text/plain');
+        await waitForText(container, 'Choose an image file for the athlete headshot.');
+        await clickButton(container, 'Use linked season photo');
+        await clickButton(container, 'Save Athlete Profile');
+        expect(playerMocks.saveParentAthleteProfileDraft).toHaveBeenLastCalledWith(expect.objectContaining({
+            profilePhotoFile: null,
+            resetProfilePhoto: true
+        }));
 
         await clickButton(container, 'Incentives');
         await waitForText(container, 'Incentive wallet');

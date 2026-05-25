@@ -6,11 +6,13 @@ import {
   getPlayers,
   getPublicTrackingItems,
   getTeam,
+  deleteAthleteProfileMediaByPath,
   inviteCoParentToAthlete,
   listAthleteProfilesForParent,
   listCertificatesForPlayer,
   saveAthleteProfile,
   updatePlayerProfile,
+  uploadAthleteProfileMedia,
   uploadPlayerPhoto
 } from '../../../../js/db.js';
 import {
@@ -311,25 +313,53 @@ export async function saveParentAthleteProfileDraft({
   teamId,
   playerId,
   draft,
-  profileId
+  profileId,
+  profilePhotoFile,
+  resetProfilePhoto = false
 }: {
   user: AuthUser | null;
   teamId: string;
   playerId: string;
   draft: Record<string, any>;
   profileId?: string | null;
+  profilePhotoFile?: File | null;
+  resetProfilePhoto?: boolean;
 }) {
   assertLinkedParent(user, teamId, playerId);
   const seasonKey = buildParentSeasonKey(teamId, playerId);
-  const saved = await saveAthleteProfile(user!.uid, {
-    ...draft,
-    selectedSeasonKeys: [seasonKey]
-  }, profileId ? { profileId } : {});
+  const workingProfileId = profileId || createLocalId('profile');
+  let uploadedProfilePhoto: Record<string, any> | null = null;
+  if (profilePhotoFile) {
+    validateImageFile(profilePhotoFile);
+    uploadedProfilePhoto = await uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' });
+  }
+  const profilePhoto = uploadedProfilePhoto || (resetProfilePhoto ? null : draft.profilePhoto);
+
+  let saved;
+  try {
+    saved = await saveAthleteProfile(user!.uid, {
+      ...draft,
+      profilePhoto,
+      selectedSeasonKeys: [seasonKey]
+    }, { profileId: workingProfileId });
+  } catch (error) {
+    if (uploadedProfilePhoto?.storagePath) {
+      await deleteAthleteProfileMediaByPath(uploadedProfilePhoto.storagePath).catch(() => undefined);
+    }
+    throw error;
+  }
   return {
     profile: saved,
     shareUrl: buildAthleteProfileShareUrl(getLegacyOrigin(), saved.id),
     builderUrl: buildLegacyUrl('athlete-profile-builder.html', { teamId, playerId, profileId: saved.id })
   };
+}
+
+function createLocalId(prefix: string) {
+  if (globalThis.crypto?.randomUUID) {
+    return `${prefix}_${globalThis.crypto.randomUUID()}`;
+  }
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function normalizePrivateProfile(profile: any): ParentPlayerPrivateProfile | null {
