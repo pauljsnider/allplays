@@ -7,6 +7,7 @@ import {
   getRsvpSummaries,
   getTeam,
   getTrackedCalendarEventUids,
+  updateGame,
   createRideOffer,
   claimAssignmentSlot,
   requestRideSpot,
@@ -32,6 +33,7 @@ import { resolveMyRsvpByChildForGame } from '../../../../js/parent-dashboard-rsv
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from '../../../../js/availability-preferences.js';
 import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
 import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
+import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import {
@@ -88,6 +90,12 @@ export type ParentPracticePacket = {
   homePacket: PracticeHomePacket;
   completions: PracticePacketCompletion[];
   children: ParentPracticePacketChild[];
+};
+
+export type GameScoreInput = {
+  homeScore: number;
+  awayScore: number;
+  scoreStreamSessionId?: string | null;
 };
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
@@ -256,6 +264,12 @@ async function readWithNativeFallback<T>(label: string, primary: () => Promise<T
 
 function compactString(value: unknown) {
   return String(value || '').trim();
+}
+
+export function normalizeGameScoreValue(value: unknown) {
+  const parsed = Number.parseInt(String(value ?? 0), 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, parsed);
 }
 
 function isActiveTeam(team: Record<string, any> | null | undefined) {
@@ -548,6 +562,7 @@ function createScheduleEvent(input: {
   visibility?: string | null;
   assignments?: any[];
   rsvpSummary?: ScheduleRsvpSummary | null;
+  canUpdateScore?: boolean;
   practiceAttendance?: any;
   practiceHomePacket?: any;
   practiceSessionId?: string | null;
@@ -581,6 +596,7 @@ function createScheduleEvent(input: {
     liveStatus: input.liveStatus || null,
     homeScore: toNullableScore(input.homeScore),
     awayScore: toNullableScore(input.awayScore),
+    canUpdateScore: input.canUpdateScore === true,
     isHome: input.isHome ?? null,
     kitColor: input.kitColor || null,
     arrivalTime,
@@ -611,7 +627,7 @@ function createScheduleEvent(input: {
   };
 }
 
-async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[]) {
+async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
   const events: ParentScheduleEvent[] = [];
   const [team, dbGames, trackedUids, practiceSessions] = await Promise.all([
     loadTeam(teamId),
@@ -622,6 +638,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
   if (!team) return events;
 
   const teamName = compactString(team.name) || teamId;
+  const teamWithId = { ...team, id: team.id || teamId };
   teamChildren.forEach((child) => {
     child.teamName = child.teamName || teamName;
   });
@@ -664,6 +681,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             liveStatus: game.liveStatus || null,
             homeScore: game.homeScore ?? null,
             awayScore: game.awayScore ?? null,
+            canUpdateScore: false,
             arrivalTime: game.arrivalTime || null,
             notes: occurrence.notes || null,
             seasonLabel: game.seasonLabel || null,
@@ -706,6 +724,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           liveStatus: game.liveStatus || null,
           homeScore: game.homeScore ?? null,
           awayScore: game.awayScore ?? null,
+          canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),
           isHome: game.isHome ?? null,
           kitColor: game.kitColor || null,
           arrivalTime: game.arrivalTime || null,
@@ -917,7 +936,7 @@ export async function loadParentSchedule(user: AuthUser | null): Promise<ParentS
 
   const eventBatches = await Promise.all([...byTeam.entries()].map(async ([teamId, teamChildren]) => {
     try {
-      return await buildTeamSchedule(teamId, teamChildren);
+      return await buildTeamSchedule(teamId, teamChildren, user);
     } catch (error) {
       console.warn('[schedule-service] Failed to load team schedule:', teamId, error);
       return [];
@@ -965,6 +984,36 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     console.warn('[schedule-service] Falling back to REST RSVP submit:', error);
     return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note);
   }
+}
+
+export async function updateGameScore(teamId: string, gameId: string, score: GameScoreInput, user: AuthUser) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before updating the score.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before updating the score.');
+  }
+
+  const payload: Record<string, unknown> = {
+    homeScore: normalizeGameScoreValue(score.homeScore),
+    awayScore: normalizeGameScoreValue(score.awayScore),
+    scoreUpdatedAt: new Date(),
+    scoreUpdatedBy: user.uid
+  };
+  const scoreStreamSessionId = compactString(score.scoreStreamSessionId);
+  if (scoreStreamSessionId) {
+    payload.scoreStreamSessionId = scoreStreamSessionId;
+  }
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, payload)), 'Score update');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST score update:', error);
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
+  }
+
+  return payload;
 }
 
 async function nativeClaimAssignment(event: ParentScheduleEvent, user: AuthUser, role: string, name: string) {
