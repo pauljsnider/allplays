@@ -28,7 +28,8 @@ const dbMocks = vi.hoisted(() => ({
     revokeFamilyShareToken: vi.fn(),
     updateFamilyShareTokenCalendars: vi.fn(),
     uploadTeamMediaFile: vi.fn(),
-    uploadTeamMediaPhoto: vi.fn()
+    uploadTeamMediaPhoto: vi.fn(),
+    createRegistrationCheckoutSession: vi.fn()
 }));
 
 const firebaseMocks = vi.hoisted(() => {
@@ -109,6 +110,11 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn().mockResolvedValue('native-token')
 }));
 
+const publicActionMocks = vi.hoisted(() => ({
+    openPublicUrl: vi.fn(),
+    sharePublicUrl: vi.fn().mockResolvedValue('shared')
+}));
+
 const scheduleMocks = vi.hoisted(() => ({
     loadParentSchedule: vi.fn()
 }));
@@ -119,6 +125,7 @@ vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
 vi.mock('../../js/team-media-utils.js', () => mediaMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
+vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 
 import {
@@ -146,7 +153,8 @@ import {
     submitParentAccessRequest,
     updateParentFamilyShareCalendars,
     uploadParentTeamMediaFile,
-    uploadParentTeamMediaPhoto
+    uploadParentTeamMediaPhoto,
+    initiateRegistrationCheckout
 } from '../../apps/app/src/lib/parentToolsService.ts';
 
 const user = {
@@ -613,5 +621,67 @@ describe('React app parent tools service', () => {
         expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile);
         expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile);
         expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://video.example.test/replay' });
+    });
+
+    it('initiates Stripe checkout for registration and returns URL', async () => {
+        const mockCheckoutUrl = 'https://checkout.stripe.com/mock-session-123';
+        dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: mockCheckoutUrl });
+
+        const teamId = 'team-1';
+        const formId = 'form-reg-1';
+        const registrationId = 'reg-abc';
+        const selectedOptionId = 'option-xyz';
+        const paymentPlanId = 'plan-123';
+        const quantity = 1;
+        const amountCents = 7500;
+        const currency = 'USD';
+
+        const result = await initiateRegistrationCheckout(
+            teamId,
+            formId,
+            registrationId,
+            selectedOptionId,
+            paymentPlanId,
+            quantity,
+            amountCents,
+            currency
+        );
+
+        expect(dbMocks.createRegistrationCheckoutSession).toHaveBeenCalledWith(
+            teamId,
+            formId,
+            registrationId,
+            selectedOptionId,
+            paymentPlanId,
+            quantity,
+            amountCents,
+            currency
+        );
+        expect(result).toEqual({ success: true, checkoutUrl: mockCheckoutUrl });
+    });
+
+    it('throws error if required fields are missing for checkout', async () => {
+        await expect(initiateRegistrationCheckout('', 'f', 'r', 'o', 'p', 1, 100, 'USD'))
+            .rejects.toThrow('Missing required fields for checkout.');
+        await expect(initiateRegistrationCheckout('t', '', 'r', 'o', 'p', 1, 100, 'USD'))
+            .rejects.toThrow('Missing required fields for checkout.');
+        await expect(initiateRegistrationCheckout('t', 'f', '', 'o', 'p', 1, 100, 'USD'))
+            .rejects.toThrow('Missing required fields for checkout.');
+        await expect(initiateRegistrationCheckout('t', 'f', 'r', '', 'p', 1, 100, 'USD'))
+            .rejects.toThrow('Missing required fields for checkout.');
+        await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', '', 1, 100, 'USD'))
+            .rejects.toThrow('Missing required fields for checkout.');
+        await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 0, 100, 'USD'))
+            .rejects.toThrow('Missing required fields for checkout.');
+        await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 1, 0, 'USD'))
+            .rejects.toThrow('Missing required fields for checkout.');
+        await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 1, 100, ''))
+            .rejects.toThrow('Missing required fields for checkout.');
+    });
+
+    it('throws error if checkout URL is not returned from backend', async () => {
+        dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: null });
+        await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 1, 100, 'USD'))
+            .rejects.toThrow('Failed to get checkout URL.');
     });
 });
