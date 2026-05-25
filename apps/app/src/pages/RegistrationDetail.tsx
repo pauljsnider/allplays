@@ -51,11 +51,6 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
           setForm(null);
           return;
         }
-        if (nextForm.onlineCheckout && !(nextForm as any).allowOnlineCheckoutReview) {
-          setError('This registration requires online checkout. Please use the checkout link from registrations.');
-          setForm(null);
-          return;
-        }
         setForm(nextForm);
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         setSelectedOptionId((current) => current || initialOptions[0]?.id || '');
@@ -86,10 +81,6 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
   const submit = async (event: SyntheticEvent) => {
     event.preventDefault();
     if (!form || saving) return;
-    if (form.onlineCheckout) {
-      setError('This registration requires online checkout. Please use the checkout link from registrations.');
-      return;
-    }
 
     const currentParticipant = collectFieldValues(formRef.current, 'participant', participant);
     const currentGuardian = collectFieldValues(formRef.current, 'guardian', guardian);
@@ -118,6 +109,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
 
     setSaving(true);
     try {
+      const currentFeeSnapshot = calculateRegistrationFeeSnapshot(form, { quantity: currentQuantity, now: new Date() });
       const result = await parentToolsService.submitOfflineRegistration(form.teamId, form.id, {
         participant: currentParticipant,
         guardian: currentGuardian,
@@ -126,11 +118,28 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
         selectedOptionId: currentSelectedOptionId,
         selectedPaymentPlanId: currentSelectedPaymentPlanId,
         quantity: currentQuantity,
-        feeSnapshot: calculateRegistrationFeeSnapshot(form, { quantity: currentQuantity, now: new Date() })
+        feeSnapshot: currentFeeSnapshot
       });
-      setMessage(result.status === 'waitlisted'
-        ? 'Registration submitted. You have been added to the waitlist.'
-        : 'Registration submitted. Your registration is pending review.');
+      if (result.status === 'waitlisted') {
+        setMessage('Registration submitted. You have been added to the waitlist.');
+        return;
+      }
+      if (form.onlineCheckout && Number(currentFeeSnapshot.finalAmountDueCents || 0) > 0) {
+        const checkout = await parentToolsService.initiateRegistrationCheckout(
+          form.teamId,
+          form.id,
+          result.registrationId,
+          currentSelectedOptionId,
+          currentSelectedPaymentPlanId,
+          currentQuantity,
+          currentFeeSnapshot.finalAmountDueCents,
+          currentFeeSnapshot.currency || form.currency || 'USD'
+        );
+        await openPublicUrl(checkout.checkoutUrl);
+        setMessage('Registration submitted. Opening Stripe checkout.');
+        return;
+      }
+      setMessage('Registration submitted. Your registration is pending review.');
     } catch (submitError: any) {
       setError(submitError?.code === 'option-full'
         ? submitError.message
@@ -218,7 +227,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
 
           <button type="button" className="primary-button" onClick={submit} disabled={saving || Boolean(message)}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
-            Submit registration
+            {saving ? (form.onlineCheckout ? 'Opening checkout...' : 'Submitting registration...') : (form.onlineCheckout ? 'Pay registration with Stripe' : 'Submit registration')}
           </button>
         </form>
       </section>

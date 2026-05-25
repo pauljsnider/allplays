@@ -8,6 +8,11 @@ import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-r
 const parentToolsServiceMocks = vi.hoisted(() => ({
   loadParentRegistrations: vi.fn(),
   submitOfflineRegistration: vi.fn(),
+  initiateRegistrationCheckout: vi.fn(),
+}));
+
+const publicActionsMocks = vi.hoisted(() => ({
+  openPublicUrl: vi.fn(),
 }));
 
 // Mock registration-flow.js
@@ -23,13 +28,14 @@ const registrationFlowMocks = vi.hoisted(() => ({
     selectedOption: params.selectedOptionId ? { id: params.selectedOptionId, countKey: params.selectedOptionId } : null,
     nextCounts: { enrolled: 1, waitlisted: 0 },
   })),
-  calculateRegistrationFeeSnapshot: vi.fn(() => ({ finalAmountDueCents: 10000 })),
+  calculateRegistrationFeeSnapshot: vi.fn(() => ({ finalAmountDueCents: 10000, currency: 'USD' })),
   getPaymentPlanChoices: vi.fn(() => ([{ id: 'pay_full', title: 'Pay in full' }])),
   getActiveRegistrationOptions: vi.fn(() => ([{ id: 'opt-1', title: 'Option 1', capacityLimit: 10 }])),
   requiresRegistrationOption: vi.fn(() => true),
 }));
 
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
+vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
 vi.mock('../../js/registration-flow.js', () => registrationFlowMocks);
 
 import { RegistrationDetail } from '../../apps/app/src/pages/RegistrationDetail.tsx';
@@ -150,6 +156,11 @@ beforeEach(() => {
     status: 'pending',
     registrationId: 'new-reg-1',
   });
+  parentToolsServiceMocks.initiateRegistrationCheckout.mockResolvedValue({
+    success: true,
+    checkoutUrl: 'https://checkout.stripe.com/c/pay-reg-1',
+  });
+  publicActionsMocks.openPublicUrl.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -250,7 +261,7 @@ describe('RegistrationDetail page', () => {
     expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
   });
 
-  it('blocks deep-linked online checkout forms from offline submission', async () => {
+  it('launches Stripe checkout for online checkout forms', async () => {
     parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
@@ -259,6 +270,7 @@ describe('RegistrationDetail page', () => {
         programName: 'Summer Camp',
         description: 'Skills week',
         season: 'Summer',
+        currency: 'USD',
         feeLabel: '$75.00',
         paymentNotice: 'Online payment required.',
         onlineCheckout: true,
@@ -272,9 +284,124 @@ describe('RegistrationDetail page', () => {
     ]);
 
     const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Pay registration with Stripe');
 
-    await waitForText(container, 'This registration requires online checkout. Please use the checkout link from registrations.');
-    expect(container.textContent).toContain('Registration unavailable');
+    await changeInputValue(container, 'Participant Name', 'Test Participant');
+    await changeInputValue(container, 'Guardian Name', 'Test Guardian');
+    await changeInputValue(container, 'I accept the waiver.', true);
+    await changeInputValue(container, 'Registration option', 'opt-1');
+
+    await clickButton(container, 'Pay registration with Stripe');
+
+    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledTimes(1);
+    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      'new-reg-1',
+      'opt-1',
+      'pay_full',
+      1,
+      10000,
+      'USD'
+    );
+    expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay-reg-1');
+  });
+
+  it('keeps online checkout validation before creating a registration', async () => {
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        season: 'Summer',
+        onlineCheckout: true,
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+      },
+    ]);
+
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Pay registration with Stripe');
+
+    await clickButton(container, 'Pay registration with Stripe');
+
+    await waitForText(container, 'Participant Name is required.');
     expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(parentToolsServiceMocks.initiateRegistrationCheckout).not.toHaveBeenCalled();
+    expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it('does not launch checkout for waitlisted online checkout registrations', async () => {
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        season: 'Summer',
+        currency: 'USD',
+        onlineCheckout: true,
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 10, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+      },
+    ]);
+    parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValueOnce({
+      success: true,
+      status: 'waitlisted',
+      registrationId: 'new-reg-waitlisted',
+    });
+
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Pay registration with Stripe');
+
+    await changeInputValue(container, 'Participant Name', 'Test Participant');
+    await changeInputValue(container, 'Guardian Name', 'Test Guardian');
+    await changeInputValue(container, 'I accept the waiver.', true);
+    await changeInputValue(container, 'Registration option', 'opt-1');
+    await clickButton(container, 'Pay registration with Stripe');
+
+    await waitForText(container, 'Registration submitted. You have been added to the waitlist.');
+    expect(parentToolsServiceMocks.initiateRegistrationCheckout).not.toHaveBeenCalled();
+    expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it('shows a retryable error when checkout creation fails', async () => {
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        season: 'Summer',
+        currency: 'USD',
+        onlineCheckout: true,
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+      },
+    ]);
+    parentToolsServiceMocks.initiateRegistrationCheckout.mockRejectedValueOnce(new Error('Stripe session failed.'));
+
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Pay registration with Stripe');
+
+    await changeInputValue(container, 'Participant Name', 'Test Participant');
+    await changeInputValue(container, 'Guardian Name', 'Test Guardian');
+    await changeInputValue(container, 'I accept the waiver.', true);
+    await changeInputValue(container, 'Registration option', 'opt-1');
+    await clickButton(container, 'Pay registration with Stripe');
+
+    await waitForText(container, 'Stripe session failed.');
+    expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
+    expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Pay registration with Stripe')).disabled).toBe(false);
   });
 });
