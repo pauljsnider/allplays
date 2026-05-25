@@ -3,6 +3,47 @@ const https = require('node:https');
 const dns = require('node:dns').promises;
 const net = require('node:net');
 
+function getIpv4MappedAddress(ip) {
+  const normalized = ip.toLowerCase();
+  let embedded = null;
+
+  if (normalized.startsWith('::ffff:')) {
+    embedded = normalized.slice('::ffff:'.length);
+  } else {
+    const parts = normalized.split(':');
+    if (
+      (parts.length === 7 || parts.length === 8) &&
+      parts.slice(0, 5).every((part) => /^[0-9a-f]{1,4}$/.test(part) && Number.parseInt(part, 16) === 0) &&
+      /^[0-9a-f]{1,4}$/.test(parts[5]) &&
+      Number.parseInt(parts[5], 16) === 0xffff
+    ) {
+      embedded = parts.slice(6).join(':');
+    }
+  }
+
+  if (!embedded) {
+    return null;
+  }
+
+  if (net.isIP(embedded) === 4) {
+    return embedded;
+  }
+
+  const hextets = embedded.split(':');
+  if (hextets.length !== 2 || hextets.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) {
+    return null;
+  }
+
+  const first = Number.parseInt(hextets[0], 16);
+  const second = Number.parseInt(hextets[1], 16);
+  return [
+    (first >> 8) & 255,
+    first & 255,
+    (second >> 8) & 255,
+    second & 255,
+  ].join('.');
+}
+
 let _http = require('node:http');
 let _https = require('node:https');
 
@@ -27,6 +68,11 @@ function isPrivateIpAddress(ip) {
     if (parts[0] === 192 && parts[1] === 168) return true;
     if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
     return false;
+  }
+
+  const mappedIpv4Address = getIpv4MappedAddress(ip);
+  if (mappedIpv4Address) {
+    return isPrivateIpAddress(mappedIpv4Address);
   }
 
   const normalized = ip.toLowerCase();
