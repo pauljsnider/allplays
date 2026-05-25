@@ -58,6 +58,7 @@ export type ChatTeam = {
   name: string;
   sport?: string | null;
   photoUrl?: string | null;
+  active?: boolean;
   role: 'Parent' | 'Coach' | 'Admin';
   canModerate: boolean;
   unreadCount: number;
@@ -150,6 +151,10 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryD
 
 function compactString(value: unknown) {
   return String(value || '').trim();
+}
+
+function isActiveTeam(team: Record<string, any> | null | undefined) {
+  return team?.active !== false;
 }
 
 function getProjectId() {
@@ -365,7 +370,9 @@ async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>)
   [...ownedTeams, ...adminTeams, ...parentTeams].forEach((team) => {
     if (team?.id) map.set(team.id, team);
   });
-  return [...map.values()].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+  return [...map.values()]
+    .filter(isActiveTeam)
+    .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
 }
 
 async function getLatestMessagePreview(teamId: string): Promise<ChatMessage | null> {
@@ -408,7 +415,7 @@ export async function loadChatInbox(user: AuthUser | null): Promise<ChatInboxLoa
   }
 
   const userWithProfile = mapUserWithProfile(user, profile);
-  const accessibleTeams = teams.filter((team) => canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
+  const accessibleTeams = teams.filter((team) => isActiveTeam(team) && canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
   const unreadCounts = await withTimeout(
     Promise.resolve(getUnreadChatCounts(user.uid, accessibleTeams.map((team) => team.id))),
     'Chat unread counts',
@@ -426,6 +433,7 @@ export async function loadChatInbox(user: AuthUser | null): Promise<ChatInboxLoa
       name: team.name || 'Team',
       sport: team.sport || null,
       photoUrl: team.photoUrl || null,
+      active: team.active,
       role: getTeamRole(user, team, profile),
       canModerate: canModerateChat(userWithProfile, { ...team, id: team.id }),
       unreadCount: Number(unreadCounts[team.id] || 0),
@@ -454,7 +462,7 @@ export async function loadChatTeamContext(teamId: string, user: AuthUser | null)
     })
   ]);
 
-  if (!team) throw new Error('Team not found.');
+  if (!team || !isActiveTeam(team as Record<string, any>)) throw new Error('Team not found.');
   const currentTeam = { ...team, id: teamId };
   const profileData = profile || {};
   const userWithProfile = mapUserWithProfile(user, profileData as Record<string, any>);
