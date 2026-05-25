@@ -220,7 +220,7 @@ describe('standard tracker finish batch limits', () => {
         ]);
     });
 
-    it('preserves beta basketball finish event clocks, jersey numbers, and playing time', async () => {
+    it('preserves beta basketball finish event clocks, jersey numbers, playing time, and DNP status', async () => {
         const harness = createFirestoreHarness();
 
         await commitStandardTrackerFinishData({
@@ -232,8 +232,14 @@ describe('standard tracker finish batch limits', () => {
             gameId: 'game-1',
             currentUserUid: 'coach-1',
             gameLog: [{ text: 'Ava made a basket', clock: '03:21', period: 'Q4', ts: 99 }],
-            players: [{ id: 'p1', name: 'Ava', num: '23' }],
-            playerStatsByPlayerId: { p1: { pts: 2, fouls: 1, time: 123000 } },
+            players: [
+                { id: 'p1', name: 'Ava', num: '23' },
+                { id: 'p2', name: 'Ben', num: '12' }
+            ],
+            playerStatsByPlayerId: {
+                p1: { pts: 2, fouls: 1, time: 123000 },
+                p2: { pts: 0, fouls: 0, time: 0 }
+            },
             columns: ['PTS', 'FOULS'],
             finalHome: 44,
             finalAway: 40,
@@ -249,9 +255,21 @@ describe('standard tracker finish batch limits', () => {
         expect(harness.batches[1].operations[0].data).toMatchObject({
             playerName: 'Ava',
             playerNumber: '23',
+            participated: true,
+            participationStatus: 'appeared',
             timeMs: 123000,
             stats: expect.objectContaining({ pts: 2, fouls: 1 })
         });
+        expect(harness.batches[1].operations[1].data).toMatchObject({
+            playerName: 'Ben',
+            playerNumber: '12',
+            participated: false,
+            participationStatus: 'did-not-appear',
+            didNotPlay: true,
+            timeMs: 0,
+            stats: { pts: 0, fouls: 0 }
+        });
+        expect(hasPlayerProfileParticipation(harness.batches[1].operations[1].data)).toBe(false);
     });
 
     it('rejects when a secondary aggregated stats batch fails after primary commit', async () => {
