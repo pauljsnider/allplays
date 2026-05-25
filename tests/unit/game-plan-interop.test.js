@@ -116,6 +116,40 @@ describe('game plan interop helpers', () => {
     });
   });
 
+  it('preserves inning labels and maps legacy 7-period plans to innings', () => {
+    expect(buildRotationPlanFromGamePlan({
+      numPeriods: 7,
+      periodPrefix: 'I',
+      lineups: {
+        'I1-pitcher': 'p1',
+        'I7-catcher': 'p2',
+        '2-full-first-base': 'p3'
+      }
+    })).toEqual({
+      I1: { pitcher: 'p1' },
+      I7: { catcher: 'p2' },
+      I2: { 'first-base': 'p3' }
+    });
+  });
+
+  it('maps saved inning lineup keys into planner interval keys', () => {
+    const lineups = normalizeLineupsForGamePlanPlanner({
+      numPeriods: 7,
+      periodPrefix: 'I',
+      periodDuration: 1,
+      subTimes: [],
+      lineups: {
+        'I1-pitcher': 'p1',
+        'I3-catcher': 'p2'
+      }
+    });
+
+    expect(lineups).toEqual({
+      '1-full-pitcher': 'p1',
+      '3-full-catcher': 'p2'
+    });
+  });
+
   it('keeps every legacy substitution slot for the same period and position', () => {
     const gamePlan = {
       numPeriods: 2,
