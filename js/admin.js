@@ -20,6 +20,7 @@ import {
     getAdminRegistrationShareUrl,
     validateAdminRegistrationFormPayload
 } from './admin-registration-forms.js?v=3';
+import { buildRecentGameResultsRows } from './admin-game-results.js?v=1';
 
 let allTeams = [];
 let allUsers = [];
@@ -198,6 +199,7 @@ function updateDashboard() {
     const scheduledGames = visibleGames.filter(g => g.status === 'scheduled').length;
     document.getElementById('stat-total-games').textContent = visibleGames.length;
     document.getElementById('stat-games-breakdown').textContent = `${completedGames} played, ${scheduledGames} scheduled`;
+    renderRecentGameResults(visibleGames);
 
     // Activity (teams with games in last 7 days)
     const activeTeams = new Set(visibleGames.filter(g => {
@@ -284,6 +286,56 @@ function updateDashboard() {
             ${user.isAdmin ? '<span class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full font-semibold">Admin</span>' : ''}
         </div>
     `).join('');
+}
+
+function renderRecentGameResults(visibleGames) {
+    const container = document.getElementById('recent-game-results');
+    if (!container) return;
+
+    const rows = buildRecentGameResultsRows(visibleGames, { limit: 10 });
+    if (!rows.length) {
+        container.innerHTML = '<p class="text-sm text-gray-500">No completed or scored game results yet.</p>';
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left font-semibold text-gray-600">Date</th>
+                        <th class="px-3 py-2 text-left font-semibold text-gray-600">Team</th>
+                        <th class="px-3 py-2 text-left font-semibold text-gray-600">Opponent</th>
+                        <th class="px-3 py-2 text-left font-semibold text-gray-600">Score</th>
+                        <th class="px-3 py-2 text-left font-semibold text-gray-600">Status</th>
+                        <th class="px-3 py-2 text-left font-semibold text-gray-600">Report</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 bg-white">
+                    ${rows.map(row => {
+                        const reportHref = row.teamId && row.gameId
+                            ? `game.html#teamId=${encodeURIComponent(row.teamId)}&gameId=${encodeURIComponent(row.gameId)}`
+                            : '';
+                        return `
+                            <tr>
+                                <td class="px-3 py-2 text-gray-600 whitespace-nowrap">${escapeHtml(row.dateLabel)}</td>
+                                <td class="px-3 py-2 font-medium text-gray-900">${escapeHtml(row.teamName)}</td>
+                                <td class="px-3 py-2 text-gray-700">${escapeHtml(row.opponent)}</td>
+                                <td class="px-3 py-2 font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(row.score)}</td>
+                                <td class="px-3 py-2 text-gray-700">${escapeHtml(row.status)}</td>
+                                <td class="px-3 py-2 whitespace-nowrap">
+                                    ${reportHref
+                                        ? `<a href="${reportHref}" class="text-indigo-600 hover:text-indigo-800 font-medium">Game Report →</a>`
+                                        : '<span class="text-gray-400">Unavailable</span>'
+                                    }
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
 }
 
 function telemetryDate(value) {
