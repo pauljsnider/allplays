@@ -23,6 +23,15 @@ test('isPrivateIpAddress correctly identifies private IPs', () => {
   assert.strictEqual(isPrivateIpAddress('fc00::1'), true, 'fc00::1 should be private (IPv6 ULA)');
   assert.strictEqual(isPrivateIpAddress('fd00::1'), true, 'fd00::1 should be private (IPv6 ULA)');
   assert.strictEqual(isPrivateIpAddress('2001:0db8::1'), false, '2001:0db8::1 should be public');
+
+  assert.strictEqual(isPrivateIpAddress('::ffff:127.0.0.1'), true, 'IPv4-mapped IPv6 loopback should be private');
+  assert.strictEqual(isPrivateIpAddress('::ffff:10.0.0.1'), true, 'IPv4-mapped IPv6 RFC1918 should be private');
+  assert.strictEqual(isPrivateIpAddress('::ffff:192.168.1.1'), true, 'IPv4-mapped IPv6 RFC1918 should be private');
+  assert.strictEqual(isPrivateIpAddress('::ffff:169.254.169.254'), true, 'IPv4-mapped IPv6 link-local should be private');
+  assert.strictEqual(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:7f00:0001'), true, 'zero-padded IPv4-mapped IPv6 loopback should be private');
+  assert.strictEqual(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:0a00:0001'), true, 'zero-padded IPv4-mapped IPv6 RFC1918 should be private');
+  assert.strictEqual(isPrivateIpAddress('::ffff:8.8.8.8'), false, 'IPv4-mapped IPv6 public address should be public');
+  assert.strictEqual(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:0808:0808'), false, 'zero-padded IPv4-mapped IPv6 public address should be public');
 });
 
 test('assertPublicHost prevents blocked hosts and private IPs', async () => {
@@ -30,6 +39,10 @@ test('assertPublicHost prevents blocked hosts and private IPs', async () => {
   await assert.rejects(assertPublicHost('127.0.0.1'), { message: 'Blocked host' }, '127.0.0.1 should be blocked');
   await assert.rejects(assertPublicHost('192.168.1.1'), { message: 'Blocked host address' }, 'private IP should be blocked');
   await assert.rejects(assertPublicHost('evil.local'), { message: 'Blocked host' }, '.local should be blocked');
+
+  await assert.rejects(assertPublicHost('::ffff:127.0.0.1'), { message: 'Blocked host address' }, 'IPv4-mapped IPv6 loopback should be blocked');
+  await assert.rejects(assertPublicHost('::ffff:169.254.169.254'), { message: 'Blocked host address' }, 'IPv4-mapped IPv6 link-local should be blocked');
+  await assert.rejects(assertPublicHost('0000:0000:0000:0000:0000:ffff:7f00:0001'), { message: 'Blocked host address' }, 'zero-padded IPv4-mapped IPv6 loopback should be blocked');
 
   const publicIp = await assertPublicHost('8.8.8.8');
   assert.deepStrictEqual(publicIp, ['8.8.8.8'], 'public IP should be allowed');
@@ -152,3 +165,4 @@ test('SSRF vulnerability via DNS Rebinding prevention in fetchWithTimeout', asyn
     dns.lookup = originalDnsLookup;
     _setClientModulesForTesting(null, null); // Restore original modules
   }
+});
