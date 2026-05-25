@@ -4,7 +4,6 @@ on:
   workflow_run:
     workflows:
       - deploy-prod
-      - app-github-pages
     types:
       - completed
 
