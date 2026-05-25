@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const dbMocks = vi.hoisted(() => ({
     createFamilyShareToken: vi.fn(),
     createParentMembershipRequest: vi.fn(),
+    createTeamMediaFolder: vi.fn(),
     createTeamMediaLink: vi.fn(),
     db: { _is_mock_db_instance: true }, // Mock db instance for runTransaction
     doc: vi.fn((db, path, ...segments) => ({
@@ -136,6 +137,7 @@ vi.mock('../../js/stripe-service.js', () => stripeMocks);
 import {
     addParentTeamMediaLink,
     buildParentScheduleIcs,
+    createTeamMediaAlbumForApp,
     createParentFamilyShare,
     getAppleCalendarFeedUrl,
     getCertificateUrl,
@@ -653,6 +655,7 @@ describe('React app parent tools service', () => {
         dbMocks.uploadTeamMediaPhoto.mockResolvedValue('photo-2');
         dbMocks.uploadTeamMediaFile.mockResolvedValue('file-1');
         dbMocks.createTeamMediaLink.mockResolvedValue('link-1');
+        dbMocks.createTeamMediaFolder.mockResolvedValue('folder-new');
 
         await expect(loadTeamMediaForApp(user, 'team-1')).resolves.toMatchObject({
             team: { id: 'team-1', name: 'Bears' },
@@ -665,9 +668,11 @@ describe('React app parent tools service', () => {
             }]
         });
 
+        await expect(createTeamMediaAlbumForApp('team-1', { name: '  Spring photos  ', visibility: 'private' })).resolves.toBe('folder-new');
         await uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile);
         await uploadParentTeamMediaFile('team-1', 'folder-1', docFile);
         await addParentTeamMediaLink('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
+        expect(dbMocks.createTeamMediaFolder).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'private' });
         expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile);
         expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile);
         expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://video.example.test/replay' });

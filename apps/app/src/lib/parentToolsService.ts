@@ -2,6 +2,7 @@ import {
   createFamilyShareToken,
   createParentMembershipRequest,
   createRegistrationCheckoutSession,
+  createTeamMediaFolder,
   createTeamMediaLink,
   getPlayers,
   getTeam,
@@ -611,6 +612,12 @@ export async function uploadParentTeamMediaPhoto(teamId: string, folderId: strin
 
 export async function uploadParentTeamMediaFile(teamId: string, folderId: string, file: File) {
   return uploadTeamMediaFile(teamId, folderId, file);
+}
+
+export async function createTeamMediaAlbumForApp(teamId: string, draft: { name: string; visibility?: string }) {
+  const name = compactString(draft?.name);
+  const visibility = draft?.visibility === 'private' ? 'private' : 'team';
+  return createTeamMediaFolder(teamId, { name, visibility });
 }
 
 export async function addParentTeamMediaLink(teamId: string, folderId: string, title: string, url: string) {
