@@ -163,6 +163,28 @@ async function mockParentToolsModules(page) {
                         url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
                     }];
                 }
+                export async function loadParentRegistrationDetail() {
+                    return {
+                        teamName: 'Bears',
+                        isPublished: true,
+                        onlineCheckout: true,
+                        legacyUrl: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1',
+                        form: {
+                            programName: 'Summer Camp',
+                            description: 'Skills week',
+                            season: 'Summer',
+                            currency: 'USD',
+                            participantFields: [],
+                            guardianFields: [],
+                            waiverText: '',
+                            registrationOptionCounts: {}
+                        },
+                        options: [{ id: 'opt-1', title: 'Full week', description: 'Skills week', capacityLimit: 20, waitlistEnabled: true }],
+                        feeSnapshot: { finalAmountDueCents: 7500 },
+                        paymentNotice: 'Online checkout available.',
+                        paymentPlans: []
+                    };
+                }
                 export async function loadParentCertificates() {
                     return [{
                         id: 'cert-1',
@@ -238,7 +260,8 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
 
     await page.getByRole('button', { name: 'Register' }).click();
     await expect(page.getByText('Summer Camp')).toBeVisible();
-    await page.getByRole('button', { name: /Open/ }).click();
+    await expect(page.getByRole('link', { name: /Review/ })).toBeVisible();
+    await page.getByRole('button', { name: /Legacy form/ }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
 
     await page.getByRole('button', { name: 'Awards' }).click();
