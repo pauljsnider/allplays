@@ -8,6 +8,7 @@ import { GameDetail } from './pages/GameDetail';
 import { Home } from './pages/Home';
 import { Messages } from './pages/Messages';
 import { ParentTools } from './pages/ParentTools';
+import { RegistrationDetail } from './pages/RegistrationDetail';
 import { PlayerDetail } from './pages/PlayerDetail';
 import { PrivateAiChat } from './pages/PrivateAiChat';
 import { Profile } from './pages/Profile';
@@ -41,6 +42,7 @@ export default function App() {
       <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
       <Route path="/teams/:teamId/media" element={<Protected auth={auth}><TeamMedia auth={auth} /></Protected>} />
       <Route path="/parent-tools" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
+      <Route path="/parent-tools/registrations/:teamId/:formId" element={<Protected auth={auth}><RegistrationDetail auth={auth} /></Protected>} />
       <Route path="/parent-tools/:toolId" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
       <Route path="/players/:teamId/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
       <Route path="/players/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
