@@ -258,6 +258,10 @@ function compactString(value: unknown) {
   return String(value || '').trim();
 }
 
+function isActiveTeam(team: Record<string, any> | null | undefined) {
+  return team?.active !== false;
+}
+
 function normalizeChildLinks(user: AuthUser, profile: Record<string, unknown>): ParentScheduleChild[] {
   const parentOf = Array.isArray(profile.parentOf) && profile.parentOf.length > 0
     ? profile.parentOf
@@ -333,11 +337,12 @@ function makeEventKey(teamId: string, id: string, childId: string, date: Date, t
 }
 
 async function loadTeam(teamId: string) {
-  return readWithNativeFallback(
+  const team = await readWithNativeFallback(
     `team ${teamId}`,
     () => Promise.resolve(getTeam(teamId)),
     () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)
   );
+  return isActiveTeam(team as Record<string, any> | null) ? team : null;
 }
 
 async function loadGames(teamId: string) {
