@@ -112,6 +112,9 @@ async function mockParentToolsModules(page) {
                         ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
                     }];
                 }
+                export async function initiateParentTeamFeeCheckout() {
+                    return { success: true, checkoutUrl: 'https://pay.example.test/created-fee' };
+                }
                 export async function loadParentCalendarTools() {
                     return {
                         events: [{ teamId: 'team-1', teamName: 'Bears', title: 'Practice', opponent: '', date: new Date('2100-06-01T18:00:00Z') }],
