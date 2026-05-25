@@ -13,6 +13,15 @@ describe('team management page access wiring', () => {
         expect(html).toContain('canManageAllTeams\n                        ? getTeams({ includePrivate: true })\n                        : getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
     });
 
+    it('backs dashboard platform-admin access with protected Firestore admin state', () => {
+        const rules = readRepoFile('firestore.rules');
+        expect(rules).toContain("request.resource.data.get('isAdmin', false) != true");
+        expect(rules).toContain("!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin'])");
+        expect(rules).toContain("allow update: if isGlobalAdmin() ||");
+        expect(rules).toContain('function isGlobalAdmin()');
+        expect(rules).toContain('canReadTeamDocument(resource.data)');
+    });
+
     it('prefers auth email before profile fallback when loading non-admin dashboard team access', () => {
         const html = readRepoFile('dashboard.html');
         expect(html).toContain('getUserTeamsWithAccess(user.uid, user.email || profile?.email)');
