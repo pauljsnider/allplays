@@ -163,6 +163,21 @@ describe('team schedule filtering', () => {
         });
     });
 
+    it('keeps default print options on local calendar days in UTC+ time zones', () => {
+        const originalTimezone = process.env.TZ;
+        process.env.TZ = 'Pacific/Kiritimati';
+        try {
+            expect(getDefaultSchedulePrintOptions(new Date(2026, 4, 25))).toEqual({
+                startDate: '2026-05-25',
+                endDate: '2026-06-24',
+                eventType: 'all',
+                blackAndWhite: false
+            });
+        } finally {
+            process.env.TZ = originalTimezone;
+        }
+    });
+
     it('filters printable schedule events by default options and event type', () => {
         const events = [
             { date: '2026-05-01T18:00:00Z', type: 'game', opponent: 'Early' },

@@ -116,7 +116,7 @@ const Blob = deps.Blob;
             'const { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;'
         )
         .replace(
-            "import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';",
+            /import \{ getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions \} from '\.\/js\/schedule-print\.js\?v=\d+';/,
             'const { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } = deps.schedulePrint;'
         )
         .replace(/\binit\(\);\s*$/, 'await init();');
