@@ -109,6 +109,40 @@ PTS=pts|visibility=public|scope=player|topStat=true
     });
   });
 
+  it('stores public stat keys by slugified definition id during visibility splitting', () => {
+    const config = normalizeStatTrackerConfig({
+      columns: ['AST/TO', 'FG%']
+    });
+
+    expect(splitPlayerStatsByVisibility(config, { 'AST/TO': 3, 'FG%': 47 })).toEqual({
+      publicStats: { astto: 3, fg: 47 },
+      privateStats: {}
+    });
+  });
+
+  it('resolves punctuated base top stats from split public storage keys', () => {
+    const config = normalizeStatTrackerConfig({
+      columns: ['FG%'],
+      statDefinitions: [
+        { label: 'FG%', acronym: 'FG%', topStat: true, format: 'percentage', precision: 1 }
+      ]
+    });
+
+    const { publicStats } = splitPlayerStatsByVisibility(config, { 'FG%': 47 });
+    const snapshot = buildPlayerLeaderboardSnapshot({
+      config,
+      players: [{ id: 'p1', name: 'Ava Cole', number: '3' }],
+      seasonStatsByPlayerId: { p1: publicStats }
+    });
+
+    expect(snapshot.topStats).toEqual([
+      expect.objectContaining({
+        id: 'fg',
+        leader: expect.objectContaining({ playerId: 'p1', value: 47, formattedValue: '47.0%' })
+      })
+    ]);
+  });
+
   it('builds grouped public leaderboards with derived metrics and ranking direction', () => {
     const config = normalizeStatTrackerConfig({
       name: 'Advanced Hoops',
