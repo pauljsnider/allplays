@@ -300,7 +300,7 @@ function MediaItemCard({ item, onStatus }: { item: TeamMediaItem; onStatus: (ton
           <span className="min-w-0 flex-1 truncate text-sm font-black text-gray-950">{title}</span>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" className="secondary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => openPublicUrl(item.url)}>
+          <button type="button" className="secondary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => openPublicUrl(item.url)} aria-label={`Open ${title}`}>
             <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
             Open
           </button>
