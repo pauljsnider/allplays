@@ -2,6 +2,7 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Layers, Route, ShieldCheck } from 'lucide-react';
 import { CategoryBadge, RoleBadge, StatusBadge } from '../components/Badges';
 import { capabilities } from '../data/capabilities';
+import { openPublicUrl } from '../lib/publicActions';
 
 export function CapabilityPage() {
   const { capabilityId } = useParams();
@@ -25,6 +26,7 @@ export function CapabilityPage() {
         </div>
         <h1 className="mt-3 text-2xl font-black text-gray-950">{capability.title}</h1>
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">{capability.summary}</p>
+        <PrimaryCapabilityAction capability={capability} />
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <Meta icon={ExternalLink} label="Current site page" value={capability.legacyPath} />
           <Meta icon={Route} label="App route" value={capability.route} />
@@ -56,14 +58,30 @@ export function CapabilityPage() {
           ))}
         </div>
       </section>
-
-      {capability.status === 'native-shell' && capability.route !== `/capabilities/${capability.id}` ? (
-        <Link to={capability.route} className="primary-button w-full justify-center">
-          Open app route
-        </Link>
-      ) : null}
     </div>
   );
+}
+
+function PrimaryCapabilityAction({ capability }: { capability: (typeof capabilities)[number] }) {
+  if (capability.status === 'native-shell' && capability.route !== `/capabilities/${capability.id}`) {
+    return (
+      <Link to={capability.route} className="primary-button mt-4 w-full justify-center">
+        Open app route
+      </Link>
+    );
+  }
+
+  if ((capability.status === 'stub' || capability.status === 'legacy-link') && capability.legacyPath) {
+    const legacyUrl = new URL(capability.legacyPath, 'https://allplays.ai').toString();
+
+    return (
+      <button type="button" className="primary-button mt-4 w-full justify-center" onClick={() => void openPublicUrl(legacyUrl)}>
+        Open current page
+      </button>
+    );
+  }
+
+  return null;
 }
 
 function Meta({ icon: Icon, label, value }: { icon: typeof ExternalLink; label: string; value: string }) {
