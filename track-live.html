@@ -2557,15 +2557,13 @@
                         await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     },
                     cleanupPersistedState: async () => {
-                        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
+                        const [eventsSnapshot, statsSnapshot] = await Promise.all([
                             getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
-                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`)),
-                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`))
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`))
                         ]);
                         const cleanupResults = await Promise.allSettled([
                             ...eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)),
-                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref)),
-                            ...liveEventsSnapshot.docs.map(liveDoc => deleteDoc(liveDoc.ref))
+                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref))
                         ]);
                         const failedDeletes = cleanupResults.filter((result) => result.status === 'rejected');
                         if (failedDeletes.length) {
@@ -2595,20 +2593,17 @@
                 const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
                 await Promise.all(deleteStatsPromises);
 
-                // Reset game status to scheduled if it was started
-                if (currentGame.status !== 'scheduled') {
-                    await updateGame(currentTeamId, currentGameId, {
-                        status: 'scheduled',
-                        homeScore: 0,
-                        awayScore: 0,
-                        liveBaseballState: gameState.isBaseballScorekeeping ? createBaseballLiveState() : null,
-                        // Preserve opponent fields
-                        opponent: currentGame.opponent,
-                        opponentTeamId: currentGame.opponentTeamId,
-                        opponentTeamName: currentGame.opponentTeamName,
-                        opponentTeamPhoto: currentGame.opponentTeamPhoto
-                    });
-                }
+                // Always reset live broadcast state, even when the scheduled game was only marked liveStatus=live.
+                await updateGame(currentTeamId, currentGameId, {
+                    ...buildTrackLiveResetUpdate({
+                        currentGame,
+                        currentConfig,
+                        period: gameState.currentPeriod,
+                        liveLineup: getLiveLineup(gameState.playerFieldStatus, players)
+                    }),
+                    status: 'scheduled',
+                    liveBaseballState: gameState.isBaseballScorekeeping ? createBaseballLiveState() : null
+                });
                 liveState.isLive = false;
                 liveState.lastClockSyncAt = 0;
 
