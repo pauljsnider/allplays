@@ -99,7 +99,7 @@
     <script type="module">
         import { db, doc, getDoc, collection, addDoc, serverTimestamp, runTransaction } from './js/firebase.js?v=15';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
-        import { initiateStripeCheckout } from './js/stripe-service.js';
+        import { cancelStripeRegistrationCheckout, initiateStripeCheckout } from './js/stripe-service.js';
         import {
             buildPendingRegistrationRecord,
             calculateRegistrationFeeSnapshot,
@@ -147,6 +147,10 @@
                 confirmationMessage.querySelector('p').textContent = 'Your registration payment was received. The program organizer will follow up with next steps.';
                 confirmationMessage.classList.remove('hidden');
             } else if (stripeStatus === 'cancelled') {
+                const cancelledRegistrationId = urlParams.get('registrationId') || '';
+                if (cancelledRegistrationId) {
+                    void releaseCancelledStripeRegistration(cancelledRegistrationId);
+                }
                 errorMessage.textContent = 'Stripe payment was cancelled. You can try again.';
                 errorMessage.classList.remove('hidden');
             }
@@ -159,6 +163,14 @@
         spinner.setAttribute('role', 'status');
         spinner.setAttribute('aria-hidden', 'true');
         submitButton.prepend(spinner); // Add spinner to the button
+
+        async function releaseCancelledStripeRegistration(registrationId) {
+            try {
+                await cancelStripeRegistrationCheckout({ teamId, formId, registrationId });
+            } catch (error) {
+                console.error('Failed to release cancelled registration checkout:', error);
+            }
+        }
 
         function showError(message) {
             loadingState.classList.add('hidden');

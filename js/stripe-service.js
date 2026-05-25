@@ -19,6 +19,18 @@ export async function initiateStripeCheckout(params) {
     }
 }
 
+export async function cancelStripeRegistrationCheckout(params) {
+    try {
+        const functions = getFunctions();
+        const cancelCheckoutSession = httpsCallable(functions, 'cancelStripeRegistrationCheckout');
+        const result = await cancelCheckoutSession(params);
+        return result?.data || { released: false };
+    } catch (error) {
+        console.error('StripeService: Error calling cancelStripeRegistrationCheckout:', error);
+        throw error;
+    }
+}
+
 export async function initiateTeamFeeCheckout(params) {
     try {
         const functions = getFunctions();
