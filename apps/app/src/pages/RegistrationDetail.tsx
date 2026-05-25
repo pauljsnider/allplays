@@ -51,7 +51,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
           setForm(null);
           return;
         }
-        if (nextForm.onlineCheckout) {
+        if (nextForm.onlineCheckout && !(nextForm as any).allowOnlineCheckoutReview) {
           setError('This registration requires online checkout. Please use the checkout link from registrations.');
           setForm(null);
           return;
@@ -273,7 +273,8 @@ async function loadRegistrationForm(user: any, teamId: string, formId: string): 
         registrationOptionCounts: detail.form.registrationOptionCounts || {},
         feeSnapshot: detail.feeSnapshot,
         paymentPlans: detail.paymentPlans || [],
-        isPublished: detail.isPublished
+        isPublished: detail.isPublished,
+        allowOnlineCheckoutReview: true
       };
     }
   } catch (error: any) {
