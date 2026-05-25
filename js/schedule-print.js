@@ -60,6 +60,24 @@ function resolveTitle(event) {
     return resolveEventType(event) === 'practice' ? 'Practice' : 'Game';
 }
 
+function formatDateInput(value) {
+    const date = toDate(value);
+    if (!date) return '';
+    return date.toISOString().slice(0, 10);
+}
+
+export function getDefaultSchedulePrintOptions(baseDate = new Date(), windowDays = 30) {
+    const start = startOfDay(baseDate) || new Date();
+    const end = new Date(start);
+    end.setDate(start.getDate() + windowDays);
+    return {
+        startDate: formatDateInput(start),
+        endDate: formatDateInput(end),
+        eventType: 'all',
+        blackAndWhite: false
+    };
+}
+
 export function filterScheduleEventsForPrint(events, options = {}) {
     const rangeStart = startOfDay(options.startDate);
     const rangeEnd = endOfDay(options.endDate);
@@ -71,6 +89,7 @@ export function filterScheduleEventsForPrint(events, options = {}) {
         .filter((event) => {
             const eventDate = toDate(event?.date || event?.dtstart);
             if (!eventDate || eventDate < rangeStart || eventDate > rangeEnd) return false;
+            if (event?.isCancelled && options.includeCancelled !== true) return false;
             if (eventType !== 'all' && resolveEventType(event) !== eventType) return false;
             return true;
         })
@@ -78,16 +97,17 @@ export function filterScheduleEventsForPrint(events, options = {}) {
 }
 
 export function promptSchedulePrintOptions(defaults = {}) {
-    const today = new Date();
-    const defaultStart = defaults.startDate || today.toISOString().slice(0, 10);
-    const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    const defaultEnd = defaults.endDate || monthEnd.toISOString().slice(0, 10);
-    const startDate = window.prompt('Print schedule start date (YYYY-MM-DD)', defaultStart);
+    const defaultOptions = { ...getDefaultSchedulePrintOptions(), ...defaults };
+    const startDate = window.prompt('Print schedule start date (YYYY-MM-DD)', defaultOptions.startDate);
     if (!startDate) return null;
-    const endDate = window.prompt('Print schedule end date (YYYY-MM-DD)', defaultEnd);
+    const endDate = window.prompt('Print schedule end date (YYYY-MM-DD)', defaultOptions.endDate);
     if (!endDate) return null;
+    const eventTypeInput = window.prompt('Event type: all, game, or practice', defaultOptions.eventType || 'all');
+    if (!eventTypeInput) return null;
+    const normalizedEventType = String(eventTypeInput).trim().toLowerCase();
+    const eventType = ['all', 'game', 'practice'].includes(normalizedEventType) ? normalizedEventType : 'all';
     const blackAndWhite = window.confirm('Print in black and white?');
-    return { startDate, endDate, blackAndWhite };
+    return { startDate, endDate, eventType, blackAndWhite };
 }
 
 export function renderSchedulePrintContainer(events, options = {}) {

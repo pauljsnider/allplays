@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { filterScheduleEventsForPrint } from '../../js/schedule-print.js';
+import { filterScheduleEventsForPrint, getDefaultSchedulePrintOptions } from '../../js/schedule-print.js';
 
 function loadGetFilteredScheduleEvents() {
     const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
@@ -18,6 +18,23 @@ function loadGetFilteredScheduleEvents() {
         let scheduleViewFilter = context.scheduleViewFilter;
         ${functionSource}
         return getFilteredScheduleEvents();
+    `);
+}
+
+function loadGetDefaultSchedulePrintEvents() {
+    const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
+    const start = source.indexOf('function getDefaultSchedulePrintEvents() {');
+    const end = source.indexOf('\n        function renderScheduleFromControls()', start);
+
+    if (start === -1 || end === -1) {
+        throw new Error('Could not locate getDefaultSchedulePrintEvents() in team.html');
+    }
+
+    const functionSource = source.slice(start, end);
+    return new Function('context', `
+        let allScheduleEvents = context.allScheduleEvents;
+        ${functionSource}
+        return getDefaultSchedulePrintEvents();
     `);
 }
 
@@ -97,21 +114,75 @@ describe('team schedule filtering', () => {
         expect(result.map((event) => event.opponent)).toEqual(['Rivals', 'Practice']);
     });
 
-    it('filters printable schedule events by date range and event type', () => {
+    it('prints the default upcoming schedule without depending on the Recent Results filter', () => {
+        const getFilteredScheduleEvents = loadGetFilteredScheduleEvents();
+        const getDefaultSchedulePrintEvents = loadGetDefaultSchedulePrintEvents();
+        const completedGame = {
+            type: 'db',
+            isPractice: false,
+            status: 'completed',
+            date: hoursFromNow(-24),
+            opponent: 'Past Win'
+        };
+        const upcomingGame = {
+            type: 'db',
+            isPractice: false,
+            status: 'scheduled',
+            date: hoursFromNow(24),
+            opponent: 'Future Game'
+        };
+        const upcomingPractice = {
+            type: 'db',
+            isPractice: true,
+            status: 'scheduled',
+            date: hoursFromNow(48),
+            opponent: 'Practice'
+        };
+
+        const recentResults = getFilteredScheduleEvents({
+            showPractices: false,
+            scheduleViewFilter: 'recent-results',
+            allScheduleEvents: [completedGame, upcomingGame, upcomingPractice]
+        });
+        const printEvents = getDefaultSchedulePrintEvents({
+            allScheduleEvents: [completedGame, upcomingGame, upcomingPractice]
+        });
+        const defaultPrintable = filterScheduleEventsForPrint(printEvents, getDefaultSchedulePrintOptions());
+
+        expect(recentResults.map((event) => event.opponent)).toEqual(['Past Win']);
+        expect(defaultPrintable.map((event) => event.opponent)).toEqual(['Future Game', 'Practice']);
+        expect(readFileSync(new URL('../../team.html', import.meta.url), 'utf8')).toContain('printSchedule(getDefaultSchedulePrintEvents()');
+    });
+
+    it('prefills default print options for the next 30 days', () => {
+        expect(getDefaultSchedulePrintOptions(new Date('2026-05-25T12:00:00Z'))).toEqual({
+            startDate: '2026-05-25',
+            endDate: '2026-06-24',
+            eventType: 'all',
+            blackAndWhite: false
+        });
+    });
+
+    it('filters printable schedule events by default options and event type', () => {
         const events = [
             { date: '2026-05-01T18:00:00Z', type: 'game', opponent: 'Early' },
             { date: '2026-05-10T18:00:00Z', type: 'practice', title: 'Practice' },
             { date: '2026-05-12T18:00:00Z', type: 'game', opponent: 'In Range' },
+            { date: '2026-05-13T18:00:00Z', type: 'game', opponent: 'Cancelled', isCancelled: true },
             { date: '2026-06-01T18:00:00Z', type: 'game', opponent: 'Late' }
         ];
-
-        const games = filterScheduleEventsForPrint(events, {
+        const baseOptions = {
             startDate: '2026-05-08',
-            endDate: '2026-05-31',
-            eventType: 'game'
-        });
+            endDate: '2026-05-31'
+        };
 
+        const all = filterScheduleEventsForPrint(events, { ...baseOptions, eventType: 'all' });
+        const games = filterScheduleEventsForPrint(events, { ...baseOptions, eventType: 'game' });
+        const practices = filterScheduleEventsForPrint(events, { ...baseOptions, eventType: 'practice' });
+
+        expect(all.map((event) => event.opponent || event.title)).toEqual(['Practice', 'In Range']);
         expect(games.map((event) => event.opponent)).toEqual(['In Range']);
+        expect(practices.map((event) => event.title)).toEqual(['Practice']);
     });
 
     it('wires the team availability filter and RSVP controls into team.html', () => {
