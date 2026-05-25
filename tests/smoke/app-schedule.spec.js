@@ -272,6 +272,16 @@ async function mockScheduleModules(page, options = {}) {
                     return { going: 2, maybe: 0, notGoing: 0, notResponded: 0 };
                 }
 
+                export async function updateGameScore(teamId, gameId, score, user) {
+                    const payload = {
+                        homeScore: Number(score?.homeScore ?? 0),
+                        awayScore: Number(score?.awayScore ?? 0),
+                        scoreUpdatedBy: user?.uid || null
+                    };
+                    window.__scheduleCalls.scoreUpdates = (window.__scheduleCalls.scoreUpdates || []).concat({ teamId, gameId, payload });
+                    return payload;
+                }
+
                 export async function loadParentPracticePacket(event, childEvents) {
                     window.__scheduleCalls.packets.push({ action: 'load', eventId: event.id, sessionId: event.practiceSessionId });
                     if (!event.practiceHomePacket) return null;
