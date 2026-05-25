@@ -151,6 +151,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       : results.teams.length === 0
         ? 'No matching teams'
         : '';
+  const helpStatus = query.trim().length >= 2 && results.help.length === 0
+    ? 'No matching help articles'
+    : '';
   const playersStatus = playersLoading
     ? 'Searching players...'
     : playersError
@@ -166,7 +169,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       className="app-search-overlay fixed inset-0 z-50 bg-gray-950/40 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
-      aria-label="Search teams, players, and actions"
+      aria-label="Search teams, players, actions, and help"
       onKeyDown={onKeyDown}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -184,8 +187,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 className="min-h-11 w-full rounded-xl border border-gray-200 px-3 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-                placeholder="Search teams, players, actions..."
-                aria-label="Search teams, players, actions"
+                placeholder="Search teams, players, actions, help..."
+                aria-label="Search teams, players, actions, help"
               />
               <div className="mt-2 hidden text-xs font-semibold text-gray-500 sm:block">
                 Use arrow keys to move, Enter to open, Esc to close.
@@ -225,10 +228,20 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
             />
 
             <SearchSection
+              title="Help"
+              items={results.help}
+              activeIndex={activeIndex}
+              offset={results.actions.length + results.teams.length}
+              status={helpStatus}
+              onOpen={openResult}
+              onHover={setActiveIndex}
+            />
+
+            <SearchSection
               title="Players"
               items={results.players}
               activeIndex={activeIndex}
-              offset={results.actions.length + results.teams.length}
+              offset={results.actions.length + results.teams.length + results.help.length}
               status={playersStatus}
               statusTone={playersError ? 'error' : 'neutral'}
               onOpen={openResult}
@@ -311,6 +324,15 @@ function SearchResultRow({ item, active, onOpen, onHover }: {
         <span className="min-w-0">
           <span className="block truncate text-sm font-black text-gray-950">{item.title}</span>
           {item.subtitle ? <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{item.subtitle}</span> : null}
+          {item.kind === 'help' && item.roles?.length ? (
+            <span className="mt-2 flex flex-wrap gap-1">
+              {item.roles.slice(0, 3).map((role) => (
+                <span key={role} className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-500">
+                  {role}
+                </span>
+              ))}
+            </span>
+          ) : null}
         </span>
         <span className="flex flex-none items-center gap-2">
           <span className="pt-1 text-[10px] font-extrabold uppercase tracking-[0.04em] text-gray-400">{item.kind}</span>
