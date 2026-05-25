@@ -214,7 +214,7 @@ export async function submitOfflineRegistration(teamId: string, formId: string, 
       feeSnapshot = calculateRegistrationFeeSnapshot(latestForm, { quantity: submission.quantity || 1, now: new Date() });
     }
 
-    transaction.set(registrationRef, buildPendingRegistrationRecord({
+    const registrationRecord = buildPendingRegistrationRecord({
       form: latestForm,
       participant: submission.participant,
       guardian: submission.guardian,
@@ -224,9 +224,11 @@ export async function submitOfflineRegistration(teamId: string, formId: string, 
       status,
       feeSnapshot,
       now: serverTimestamp()
-    }));
+    });
 
-    return { success: true, status, registrationId: registrationRef.id };
+    transaction.set(registrationRef, registrationRecord);
+
+    return { success: true, status, registrationId: registrationRef.id, feeSnapshot: registrationRecord.feeSnapshot };
   });
 }
 
@@ -662,7 +664,7 @@ export async function initiateRegistrationCheckout(
   amountCents: number,
   currency: string
 ): Promise<{ success: true, checkoutUrl: string }> {
-  if (!teamId || !formId || !registrationId || !selectedOptionId || !paymentPlanId || !quantity || !amountCents || !currency) {
+  if (!teamId || !formId || !registrationId || !paymentPlanId || !quantity || !amountCents || !currency) {
     throw new Error('Missing required fields for checkout.');
   }
 
