@@ -712,18 +712,15 @@ function RegistrationCard({ card }: { card: ParentRegistrationCard }) {
       </div>
       {card.paymentNotice ? <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-semibold text-blue-800">{card.paymentNotice}</div> : null}
       <div className="mt-3 grid grid-cols-2 gap-2">
-        {card.onlineCheckout ? (
-          <button type="button" className="secondary-button justify-center text-xs" onClick={() => openPublicUrl(card.url)}>
-            <ExternalLink className="h-4 w-4" aria-hidden="true" />
-            Open
-          </button>
-        ) : (
-          <Link to={`/parent-tools/registrations/${card.teamId}/${card.id}`} className="primary-button justify-center text-xs">
-            <Ticket className="h-4 w-4" aria-hidden="true" />
-            Register
-          </Link>
-        )}
-        <button type="button" className="secondary-button justify-center text-xs" onClick={() => sharePublicUrl({ title: card.programName, text: `${card.teamName} registration`, url: card.url })}>
+        <Link to={`/parent-tools/registrations/${card.teamId}/${card.id}`} className="primary-button justify-center text-xs">
+          <Ticket className="h-4 w-4" aria-hidden="true" />
+          Review
+        </Link>
+        <button type="button" className="secondary-button justify-center text-xs" onClick={() => openPublicUrl(card.url)}>
+          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+          Legacy form
+        </button>
+        <button type="button" className="secondary-button justify-center text-xs sm:col-span-2" onClick={() => sharePublicUrl({ title: card.programName, text: `${card.teamName} registration`, url: card.url })}>
           <Share2 className="h-4 w-4" aria-hidden="true" />
           Share
         </button>
