@@ -13,6 +13,21 @@ export type ScheduleRsvpSummary = {
   total?: number;
 };
 
+export type StaffRsvpReminderPreviewPlayer = {
+  playerId: string;
+  playerName: string;
+  playerNumber?: string | number | null;
+  parentEmails: string[];
+  hasEligibleParentEmail: boolean;
+};
+
+export type StaffRsvpReminderPreview = {
+  missingPlayerCount: number;
+  eligibleEmailCount: number;
+  eligibleEmails: string[];
+  players: StaffRsvpReminderPreviewPlayer[];
+};
+
 export type ScheduleAssignment = {
   role?: string;
   value?: string;
@@ -137,6 +152,7 @@ export type ParentScheduleEvent = {
   practiceSessionId?: string | null;
   practiceHomePacket?: PracticeHomePacket | null;
   practicePacketCompletions?: PracticePacketCompletion[];
+  isTeamStaff?: boolean;
 };
 
 export type CalendarScheduleEntry = ParentScheduleEvent & {
@@ -202,6 +218,111 @@ export function normalizeRsvpResponse(response: unknown): RsvpResponse {
   const value = String(response || '').trim().toLowerCase();
   if (value === 'going' || value === 'maybe' || value === 'not_going') return value;
   return 'not_responded';
+}
+
+function compactString(value: unknown) {
+  return String(value || '').trim();
+}
+
+function uniqueStrings(values: unknown[]) {
+  return [...new Set(values.map(compactString).filter(Boolean))];
+}
+
+function uniqueEligibleEmails(values: unknown[]) {
+  return uniqueStrings(values).filter((email) => email.includes('@'));
+}
+
+function getRsvpPlayerIds(rsvp: any) {
+  const playerIds = Array.isArray(rsvp?.playerIds) ? rsvp.playerIds : [];
+  return uniqueStrings([...playerIds, rsvp?.playerId, rsvp?.childId]);
+}
+
+function getPlayerParentUserIds(player: any) {
+  return uniqueStrings([
+    ...(Array.isArray(player?.parents) ? player.parents.map((parent: any) => parent?.userId) : []),
+    player?.parentUserId,
+    player?.guardianUserId
+  ]);
+}
+
+function getPlayerParentEmails(player: any) {
+  return uniqueEligibleEmails([
+    ...(Array.isArray(player?.parents) ? player.parents.map((parent: any) => parent?.email) : []),
+    player?.parentEmail,
+    player?.guardianEmail
+  ]);
+}
+
+export function buildStaffRsvpReminderPreview(players: any[] = [], rsvps: any[] = []): StaffRsvpReminderPreview {
+  const activePlayers = (Array.isArray(players) ? players : [])
+    .filter((player) => player?.active !== false && compactString(player?.id));
+  const playerIdsByParentUserId = new Map<string, string[]>();
+  activePlayers.forEach((player) => {
+    getPlayerParentUserIds(player).forEach((userId) => {
+      playerIdsByParentUserId.set(userId, [...(playerIdsByParentUserId.get(userId) || []), compactString(player.id)]);
+    });
+  });
+
+  const respondedPlayerIds = new Set<string>();
+  (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
+    if (normalizeRsvpResponse(rsvp?.response) === 'not_responded') return;
+    const explicitPlayerIds = getRsvpPlayerIds(rsvp);
+    const fallbackPlayerIds = explicitPlayerIds.length ? [] : (playerIdsByParentUserId.get(compactString(rsvp?.userId)) || []);
+    [...explicitPlayerIds, ...fallbackPlayerIds].forEach((playerId) => respondedPlayerIds.add(playerId));
+  });
+
+  const previewPlayers = activePlayers
+    .filter((player) => !respondedPlayerIds.has(compactString(player.id)))
+    .map((player) => {
+      const parentEmails = getPlayerParentEmails(player);
+      return {
+        playerId: compactString(player.id),
+        playerName: compactString(player.name) || compactString(player.displayName) || `#${compactString(player.number)}`.trim() || 'Unknown Player',
+        playerNumber: player.number || null,
+        parentEmails,
+        hasEligibleParentEmail: parentEmails.length > 0
+      };
+    });
+  const eligibleEmails = uniqueEligibleEmails(previewPlayers.flatMap((player) => player.parentEmails));
+
+  return {
+    missingPlayerCount: previewPlayers.length,
+    eligibleEmailCount: eligibleEmails.length,
+    eligibleEmails,
+    players: previewPlayers
+  };
+}
+
+export function buildStaffRsvpReminderMessage({
+  eventType,
+  title,
+  dateLabel,
+  missingCount
+}: {
+  eventType?: string | null;
+  title?: string | null;
+  dateLabel?: string | null;
+  missingCount?: number | null;
+}) {
+  const typeLabel = String(eventType || '').toLowerCase() === 'practice' ? 'Practice' : 'Game';
+  return [
+    `RSVP reminder: ${typeLabel}`,
+    `${typeLabel}: ${title || 'Untitled event'}`,
+    dateLabel ? `When: ${dateLabel}` : '',
+    `${Number.parseInt(String(missingCount || 0), 10) || 0} player(s) still have not responded.`
+  ].filter(Boolean).join('\n');
+}
+
+export function buildStaffRsvpReminderMetadata(userId: string | null | undefined, missingCount: number, emailCount: number, sentAt = new Date().toISOString()) {
+  return {
+    sent: true,
+    sentAt,
+    lastAction: 'rsvp_reminder',
+    lastSentAt: sentAt,
+    lastSentBy: userId || null,
+    lastRsvpReminderCount: Math.max(0, Number.parseInt(String(missingCount || 0), 10) || 0),
+    lastRsvpEmailCount: Math.max(0, Number.parseInt(String(emailCount || 0), 10) || 0)
+  };
 }
 
 export function normalizeScheduleAssignment(assignment: Partial<ScheduleAssignment> = {}): ScheduleAssignment {
