@@ -153,6 +153,7 @@ export type ParentScheduleEvent = {
   practiceHomePacket?: PracticeHomePacket | null;
   practicePacketCompletions?: PracticePacketCompletion[];
   isTeamStaff?: boolean;
+  isTeamRsvpReminderManager?: boolean;
 };
 
 export type CalendarScheduleEntry = ParentScheduleEvent & {
@@ -311,6 +312,28 @@ export function buildStaffRsvpReminderMessage({
     dateLabel ? `When: ${dateLabel}` : '',
     `${Number.parseInt(String(missingCount || 0), 10) || 0} player(s) still have not responded.`
   ].filter(Boolean).join('\n');
+}
+
+export function resolveStaffRsvpReminderEmailSentCount(sentCount: unknown, fallbackCount: unknown) {
+  const parsedSentCount = Number(sentCount);
+  if (sentCount !== null && sentCount !== undefined && Number.isFinite(parsedSentCount)) {
+    return Math.max(0, parsedSentCount);
+  }
+
+  const parsedFallbackCount = Number(fallbackCount);
+  return Number.isFinite(parsedFallbackCount) ? Math.max(0, parsedFallbackCount) : 0;
+}
+
+export function getStaffRsvpReminderMetadataTarget(eventId: string) {
+  const normalizedEventId = String(eventId || '').trim();
+  const [persistedEventId, occurrenceKey] = normalizedEventId.includes('__')
+    ? normalizedEventId.split(/__(.+)/).filter(Boolean)
+    : [normalizedEventId, ''];
+
+  return {
+    persistedEventId: persistedEventId || normalizedEventId,
+    occurrenceKey: String(occurrenceKey || '').replace(/[^A-Za-z0-9_-]/g, '_')
+  };
 }
 
 export function buildStaffRsvpReminderMetadata(userId: string | null | undefined, missingCount: number, emailCount: number, sentAt = new Date().toISOString()) {

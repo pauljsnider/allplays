@@ -52,6 +52,8 @@ import {
   buildStaffRsvpReminderMetadata,
   buildStaffRsvpReminderMessage,
   buildStaffRsvpReminderPreview,
+  getStaffRsvpReminderMetadataTarget,
+  resolveStaffRsvpReminderEmailSentCount,
   type ParentScheduleEvent,
   type PracticeHomePacket,
   type PracticePacketCompletion,
@@ -315,13 +317,19 @@ function normalizeEmail(value: unknown) {
   return compactString(value).toLowerCase();
 }
 
-function isTeamStaff(team: any, user: AuthUser | null) {
+function isPublicRsvpReminderManager(team: any, user: AuthUser | null) {
   if (!team || !user?.uid) return false;
   if (team.ownerId === user.uid || (user as any).isAdmin === true) return true;
-  if (Array.isArray(user.coachOf) && user.coachOf.map(compactString).includes(compactString(team.id))) return true;
   const email = normalizeEmail(user.email);
   const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails.map(normalizeEmail) : [];
   return Boolean(email && adminEmails.includes(email));
+}
+
+function isTeamStaff(team: any, user: AuthUser | null) {
+  if (!team || !user?.uid) return false;
+  if (isPublicRsvpReminderManager(team, user)) return true;
+  if (Array.isArray(user.coachOf) && user.coachOf.map(compactString).includes(compactString(team.id))) return true;
+  return false;
 }
 
 async function loadStaffTeams(user: AuthUser) {
@@ -656,6 +664,7 @@ function createScheduleEvent(input: {
   availabilityPreferences?: any;
   isTeamAdmin?: boolean;
   isTeamStaff?: boolean;
+  isTeamRsvpReminderManager?: boolean;
 }): ParentScheduleEvent {
   const arrivalTime = normalizeScheduleDate(input.arrivalTime);
   const endDate = normalizeScheduleDate(input.endDate);
@@ -712,7 +721,8 @@ function createScheduleEvent(input: {
     practiceSessionId: input.practiceSessionId || null,
     practiceHomePacket: packetSummary ? input.practiceHomePacket : null,
     practicePacketCompletions: [],
-    isTeamStaff: input.isTeamStaff === true
+    isTeamStaff: input.isTeamStaff === true,
+    isTeamRsvpReminderManager: input.isTeamRsvpReminderManager === true
   };
 }
 
@@ -729,6 +739,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
   const isStaff = isTeamStaff(teamWithId, user);
+  const isRsvpReminderManager = isPublicRsvpReminderManager(teamWithId, user);
   teamChildren.forEach((child) => {
     child.teamName = child.teamName || teamName;
   });
@@ -786,7 +797,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null,
             practiceSessionId: compactString(session?.id) || null,
             availabilityPreferences,
-            isTeamStaff: isStaff
+            isTeamStaff: isStaff,
+            isTeamRsvpReminderManager: isRsvpReminderManager
           }));
         });
       }
@@ -833,7 +845,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
           practiceSessionId: isPractice ? compactString(session?.id) || null : null,
           availabilityPreferences,
-          isTeamStaff: isStaff
+          isTeamStaff: isStaff,
+          isTeamRsvpReminderManager: isRsvpReminderManager
         }));
       });
     }
@@ -881,7 +894,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
           practiceSessionId: isPractice ? compactString(session?.id) || null : null,
           availabilityPreferences,
-          isTeamStaff: isStaff
+          isTeamStaff: isStaff,
+          isTeamRsvpReminderManager: isRsvpReminderManager
         }));
       });
     });
@@ -910,7 +924,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null,
           practiceSessionId: compactString(session?.id) || null,
           availabilityPreferences,
-          isTeamStaff: isStaff
+          isTeamStaff: isStaff,
+          isTeamRsvpReminderManager: isRsvpReminderManager
         }));
       });
     });
@@ -1131,7 +1146,7 @@ export async function updateGameScore(teamId: string, gameId: string, score: Gam
 
 function assertStaffRsvpReminderEvent(event: ParentScheduleEvent, user: AuthUser | null) {
   if (!user?.uid) throw new Error('Sign in before sending RSVP reminders.');
-  if (!event.isTeamStaff) throw new Error('Only team staff can send RSVP reminders.');
+  if (!event.isTeamRsvpReminderManager) throw new Error('Only team owners and admins can send RSVP reminders.');
   if (!event.isDbGame) throw new Error('RSVP reminders are available only for schedule events.');
   if (event.isCancelled) throw new Error('RSVP reminders are unavailable for cancelled events.');
 }
@@ -1188,19 +1203,27 @@ async function sendPublicRsvpReminderEmailsNativeSafe(event: ParentScheduleEvent
 async function updateRsvpReminderMetadata(event: ParentScheduleEvent, user: AuthUser, missingCount: number, emailCount: number) {
   const sentAt = new Date().toISOString();
   const metadata = buildStaffRsvpReminderMetadata(user.uid, missingCount, emailCount, sentAt);
+  const { persistedEventId, occurrenceKey } = getStaffRsvpReminderMetadataTarget(event.id);
 
   if (isNativeRuntime()) {
-    const existing = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`).catch(() => null);
-    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, {
+    const existing = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(persistedEventId)}`).catch(() => null);
+    const existingNotifications = existing?.scheduleNotifications || {};
+    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(persistedEventId)}`, {
       scheduleNotifications: {
-        ...(existing?.scheduleNotifications || {}),
-        ...metadata
+        ...existingNotifications,
+        ...metadata,
+        rsvpReminderOccurrences: occurrenceKey
+          ? {
+              ...(existingNotifications.rsvpReminderOccurrences || {}),
+              [occurrenceKey]: metadata
+            }
+          : existingNotifications.rsvpReminderOccurrences || null
       }
     });
     return;
   }
 
-  await updateGame(event.teamId, event.id, {
+  const updates: Record<string, unknown> = {
     'scheduleNotifications.sent': true,
     'scheduleNotifications.sentAt': sentAt,
     'scheduleNotifications.lastAction': 'rsvp_reminder',
@@ -1208,7 +1231,12 @@ async function updateRsvpReminderMetadata(event: ParentScheduleEvent, user: Auth
     'scheduleNotifications.lastSentBy': user.uid || null,
     'scheduleNotifications.lastRsvpReminderCount': missingCount,
     'scheduleNotifications.lastRsvpEmailCount': emailCount
-  });
+  };
+  if (occurrenceKey) {
+    updates[`scheduleNotifications.rsvpReminderOccurrences.${occurrenceKey}`] = metadata;
+  }
+
+  await updateGame(event.teamId, persistedEventId, updates);
 }
 
 export async function sendStaffRsvpReminder(event: ParentScheduleEvent, user: AuthUser, profile: Record<string, any> = {}): Promise<StaffRsvpReminderSendResult> {
@@ -1234,7 +1262,7 @@ export async function sendStaffRsvpReminder(event: ParentScheduleEvent, user: Au
     selectedRecipientTarget: 'full_team',
     selectedRecipientIds: []
   });
-  const emailSentCount = Number(emailResult?.sentCount || preview.eligibleEmailCount || 0);
+  const emailSentCount = resolveStaffRsvpReminderEmailSentCount(emailResult?.sentCount, preview.eligibleEmailCount);
   await updateRsvpReminderMetadata(event, user, preview.missingPlayerCount, emailSentCount);
   return {
     ...preview,

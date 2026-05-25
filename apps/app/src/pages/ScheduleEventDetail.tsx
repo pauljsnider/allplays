@@ -711,7 +711,7 @@ function StaffRsvpReminderPanel({ auth, event }: { auth: AuthState; event: Paren
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canLoad = Boolean(auth.user && event.isTeamStaff && event.isDbGame && !event.isCancelled);
+  const canLoad = Boolean(auth.user && event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled);
 
   const refreshPreview = useCallback(async () => {
     if (!auth.user || !canLoad) return;
@@ -736,7 +736,7 @@ function StaffRsvpReminderPanel({ auth, event }: { auth: AuthState; event: Paren
     }
   }, [canLoad, refreshPreview]);
 
-  if (!event.isTeamStaff || !event.isDbGame || event.isCancelled) return null;
+  if (!event.isTeamRsvpReminderManager || !event.isDbGame || event.isCancelled) return null;
   if (loading && !preview) {
     return <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 text-sm font-semibold text-gray-600">Loading staff RSVP reminder preview…</div>;
   }

@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   buildStaffRsvpReminderMessage,
   buildStaffRsvpReminderMetadata,
-  buildStaffRsvpReminderPreview
+  buildStaffRsvpReminderPreview,
+  getStaffRsvpReminderMetadataTarget,
+  resolveStaffRsvpReminderEmailSentCount
 } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 describe('staff RSVP reminder helpers', () => {
@@ -40,6 +43,22 @@ describe('staff RSVP reminder helpers', () => {
     ].join('\n'));
   });
 
+  it('preserves an explicit zero email sent count', () => {
+    expect(resolveStaffRsvpReminderEmailSentCount(0, 8)).toBe(0);
+    expect(resolveStaffRsvpReminderEmailSentCount(undefined, 8)).toBe(8);
+  });
+
+  it('routes recurring virtual event metadata writes to the persisted master event', () => {
+    expect(getStaffRsvpReminderMetadataTarget('practice-master__2026-05-25')).toEqual({
+      persistedEventId: 'practice-master',
+      occurrenceKey: '2026-05-25'
+    });
+    expect(getStaffRsvpReminderMetadataTarget('game-1')).toEqual({
+      persistedEventId: 'game-1',
+      occurrenceKey: ''
+    });
+  });
+
   it('builds scheduleNotifications metadata for a successful reminder send', () => {
     expect(buildStaffRsvpReminderMetadata('coach-1', 2, 4, '2026-05-25T03:50:00.000Z')).toEqual({
       sent: true,
@@ -50,5 +69,18 @@ describe('staff RSVP reminder helpers', () => {
       lastRsvpReminderCount: 2,
       lastRsvpEmailCount: 4
     });
+  });
+});
+
+
+describe('staff RSVP reminder service wiring', () => {
+  it('gates reminders on backend-compatible managers instead of all team staff', () => {
+    const serviceSource = readFileSync('apps/app/src/lib/scheduleService.ts', 'utf8');
+    const detailSource = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+
+    expect(serviceSource).toContain('function isPublicRsvpReminderManager');
+    expect(serviceSource).toContain('if (!event.isTeamRsvpReminderManager)');
+    expect(detailSource).toContain('event.isTeamRsvpReminderManager');
+    expect(detailSource).not.toContain('event.isTeamStaff && event.isDbGame');
   });
 });
