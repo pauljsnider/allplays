@@ -12,6 +12,7 @@ import {
     getTeamMediaUploaderName,
     isSafeTeamMediaPhoto,
     isSafeTeamMediaUrl,
+    TEAM_MEDIA_MAX_FILE_SIZE_BYTES,
     isSupportedTeamMediaDocument,
     isSupportedTeamMediaVideoUrl,
     isSupportedTeamMediaImage,
@@ -162,19 +163,23 @@ describe('team media bulk actions', () => {
         expect(getTeamMediaUploaderName(item)).toBe('Coach Pat');
     });
 
-    it('accepts only image files for team album uploads', () => {
-        expect(isSupportedTeamMediaImage({ type: 'image/jpeg' })).toBe(true);
-        expect(isSupportedTeamMediaImage({ type: 'image/png' })).toBe(true);
-        expect(isSupportedTeamMediaImage({ type: 'video/mp4' })).toBe(false);
+    it('accepts only image files up to the team media backend size limit', () => {
+        expect(isSupportedTeamMediaImage({ type: 'image/jpeg', size: TEAM_MEDIA_MAX_FILE_SIZE_BYTES })).toBe(true);
+        expect(isSupportedTeamMediaImage({ type: 'image/png', size: 1 })).toBe(true);
+        expect(isSupportedTeamMediaImage({ type: 'image/jpeg', size: TEAM_MEDIA_MAX_FILE_SIZE_BYTES + 1 })).toBe(false);
+        expect(isSupportedTeamMediaImage({ type: 'image/jpeg', size: 0 })).toBe(false);
+        expect(isSupportedTeamMediaImage({ type: 'video/mp4', size: 1 })).toBe(false);
         expect(isSupportedTeamMediaImage(null)).toBe(false);
     });
 
-    it('accepts approved document files for team media uploads', () => {
-        expect(isSupportedTeamMediaDocument({ type: 'application/pdf' })).toBe(true);
-        expect(isSupportedTeamMediaDocument({ type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })).toBe(true);
-        expect(isSupportedTeamMediaDocument({ type: 'text/csv' })).toBe(true);
-        expect(isSupportedTeamMediaDocument({ type: 'video/mp4' })).toBe(false);
-        expect(isSupportedTeamMediaDocument({ type: 'image/png' })).toBe(false);
+    it('accepts approved document files up to the team media backend size limit', () => {
+        expect(isSupportedTeamMediaDocument({ type: 'application/pdf', size: TEAM_MEDIA_MAX_FILE_SIZE_BYTES })).toBe(true);
+        expect(isSupportedTeamMediaDocument({ type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 1 })).toBe(true);
+        expect(isSupportedTeamMediaDocument({ type: 'text/csv', size: 1 })).toBe(true);
+        expect(isSupportedTeamMediaDocument({ type: 'application/pdf', size: TEAM_MEDIA_MAX_FILE_SIZE_BYTES + 1 })).toBe(false);
+        expect(isSupportedTeamMediaDocument({ type: 'application/pdf', size: 0 })).toBe(false);
+        expect(isSupportedTeamMediaDocument({ type: 'video/mp4', size: 1 })).toBe(false);
+        expect(isSupportedTeamMediaDocument({ type: 'image/png', size: 1 })).toBe(false);
         expect(isTeamMediaDocument({ type: 'file' })).toBe(true);
     });
 

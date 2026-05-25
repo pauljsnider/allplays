@@ -28,7 +28,7 @@
         <section id="team-media-upload-panel" class="hidden mb-6 rounded-xl border border-indigo-100 bg-white p-5 shadow-sm">
             <form id="photo-upload-form" class="space-y-3">
                 <h2 class="font-semibold text-gray-900">Upload photos</h2>
-                <p class="text-sm text-gray-500">Choose an album and add one or more image files.</p>
+                <p class="text-sm text-gray-500">Choose an album and add one or more image files up to 10 MB each.</p>
                 <select id="photo-folder" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required></select>
                 <input id="photo-files" type="file" accept="image/*" multiple class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required>
                 <button class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2">Upload photos</button>
@@ -36,7 +36,7 @@
             </form>
             <form id="file-upload-form" class="mt-5 space-y-3 border-t border-gray-100 pt-5">
                 <h2 class="font-semibold text-gray-900">Upload files</h2>
-                <p class="text-sm text-gray-500">Share PDFs, Office documents, text files, or CSVs with the team.</p>
+                <p class="text-sm text-gray-500">Share PDFs, Office documents, text files, or CSVs up to 10 MB each with the team.</p>
                 <select id="file-folder" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required></select>
                 <input id="media-files" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/csv" multiple class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" required>
                 <button class="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-2">Upload files</button>
@@ -96,6 +96,6 @@
         <section id="album-detail"></section>
     </main>
 
-    <script type="module" src="js/team-media.js?v=4"></script>
+    <script type="module" src="js/team-media.js?v=5"></script>
 </body>
 </html>
