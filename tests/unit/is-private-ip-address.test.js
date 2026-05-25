@@ -77,7 +77,13 @@ describe('isPrivateIpAddress', () => {
     expect(isPrivateIpAddress('::ffff:192.168.1.1')).toBe(true);
     expect(isPrivateIpAddress('::ffff:169.254.169.254')).toBe(true);
     expect(isPrivateIpAddress('::ffff:7f00:1')).toBe(true);
+    expect(isPrivateIpAddress('0:0:0:0:0:ffff:7f00:1')).toBe(true);
+    expect(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:7f00:0001')).toBe(true);
+    expect(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:0a00:0001')).toBe(true);
+    expect(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:c0a8:0101')).toBe(true);
+    expect(isPrivateIpAddress('0000:0000:0000:0000:0000:FFFF:7F00:0001')).toBe(true);
     expect(isPrivateIpAddress('::ffff:8.8.8.8')).toBe(false);
+    expect(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:0808:0808')).toBe(false);
   });
 
   // Invalid IP addresses

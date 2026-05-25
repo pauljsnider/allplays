@@ -5,13 +5,26 @@ const net = require('node:net');
 
 function getIpv4MappedAddress(ip) {
   const normalized = ip.toLowerCase();
-  const mappedPrefixes = ['::ffff:', '0:0:0:0:0:ffff:'];
-  const prefix = mappedPrefixes.find((candidate) => normalized.startsWith(candidate));
-  if (!prefix) {
+  let embedded = null;
+
+  if (normalized.startsWith('::ffff:')) {
+    embedded = normalized.slice('::ffff:'.length);
+  } else {
+    const parts = normalized.split(':');
+    if (
+      (parts.length === 7 || parts.length === 8) &&
+      parts.slice(0, 5).every((part) => /^[0-9a-f]{1,4}$/.test(part) && Number.parseInt(part, 16) === 0) &&
+      /^[0-9a-f]{1,4}$/.test(parts[5]) &&
+      Number.parseInt(parts[5], 16) === 0xffff
+    ) {
+      embedded = parts.slice(6).join(':');
+    }
+  }
+
+  if (!embedded) {
     return null;
   }
 
-  const embedded = normalized.slice(prefix.length);
   if (net.isIP(embedded) === 4) {
     return embedded;
   }
