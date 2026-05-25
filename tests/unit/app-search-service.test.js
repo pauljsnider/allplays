@@ -147,6 +147,7 @@ describe('React app search service', () => {
     it('loads public/current-site teams and merges private teams from app access', async () => {
         dbMocks.getTeams.mockResolvedValue([
             { id: 'team-public', name: 'Public Bears', sport: 'Soccer', isPublic: true },
+            { id: 'team-inactive', name: 'Inactive Sharks', sport: 'Soccer', isPublic: true, active: false },
             { id: 'team-private', name: 'Private Wolves', sport: 'Basketball', isPublic: false },
             { id: 'team-admin', name: 'Admin Lions', sport: 'Soccer', isPublic: false, adminEmails: ['parent@example.com'] },
             { id: 'team-owner', name: 'Owner Eagles', sport: 'Volleyball', isPublic: false, ownerId: 'user-1' },
@@ -158,6 +159,16 @@ describe('React app search service', () => {
                 teamName: 'Home Rockets',
                 sport: 'Basketball',
                 photoUrl: 'https://img.example.test/home.png',
+                players: [],
+                nextEvent: null,
+                eventCount: 0,
+                unreadCount: 0,
+                openActions: 0
+            }, {
+                teamId: 'team-inactive-access',
+                teamName: 'Inactive Access',
+                sport: 'Soccer',
+                active: false,
                 players: [],
                 nextEvent: null,
                 eventCount: 0,
@@ -175,6 +186,8 @@ describe('React app search service', () => {
             photoUrl: 'https://img.example.test/home.png'
         });
         expect(teams.find((team) => team.id === 'team-private')).toBeUndefined();
+        expect(teams.find((team) => team.id === 'team-inactive')).toBeUndefined();
+        expect(teams.find((team) => team.id === 'team-inactive-access')).toBeUndefined();
     });
 
     it('caches loaded teams and falls back to app access when public team loading fails', async () => {
