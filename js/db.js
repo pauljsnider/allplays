@@ -102,7 +102,7 @@ import {
 } from './registration-review.js?v=2';
 import { assertVolunteerScreeningCleared } from './volunteer-screening-access.js?v=1';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=2';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=3';
 import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
@@ -693,7 +693,7 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     const currentUser = auth.currentUser;
     if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading photos.');
     if (!currentUser?.uid) throw new Error('Sign in before uploading photos.');
-    if (!file || !String(file.type || '').startsWith('image/')) throw new Error('Choose a supported image file.');
+    if (!isSupportedTeamMediaImage(file)) throw new Error('Choose an image file that is 10 MB or smaller.');
 
     const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);
@@ -739,7 +739,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
     const currentUser = auth.currentUser;
     if (!cleanTeamId || !cleanFolderId) throw new Error('Choose an album before uploading files.');
     if (!currentUser?.uid) throw new Error('Sign in before uploading files.');
-    if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file.');
+    if (!isSupportedTeamMediaDocument(file)) throw new Error('Choose a supported document file that is 10 MB or smaller.');
 
     const storagePath = `team-media/${cleanTeamId}/${cleanFolderId}/${currentUser.uid}/${Date.now()}-${sanitizeTeamMediaFileName(file.name)}`;
     const storageRef = ref(storage, storagePath);

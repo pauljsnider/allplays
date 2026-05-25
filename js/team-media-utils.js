@@ -36,6 +36,7 @@ const GENERIC_TEAM_MEDIA_DOCUMENT_TYPES = new Set([
     'binary/octet-stream'
 ]);
 
+export const TEAM_MEDIA_MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 export const TEAM_MEDIA_VISIBILITIES = ['team', 'private'];
 
 function asTrimmedString(value) {
@@ -96,12 +97,16 @@ export function isSupportedTeamMediaVideoUrl(value) {
     return Boolean(getSafeVideoUrl(value));
 }
 
+function isAllowedTeamMediaFileSize(file) {
+    return Number(file?.size || 0) > 0 && Number(file.size) <= TEAM_MEDIA_MAX_FILE_SIZE_BYTES;
+}
+
 export function isSupportedTeamMediaImage(file) {
-    return Boolean(file && String(file.type || '').startsWith('image/'));
+    return Boolean(file && isAllowedTeamMediaFileSize(file) && String(file.type || '').startsWith('image/'));
 }
 
 export function isSupportedTeamMediaDocument(file) {
-    if (!file) return false;
+    if (!file || !isAllowedTeamMediaFileSize(file)) return false;
 
     const mimeType = String(file.type || '').toLowerCase();
     if (TEAM_MEDIA_DOCUMENT_TYPES.has(mimeType)) return true;
