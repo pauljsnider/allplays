@@ -457,9 +457,13 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Alerts' }).click();
     await expect(page.getByText('Notification preferences')).toBeVisible();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
+    await page.getByRole('button', { name: 'Turn on game-day alerts' }).click();
+    await expect(page.getByText('Game-day alerts are on for this team.')).toBeVisible();
+    await page.getByText('Customize alerts').click();
     await expect(page.getByLabel('Live Chat')).toBeChecked();
-    await page.getByLabel('Live Score').check();
-    await page.getByRole('button', { name: 'Enable push' }).click();
+    await expect(page.getByLabel('Live Score')).toBeChecked();
+    await expect(page.getByLabel('Schedule Changes')).toBeChecked();
+    await page.getByLabel('Live Chat').uncheck();
     await page.getByRole('button', { name: 'Save preferences' }).click();
     await expect(page.getByText('Notification preferences saved.')).toBeVisible();
 
@@ -499,6 +503,10 @@ test('profile exposes account, notification, invite, verification, password, upl
     }))).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
         push: 1,
+        notificationSaves: [
+            { userId: 'user-1', teamId: 'team-1', preferences: { liveChat: true, liveScore: true, schedule: true } },
+            { userId: 'user-1', teamId: 'team-1', preferences: { liveChat: false, liveScore: true, schedule: true } }
+        ],
         accessCodes: [{ userId: 'user-1', email: '', phone: '' }],
         password: ['new-password'],
         reset: ['parent@example.com'],
