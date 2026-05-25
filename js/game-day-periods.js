@@ -1,11 +1,22 @@
-export function getPeriodsForNumPeriods(numPeriods) {
+export function getPeriodPrefixForFormation(formation = {}) {
+  const configuredPrefix = String(formation?.periodPrefix || '').trim().toUpperCase();
+  if (configuredPrefix) return configuredPrefix;
+
+  const parsed = Number.parseInt(formation?.numPeriods, 10) || 2;
+  if (parsed === 4) return 'Q';
+  if (parsed === 7) return 'I';
+  return 'H';
+}
+
+export function getPeriodsForNumPeriods(numPeriods, periodPrefix = '') {
   const parsed = Number.parseInt(numPeriods, 10) || 2;
-  if (parsed === 4) return ['Q1', 'Q2', 'Q3', 'Q4'];
-  return ['H1', 'H2'];
+  const prefix = String(periodPrefix || '').trim().toUpperCase()
+    || (parsed === 4 ? 'Q' : parsed === 7 ? 'I' : 'H');
+  return Array.from({ length: parsed }, (_, index) => `${prefix}${index + 1}`);
 }
 
 export function getPeriodsForFormation(formation = {}) {
-  return getPeriodsForNumPeriods(formation?.numPeriods);
+  return getPeriodsForNumPeriods(formation?.numPeriods, getPeriodPrefixForFormation(formation));
 }
 
 function parseSubstitutionPeriodLabel(period) {
