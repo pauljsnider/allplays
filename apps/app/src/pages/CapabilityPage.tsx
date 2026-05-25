@@ -2,6 +2,7 @@ import { Link, Navigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ExternalLink, Layers, Route, ShieldCheck } from 'lucide-react';
 import { CategoryBadge, RoleBadge, StatusBadge } from '../components/Badges';
 import { capabilities } from '../data/capabilities';
+import { openPublicUrl } from '../lib/publicActions';
 
 export function CapabilityPage() {
   const { capabilityId } = useParams();
@@ -71,10 +72,12 @@ function PrimaryCapabilityAction({ capability }: { capability: (typeof capabilit
   }
 
   if ((capability.status === 'stub' || capability.status === 'legacy-link') && capability.legacyPath) {
+    const legacyUrl = new URL(capability.legacyPath, 'https://allplays.ai').toString();
+
     return (
-      <a href={`/${capability.legacyPath}`} className="primary-button mt-4 w-full justify-center">
+      <button type="button" className="primary-button mt-4 w-full justify-center" onClick={() => void openPublicUrl(legacyUrl)}>
         Open current page
-      </a>
+      </button>
     );
   }
 

@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import React, { act } from '../../apps/app/node_modules/react/index.js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
 import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
 
+vi.mock('../../apps/app/src/lib/publicActions.ts', () => ({
+    openPublicUrl: vi.fn()
+}));
+
+import { openPublicUrl } from '../../apps/app/src/lib/publicActions.ts';
 import { CapabilityPage } from '../../apps/app/src/pages/CapabilityPage.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -38,18 +43,50 @@ function linkByText(container, text) {
     return link;
 }
 
+function buttonByText(container, text) {
+    const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.includes(text));
+    if (!button) {
+        const labels = Array.from(container.querySelectorAll('button')).map((candidate) => candidate.textContent.trim() || '(unlabeled)');
+        throw new Error(`Button not found: ${text}. Available buttons: ${labels.join(', ')}`);
+    }
+    return button;
+}
+
 afterEach(() => {
     document.body.innerHTML = '';
+    vi.clearAllMocks();
 });
 
 describe('CapabilityPage launch CTAs', () => {
-    it('shows a primary current page link for stub capabilities with a legacy path', async () => {
+    it('opens stub capability legacy pages through the native-safe public URL flow', async () => {
         const { container, root } = await renderCapabilityPage('/capabilities/game-plan');
 
         expect(container.textContent).toContain('Current site page');
         expect(container.textContent).toContain('game-plan.html');
-        expect(linkByText(container, 'Open current page').getAttribute('href')).toBe('/game-plan.html');
+        expect(container.querySelector('a[href="/game-plan.html"]')).toBeNull();
         expect(container.textContent).not.toContain('Open app route');
+
+        await act(async () => {
+            buttonByText(container, 'Open current page').click();
+        });
+
+        expect(openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/game-plan.html');
+
+        await act(async () => root.unmount());
+    });
+
+    it('opens legacy-link capability pages through the native-safe public URL flow', async () => {
+        const { container, root } = await renderCapabilityPage('/capabilities/admin');
+
+        expect(container.textContent).toContain('Current site page');
+        expect(container.textContent).toContain('admin.html');
+        expect(container.querySelector('a[href="/admin.html"]')).toBeNull();
+
+        await act(async () => {
+            buttonByText(container, 'Open current page').click();
+        });
+
+        expect(openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/admin.html');
 
         await act(async () => root.unmount());
     });
@@ -59,6 +96,7 @@ describe('CapabilityPage launch CTAs', () => {
 
         expect(linkByText(container, 'Open app route').getAttribute('href')).toBe('/profile');
         expect(container.textContent).not.toContain('Open current page');
+        expect(openPublicUrl).not.toHaveBeenCalled();
 
         await act(async () => root.unmount());
     });
@@ -70,6 +108,7 @@ describe('CapabilityPage launch CTAs', () => {
         expect(container.textContent).toContain('organization-schedule.html');
         expect(container.textContent).not.toContain('Open current page');
         expect(container.textContent).not.toContain('Open app route');
+        expect(openPublicUrl).not.toHaveBeenCalled();
 
         await act(async () => root.unmount());
     });
