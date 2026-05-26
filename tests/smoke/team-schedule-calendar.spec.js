@@ -602,6 +602,7 @@ test('team schedule print uses the selected range and black-and-white layout', a
     const dialogValues = [
         inRangeGameDate.toISOString().slice(0, 10),
         inRangePracticeDate.toISOString().slice(0, 10),
+        'all',
         true
     ];
     page.on('dialog', async (dialog) => {
@@ -613,8 +614,8 @@ test('team schedule print uses the selected range and black-and-white layout', a
         await dialog.accept(String(value));
     });
 
-    await page.locator('#print-schedule').scrollIntoViewIfNeeded();
-    await page.locator('#print-schedule').click({ force: true });
+    await page.locator('#print-schedule-options').scrollIntoViewIfNeeded();
+    await page.locator('#print-schedule-options').click({ force: true });
 
     await expect.poll(() => page.evaluate(() => window.__printCalls)).toBe(1);
     await expect(page.locator('#schedule-print-container')).toHaveClass(/schedule-print-bw/);
