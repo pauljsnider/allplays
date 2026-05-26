@@ -424,7 +424,8 @@ test('signed-in invite and account action routes process existing site flows', a
 
     await page.goto(appUrl(baseURL, '/verify-pending'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('parent@example.com')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Continue to dashboard' })).toBeVisible();
+    await page.getByRole('button', { name: 'Need another option?' }).click();
+    await expect(page.getByRole('link', { name: 'Continue without verifying' })).toBeVisible();
     await page.getByRole('button', { name: 'Resend verification email' }).click();
     await page.getByRole('button', { name: 'Refresh status' }).click();
     expect(await page.evaluate(() => ({
