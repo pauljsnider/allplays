@@ -28,7 +28,19 @@ const registrationFlowMocks = vi.hoisted(() => ({
     selectedOption: params.selectedOptionId ? { id: params.selectedOptionId, countKey: params.selectedOptionId } : null,
     nextCounts: { enrolled: 1, waitlisted: 0 },
   })),
-  calculateRegistrationFeeSnapshot: vi.fn(() => ({ finalAmountDueCents: 10000, currency: 'USD' })),
+  calculateRegistrationFeeSnapshot: vi.fn((form = {}, options = {}) => {
+    const quantity = Math.max(1, Number(options.quantity || 1));
+    const originalFeeAmountCents = Number(form.feeAmountCents || 10000);
+    const subtotalAmountCents = originalFeeAmountCents * quantity;
+    const appliedDiscounts = quantity >= 2 ? [{ id: 'sibling', label: 'Sibling discount', amountCents: 2500 }] : [];
+    const finalAmountDueCents = subtotalAmountCents - appliedDiscounts.reduce((sum, discount) => sum + discount.amountCents, 0);
+    return { originalFeeAmountCents, subtotalAmountCents, appliedDiscounts, finalAmountDueCents, currency: form.currency || 'USD' };
+  }),
+  formatFeeSnapshotLines: vi.fn((snapshot = {}) => ([
+    { label: 'Original fee', amountCents: snapshot.subtotalAmountCents ?? snapshot.originalFeeAmountCents ?? 0 },
+    ...(snapshot.appliedDiscounts || []).map((discount) => ({ label: discount.label, amountCents: -Math.abs(Number(discount.amountCents || 0)) })),
+    { label: 'Final amount due', amountCents: snapshot.finalAmountDueCents ?? 0, strong: true },
+  ])),
   getPaymentPlanChoices: vi.fn(() => ([{ id: 'pay_full', title: 'Pay in full' }])),
   getActiveRegistrationOptions: vi.fn(() => ([{ id: 'opt-1', title: 'Option 1', capacityLimit: 10 }])),
   requiresRegistrationOption: vi.fn(() => true),
@@ -109,9 +121,16 @@ async function changeInputValue(container, labelText, value) {
   if (!input) throw new Error(`Input with label "${labelText}" not found.`);
   await act(async () => {
     if (input.type === 'checkbox') {
-      input.checked = value;
+      const checkedSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'checked')?.set;
+      checkedSetter?.call(input, value);
     } else {
-      input.value = value;
+      const prototype = input instanceof window.HTMLSelectElement
+        ? window.HTMLSelectElement.prototype
+        : input instanceof window.HTMLTextAreaElement
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype;
+      const valueSetter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      valueSetter?.call(input, value);
     }
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -481,6 +500,54 @@ describe('RegistrationDetail page', () => {
       'USD'
     );
     expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay-reg-1');
+  });
+
+  it('renders fee summary rows and updates them when quantity changes', async () => {
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Summer Camp');
+
+    expect(container.textContent).toContain('Fee summary');
+    expect(container.textContent).toContain('Original fee');
+    expect(container.textContent).toContain('$100.00');
+    expect(container.textContent).toContain('Final amount due');
+
+    await changeInputValue(container, 'Quantity', '2');
+
+    expect(container.textContent).toContain('Sibling discount');
+    expect(container.textContent).toContain('-$25.00');
+    expect(container.textContent).toContain('$175.00');
+  });
+
+  it('does not let a loaded fee snapshot freeze the displayed quantity total', async () => {
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        season: 'Summer',
+        currency: 'USD',
+        feeAmountCents: 10000,
+        feeSnapshot: { originalFeeAmountCents: 10000, subtotalAmountCents: 10000, appliedDiscounts: [], finalAmountDueCents: 10000, currency: 'USD' },
+        onlineCheckout: false,
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+      },
+    ]);
+
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Summer Camp');
+    await changeInputValue(container, 'Quantity', '3');
+
+    expect(registrationFlowMocks.calculateRegistrationFeeSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({ feeSnapshot: expect.objectContaining({ finalAmountDueCents: 10000 }) }),
+      expect.objectContaining({ quantity: 3, now: expect.any(Date) })
+    );
+    expect(container.textContent).toContain('Sibling discount');
+    expect(container.textContent).toContain('$275.00');
   });
 
   it('uses the server-returned registration fee for checkout', async () => {
