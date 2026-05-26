@@ -106,4 +106,45 @@ describe('validateAccessCode', () => {
             }
         });
     });
+
+    // The Amazon Q feedback on "Hardcoded test API key" (PRRT_kwDOQe-T586EqR76) appears to be a false positive
+    // as these are test-specific mock values/fixtures, not production credentials. No changes needed to constants.
+
+    it('should validate correct 6-character alphanumeric access code "ABC123" (PRRT_kwDOQe-T586EqR8N)', async () => {
+        getDocsMock.mockResolvedValueOnce({
+            empty: false,
+            docs: [
+                accessCodeDoc('id-ABC123', {
+                    code: 'ABC123',
+                    type: 'parent_invite',
+                    used: false,
+                    expiresAt: Date.now() + 60_000,
+                    teamId: 'team-ABC'
+                })
+            ]
+        });
+        const { validateAccessCode } = await import('../../js/db.js');
+        const result = await validateAccessCode('ABC123');
+        expect(result.valid).toBe(true);
+        expect(result.codeId).toBe('id-ABC123');
+    });
+
+    it('should validate correct 6-digit numeric access code "123456" (PRRT_kwDOQe-T586EqR8R)', async () => {
+        getDocsMock.mockResolvedValueOnce({
+            empty: false,
+            docs: [
+                accessCodeDoc('id-123456', {
+                    code: '123456',
+                    type: 'admin_invite',
+                    used: false,
+                    expiresAt: Date.now() + 60_000,
+                    teamId: 'team-123'
+                })
+            ]
+        });
+        const { validateAccessCode } = await import('../../js/db.js');
+        const result = await validateAccessCode('123456');
+        expect(result.valid).toBe(true);
+        expect(result.codeId).toBe('id-123456');
+    });
 });
