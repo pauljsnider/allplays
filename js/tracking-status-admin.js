@@ -5,9 +5,11 @@ export function normalizeTrackingItemDraft(draft = {}) {
     }
 
     return {
-        title,
-        scope: 'players',
-        active: true
+        name: title,
+        visibility: 'private',
+        status: 'active',
+        active: true,
+        archived: false
     };
 }
 
