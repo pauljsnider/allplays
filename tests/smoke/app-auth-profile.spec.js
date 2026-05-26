@@ -303,6 +303,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     };
                 }
 
+                export async function cancelScheduledGameForApp() {
+                    return { status: 'cancelled', isCancelled: true };
+                }
+
                 export async function createParentScheduleRideOffer() {}
                 export async function requestParentScheduleRideSpot() {}
                 export async function cancelParentScheduleRideRequest() {}

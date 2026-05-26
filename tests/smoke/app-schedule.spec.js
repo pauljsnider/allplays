@@ -282,6 +282,11 @@ async function mockScheduleModules(page, options = {}) {
                     return payload;
                 }
 
+                export async function cancelScheduledGameForApp(teamId, gameId, user) {
+                    window.__scheduleCalls.cancellations = (window.__scheduleCalls.cancellations || []).concat({ teamId, gameId, userId: user?.uid || null });
+                    return { status: 'cancelled', isCancelled: true };
+                }
+
                 export async function loadParentPracticePacket(event, childEvents) {
                     window.__scheduleCalls.packets.push({ action: 'load', eventId: event.id, sessionId: event.practiceSessionId });
                     if (!event.practiceHomePacket) return null;
