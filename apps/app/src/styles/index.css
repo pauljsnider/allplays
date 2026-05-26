@@ -1115,9 +1115,45 @@ a {
 
 .private-ai-welcome {
   margin: auto;
-  max-width: 360px;
+  max-width: 420px;
   padding: 28px 18px;
   text-align: center;
+}
+
+.private-ai-starter-prompts {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.private-ai-starter-prompt {
+  display: flex;
+  min-height: 42px;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #c7d2fe;
+  border-radius: 13px;
+  background: #ffffff;
+  padding: 9px 11px;
+  color: #3730a3;
+  text-align: left;
+  font-size: 0.84rem;
+  font-weight: 900;
+  line-height: 1.25;
+  box-shadow: 0 8px 18px rgba(79, 70, 229, 0.1);
+}
+
+.private-ai-starter-prompt:hover:not(:disabled) {
+  background: #eef2ff;
+  transform: translateY(-1px);
+}
+
+.private-ai-starter-prompt:disabled,
+.private-ai-prompt-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .private-ai-composer {
