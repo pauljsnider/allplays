@@ -9,10 +9,13 @@ import {
   getPublicTrackingItems,
   getTeam
 } from '../../../../js/db.js';
+import { collection, db, getDocs, query, where } from '../../../../js/firebase.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
 import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-summary.js';
+import { hasFullTeamAccess } from '../../../../js/team-access.js';
+import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-permissions.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import type { AuthUser } from './types';
 
@@ -73,6 +76,18 @@ export type TeamDetailSponsor = {
   websiteUrl: string | null;
 };
 
+export type TeamStaffPermissionsSummary = {
+  staff: Array<{ label: string; role: string }>;
+  pendingInvites: string[];
+  helperPermissions: Array<{
+    key: string;
+    title: string;
+    grants: string[];
+    emptyText: string;
+  }>;
+  hasAnyStaff: boolean;
+};
+
 export type TeamDetailModel = {
   team: {
     id: string;
@@ -85,6 +100,7 @@ export type TeamDetailModel = {
     bracketUrl: string | null;
     streamUrl: string | null;
     websiteUrl: string;
+    editTeamUrl: string;
     mediaUrl: string;
     registrationProvider: Array<{ label: string; value: string }>;
   };
@@ -110,6 +126,7 @@ export type TeamDetailModel = {
   leaderboards: TeamDetailLeaderboard[];
   trackingSummaries: TeamDetailTrackingSummary[];
   sponsors: TeamDetailSponsor[];
+  staffPermissions: TeamStaffPermissionsSummary | null;
   counts: {
     games: number;
     practices: number;
@@ -153,9 +170,13 @@ async function getNativeHeaders() {
   };
 }
 
-async function nativeFirestoreRequest(path: string) {
+async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
   const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    headers: await getNativeHeaders()
+    ...init,
+    headers: {
+      ...(await getNativeHeaders()),
+      ...(init.headers || {})
+    }
   }), 'Firestore REST request');
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -210,6 +231,28 @@ async function nativeListCollection(path: string) {
     .filter(Boolean) as FirestoreDocument[];
 }
 
+async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUAL' | 'ARRAY_CONTAINS', value: string) {
+  const payload = await nativeFirestoreRequest(':runQuery', {
+    method: 'POST',
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath },
+            op,
+            value: { stringValue: value }
+          }
+        }
+      }
+    })
+  });
+
+  return Array.isArray(payload)
+    ? payload.map((entry: any) => decodeFirestoreDocument(entry.document)).filter(Boolean) as FirestoreDocument[]
+    : [];
+}
+
 async function readWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
   try {
     return await withTimeout(Promise.resolve(primary()), label);
@@ -252,6 +295,18 @@ async function loadTeamConfigs(teamId: string) {
   ).catch(() => []);
 }
 
+async function loadPendingAdminInvites(teamId: string) {
+  return readWithNativeFallback(
+    `pending admin invites ${teamId}`,
+    async () => {
+      const snapshot = await getDocs(query(collection(db, 'accessCodes'), where('teamId', '==', teamId)));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    async () => nativeRunQuery('accessCodes', 'teamId', 'EQUAL', teamId)
+  ).then((invites: any[]) => (Array.isArray(invites) ? invites : [])
+    .filter((invite) => invite?.type === 'admin_invite' && invite?.used !== true));
+}
+
 export async function loadParentTeamDetail(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
   const [team, players, games, configs] = await Promise.all([
     loadTeamDocument(teamId),
@@ -261,6 +316,9 @@ export async function loadParentTeamDetail(teamId: string, user: AuthUser | null
   ]);
 
   if (!team) throw new Error('Team not found.');
+
+  const canManageTeam = hasFullTeamAccess(user, team);
+  const pendingAdminInvites = canManageTeam ? await loadPendingAdminInvites(teamId).catch(() => []) : [];
 
   const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
   const completedGameIds = (Array.isArray(games) ? games : [])
@@ -287,7 +345,8 @@ export async function loadParentTeamDetail(teamId: string, user: AuthUser | null
     seasonStatsByPlayerId,
     trackingItems,
     trackingStatuses,
-    sponsors: [...normalizeSponsorList(adSponsors), ...normalizeSponsorList(localSponsors)]
+    sponsors: [...normalizeSponsorList(adSponsors), ...normalizeSponsorList(localSponsors)],
+    pendingAdminInvites
   });
 }
 
@@ -302,7 +361,8 @@ export function buildTeamDetailModel({
   seasonStatsByPlayerId = {},
   trackingItems = [],
   trackingStatuses = [],
-  sponsors = []
+  sponsors = [],
+  pendingAdminInvites = []
 }: {
   teamId: string;
   team: Record<string, any>;
@@ -315,6 +375,7 @@ export function buildTeamDetailModel({
   trackingItems?: any[];
   trackingStatuses?: any[];
   sponsors?: TeamDetailSponsor[];
+  pendingAdminInvites?: any[];
 }): TeamDetailModel {
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
   const normalizedEvents = normalizeEvents(games);
@@ -326,6 +387,9 @@ export function buildTeamDetailModel({
   const standings = buildStandings(team, games);
   const leaderboards = buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport);
   const trackingSummaries = buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses);
+  const staffPermissions = hasFullTeamAccess(user, team)
+    ? buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites)
+    : null;
 
   return {
     team: {
@@ -339,6 +403,7 @@ export function buildTeamDetailModel({
       bracketUrl: getFirstUrl(team?.bracketUrl),
       streamUrl: getStreamUrl(team),
       websiteUrl: getPublicHashUrl('team.html', teamId),
+      editTeamUrl: getPublicHashUrl('edit-team.html', teamId),
       mediaUrl: getPublicHashUrl('team-media.html', teamId),
       registrationProvider: getRegistrationProviderDetails(team, teamId)
     },
@@ -359,6 +424,7 @@ export function buildTeamDetailModel({
     leaderboards,
     trackingSummaries,
     sponsors: sponsors.slice(0, 4),
+    staffPermissions,
     counts: {
       games: games.filter((game: any) => game?.type !== 'practice').length,
       practices: games.filter((game: any) => game?.type === 'practice').length,
