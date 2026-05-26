@@ -399,6 +399,7 @@ function writeImageUploadSession(session: ImageUploadSession) {
   }
 }
 
+// Firebase web API keys are public project identifiers. Security is enforced by Firebase Auth and Storage rules.
 async function getImageUploadSession(apiKey: string): Promise<ImageUploadSession> {
   const current = readImageUploadSession();
   if (current?.apiKey === apiKey && current.idToken && current.refreshToken) {
