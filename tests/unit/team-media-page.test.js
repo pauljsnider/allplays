@@ -45,6 +45,13 @@ describe('team media entry point', () => {
         expect(pageJs).toContain('canReadTeamMediaAlbum');
         expect(pageJs).toContain('bulkDeleteTeamMediaItems');
         expect(pageJs).toContain('setTeamMediaAlbumCover');
+        expect(pageJs).toContain('MEDIA_TYPE_FILTERS');
+        expect(pageJs).toContain("{ id: 'videos', label: 'Videos' }");
+        expect(pageJs).toContain('data-media-type-filter');
+        expect(pageJs).toContain('aria-label="Media type filters"');
+        expect(pageJs).toContain('getMediaTypeCounts');
+        expect(pageJs).toContain('matchesMediaTypeFilter(item, state.selectedMediaType)');
+        expect(pageJs).toContain('No ${escapeHtml(emptyStateLabel)} in this album.');
         expect(pageJs).toContain('download class="rounded-lg');
         expect(pageJs).toContain('data-set-cover');
         expect(rules).toContain('match /mediaFolders/{folderId}');
