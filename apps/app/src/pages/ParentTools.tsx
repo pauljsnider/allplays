@@ -674,7 +674,23 @@ function AccessRequestCard({ request }: { request: ParentAccessRequest }) {
   );
 }
 
+function getFeeMessage(...values: Array<unknown>): string {
+  return values.map((value) => String(value || '').trim()).find(Boolean) || '';
+}
+
+function FeeMessageBlock({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs font-semibold leading-5 text-blue-900">
+      <div className="font-black uppercase tracking-[0.04em] text-blue-700">{title}</div>
+      <div className="mt-1 whitespace-pre-wrap break-words">{message}</div>
+    </div>
+  );
+}
+
 function FeeCard({ fee, onPay, paying, error }: { fee: ParentFeeAppRecord; onPay: (fee: ParentFeeAppRecord) => void | Promise<void>; paying: boolean; error: string }) {
+  const notes = getFeeMessage(fee.notes, fee.feeNotes);
+  const offlinePaymentInstructions = getFeeMessage(fee.offlinePaymentInstructions, fee.paymentInstructions);
+
   return (
     <section className="app-card p-4">
       <div className="flex items-start justify-between gap-3">
@@ -692,6 +708,8 @@ function FeeCard({ fee, onPay, paying, error }: { fee: ParentFeeAppRecord; onPay
       {fee.lineItems.length ? <FeeDetailList title="Line items" rows={fee.lineItems} /> : null}
       {fee.installments.length ? <FeeDetailList title="Installments" rows={fee.installments} /> : null}
       {fee.ledgerEntries.length ? <FeeDetailList title="Payments and adjustments" rows={fee.ledgerEntries} /> : null}
+      {notes ? <FeeMessageBlock title="Notes" message={notes} /> : null}
+      {offlinePaymentInstructions ? <FeeMessageBlock title="Offline payment" message={offlinePaymentInstructions} /> : null}
       {fee.canPay ? (
         <button type="button" className="primary-button mt-3 w-full" onClick={() => onPay(fee)} disabled={paying}>
           {paying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ExternalLink className="h-4 w-4" aria-hidden="true" />}

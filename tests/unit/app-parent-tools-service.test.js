@@ -450,6 +450,8 @@ describe('React app parent tools service', () => {
                 amountDueCents: 12000,
                 balanceDueCents: 12000,
                 checkoutUrl: 'https://pay.example.test/open',
+                notes: 'Bring jersey deposit form.',
+                offlinePaymentInstructions: 'Cash or check accepted at practice.',
                 lineItems: [{ title: 'Season', amountCents: 10000 }],
                 installments: [{ label: 'Deposit', amountCents: 5000 }],
                 ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
@@ -464,6 +466,8 @@ describe('React app parent tools service', () => {
             amountLabel: '$120',
             dueLabel: 'No due date',
             statusLabel: 'Open',
+            notes: 'Bring jersey deposit form.',
+            offlinePaymentInstructions: 'Cash or check accepted at practice.',
             canPay: true,
             checkoutInitiatable: false,
             paymentAction: 'checkoutUrl',
