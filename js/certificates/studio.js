@@ -69,7 +69,8 @@ const state = {
     imageUploadStatus: {},
     pendingPreviewTimer: null,
     descriptionGeneration: null,
-    savedListExpanded: {}
+    savedListExpanded: {},
+    advancedCustomizationOpen: false
 };
 
 renderFooter(document.getElementById('footer-container'));
@@ -619,21 +620,9 @@ function renderSetup() {
     document.getElementById('cert-setup').innerHTML = `
         <div class="cert-panel-header">
             <h2 class="text-xl font-bold text-gray-900">Shared setup</h2>
-            <p class="mt-1 text-sm text-gray-500">Set the team-wide certificate values once, then review each player.</p>
+            <p class="mt-1 text-sm text-gray-500">Start with the essentials, then customize the design only if needed.</p>
         </div>
         <div class="cert-panel-body space-y-5">
-            <div>
-                <div class="cert-label">Template</div>
-                <div class="cert-template-picker">
-                    ${Object.values(TEMPLATES).map((template) => `
-                        <button type="button" class="cert-template-option" data-template-id="${template.id}" aria-pressed="${state.shared.templateId === template.id}">
-                            <div class="cert-template-swatch ${template.id === 'header' ? 'cert-template-swatch-header' : ''}"></div>
-                            <div class="mt-2 text-sm font-bold text-gray-900">${escapeHtml(template.displayName)}</div>
-                        </button>
-                    `).join('')}
-                </div>
-            </div>
-
             <div class="cert-form-grid">
                 <div class="cert-field">
                     <label for="cert-team-name">Team name banner</label>
@@ -647,85 +636,103 @@ function renderSetup() {
                     <label for="cert-award-title">Award title</label>
                     <input id="cert-award-title" class="cert-input" data-shared-field="awardTitle" value="${escapeAttr(state.shared.awardTitle)}" placeholder="Optional">
                 </div>
-                <div class="cert-field">
-                    <label for="cert-footer-url">Footer URL</label>
-                    <input id="cert-footer-url" class="cert-input" data-shared-field="footerUrl" value="${escapeAttr(state.shared.footerUrl)}" placeholder="www.jrkccurrent.com">
-                </div>
             </div>
 
-            <div>
-                <div class="cert-label">Color mode</div>
-                <div class="cert-segmented">
-                    ${[
-                        ['team', 'Use team colors'],
-                        ['template', 'Template default'],
-                        ['custom', 'Custom']
-                    ].map(([value, label]) => `
-                        <label><input type="radio" name="cert-color-mode" value="${value}" ${state.shared.colorMode === value ? 'checked' : ''}> <span>${label}</span></label>
-                    `).join('')}
-                </div>
-                ${teamColorsHint ? `<p class="mt-2 text-xs text-amber-700">${teamColorsHint} to use a team-specific palette.</p>` : ''}
-                <div id="cert-custom-colors" class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3 ${customVisible ? '' : 'hidden'}">
-                    ${[
-                        ['borderColor', 'Border'],
-                        ['accentColor', 'Accent'],
-                        ['textColor', 'Text']
-                    ].map(([slot, label]) => `
-                        <label class="text-xs font-semibold text-gray-600">${label}
-                            <input type="color" data-color-slot="${slot}" value="${escapeAttr(state.shared.customColors[slot])}" class="mt-1 h-10 w-full cursor-pointer rounded border border-gray-300">
-                        </label>
-                    `).join('')}
-                </div>
-                ${contrastWarning ? `<p id="cert-contrast-warning" class="mt-2 text-xs font-semibold text-amber-700">${escapeHtml(contrastWarning)}</p>` : ''}
-            </div>
+            <details id="cert-advanced-customization" class="rounded-xl border border-gray-200 bg-gray-50/70" ${state.advancedCustomizationOpen ? 'open' : ''}>
+                <summary class="cursor-pointer px-4 py-3 text-sm font-bold text-gray-800">Customize certificate design</summary>
+                <div class="space-y-5 border-t border-gray-200 bg-white px-4 py-5">
+                    <div>
+                        <div class="cert-label">Template</div>
+                        <div class="cert-template-picker">
+                            ${Object.values(TEMPLATES).map((template) => `
+                                <button type="button" class="cert-template-option" data-template-id="${template.id}" aria-pressed="${state.shared.templateId === template.id}">
+                                    <div class="cert-template-swatch ${template.id === 'header' ? 'cert-template-swatch-header' : ''}"></div>
+                                    <div class="mt-2 text-sm font-bold text-gray-900">${escapeHtml(template.displayName)}</div>
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
 
-            <div class="cert-image-stack">
-                ${renderImageSlot('foregroundImageRef', 'Foreground crest')}
-                ${renderImageSlot('backgroundImageRef', 'Background image', { opacityField: 'backgroundOpacity', opacityLabel: 'Background opacity' })}
-                ${renderImageSlot('watermarkImageRef', 'Watermark image', { opacityField: 'watermarkOpacity', opacityLabel: 'Watermark opacity' })}
-            </div>
+                    <div class="cert-field">
+                        <label for="cert-footer-url">Footer URL</label>
+                        <input id="cert-footer-url" class="cert-input" data-shared-field="footerUrl" value="${escapeAttr(state.shared.footerUrl)}" placeholder="www.jrkccurrent.com">
+                    </div>
 
-            <div class="cert-form-grid">
-                <div class="cert-field">
-                    <label for="cert-description-tone">Description tone</label>
-                    <input id="cert-description-tone" class="cert-input" data-shared-field="descriptionTone" value="${escapeAttr(state.shared.descriptionTone)}">
-                </div>
-                <div class="cert-field">
-                    <label for="cert-stats-window">Stats window</label>
-                    <select id="cert-stats-window" class="cert-select" data-shared-field="statsWindow">
-                        <option value="10" ${state.shared.statsWindow === 10 ? 'selected' : ''}>Last 10 completed games</option>
-                        <option value="5" ${state.shared.statsWindow === 5 ? 'selected' : ''}>Last 5 completed games</option>
-                    </select>
-                </div>
-            </div>
+                    <div>
+                        <div class="cert-label">Color mode</div>
+                        <div class="cert-segmented">
+                            ${[
+                                ['team', 'Use team colors'],
+                                ['template', 'Template default'],
+                                ['custom', 'Custom']
+                            ].map(([value, label]) => `
+                                <label><input type="radio" name="cert-color-mode" value="${value}" ${state.shared.colorMode === value ? 'checked' : ''}> <span>${label}</span></label>
+                            `).join('')}
+                        </div>
+                        ${teamColorsHint ? `<p class="mt-2 text-xs text-amber-700">${teamColorsHint} to use a team-specific palette.</p>` : ''}
+                        <div id="cert-custom-colors" class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3 ${customVisible ? '' : 'hidden'}">
+                            ${[
+                                ['borderColor', 'Border'],
+                                ['accentColor', 'Accent'],
+                                ['textColor', 'Text']
+                            ].map(([slot, label]) => `
+                                <label class="text-xs font-semibold text-gray-600">${label}
+                                    <input type="color" data-color-slot="${slot}" value="${escapeAttr(state.shared.customColors[slot])}" class="mt-1 h-10 w-full cursor-pointer rounded border border-gray-300">
+                                </label>
+                            `).join('')}
+                        </div>
+                        ${contrastWarning ? `<p id="cert-contrast-warning" class="mt-2 text-xs font-semibold text-amber-700">${escapeHtml(contrastWarning)}</p>` : ''}
+                    </div>
 
-            <div>
-                <div class="cert-label">Fonts</div>
-                <div class="cert-form-grid">
-                    ${[
-                        ['heading', 'Team and title'],
-                        ['recipient', 'Recipient name'],
-                        ['body', 'Description and footer']
-                    ].map(([slot, label]) => `
+                    <div class="cert-image-stack">
+                        ${renderImageSlot('foregroundImageRef', 'Foreground crest')}
+                        ${renderImageSlot('backgroundImageRef', 'Background image', { opacityField: 'backgroundOpacity', opacityLabel: 'Background opacity' })}
+                        ${renderImageSlot('watermarkImageRef', 'Watermark image', { opacityField: 'watermarkOpacity', opacityLabel: 'Watermark opacity' })}
+                    </div>
+
+                    <div class="cert-form-grid">
                         <div class="cert-field">
-                            <label for="cert-font-${slot}">${label}</label>
-                            <select id="cert-font-${slot}" class="cert-select" data-font-slot="${slot}">
-                                ${Object.entries(CERTIFICATE_FONT_OPTIONS).map(([value, option]) => `
-                                    <option value="${escapeAttr(value)}" ${state.shared.fonts?.[slot] === value ? 'selected' : ''}>${escapeHtml(option.label)}</option>
-                                `).join('')}
+                            <label for="cert-description-tone">Description tone</label>
+                            <input id="cert-description-tone" class="cert-input" data-shared-field="descriptionTone" value="${escapeAttr(state.shared.descriptionTone)}">
+                        </div>
+                        <div class="cert-field">
+                            <label for="cert-stats-window">Stats window</label>
+                            <select id="cert-stats-window" class="cert-select" data-shared-field="statsWindow">
+                                <option value="10" ${state.shared.statsWindow === 10 ? 'selected' : ''}>Last 10 completed games</option>
+                                <option value="5" ${state.shared.statsWindow === 5 ? 'selected' : ''}>Last 5 completed games</option>
                             </select>
                         </div>
-                    `).join('')}
+                    </div>
+
+                    <div>
+                        <div class="cert-label">Fonts</div>
+                        <div class="cert-form-grid">
+                            ${[
+                                ['heading', 'Team and title'],
+                                ['recipient', 'Recipient name'],
+                                ['body', 'Description and footer']
+                            ].map(([slot, label]) => `
+                                <div class="cert-field">
+                                    <label for="cert-font-${slot}">${label}</label>
+                                    <select id="cert-font-${slot}" class="cert-select" data-font-slot="${slot}">
+                                        ${Object.entries(CERTIFICATE_FONT_OPTIONS).map(([value, option]) => `
+                                            <option value="${escapeAttr(value)}" ${state.shared.fonts?.[slot] === value ? 'selected' : ''}>${escapeHtml(option.label)}</option>
+                                        `).join('')}
+                                    </select>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    ${renderSignerEditor()}
+
+                    <div class="flex flex-wrap gap-2 border-t border-gray-100 pt-4">
+                        <button id="cert-save-default-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Save setup for future runs</button>
+                        <button id="cert-reset-defaults-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Reset setup</button>
+                    </div>
+                    <p class="-mt-3 text-xs text-gray-500">Saved setup changes the starting values for future runs. Reset setup restores the basic team defaults.</p>
                 </div>
-            </div>
-
-            ${renderSignerEditor()}
-
-            <div class="flex flex-wrap gap-2 border-t border-gray-100 pt-4">
-                <button id="cert-save-default-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Save setup for future runs</button>
-                <button id="cert-reset-defaults-btn" type="button" class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Reset setup</button>
-            </div>
-            <p class="-mt-3 text-xs text-gray-500">Saved setup changes the starting values for future runs. Reset setup restores the basic team defaults.</p>
+            </details>
         </div>
     `;
 
@@ -784,6 +791,10 @@ function renderPlayerSelection() {
 }
 
 function bindSetupEvents() {
+    document.getElementById('cert-advanced-customization')?.addEventListener('toggle', (event) => {
+        state.advancedCustomizationOpen = event.target.open;
+    });
+
     document.querySelectorAll('[data-template-id]').forEach((button) => {
         button.addEventListener('click', () => {
             state.shared.templateId = button.dataset.templateId;
