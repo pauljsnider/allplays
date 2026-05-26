@@ -83,6 +83,10 @@ export type ParentFeeAppRecord = Record<string, any> & {
   amountLabel: string;
   dueLabel: string;
   statusLabel: string;
+  notes?: string;
+  feeNotes?: string;
+  offlinePaymentInstructions?: string;
+  paymentInstructions?: string;
   canPay: boolean;
   checkoutInitiatable: boolean;
   paymentAction: 'checkoutUrl' | 'createCheckout' | '';
