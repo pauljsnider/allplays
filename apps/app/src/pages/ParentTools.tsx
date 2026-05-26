@@ -22,6 +22,7 @@ import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import {
   buildParentScheduleIcs,
   createParentFamilyShare,
+  createParentHouseholdMemberInvite,
   downloadIcs,
   getAppleCalendarFeedUrl,
   getGoogleCalendarFeedUrl,
@@ -33,6 +34,7 @@ import {
   loadParentCalendarTools,
   loadParentCertificates,
   loadParentFeesForApp,
+  loadParentHouseholdInviteModel,
   loadParentRegistrations,
   revokeParentFamilyShare,
   submitParentAccessRequest,
@@ -44,16 +46,19 @@ import {
   type ParentCalendarTeam,
   type ParentCertificateCard,
   type ParentFeeAppRecord,
+  type ParentHouseholdFamilyMember,
+  type ParentHouseholdLinkedPlayer,
   type ParentRegistrationCard
 } from '../lib/parentToolsService';
 import { getCalendarEventShareText } from '../lib/parentToolsService';
 import type { ParentScheduleEvent } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
 
-type ParentToolId = 'access' | 'fees' | 'calendar' | 'share' | 'registrations' | 'certificates';
+type ParentToolId = 'access' | 'household' | 'fees' | 'calendar' | 'share' | 'registrations' | 'certificates';
 
 const tools: Array<{ id: ParentToolId; label: string; icon: LucideIcon }> = [
   { id: 'access', label: 'Access', icon: Shield },
+  { id: 'household', label: 'Household', icon: Users },
   { id: 'fees', label: 'Fees', icon: DollarSign },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'share', label: 'Share', icon: Share2 },
@@ -87,13 +92,13 @@ export function ParentTools({ auth }: { auth: AuthState }) {
           <div className="min-w-0 flex-1">
             <div className="app-label">Parent tools</div>
             <h1 className="truncate text-xl font-black leading-tight text-gray-950">Family workflows</h1>
-            <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">Access, payments, calendars, sharing, registration, and awards.</p>
+            <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">Access, household invites, payments, calendars, sharing, registration, and awards.</p>
           </div>
         </div>
       </section>
 
       <div className="parent-tools-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
-        <div className="grid min-w-max grid-cols-6 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+        <div className="grid min-w-max grid-cols-7 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
           {tools.map((tool) => {
             const Icon = tool.icon;
             const active = tool.id === activeTool;
@@ -114,6 +119,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
       </div>
 
       {activeTool === 'access' ? <AccessTool auth={auth} /> : null}
+      {activeTool === 'household' ? <HouseholdInviteTool auth={auth} /> : null}
       {activeTool === 'fees' ? <FeesTool auth={auth} /> : null}
       {activeTool === 'calendar' ? <CalendarTool auth={auth} /> : null}
       {activeTool === 'share' ? <FamilyShareTool auth={auth} /> : null}
@@ -448,6 +454,135 @@ function CalendarTool({ auth }: { auth: AuthState }) {
           )) : <EmptyState icon={CalendarDays} title="No team schedules" detail="Schedules appear after a player or team is linked." />}
         </section>
       )}
+    </div>
+  );
+}
+
+
+function HouseholdInviteTool({ auth }: { auth: AuthState }) {
+  const [linkedPlayers, setLinkedPlayers] = useState<ParentHouseholdLinkedPlayer[]>([]);
+  const [members, setMembers] = useState<ParentHouseholdFamilyMember[]>([]);
+  const [playerKey, setPlayerKey] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
+  const [relation, setRelation] = useState('');
+  const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const pendingMembers = useMemo(() => members.filter((member) => String(member.status || '').toLowerCase() === 'pending'), [members]);
+
+  const refresh = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const model = await loadParentHouseholdInviteModel(auth.user);
+      setLinkedPlayers(model.linkedPlayers);
+      setMembers(model.members);
+      setPlayerKey((current) => current || (model.linkedPlayers[0] ? `${model.linkedPlayers[0].teamId}::${model.linkedPlayers[0].playerId}` : ''));
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load household invites.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user?.uid]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const trimmedEmail = email.trim();
+    const trimmedRelation = relation.trim();
+    if (!playerKey) {
+      setError('Choose a linked player first.');
+      return;
+    }
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setError('Enter a valid email for the household contact.');
+      return;
+    }
+    if (!trimmedRelation) {
+      setError('Enter the household contact relation.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    setMessage('');
+    setCreatedInvite(null);
+    try {
+      const result = await createParentHouseholdMemberInvite(auth.user, {
+        playerKey,
+        displayName,
+        email: trimmedEmail,
+        relation: trimmedRelation
+      });
+      setCreatedInvite(result);
+      setMessage('Household invite created.');
+      setDisplayName('');
+      setEmail('');
+      setRelation('');
+      await refresh();
+    } catch (createError: any) {
+      setError(createError?.message || 'Unable to create household invite.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <section className="app-card p-4">
+        <ToolHeader icon={Users} title="Household member invite" detail="Create one pending family plan invite for a linked player. This is separate from co-parent and token share links." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
+        {error ? <Status tone="error" message={error} /> : null}
+        {message ? <Status tone="success" message={message} /> : null}
+        {createdInvite ? (
+          <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+            <div className="font-black">Invite code: <span className="font-mono">{createdInvite.code}</span></div>
+            <div className="mt-1 break-all text-xs font-semibold">{createdInvite.inviteUrl}</div>
+            <button type="button" className="ghost-button mt-2 !min-h-8 text-xs" onClick={() => copyText(createdInvite.inviteUrl, setMessage)}><Copy className="h-4 w-4" aria-hidden="true" />Copy invite link</button>
+          </div>
+        ) : null}
+        {loading ? <LoadingBlock label="Loading household invites" /> : (
+          <form className="mt-3 grid gap-3" onSubmit={submit}>
+            <label>
+              <span className="app-label">Linked player</span>
+              <select className="auth-input mt-1" value={playerKey} onChange={(event) => setPlayerKey(event.target.value)} disabled={!linkedPlayers.length || saving}>
+                {linkedPlayers.length ? linkedPlayers.map((player) => (
+                  <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName || 'Player'}{player.playerNumber ? ` #${player.playerNumber}` : ''}{player.teamName ? ` - ${player.teamName}` : ''}</option>
+                )) : <option value="">No linked players</option>}
+              </select>
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <input className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" disabled={saving || !linkedPlayers.length} />
+              <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Household contact email" disabled={saving || !linkedPlayers.length} />
+            </div>
+            <input className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" disabled={saving || !linkedPlayers.length} />
+            <button type="submit" className="primary-button" disabled={saving || loading || !linkedPlayers.length}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Users className="h-4 w-4" aria-hidden="true" />}
+              Create household invite
+            </button>
+          </form>
+        )}
+      </section>
+
+      <section className="app-card p-4">
+        <ToolHeader icon={Users} title="Pending household invites" detail="Family membership invites that have not been redeemed or removed." />
+        <div className="mt-3 grid gap-3 lg:grid-cols-2">
+          {pendingMembers.length ? pendingMembers.map((member) => (
+            <div key={member.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <div className="text-sm font-black text-gray-950">{member.displayName || member.email}</div>
+              <div className="mt-0.5 text-xs font-semibold text-gray-500">{member.email}</div>
+              <div className="mt-1 text-xs font-semibold text-gray-600">{member.relation || 'Household contact'} for {member.playerName || 'Player'}{member.playerNumber ? ` #${member.playerNumber}` : ''}{member.teamName ? ` - ${member.teamName}` : ''}</div>
+              {member.accessCode ? <div className="mt-2 text-xs font-semibold text-gray-600">Code <span className="font-mono">{member.accessCode}</span></div> : null}
+            </div>
+          )) : <EmptyState icon={Users} title="No pending household invites" detail="Create an invite when a household member needs account-based access to a linked player." />}
+        </div>
+      </section>
     </div>
   );
 }
