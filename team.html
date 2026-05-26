@@ -209,6 +209,10 @@
                                 class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white rounded-lg hover:bg-gray-50 transition border border-gray-200">
                                 Print Schedule
                             </button>
+                            <button id="print-schedule-options"
+                                class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-600 bg-white rounded-lg hover:bg-gray-50 transition border border-gray-200">
+                                Print Options
+                            </button>
                             <button id="sync-calendar"
                                 class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -339,7 +343,7 @@
         import { renderTeamPassCard } from './js/team-pass.js?v=2';
         import { getVisiblePlayerTrackingSummary } from './js/player-tracking-summary.js?v=1';
         import { renderTeamStaffPermissionsSection } from './js/team-staff-permissions.js?v=2';
-        import { printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=1';
+        import { getDefaultSchedulePrintOptions, printSchedule, promptSchedulePrintOptions } from './js/schedule-print.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -2349,6 +2353,10 @@
             return events.sort((a, b) => a.date - b.date);
         }
 
+        function getDefaultSchedulePrintEvents() {
+            return (allScheduleEvents || []).filter((event) => !event.isCancelled);
+        }
+
         function renderScheduleFromControls() {
             const events = getFilteredScheduleEvents();
             const scheduleList = document.getElementById('schedule-list');
@@ -2908,9 +2916,19 @@
         });
 
         document.getElementById('print-schedule')?.addEventListener('click', () => {
-            const options = promptSchedulePrintOptions();
+            const options = getDefaultSchedulePrintOptions();
+            printSchedule(getDefaultSchedulePrintEvents(), {
+                ...options,
+                title: `${currentTeam?.name || 'Team'} schedule`,
+                teamName: currentTeam?.name || 'Team',
+                noEventsMessage: 'No upcoming schedule events in the next 30 days. Open Print Options to choose a custom date range or event type.'
+            });
+        });
+
+        document.getElementById('print-schedule-options')?.addEventListener('click', () => {
+            const options = promptSchedulePrintOptions(getDefaultSchedulePrintOptions());
             if (!options) return;
-            printSchedule(getFilteredScheduleEvents(), {
+            printSchedule(getDefaultSchedulePrintEvents(), {
                 ...options,
                 title: `${currentTeam?.name || 'Team'} schedule`,
                 teamName: currentTeam?.name || 'Team'
