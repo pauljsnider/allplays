@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../js/db.js', () => ({
@@ -12,12 +13,22 @@ vi.mock('../../js/db.js', () => ({
     getTeam: vi.fn()
 }));
 
+vi.mock('../../js/firebase.js', () => ({
+    collection: vi.fn((db, name) => ({ db, name })),
+    db: {},
+    getDocs: vi.fn(),
+    query: vi.fn((...parts) => parts),
+    where: vi.fn((field, op, value) => ({ field, op, value }))
+}));
+
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildTeamDetailModel } from '../../apps/app/src/lib/teamDetailService.ts';
+import { buildTeamDetailModel, loadParentTeamDetail } from '../../apps/app/src/lib/teamDetailService.ts';
+import { getDocs } from '../../js/firebase.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam } from '../../js/db.js';
 
 describe('React app team detail model', () => {
     it('projects team.html parent features into the native team model', () => {
@@ -115,6 +126,7 @@ describe('React app team detail model', () => {
         expect(model.team.photoUrl).toBe('https://img.example.test/logo.png');
         expect(model.team.streamUrl).toBe('https://twitch.tv/allplayslive');
         expect(model.team.websiteUrl).toBe('https://allplays.ai/team.html#teamId=team%2Fwith+slash');
+        expect(model.team.editTeamUrl).toBe('https://allplays.ai/edit-team.html#teamId=team%2Fwith+slash');
         expect(model.team.mediaUrl).toBe('https://allplays.ai/team-media.html#teamId=team%2Fwith+slash');
         expect(model.team.registrationProvider).toEqual([
             { label: 'Provider', value: 'League Apps' },
@@ -128,5 +140,80 @@ describe('React app team detail model', () => {
         expect(model.recentResults.map((event) => event.id)).toEqual(['scored-past', 'final-game']);
         expect(model.counts).toMatchObject({ games: 4, practices: 1, completedGames: 1 });
         expect(model.sponsors.map((sponsor) => sponsor.id)).toEqual(['s1', 's2', 's3', 's4']);
+    });
+
+    it('adds staff permissions only for users with full team access', () => {
+        const team = {
+            ownerId: 'owner-1',
+            ownerEmail: 'Owner@Example.com',
+            adminEmails: [' Coach@Example.com ', 'coach@example.com'],
+            teamPermissions: {
+                scorekeeping: { mode: 'selected', memberIds: ['scorekeeper-1', 'scorekeeper-1'] },
+                streaming: { mode: 'selected', memberIds: ['scorekeeper-1', 'video-1'] },
+                volunteer: { mode: 'selected', memberIds: ['snacks-1'] }
+            },
+            streamVolunteerEmails: ['video@example.com']
+        };
+
+        const adminModel = buildTeamDetailModel({
+            teamId: 'team-1',
+            team,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+            pendingAdminInvites: [
+                { email: 'pending@example.com', type: 'admin_invite', used: false },
+                { email: 'used@example.com', type: 'admin_invite', used: true }
+            ]
+        });
+
+        expect(adminModel.staffPermissions.staff).toEqual([
+            { label: 'owner@example.com', role: 'Owner' },
+            { label: 'coach@example.com', role: 'Admin' }
+        ]);
+        expect(adminModel.staffPermissions.pendingInvites).toEqual(['pending@example.com']);
+        expect(adminModel.staffPermissions.helperPermissions).toEqual([
+            expect.objectContaining({ key: 'scorekeeper', grants: ['scorekeeper-1'] }),
+            expect.objectContaining({ key: 'stream-score', grants: ['scorekeeper-1'] }),
+            expect.objectContaining({ key: 'videographer', grants: ['scorekeeper-1', 'video-1', 'video@example.com'] }),
+            expect.objectContaining({ key: 'volunteer', grants: ['snacks-1'] })
+        ]);
+
+        const parentModel = buildTeamDetailModel({
+            teamId: 'team-1',
+            team,
+            user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] }
+        });
+        expect(parentModel.staffPermissions).toBeNull();
+    });
+
+    it('loads pending admin invites for team admins but not parent members', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getAggregatedStatsForGames.mockResolvedValue({});
+        getAdSpaceSponsors.mockResolvedValue([]);
+        getLocalAttractionSponsors.mockResolvedValue([]);
+        const future = Date.now() + 60_000;
+        const past = Date.now() - 60_000;
+        getDocs.mockResolvedValue({
+            docs: [
+                { id: 'invite-1', data: () => ({ email: 'pending@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-2', data: () => ({ email: 'expired@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => past } }) },
+                { id: 'invite-3', data: () => ({ email: 'revoked@example.com', teamId: 'team-1', type: 'admin_invite', used: false, revoked: true, expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-4', data: () => ({ email: 'inactive@example.com', teamId: 'team-1', type: 'admin_invite', used: false, active: false, expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-5', data: () => ({ email: 'cancelled@example.com', teamId: 'team-1', type: 'admin_invite', used: false, status: 'cancelled', expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-6', data: () => ({ email: 'used@example.com', teamId: 'team-1', type: 'admin_invite', used: true, expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-7', data: () => ({ email: 'standard@example.com', teamId: 'team-1', type: 'standard', used: false, expiresAt: { toMillis: () => future } }) }
+            ]
+        });
+
+        const adminModel = await loadParentTeamDetail('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
+        expect(adminModel.staffPermissions.pendingInvites).toEqual(['pending@example.com']);
+        expect(getDocs).toHaveBeenCalledTimes(1);
+
+        getDocs.mockClear();
+        const parentModel = await loadParentTeamDetail('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] });
+        expect(parentModel.staffPermissions).toBeNull();
+        expect(getDocs).not.toHaveBeenCalled();
     });
 });
