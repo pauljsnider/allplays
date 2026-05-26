@@ -297,6 +297,7 @@ async function loadRegistrationForm(user: any, teamId: string, formId: string): 
         description: detail.form.description || '',
         season: detail.form.season || '',
         currency: detail.form.currency || 'USD',
+        feeAmountCents: detail.form.feeAmountCents ?? detail.feeSnapshot?.originalFeeAmountCents ?? detail.feeSnapshot?.finalAmountDueCents ?? 0,
         feeLabel: detail.feeSnapshot?.finalAmountDueCents ? formatMoney(detail.feeSnapshot.finalAmountDueCents, detail.form.currency) : '',
         paymentNotice: detail.paymentNotice || '',
         onlineCheckout: detail.onlineCheckout,
