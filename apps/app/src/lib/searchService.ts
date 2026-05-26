@@ -364,6 +364,7 @@ function buildAppSearchHelpResults(
     kind: 'help' as const,
     title: result.title,
     subtitle: result.snippet || result.summary,
+    route: `/help/${encodeURIComponent(result.id)}`,
     href: result.url,
     roles: result.roles,
     snippet: result.snippet
