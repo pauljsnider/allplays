@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, Clock, ExternalLink, FileText, MapPin, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
@@ -1457,24 +1457,61 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated }: { auth: Au
   );
 }
 
+type ScoreSnapshot = {
+  homeScore: number;
+  awayScore: number;
+};
+
 function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
   const [homeScore, setHomeScore] = useState(savedHomeScore);
   const [awayScore, setAwayScore] = useState(savedAwayScore);
+  const [previousScoreSnapshots, setPreviousScoreSnapshots] = useState<ScoreSnapshot[]>([]);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const lastSavedScoreRef = useRef({ eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore });
+  const pendingLocalSaveRef = useRef<ScoreSnapshot | null>(null);
 
   useEffect(() => {
-    setHomeScore(savedHomeScore);
-    setAwayScore(savedAwayScore);
+    const pendingLocalSave = pendingLocalSaveRef.current;
+    const isLocalSaveEcho = Boolean(
+      pendingLocalSave
+        && lastSavedScoreRef.current.eventKey === event.eventKey
+        && pendingLocalSave.homeScore === savedHomeScore
+        && pendingLocalSave.awayScore === savedAwayScore
+    );
+
+    if (!isLocalSaveEcho) {
+      setHomeScore(savedHomeScore);
+      setAwayScore(savedAwayScore);
+      setPreviousScoreSnapshots([]);
+    }
+
+    pendingLocalSaveRef.current = null;
+    lastSavedScoreRef.current = { eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore };
   }, [event.eventKey, savedHomeScore, savedAwayScore]);
 
   const dirty = homeScore !== savedHomeScore || awayScore !== savedAwayScore;
   const adjust = (side: 'home' | 'away', delta: number) => {
-    const setter = side === 'home' ? setHomeScore : setAwayScore;
-    setter((current) => Math.max(0, current + delta));
+    const nextHomeScore = side === 'home' ? Math.max(0, homeScore + delta) : homeScore;
+    const nextAwayScore = side === 'away' ? Math.max(0, awayScore + delta) : awayScore;
+    if (nextHomeScore === homeScore && nextAwayScore === awayScore) return;
+    setPreviousScoreSnapshots((snapshots) => [...snapshots, { homeScore, awayScore }]);
+    setHomeScore(nextHomeScore);
+    setAwayScore(nextAwayScore);
     setStatus(null);
+  };
+
+  const undoLastScoreChange = () => {
+    setPreviousScoreSnapshots((snapshots) => {
+      const latestSnapshot = snapshots[snapshots.length - 1];
+      if (!latestSnapshot) return snapshots;
+      setHomeScore(latestSnapshot.homeScore);
+      setAwayScore(latestSnapshot.awayScore);
+      setStatus(null);
+      return snapshots.slice(0, -1);
+    });
   };
 
   const saveScore = async () => {
@@ -1485,6 +1522,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
       const payload = await updateGameScore(event.teamId, event.id, { homeScore, awayScore }, auth.user);
       const nextHomeScore = Number(payload.homeScore ?? homeScore);
       const nextAwayScore = Number(payload.awayScore ?? awayScore);
+      pendingLocalSaveRef.current = { homeScore: nextHomeScore, awayScore: nextAwayScore };
       onScoreUpdated(nextHomeScore, nextAwayScore);
       setStatus({ tone: 'success', message: 'Score saved.' });
     } catch (error: any) {
@@ -1508,14 +1546,27 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
         <ScoreStepper label="Away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving} />
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <button
-          type="button"
-          className="primary-button min-h-11 px-4 text-sm"
-          onClick={saveScore}
-          disabled={saving || !dirty}
-        >
-          {saving ? 'Saving score' : 'Save score'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="primary-button min-h-11 px-4 text-sm"
+            onClick={saveScore}
+            disabled={saving || !dirty}
+          >
+            {saving ? 'Saving score' : 'Save score'}
+          </button>
+          {previousScoreSnapshots.length ? (
+            <button
+              type="button"
+              className="ghost-button min-h-11 px-4 text-sm"
+              onClick={undoLastScoreChange}
+              disabled={saving || !previousScoreSnapshots.length}
+              aria-label="Undo last score change"
+            >
+              Undo last score change
+            </button>
+          ) : null}
+        </div>
         {status ? <span className={`text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</span> : null}
       </div>
     </div>
