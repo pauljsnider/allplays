@@ -4,6 +4,7 @@ import {
     canViewTeamMediaFolder,
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
+    hasTeamMediaUploadGrant,
     canReadTeamMediaAlbum,
     buildBulkDeleteUpdates,
     buildMoveUpdates,
@@ -35,13 +36,16 @@ describe('team media management permissions', () => {
         expect(canManageTeamMedia(null, team)).toBe(false);
     });
 
-    it('allows team parents and admins to contribute photos', () => {
+    it('allows admins and explicitly approved members to contribute uploads', () => {
         const team = { id: 'team-1', ownerId: 'coach-1', adminEmails: ['admin@example.com'] };
 
         expect(canContributeTeamMedia({ uid: 'coach-1', email: 'coach@example.com' }, team)).toBe(true);
-        expect(canContributeTeamMedia({ uid: 'parent-1', parentTeamIds: ['team-1'] }, team)).toBe(true);
-        expect(canContributeTeamMedia({ uid: 'parent-2', parentOf: [{ teamId: 'team-1' }] }, team)).toBe(true);
-        expect(canContributeTeamMedia({ uid: 'other-1', parentTeamIds: ['other-team'] }, team)).toBe(false);
+        expect(canContributeTeamMedia({ uid: 'parent-1', parentTeamIds: ['team-1'] }, team)).toBe(false);
+        expect(canContributeTeamMedia({ uid: 'parent-2', parentOf: [{ teamId: 'team-1' }] }, team)).toBe(false);
+        expect(canContributeTeamMedia({ uid: 'parent-3', teamMediaUploadTeamIds: ['team-1'] }, team)).toBe(true);
+        expect(canContributeTeamMedia({ uid: 'parent-4', mediaUploadTeamIds: ['team-1'] }, team)).toBe(true);
+        expect(canContributeTeamMedia({ uid: 'other-1', teamMediaUploadTeamIds: ['other-team'] }, team)).toBe(false);
+        expect(hasTeamMediaUploadGrant({ teamMediaUploadTeamIds: ['team-1'] }, 'team-1')).toBe(true);
     });
 
     it('allows owners or admins to moderate all uploads and uploaders to delete their own files', () => {
