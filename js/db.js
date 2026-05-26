@@ -6732,37 +6732,51 @@ export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {
     if (!childId) throw new Error('childId is required to request a ride.');
     const childName = (payload.childName || '').toString().trim();
     const requestId = `${user.uid}__${childId}`;
+    const offerRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId);
     const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);
-    const existingRequestSnap = await getDoc(requestRef);
-    const requestedAt = Timestamp.now();
 
-    if (existingRequestSnap.exists()) {
-        const existingRequest = existingRequestSnap.data() || {};
-        const existingStatus = normalizeRideRequestStatus(existingRequest.status);
-        if (existingStatus && existingStatus !== RIDE_REQUEST_STATUS.DECLINED && existingStatus !== RIDE_REQUEST_STATUS.WAITLISTED) {
-            throw new Error('Ride request is already active.');
+    return runTransaction(db, async (tx) => {
+        const [offerSnap, existingRequestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);
+        if (!offerSnap.exists()) throw new Error('Ride offer not found.');
+
+        const offer = offerSnap.data() || {};
+        const offerStatus = normalizeRideOfferStatus(offer.status);
+        if (offerStatus !== RIDE_OFFER_STATUS.OPEN) throw new Error('Ride offer is closed.');
+
+        if (existingRequestSnap.exists()) {
+            const existingRequest = existingRequestSnap.data() || {};
+            const existingStatus = normalizeRideRequestStatus(existingRequest.status);
+            if (existingStatus && existingStatus !== RIDE_REQUEST_STATUS.DECLINED && existingStatus !== RIDE_REQUEST_STATUS.WAITLISTED) {
+                throw new Error('Ride request is already active.');
+            }
         }
 
-        await updateDoc(requestRef, {
+        const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);
+        const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);
+        if (currentSeatCountConfirmed >= seatCapacity) throw new Error('Offer is full.');
+
+        const requestedAt = Timestamp.now();
+        const updatedAt = Timestamp.now();
+        const requestPayload = {
             childName: childName || null,
             status: RIDE_REQUEST_STATUS.PENDING,
             requestedAt: requestedAt,
             respondedAt: null,
-            updatedAt: Timestamp.now()
+            updatedAt
+        };
+
+        if (existingRequestSnap.exists()) {
+            tx.update(requestRef, requestPayload);
+            return requestId;
+        }
+
+        tx.set(requestRef, {
+            parentUserId: user.uid,
+            childId,
+            ...requestPayload
         });
         return requestId;
-    }
-
-    await setDoc(requestRef, {
-        parentUserId: user.uid,
-        childId,
-        childName: childName || null,
-        status: RIDE_REQUEST_STATUS.PENDING,
-        requestedAt: requestedAt,
-        respondedAt: null,
-        updatedAt: Timestamp.now()
     });
-    return requestId;
 }
 
 /**

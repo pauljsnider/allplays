@@ -21,10 +21,17 @@ describe('rideshare re-request policy', () => {
         const source = extractRequestRideSpotSection(readFile('js/db.js'));
 
         expect(source).toContain('export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {');
+        expect(source).toContain('const offerRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers`, offerId);');
         expect(source).toContain('const requestRef = doc(db, `teams/${teamId}/games/${gameId}/rideOffers/${offerId}/requests`, requestId);');
-        expect(source).toContain('const existingRequestSnap = await getDoc(requestRef);');
+        expect(source).toContain('return runTransaction(db, async (tx) => {');
+        expect(source).toContain('const [offerSnap, existingRequestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);');
+        expect(source).toContain("if (offerStatus !== RIDE_OFFER_STATUS.OPEN) throw new Error('Ride offer is closed.');");
         expect(source).toContain("if (existingStatus && existingStatus !== RIDE_REQUEST_STATUS.DECLINED && existingStatus !== RIDE_REQUEST_STATUS.WAITLISTED)");
-        expect(source).toContain('await updateDoc(requestRef, {');
+        expect(source).toContain('const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);');
+        expect(source).toContain('const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);');
+        expect(source).toContain("if (currentSeatCountConfirmed >= seatCapacity) throw new Error('Offer is full.');");
+        expect(source).toContain('tx.update(requestRef, requestPayload);');
+        expect(source).toContain('tx.set(requestRef, {');
         expect(source).toContain('status: RIDE_REQUEST_STATUS.PENDING');
         expect(source).toContain('requestedAt: requestedAt');
         expect(source).toContain('respondedAt: null');
@@ -39,6 +46,8 @@ describe('rideshare re-request policy', () => {
         expect(rules).toContain('request.resource.data.respondedAt == null');
         expect(rules).toContain('isParentForPlayer(teamId, resource.data.childId)');
         expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().hasOnly([\'childName\', \'status\', \'requestedAt\', \'respondedAt\', \'updatedAt\'])');
-        expect(rules).toContain('isRideshareOfferOpen(teamId, gameId, offerId)');
+        expect(rules).toContain('function isRideshareOfferAcceptingRequests(teamId, gameId, offerId)');
+        expect(rules).toContain('get(offerPath).data.seatCountConfirmed < get(offerPath).data.seatCapacity');
+        expect(rules).toContain('isRideshareOfferAcceptingRequests(teamId, gameId, offerId)');
     });
 });
