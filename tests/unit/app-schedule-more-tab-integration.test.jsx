@@ -306,6 +306,76 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(container.textContent).toContain('5-2');
     });
 
+    it('lets staff undo the latest score change and save the restored score', async () => {
+        scheduleMocks.updateGameScore.mockImplementation(async (_teamId, _gameId, score) => ({
+            ...score,
+            scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'),
+            scoreUpdatedBy: 'user-1'
+        }));
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [
+                event({
+                    homeScore: 4,
+                    awayScore: 2,
+                    canUpdateScore: true
+                })
+            ]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+        expect(container.textContent).not.toContain('Undo last score change');
+
+        await clickButton(container, 'Home score up');
+        expect(container.textContent).toContain('5-2');
+        expect(container.textContent).toContain('Undo last score change');
+        await clickButton(container, 'Save score');
+        await waitForText(container, 'Score saved.');
+
+        await clickButton(container, 'Undo last score change');
+        expect(container.textContent).toContain('4-2');
+        expect(container.textContent).toContain('Unsaved score changes');
+        expect(container.textContent).not.toContain('Score saved.');
+        await clickButton(container, 'Save score');
+
+        expect(scheduleMocks.updateGameScore).toHaveBeenLastCalledWith(
+            'team-1',
+            'game-1',
+            { homeScore: 4, awayScore: 2 },
+            auth.user
+        );
+        await waitForText(container, 'Score saved.');
+    });
+
+    it('disables undo while a live score save is in flight', async () => {
+        let resolveSave;
+        const savePromise = new Promise((resolve) => {
+            resolveSave = resolve;
+        });
+        scheduleMocks.updateGameScore.mockReturnValue(savePromise);
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ homeScore: 4, awayScore: 2, canUpdateScore: true })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+
+        await clickButton(container, 'Away score up');
+        await clickButton(container, 'Save score');
+        expect(buttonByText(container, 'Undo last score change').disabled).toBe(true);
+
+        await act(async () => {
+            resolveSave({ homeScore: 4, awayScore: 3, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
+            await savePromise;
+        });
+
+        expect(buttonByText(container, 'Undo last score change').disabled).toBe(false);
+    });
+
     it('keeps score controls hidden for read-only schedule viewers', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [event({ homeScore: 4, awayScore: 2, canUpdateScore: false })]
