@@ -1,6 +1,5 @@
 import {
   createAccessCode,
-  generateAccessCode,
   getNotificationPreferencesForTeam,
   getParentTeams,
   getUserAccessCodes,
@@ -312,24 +311,6 @@ async function nativeSaveNotificationDeviceToken(userId: string, input: Notifica
   return deviceId;
 }
 
-async function nativeCreateAccessCode(userId: string, email: string, phone: string, code: string) {
-  await nativeFirestoreRequest('/accessCodes', {
-    method: 'POST',
-    body: JSON.stringify({
-      fields: {
-        code: encodeFirestoreValue(code),
-        generatedBy: encodeFirestoreValue(userId),
-        email: encodeFirestoreValue(email || null),
-        phone: encodeFirestoreValue(phone || null),
-        createdAt: encodeFirestoreValue(new Date()),
-        used: encodeFirestoreValue(false),
-        usedBy: encodeFirestoreValue(null),
-        usedAt: encodeFirestoreValue(null)
-      }
-    })
-  });
-}
-
 async function nativeLoadAccessCodes(userId: string): Promise<AccessCodeRecord[]> {
   const codes = await nativeRunQuery('accessCodes', 'generatedBy', 'EQUAL', userId) as AccessCodeRecord[];
   return codes.sort((a, b) => {
@@ -562,14 +543,13 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
 }
 
 export async function createProfileAccessCode(userId: string, email: string, phone: string) {
-  const code = generateAccessCode();
   try {
-    await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code)), 'Invite code create', primaryDataTimeoutMs);
+    const result = await withTimeout(Promise.resolve(createAccessCode(userId, email, phone)), 'Invite code create', primaryDataTimeoutMs) as { code: string };
+    return result.code;
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST invite code create:', error);
-    await nativeCreateAccessCode(userId, email, phone, code);
+    console.warn('[profile-service] Unable to create invite code securely:', error);
+    throw error;
   }
-  return code;
 }
 
 export async function loadProfileAccessCodes(userId: string): Promise<AccessCodeRecord[]> {
