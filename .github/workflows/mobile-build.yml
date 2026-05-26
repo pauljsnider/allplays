@@ -100,9 +100,14 @@ jobs:
 
       - name: Resolve iOS package dependencies
         run: |
+          reset_swiftpm_artifact_cache() {
+            rm -rf "$HOME/Library/Caches/org.swift.swiftpm/artifacts"
+          }
+
           run_with_retry() {
             attempt=1
             delay=20
+            reset_swiftpm_artifact_cache
             until "$@"; do
               if [ "$attempt" -ge 3 ]; then
                 return 1
@@ -110,6 +115,7 @@ jobs:
               echo "Attempt $attempt failed. Retrying in ${delay}s..."
               attempt=$((attempt + 1))
               sleep "$delay"
+              reset_swiftpm_artifact_cache
               delay=$((delay * 2))
             done
           }

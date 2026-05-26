@@ -20,6 +20,7 @@ import {
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import {
   addParentTeamMediaLink,
+  createTeamMediaAlbumForApp,
   loadTeamMediaForApp,
   uploadParentTeamMediaFile,
   uploadParentTeamMediaPhoto,
@@ -38,12 +39,15 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [selectedMediaType, setSelectedMediaType] = useState<MediaTypeFilter>('all');
   const [linkTitle, setLinkTitle] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
+  const [albumName, setAlbumName] = useState('');
+  const [albumVisibility, setAlbumVisibility] = useState<'team' | 'private'>('team');
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState('');
+  const [creatingAlbum, setCreatingAlbum] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const refresh = async ({ showLoading = model === null }: { showLoading?: boolean } = {}) => {
+  const refresh = async ({ showLoading = model === null, preferredFolderId = '' }: { showLoading?: boolean; preferredFolderId?: string } = {}) => {
     if (!teamId) return;
     if (showLoading) setLoading(true);
     setError('');
@@ -51,6 +55,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       const nextModel = await loadTeamMediaForApp(auth.user, teamId);
       setModel(nextModel);
       setActiveFolderId((current) => {
+        if (preferredFolderId && nextModel.folders.some((folder) => folder.id === preferredFolderId)) return preferredFolderId;
         if (current && nextModel.folders.some((folder) => folder.id === current)) return current;
         return nextModel.folders[0]?.id || '';
       });
@@ -76,7 +81,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const featured = activeFolder?.items[0] || allItems[0] || null;
 
   const uploadPhoto = async (file: File | null | undefined) => {
-    if (!file || !activeFolder) return;
+    if (!file || !activeFolder || creatingAlbum) return;
     setUploading('photo');
     setError('');
     setMessage('Uploading photo...');
@@ -94,7 +99,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   };
 
   const uploadFile = async (file: File | null | undefined) => {
-    if (!file || !activeFolder) return;
+    if (!file || !activeFolder || creatingAlbum) return;
     setUploading('file');
     setError('');
     setMessage('Uploading file...');
@@ -111,9 +116,28 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     }
   };
 
+  const createAlbum = async (event: FormEvent) => {
+    event.preventDefault();
+    const name = albumName.trim();
+    if (!name || creatingAlbum) return;
+    setCreatingAlbum(true);
+    setError('');
+    setMessage('');
+    try {
+      const folderId = await createTeamMediaAlbumForApp(teamId, { name, visibility: albumVisibility });
+      setMessage('Album created. You can add photos, files, or links now.');
+      setAlbumName('');
+      await refresh({ showLoading: false, preferredFolderId: String(folderId || '') });
+    } catch (albumError: any) {
+      setError(albumError?.message || 'Unable to create album. Check your connection and permissions, then try again.');
+    } finally {
+      setCreatingAlbum(false);
+    }
+  };
+
   const addLink = async (event: FormEvent) => {
     event.preventDefault();
-    if (!activeFolder) return;
+    if (!activeFolder || creatingAlbum) return;
     setUploading('link');
     setError('');
     setMessage('');
@@ -169,8 +193,8 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             <h1 className="truncate text-xl font-black leading-tight text-gray-950">{model.team.name || 'Team'} media</h1>
             <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{model.folders.length} albums - {allItems.length} items</p>
           </div>
-          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refresh({ showLoading: false })} disabled={Boolean(uploading)} aria-label="Refresh media" title="Refresh media">
-            <RefreshCw className={`h-4 w-4 ${uploading ? 'animate-spin' : ''}`} aria-hidden="true" />
+          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refresh({ showLoading: false })} disabled={Boolean(uploading) || creatingAlbum} aria-label="Refresh media" title="Refresh media">
+            <RefreshCw className={`h-4 w-4 ${uploading || creatingAlbum ? 'animate-spin' : ''}`} aria-hidden="true" />
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>
@@ -196,6 +220,47 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       {error ? <Status tone="error" message={error} /> : null}
       {message ? <Status tone="success" message={message} /> : null}
 
+      {model.canManage ? (
+        <section className="app-card p-4">
+          <form className="space-y-3" onSubmit={createAlbum}>
+            <div>
+              <div className="text-sm font-black text-gray-950">Create album</div>
+              <div className="mt-0.5 text-xs font-semibold text-gray-500">{model.folders.length ? 'Add another album for this team.' : 'Start this media library with a team-visible or private album.'}</div>
+            </div>
+            <label className="block text-xs font-black uppercase tracking-wide text-gray-600" htmlFor="team-media-album-name">Album name</label>
+            <input
+              id="team-media-album-name"
+              className="auth-input min-h-11 w-full"
+              value={albumName}
+              onChange={(event) => setAlbumName(event.target.value)}
+              placeholder="Album name"
+              disabled={creatingAlbum}
+              aria-label="Album name"
+            />
+            <label className="block text-xs font-black uppercase tracking-wide text-gray-600" htmlFor="team-media-album-visibility">Visibility</label>
+            <select
+              id="team-media-album-visibility"
+              className="auth-input min-h-11 w-full"
+              value={albumVisibility}
+              onChange={(event) => setAlbumVisibility(event.target.value === 'private' ? 'private' : 'team')}
+              disabled={creatingAlbum}
+              aria-label="Album visibility"
+            >
+              <option value="team">Team-visible</option>
+              <option value="private">Private/admins only</option>
+            </select>
+            <button type="submit" className="primary-button min-h-11 w-full justify-center" disabled={creatingAlbum || !albumName.trim()} aria-disabled={creatingAlbum || !albumName.trim()}>
+              {creatingAlbum ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
+              Create album
+            </button>
+          </form>
+        </section>
+      ) : !model.folders.length ? (
+        <section className="app-card p-4 text-sm font-semibold text-gray-600">
+          No albums are available yet. A coach or team admin can create the first media album.
+        </section>
+      ) : null}
+
       {model.canContribute && activeFolder ? (
         <section className="app-card p-4">
           <div className="flex items-start justify-between gap-3">
@@ -206,11 +271,11 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             {uploading ? <Loader2 className="h-5 w-5 animate-spin text-primary-600" aria-hidden="true" /> : <Upload className="h-5 w-5 text-primary-600" aria-hidden="true" />}
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <button type="button" className="secondary-button justify-center" onClick={() => photoInputRef.current?.click()} disabled={Boolean(uploading)}>
+            <button type="button" className="secondary-button justify-center" onClick={() => photoInputRef.current?.click()} disabled={Boolean(uploading) || creatingAlbum}>
               <ImageIcon className="h-4 w-4" aria-hidden="true" />
               Photo
             </button>
-            <button type="button" className="secondary-button justify-center" onClick={() => fileInputRef.current?.click()} disabled={Boolean(uploading)}>
+            <button type="button" className="secondary-button justify-center" onClick={() => fileInputRef.current?.click()} disabled={Boolean(uploading) || creatingAlbum}>
               <File className="h-4 w-4" aria-hidden="true" />
               File
             </button>
@@ -220,7 +285,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           <form className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={addLink}>
             <input className="auth-input" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} placeholder="Video or link title" />
             <input className="auth-input" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://..." inputMode="url" />
-            <button type="submit" className="primary-button justify-center" disabled={Boolean(uploading) || !linkTitle.trim() || !linkUrl.trim()}>
+            <button type="submit" className="primary-button justify-center" disabled={Boolean(uploading) || creatingAlbum || !linkTitle.trim() || !linkUrl.trim()}>
               {uploading === 'link' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
               Add link
             </button>
@@ -390,7 +455,7 @@ function getMediaDownloadName(item: TeamMediaItem) {
 function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const Icon = tone === 'error' ? AlertCircle : CheckCircle2;
   return (
-    <div className={`flex items-start gap-2 rounded-xl border p-3 text-sm font-semibold ${tone === 'error' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+    <div role={tone === 'error' ? 'alert' : 'status'} aria-live={tone === 'error' ? 'assertive' : 'polite'} className={`flex items-start gap-2 rounded-xl border p-3 text-sm font-semibold ${tone === 'error' ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
       <Icon className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
       <span>{message}</span>
     </div>
