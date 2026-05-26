@@ -63,7 +63,7 @@ export interface AuthState {
   isCoach: boolean;
   isAdmin: boolean;
   isPlatformAdmin: boolean;
-  refresh: () => Promise<void>;
+  refresh: () => Promise<AuthUser | null>;
   signOut: () => Promise<void>;
 }
 
