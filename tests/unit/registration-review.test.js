@@ -4,6 +4,8 @@ import {
     buildRegistrationReviewCsv,
     buildRegistrationReviewCsvFilename,
     buildRegistrationRosterDecision,
+    getDefaultRegistrationReviewCsvColumnKeys,
+    getRegistrationReviewCsvColumnDefinitions,
     buildRegistrationStatusUpdate,
     flattenRegistrationReviewForCsv,
     canTransitionRegistrationStatus,
@@ -170,6 +172,9 @@ describe('registration review helpers', () => {
         expect(editRosterPage).toContain('screening-provider-reference');
         expect(editRosterPage).toContain('updateRegistrationScreening');
         expect(editRosterPage).toContain('screeningUpdatedByName');
+        expect(editRosterPage).toContain('registration-export-options');
+        expect(editRosterPage).toContain('registration-export-columns');
+        expect(editRosterPage).toContain('getRegistrationReviewCsvColumnDefinitions');
     });
 
     it('flattens registration reviews for CSV export', () => {
@@ -227,6 +232,72 @@ describe('registration review helpers', () => {
         expect(csv).toContain('"Taylor\nReed"');
         expect(csv).toContain('"Summer, Camp"');
         expect(csv).toContain('"Needs ""waiver""\nfollow-up"');
+    });
+
+    it('serializes registration review CSV with selected standard columns', () => {
+        const csv = buildRegistrationReviewCsv([{
+            id: 'reg-4',
+            status: 'enrolled',
+            submittedData: {
+                athlete: { name: 'Morgan West', jerseyNumber: '8' },
+                guardian: { guardianName: 'Casey West', guardianEmail: 'casey@example.com' }
+            },
+            decisionNote: 'Ready for coach sheet'
+        }], {}, ['playerName', 'status', 'decisionNote']);
+
+        expect(csv.split('\n')).toEqual([
+            'player name,status,decision note',
+            'Morgan West,enrolled,Ready for coach sheet'
+        ]);
+    });
+
+    it('serializes participant and guardian form fields as selectable CSV columns', () => {
+        const form = {
+            participantFields: [
+                { id: 'birthdate', label: 'Birthdate' },
+                { id: 'division', label: 'Division' }
+            ],
+            guardianFields: [
+                { id: 'phone', label: 'Guardian phone' }
+            ]
+        };
+        const definitions = getRegistrationReviewCsvColumnDefinitions(form);
+        const csv = buildRegistrationReviewCsv([{
+            id: 'reg-5',
+            status: 'pending',
+            submittedData: {
+                participant: { birthdate: '2015-04-01', division: '10U' },
+                guardian: { phone: '555-0100' }
+            }
+        }], form, ['participant.birthdate', 'guardian.phone', 'participant.division']);
+
+        expect(getDefaultRegistrationReviewCsvColumnKeys()).toContain('registrationId');
+        expect(definitions.map((definition) => definition.key)).toEqual(expect.arrayContaining([
+            'participant.birthdate',
+            'participant.division',
+            'guardian.phone'
+        ]));
+        expect(csv.split('\n')).toEqual([
+            'participant: Birthdate,guardian: Guardian phone,participant: Division',
+            '2015-04-01,555-0100,10U'
+        ]);
+    });
+
+    it('neutralizes spreadsheet formulas in custom registration review CSV cells', () => {
+        const csv = buildRegistrationReviewCsv([{
+            id: 'reg-6',
+            status: 'pending',
+            submittedData: {
+                participant: { legalName: '=IMPORTXML("https://example.com","//x")' },
+                guardian: { phone: '+15550100' }
+            }
+        }], {
+            participantFields: [{ id: 'legalName', label: 'Legal name' }],
+            guardianFields: [{ id: 'phone', label: 'Guardian phone' }]
+        }, ['participant.legalName', 'guardian.phone']);
+
+        expect(csv).toContain('"\'=IMPORTXML(""https://example.com"",""//x"")"');
+        expect(csv).toContain("'+15550100");
     });
 
     it('neutralizes spreadsheet formulas in registration review CSV cells', () => {

@@ -285,6 +285,63 @@ export function escapeRegistrationCsvValue(value) {
     return /[",\n\r]/.test(safeText) ? `"${safeText.replace(/"/g, '""')}"` : safeText;
 }
 
+export const REGISTRATION_REVIEW_STANDARD_CSV_COLUMNS = [
+    { key: 'registrationId', label: 'registration id', value: (row) => row.registrationId },
+    { key: 'playerName', label: 'player name', value: (row) => row.playerName },
+    { key: 'playerNumber', label: 'player number', value: (row) => row.playerNumber },
+    { key: 'guardianName', label: 'guardian name', value: (row) => row.guardianName },
+    { key: 'guardianEmail', label: 'guardian email', value: (row) => row.guardianEmail },
+    { key: 'status', label: 'status', value: (row) => row.status },
+    { key: 'selectedOptionLabel', label: 'selected option label', value: (row) => row.selectedOptionLabel },
+    { key: 'selectedOptionId', label: 'selected option id', value: (row) => row.selectedOptionId },
+    { key: 'submittedDate', label: 'submitted date', value: (row) => row.submittedDate },
+    { key: 'feeAmount', label: 'fee amount', value: (row) => row.feeAmount },
+    { key: 'paymentPlan', label: 'payment plan', value: (row) => row.paymentPlan },
+    { key: 'linkedPlayerId', label: 'linked player id', value: (row) => row.linkedPlayerId },
+    { key: 'decisionNote', label: 'decision note', value: (row) => row.decisionNote }
+];
+
+const DEFAULT_REGISTRATION_REVIEW_CSV_COLUMN_KEYS = REGISTRATION_REVIEW_STANDARD_CSV_COLUMNS.map((column) => column.key);
+
+function normalizeExportField(field = {}, index = 0, group = 'field') {
+    const id = cleanString(field.id || field.key || `field_${index + 1}`);
+    const label = cleanString(field.label || field.name || id || `Field ${index + 1}`);
+    return id && label ? { id, label, group } : null;
+}
+
+function readSubmittedFieldValue(registration = {}, group = '', fieldId = '') {
+    const submitted = getRegistrationSubmittedData(registration);
+    return asObject(submitted[group])[fieldId] ?? asObject(registration[group])[fieldId] ?? '';
+}
+
+export function getRegistrationReviewCsvColumnDefinitions(form = {}) {
+    const participantColumns = (Array.isArray(form.participantFields) ? form.participantFields : [])
+        .map((field, index) => normalizeExportField(field, index, 'participant'))
+        .filter(Boolean)
+        .map((field) => ({
+            key: `participant.${field.id}`,
+            label: `participant: ${field.label}`,
+            value: (_row, registration) => readSubmittedFieldValue(registration, 'participant', field.id)
+        }));
+    const guardianColumns = (Array.isArray(form.guardianFields) ? form.guardianFields : [])
+        .map((field, index) => normalizeExportField(field, index, 'guardian'))
+        .filter(Boolean)
+        .map((field) => ({
+            key: `guardian.${field.id}`,
+            label: `guardian: ${field.label}`,
+            value: (_row, registration) => readSubmittedFieldValue(registration, 'guardian', field.id)
+        }));
+    return [
+        ...REGISTRATION_REVIEW_STANDARD_CSV_COLUMNS,
+        ...participantColumns,
+        ...guardianColumns
+    ];
+}
+
+export function getDefaultRegistrationReviewCsvColumnKeys() {
+    return [...DEFAULT_REGISTRATION_REVIEW_CSV_COLUMN_KEYS];
+}
+
 export function flattenRegistrationReviewForCsv(registration = {}, form = {}) {
     const summary = registration.reviewSummary || summarizeRegistration(registration);
     const guardians = getRegistrationGuardianDrafts(registration);
@@ -309,25 +366,19 @@ export function flattenRegistrationReviewForCsv(registration = {}, form = {}) {
     };
 }
 
-export function buildRegistrationReviewCsv(registrations = [], form = {}) {
-    const headers = [
-        'registration id',
-        'player name',
-        'player number',
-        'guardian name',
-        'guardian email',
-        'status',
-        'selected option label',
-        'selected option id',
-        'submitted date',
-        'fee amount',
-        'payment plan',
-        'linked player id',
-        'decision note'
-    ];
-    const rows = registrations.map((registration) => flattenRegistrationReviewForCsv(registration, form));
-    const keys = Object.keys(flattenRegistrationReviewForCsv());
-    return [headers, ...rows.map((row) => keys.map((key) => row[key] || ''))]
+export function buildRegistrationReviewCsv(registrations = [], form = {}, selectedColumnKeys = null) {
+    const definitions = getRegistrationReviewCsvColumnDefinitions(form);
+    const selectedKeys = Array.isArray(selectedColumnKeys) && selectedColumnKeys.length
+        ? selectedColumnKeys
+        : DEFAULT_REGISTRATION_REVIEW_CSV_COLUMN_KEYS;
+    const definitionsByKey = new Map(definitions.map((definition) => [definition.key, definition]));
+    const selectedDefinitions = selectedKeys.map((key) => definitionsByKey.get(key)).filter(Boolean);
+    const columns = selectedDefinitions.length ? selectedDefinitions : definitions.filter((definition) => DEFAULT_REGISTRATION_REVIEW_CSV_COLUMN_KEYS.includes(definition.key));
+    const rows = registrations.map((registration) => ({
+        registration,
+        row: flattenRegistrationReviewForCsv(registration, form)
+    }));
+    return [columns.map((column) => column.label), ...rows.map(({ row, registration }) => columns.map((column) => column.value(row, registration) || ''))]
         .map((row) => row.map(escapeRegistrationCsvValue).join(','))
         .join('\n');
 }
