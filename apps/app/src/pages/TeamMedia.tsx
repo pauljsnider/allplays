@@ -35,6 +35,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [model, setModel] = useState<TeamMediaModel | null>(null);
   const [activeFolderId, setActiveFolderId] = useState('');
+  const [selectedMediaType, setSelectedMediaType] = useState<MediaTypeFilter>('all');
   const [linkTitle, setLinkTitle] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
   const [loading, setLoading] = useState(true);
@@ -68,6 +69,10 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
 
   const activeFolder = useMemo(() => model?.folders.find((folder) => folder.id === activeFolderId) || model?.folders[0] || null, [activeFolderId, model]);
   const allItems = useMemo(() => model?.folders.flatMap((folder) => folder.items.map((item) => ({ ...item, folderName: folder.name || 'Album' }))) || [], [model]);
+  const mediaTypeCounts = useMemo(() => getMediaTypeCounts(activeFolder?.items || []), [activeFolder]);
+  const filteredItems = useMemo(() => (activeFolder?.items || []).filter((item) => matchesMediaTypeFilter(item, selectedMediaType)), [activeFolder, selectedMediaType]);
+  const selectedMediaTypeLabel = MEDIA_TYPE_FILTERS.find((filter) => filter.id === selectedMediaType)?.label || 'All';
+  const emptyStateLabel = selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
   const featured = activeFolder?.items[0] || allItems[0] || null;
 
   const uploadPhoto = async (file: File | null | undefined) => {
@@ -175,7 +180,10 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               key={folder.id}
               type="button"
               className={`flex min-h-9 flex-none items-center gap-2 rounded-full border px-3 text-xs font-black ${activeFolder?.id === folder.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-200 bg-gray-50 text-gray-700'}`}
-              onClick={() => setActiveFolderId(folder.id)}
+              onClick={() => {
+                setActiveFolderId(folder.id);
+                setSelectedMediaType('all');
+              }}
               aria-pressed={activeFolder?.id === folder.id}
             >
               {folder.name || 'Album'}
@@ -228,8 +236,22 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           </div>
           {activeFolder?.visibility ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase text-gray-700">{activeFolder.visibility}</span> : null}
         </div>
+        <div className="mt-3 flex gap-1.5 overflow-x-auto" aria-label="Media type filters">
+          {MEDIA_TYPE_FILTERS.map((filter) => (
+            <button
+              key={filter.id}
+              type="button"
+              className={`flex min-h-9 flex-none items-center gap-2 rounded-full border px-3 text-xs font-black ${selectedMediaType === filter.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-200 bg-gray-50 text-gray-700'}`}
+              onClick={() => setSelectedMediaType(filter.id)}
+              aria-pressed={selectedMediaType === filter.id}
+            >
+              {filter.label}
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${selectedMediaType === filter.id ? 'bg-white/20 text-white' : 'bg-white text-gray-600'}`}>{mediaTypeCounts[filter.id]}</span>
+            </button>
+          ))}
+        </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {activeFolder?.items.length ? activeFolder.items.map((item) => (
+          {filteredItems.length ? filteredItems.map((item) => (
             <MediaItemCard
               key={item.id}
               item={item}
@@ -239,12 +261,50 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               }}
             />
           )) : (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No media in this album yet.</div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
         </div>
       </section>
     </div>
   );
+}
+
+type MediaTypeFilter = 'all' | 'photos' | 'videos' | 'files';
+
+const MEDIA_TYPE_FILTERS: { id: MediaTypeFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'photos', label: 'Photos' },
+  { id: 'videos', label: 'Videos' },
+  { id: 'files', label: 'Files' }
+];
+
+function isPhotoMediaItem(item: TeamMediaItem) {
+  const type = String(item.type || '').toLowerCase();
+  return type === 'photo' || type.includes('image');
+}
+
+function isVideoMediaItem(item: TeamMediaItem) {
+  return String(item.type || '').toLowerCase() === 'video_link';
+}
+
+function isFileMediaItem(item: TeamMediaItem) {
+  return String(item.type || '').toLowerCase() === 'file';
+}
+
+function matchesMediaTypeFilter(item: TeamMediaItem, filter: MediaTypeFilter) {
+  if (filter === 'photos') return isPhotoMediaItem(item);
+  if (filter === 'videos') return isVideoMediaItem(item);
+  if (filter === 'files') return isFileMediaItem(item);
+  return true;
+}
+
+function getMediaTypeCounts(items: TeamMediaItem[]) {
+  return {
+    all: items.length,
+    photos: items.filter((item) => matchesMediaTypeFilter(item, 'photos')).length,
+    videos: items.filter((item) => matchesMediaTypeFilter(item, 'videos')).length,
+    files: items.filter((item) => matchesMediaTypeFilter(item, 'files')).length
+  };
 }
 
 function MediaItemCard({ item, onStatus }: { item: TeamMediaItem; onStatus: (tone: 'error' | 'success', message: string) => void }) {

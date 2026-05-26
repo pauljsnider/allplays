@@ -41,6 +41,7 @@ const state = {
     folders: [],
     items: [],
     selectedFolderId: '',
+    selectedMediaType: 'all',
     selectedIds: new Set(),
     actionInFlight: false
 };
@@ -116,6 +117,41 @@ function getItemsForFolder(folderId) {
     return sortByMediaOrder(state.items
         .filter((item) => item.folderId === folderId)
         .filter((item) => isSafeTeamMediaUrl(getTeamMediaItemUrl(item))));
+}
+
+const MEDIA_TYPE_FILTERS = [
+    { id: 'all', label: 'All' },
+    { id: 'photos', label: 'Photos' },
+    { id: 'videos', label: 'Videos' },
+    { id: 'files', label: 'Files' }
+];
+
+function isVideoMediaItem(item = {}) {
+    return String(item.type || '').toLowerCase() === 'video_link';
+}
+
+function matchesMediaTypeFilter(item, filterId = 'all') {
+    if (filterId === 'photos') return isSafeTeamMediaPhoto(item);
+    if (filterId === 'videos') return isVideoMediaItem(item);
+    if (filterId === 'files') return isTeamMediaDocument(item);
+    return true;
+}
+
+function getMediaTypeCounts(items = []) {
+    return {
+        all: items.length,
+        photos: items.filter((item) => matchesMediaTypeFilter(item, 'photos')).length,
+        videos: items.filter((item) => matchesMediaTypeFilter(item, 'videos')).length,
+        files: items.filter((item) => matchesMediaTypeFilter(item, 'files')).length
+    };
+}
+
+function getFilteredItems(items = []) {
+    return items.filter((item) => matchesMediaTypeFilter(item, state.selectedMediaType));
+}
+
+function getSelectedMediaTypeLabel() {
+    return MEDIA_TYPE_FILTERS.find((filter) => filter.id === state.selectedMediaType)?.label || 'All';
 }
 
 function getVisibilityLabel(folder) {
@@ -209,9 +245,17 @@ function renderAlbumDetail() {
     }
 
     const items = getItemsForFolder(folder.id);
-    const itemRows = items.length === 0
-        ? '<div class="rounded-xl border border-dashed border-gray-200 p-4 text-sm text-gray-500">No media in this album.</div>'
-        : `<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">${items.map((item, itemIndex) => {
+    const counts = getMediaTypeCounts(items);
+    const filteredItems = getFilteredItems(items);
+    const selectedMediaTypeLabel = getSelectedMediaTypeLabel();
+    const emptyStateLabel = state.selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
+    const filterTabs = MEDIA_TYPE_FILTERS.map((filter) => {
+        const selected = filter.id === state.selectedMediaType;
+        return `<button type="button" data-media-type-filter="${escapeHtml(filter.id)}" aria-pressed="${selected ? 'true' : 'false'}" class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${selected ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100'}">${escapeHtml(filter.label)} <span class="rounded-full ${selected ? 'bg-white/20 text-white' : 'bg-white text-gray-600'} px-1.5 py-0.5 text-[10px]">${counts[filter.id]}</span></button>`;
+    }).join('');
+    const itemRows = filteredItems.length === 0
+        ? `<div class="rounded-xl border border-dashed border-gray-200 p-4 text-sm text-gray-500">No ${escapeHtml(emptyStateLabel)} in this album.</div>`
+        : `<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">${filteredItems.map((item, itemIndex) => {
             const itemUrl = getTeamMediaItemUrl(item);
             const isPhoto = isSafeTeamMediaPhoto(item);
             const isFile = isTeamMediaDocument(item);
@@ -244,7 +288,7 @@ function renderAlbumDetail() {
                         <a href="${escapeHtml(itemUrl)}" download class="rounded-lg border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Download</a>
                         ${state.canManage && isPhoto ? `<button type="button" data-set-cover="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" class="rounded-lg border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50">Set cover</button>` : ''}
                         ${state.canManage ? `<button type="button" data-item-move="up" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === 0 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Up</button>
-                        <button type="button" data-item-move="down" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === items.length - 1 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Down</button>` : ''}
+                        <button type="button" data-item-move="down" data-item-id="${escapeHtml(item.id)}" data-folder-id="${escapeHtml(folder.id)}" ${itemIndex === filteredItems.length - 1 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Down</button>` : ''}
                         ${canDeleteItem ? `<button type="button" data-item-delete="${escapeHtml(item.id)}" class="rounded-lg border border-red-200 px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-50">Delete</button>` : ''}
                     </div>
                 </div>`;
@@ -259,6 +303,7 @@ function renderAlbumDetail() {
                         <p class="text-sm text-gray-500">${items.length} item${items.length === 1 ? '' : 's'} · ${escapeHtml(getVisibilityLabel(folder))}</p>
                     </div>
                 </div>
+                <div class="mt-4 flex flex-wrap gap-2" aria-label="Media type filters">${filterTabs}</div>
             </header>
             <div class="space-y-3 p-5">${itemRows}</div>
         </article>`;
@@ -426,6 +471,14 @@ els.foldersList.addEventListener('click', (event) => {
 });
 
 els.albumDetail.addEventListener('click', async (event) => {
+    const filterButton = event.target.closest('[data-media-type-filter]');
+    if (filterButton) {
+        state.selectedMediaType = filterButton.dataset.mediaTypeFilter || 'all';
+        state.selectedIds.clear();
+        render();
+        return;
+    }
+
     const deleteButton = event.target.closest('[data-item-delete]');
     if (deleteButton) {
         const item = state.items.find((candidate) => candidate.id === deleteButton.dataset.itemDelete);

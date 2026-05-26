@@ -378,6 +378,62 @@ describe('React app parent tools integration', () => {
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
+
+
+    it('filters team media albums by media type in the app', async () => {
+        serviceMocks.loadTeamMediaForApp.mockResolvedValueOnce({
+            team: { id: 'team-1', name: 'Bears' },
+            canManage: false,
+            canContribute: false,
+            folders: [{
+                id: 'folder-1',
+                name: 'Game media',
+                visibility: 'team',
+                itemCount: 3,
+                items: [
+                    { id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/tipoff.jpg' },
+                    { id: 'video-1', title: 'Replay', type: 'video_link', url: 'https://youtube.com/watch?v=abc' },
+                    { id: 'file-1', title: 'Packet', type: 'file', url: 'https://docs.example.test/packet.pdf' }
+                ]
+            }]
+        });
+
+        const { container } = await renderParentTools('/teams/team-1/media');
+        await waitForText(container, 'Game media');
+        expect(container.textContent).toContain('All3');
+        expect(container.textContent).toContain('Photos1');
+        expect(container.textContent).toContain('Videos1');
+        expect(container.textContent).toContain('Files1');
+
+        await clickButton(container, 'Videos');
+
+        expect(container.textContent).toContain('Replay');
+        expect(container.textContent).not.toContain('Tipoff');
+        expect(container.textContent).not.toContain('Packet');
+    });
+
+    it('shows an empty state when the selected app media type has no matches', async () => {
+        serviceMocks.loadTeamMediaForApp.mockResolvedValueOnce({
+            team: { id: 'team-1', name: 'Bears' },
+            canManage: false,
+            canContribute: false,
+            folders: [{
+                id: 'folder-1',
+                name: 'Photos only',
+                visibility: 'team',
+                itemCount: 1,
+                items: [{ id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/tipoff.jpg' }]
+            }]
+        });
+
+        const { container } = await renderParentTools('/teams/team-1/media');
+        await waitForText(container, 'Photos only');
+        await clickButton(container, 'Videos');
+
+        expect(container.textContent).toContain('Videos0');
+        expect(container.textContent).toContain('No videos in this album.');
+    });
+
     it('loads team media, uploads photos/files, adds links, and opens media items', async () => {
         const { container } = await renderParentTools('/teams/team-1/media');
         await waitForText(container, 'Bears media');
