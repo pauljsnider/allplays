@@ -24,17 +24,19 @@ export function useAuth(): AuthState {
       setUser(null);
       setProfile(null);
       setLoading(false);
-      return;
+      return null;
     }
 
     try {
       const hydrated = await hydrateFirebaseUser(currentUser);
       setUser(hydrated.user);
       setProfile(hydrated.profile);
+      return hydrated.user;
     } catch (hydrateError: any) {
       setError(hydrateError?.message || 'Unable to load account profile.');
       setUser(null);
       setProfile(null);
+      return null;
     } finally {
       setLoading(false);
     }
