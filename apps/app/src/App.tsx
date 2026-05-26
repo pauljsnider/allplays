@@ -5,6 +5,7 @@ import { AuthPage } from './pages/AuthPage';
 import { AcceptInvite } from './pages/AcceptInvite';
 import { CapabilityPage } from './pages/CapabilityPage';
 import { GameDetail } from './pages/GameDetail';
+import { HelpArticle } from './pages/HelpArticle';
 import { Home } from './pages/Home';
 import { Messages } from './pages/Messages';
 import { ParentTools } from './pages/ParentTools';
@@ -47,6 +48,7 @@ export default function App() {
       <Route path="/players/:teamId/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
       <Route path="/players/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
       <Route path="/games/:gameId" element={<Protected auth={auth}><GameDetail auth={auth} /></Protected>} />
+      <Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />
       <Route path="/profile" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
       <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />
       <Route path="*" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
