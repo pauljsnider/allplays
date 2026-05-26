@@ -8,11 +8,13 @@ import {
 } from '../../js/tracking-status-admin.js';
 
 describe('tracking status admin helpers', () => {
-    it('normalizes player-scoped tracking items', () => {
+    it('normalizes tracking items to the Firestore rules schema', () => {
         expect(normalizeTrackingItemDraft({ title: ' Medical release ' })).toEqual({
-            title: 'Medical release',
-            scope: 'players',
-            active: true
+            name: 'Medical release',
+            visibility: 'private',
+            status: 'active',
+            active: true,
+            archived: false
         });
         expect(() => normalizeTrackingItemDraft({ title: '   ' })).toThrow('Tracking item title');
     });
