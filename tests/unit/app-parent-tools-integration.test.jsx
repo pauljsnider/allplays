@@ -279,9 +279,45 @@ describe('React app parent tools integration', () => {
         }));
     });
 
-    it('creates a team fee checkout session when no checkout URL exists', async () => {
+    it('renders fee notes and offline payment guidance without changing checkout', async () => {
         serviceMocks.loadParentFeesForApp.mockResolvedValueOnce([{
             id: 'fee-2',
+            title: 'Tournament fee',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerName: 'Pat Star',
+            status: 'unpaid',
+            amountLabel: '$75',
+            dueLabel: 'Jul 1',
+            statusLabel: 'Open',
+            balanceDueCents: 7500,
+            checkoutUrl: 'https://pay.example.test/tournament',
+            notes: 'Uniform deposit is included.',
+            paymentInstructions: 'Bring a check payable to Bears Booster Club.',
+            canPay: true,
+            checkoutInitiatable: false,
+            paymentAction: 'checkoutUrl',
+            lineItems: [],
+            installments: [],
+            ledgerEntries: []
+        }]);
+
+        const { container } = await renderParentTools('/parent-tools/fees');
+        await waitForText(container, 'Tournament fee');
+
+        expect(container.textContent).toContain('Notes');
+        expect(container.textContent).toContain('Uniform deposit is included.');
+        expect(container.textContent).toContain('Offline payment');
+        expect(container.textContent).toContain('Bring a check payable to Bears Booster Club.');
+
+        await clickButton(container, 'Pay fee');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/tournament');
+        expect(serviceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+    });
+
+    it('creates a team fee checkout session when no checkout URL exists', async () => {
+        serviceMocks.loadParentFeesForApp.mockResolvedValueOnce([{
+            id: 'fee-3',
             title: 'Tournament fee',
             teamId: 'team-1',
             batchId: 'batch-1',
@@ -312,7 +348,7 @@ describe('React app parent tools integration', () => {
 
     it('shows an inline fee checkout error without leaving Parent Tools', async () => {
         serviceMocks.loadParentFeesForApp.mockResolvedValueOnce([{
-            id: 'fee-3',
+            id: 'fee-4',
             title: 'Camp fee',
             teamId: 'team-1',
             batchId: 'batch-1',
