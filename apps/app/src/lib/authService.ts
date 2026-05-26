@@ -1149,6 +1149,7 @@ export async function reloadCurrentUser() {
   if (user?.reload) {
     await user.reload();
   }
+  return user?.emailVerified === true;
 }
 
 export async function verifyResetCode(oobCode: string) {
