@@ -283,6 +283,25 @@ describe('registration review helpers', () => {
         ]);
     });
 
+    it('preserves falsy custom registration review CSV cell values', () => {
+        const csv = buildRegistrationReviewCsv([{
+            id: 'reg-7',
+            status: 'pending',
+            submittedData: {
+                participant: { goals: 0 },
+                guardian: { receivesTexts: false }
+            }
+        }], {
+            participantFields: [{ id: 'goals', label: 'Goals' }],
+            guardianFields: [{ id: 'receivesTexts', label: 'Receives texts' }]
+        }, ['participant.goals', 'guardian.receivesTexts']);
+
+        expect(csv.split('\n')).toEqual([
+            'participant: Goals,guardian: Receives texts',
+            '0,false'
+        ]);
+    });
+
     it('neutralizes spreadsheet formulas in custom registration review CSV cells', () => {
         const csv = buildRegistrationReviewCsv([{
             id: 'reg-6',

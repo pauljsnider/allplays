@@ -378,7 +378,7 @@ export function buildRegistrationReviewCsv(registrations = [], form = {}, select
         registration,
         row: flattenRegistrationReviewForCsv(registration, form)
     }));
-    return [columns.map((column) => column.label), ...rows.map(({ row, registration }) => columns.map((column) => column.value(row, registration) || ''))]
+    return [columns.map((column) => column.label), ...rows.map(({ row, registration }) => columns.map((column) => column.value(row, registration) ?? ''))]
         .map((row) => row.map(escapeRegistrationCsvValue).join(','))
         .join('\n');
 }
