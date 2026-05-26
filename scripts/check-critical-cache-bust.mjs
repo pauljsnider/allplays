@@ -29,7 +29,7 @@ const CRITICAL_RULES = [
 ];
 
 function execGit(args) {
-    return execFileSync('git', args, { encoding: 'utf8' }).trim();
+    return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 200 * 1024 * 1024 }).trim();
 }
 
 function hasCommitRef(ref) {
@@ -89,7 +89,9 @@ const changedFiles = new Set(
         .filter(Boolean)
 );
 const changedRules = CRITICAL_RULES.filter((rule) => changedFiles.has(rule.changedFile));
-const diffText = execGit(['diff', '--unified=0', diffBase]);
+const diffText = changedRules.length > 0
+    ? execGit(['diff', '--unified=0', diffBase])
+    : '';
 
 const failures = [];
 for (const rule of changedRules) {
