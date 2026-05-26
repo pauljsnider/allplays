@@ -448,7 +448,6 @@
         import {
             getUserProfile,
             updateUserProfile,
-            generateAccessCode,
             createAccessCode,
             createAccountMergeRequest,
             getUserAccessCodes,
@@ -458,7 +457,7 @@
             getNotificationPreferencesForTeam,
             saveNotificationPreferencesForTeam,
             upsertNotificationDeviceToken
-        } from './js/db.js?v=33';
+        } from './js/db.js?v=36';
         import { normalizeTeamNotificationPreferences } from './js/notification-preferences.js?v=1';
         import { registerPushNotifications } from './js/push-notifications.js?v=1';
 
@@ -894,8 +893,7 @@
                 status.textContent = 'Generating...';
                 status.className = 'text-sm text-gray-500';
 
-                const code = generateAccessCode();
-                await createAccessCode(currentUser.uid, email, phone, code);
+                const { code } = await createAccessCode(currentUser.uid, email, phone);
 
                 // Display the generated code
                 document.getElementById('generated-code-text').textContent = code;
