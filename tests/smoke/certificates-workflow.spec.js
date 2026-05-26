@@ -28,10 +28,24 @@ test('certificates demo workflow creates, edits, exports, and prints', async ({ 
     await expect(page.locator('#cert-custom-recipient-btn')).toHaveText('Create one-off certificate');
     await expect(page.locator('#cert-setup #cert-generate-btn')).toHaveCount(0);
     await expect(page.locator('#cert-saved-work')).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Players' })).toBeVisible();
+    await expect(page.locator('#cert-player-selection #cert-generate-btn')).toBeVisible();
     await expect(page.locator('#cert-player-selection #cert-generate-btn')).toHaveText('Create drafts for selected players');
+    await expect(page.locator('#cert-advanced-customization')).not.toHaveAttribute('open', '');
+    await expect(page.locator('#cert-font-recipient')).not.toBeVisible();
+    await expect(page.locator('#cert-preview .cert-canvas')).toHaveAttribute('data-template-id', 'banner');
+
+    await page.getByText('Customize certificate design').click();
+    await expect(page.locator('#cert-advanced-customization')).toHaveAttribute('open', '');
+    await expect(page.locator('[data-template-id]')).toHaveCount(3);
+    await expect(page.locator('input[name="cert-color-mode"]')).toHaveCount(3);
+    await expect(page.locator('#foregroundImageRef-source')).toBeVisible();
+    await expect(page.locator('#backgroundImageRef-source')).toBeVisible();
+    await expect(page.locator('#watermarkImageRef-source')).toBeVisible();
+    await expect(page.locator('#cert-font-recipient')).toBeVisible();
+    await expect(page.locator('#cert-add-signer-btn')).toBeVisible();
     await expect(page.locator('#cert-save-default-btn')).toHaveText('Save setup for future runs');
     await expect(page.locator('#cert-reset-defaults-btn')).toHaveText('Reset setup');
-    await expect(page.locator('#cert-preview .cert-canvas')).toHaveAttribute('data-template-id', 'banner');
 
     await page.locator('#cert-view-saved-btn').click();
     await expect(page.locator('#cert-review-layout')).toBeVisible();
