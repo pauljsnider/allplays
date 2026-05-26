@@ -195,7 +195,7 @@ describe('React app shell search', () => {
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-1/player-1');
     });
 
-    it('renders help matches and opens help URLs through the public URL adapter', async () => {
+    it('renders help matches and opens help articles inside the app', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([{
             id: 'account-password-reset',
             title: 'Reset a password',
@@ -217,7 +217,8 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('parent');
 
         await pressDialogKey(container, 'Enter');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/help-account.html');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/help/account-password-reset');
+        expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
     it('opens website-only search actions through the public URL adapter', async () => {
