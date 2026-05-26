@@ -19,7 +19,8 @@ const dbMocks = vi.hoisted(() => ({
     releaseAssignmentClaim: vi.fn(),
     submitRsvpForPlayer: vi.fn(),
     upsertPracticePacketCompletion: vi.fn(),
-    updateGame: vi.fn()
+    updateGame: vi.fn(),
+    postChatMessage: vi.fn()
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
@@ -62,7 +63,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     mergeAssignmentsWithClaims: vi.fn((assignments = []) => assignments)
 }));
 
-import { normalizeGameScoreValue, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
+import { buildCancelScheduledGameChatMessage, cancelScheduledGameForApp, normalizeGameScoreValue, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
 
 const user = {
     uid: 'user-1',
@@ -104,5 +105,94 @@ describe('React app schedule score updates', () => {
         }));
         expect(dbMocks.updateGame.mock.calls[0][2].scoreUpdatedAt).toBeInstanceOf(Date);
         expect(payload).toEqual(dbMocks.updateGame.mock.calls[0][2]);
+    });
+
+    it('writes cancellation metadata and posts the legacy-style team chat notice', async () => {
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        dbMocks.postChatMessage.mockResolvedValue(undefined);
+
+        const result = await cancelScheduledGameForApp({
+            eventKey: 'team-1__game-1__player-1',
+            id: 'game-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            location: 'Main Gym',
+            opponent: 'Falcons',
+            childId: 'player-1',
+            childName: 'Pat',
+            isDbGame: true,
+            isCancelled: false,
+            canUpdateScore: true,
+            assignments: []
+        }, user);
+
+        expect(dbMocks.updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+            status: 'cancelled',
+            cancelledBy: 'user-1'
+        }));
+        expect(dbMocks.updateGame.mock.calls[0][2].cancelledAt).toBeInstanceOf(Date);
+        expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            text: '⚠️ Game cancelled: vs. Falcons on Thu, May 21',
+            senderId: 'user-1',
+            senderName: 'Coach Pat',
+            senderEmail: 'coach@example.com'
+        }));
+        expect(result).toEqual({ cancelled: true, notificationError: null });
+    });
+
+    it('reports chat notification failure without failing the cancellation', async () => {
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        dbMocks.postChatMessage.mockRejectedValue(new Error('chat write failed'));
+
+        const result = await cancelScheduledGameForApp({
+            eventKey: 'team-1__game-1__player-1',
+            id: 'game-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            location: 'Main Gym',
+            opponent: 'Falcons',
+            childId: 'player-1',
+            childName: 'Pat',
+            isDbGame: true,
+            isCancelled: false,
+            canUpdateScore: true,
+            assignments: []
+        }, user);
+
+        expect(dbMocks.updateGame).toHaveBeenCalledTimes(1);
+        expect(result).toEqual({ cancelled: true, notificationError: 'chat write failed' });
+    });
+
+    it('rejects missing cancellation inputs before writing', async () => {
+        await expect(cancelScheduledGameForApp({}, user)).rejects.toThrow('A scheduled game is required before cancelling.');
+        await expect(cancelScheduledGameForApp({
+            eventKey: 'team-1__game-1__player-1',
+            id: 'game-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            location: 'Main Gym',
+            opponent: 'Falcons',
+            childId: 'player-1',
+            childName: 'Pat',
+            isDbGame: true,
+            isCancelled: false,
+            canUpdateScore: true,
+            assignments: []
+        }, {})).rejects.toThrow('Sign in before cancelling the game.');
+        expect(dbMocks.updateGame).not.toHaveBeenCalled();
+    });
+
+    it('builds the cancellation chat text from title when opponent is missing', () => {
+        expect(buildCancelScheduledGameChatMessage({
+            title: 'Championship game',
+            opponent: '',
+            date: new Date('2026-05-21T18:00:00Z')
+        })).toBe('⚠️ Game cancelled: Championship game on Thu, May 21');
     });
 });

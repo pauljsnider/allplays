@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, Clock, ExternalLink, FileText, MapPin, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelParentScheduleRideRequest,
+  cancelScheduledGameForApp,
   claimParentScheduleAssignmentSlot,
   createParentScheduleRideOffer,
   loadParentPracticePacket,
@@ -192,6 +193,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
+  const handleGameCancelled = useCallback(() => {
+    setEvents((current) => current.map((event) => (
+      event.teamId === decodedTeamId && event.id === decodedEventId
+        ? { ...event, status: 'cancelled', isCancelled: true, availabilityLocked: true }
+        : event
+    )));
+  }, [decodedEventId, decodedTeamId]);
+
   const canSubmitRsvp = Boolean(selectedEvent?.isDbGame && !selectedEvent.isCancelled && !selectedEvent.availabilityLocked);
 
   const submitRsvp = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
@@ -355,7 +364,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} /> : null}
+        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onGameCancelled={handleGameCancelled} /> : null}
       </div>
     </div>
   );
@@ -1378,13 +1387,37 @@ function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease
   );
 }
 
-function GameHubSection({ auth, event, childEvents, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancelled }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onGameCancelled: () => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
   const isPractice = event.type === 'practice';
-  const canUpdateScore = Boolean(!isPractice && event.isDbGame && event.canUpdateScore && auth.user);
+  const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
+  const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
+
+  const cancelGame = async () => {
+    if (!auth.user) return;
+    const opponentLabel = event.opponent || event.title || 'this game';
+    const confirmed = window.confirm(`Cancel ${opponentLabel} on ${formatEventDateLabel(event.date)}? This marks the game cancelled and notifies the team in chat.`);
+    if (!confirmed) return;
+
+    setCancelling(true);
+    setCancelStatus(null);
+    try {
+      const result = await cancelScheduledGameForApp(event, auth.user);
+      onGameCancelled();
+      setCancelStatus(result.notificationError
+        ? { tone: 'error', message: `Game cancelled, but team chat notification failed: ${result.notificationError}` }
+        : { tone: 'success', message: 'Game cancelled and team chat notified.' });
+    } catch (error: any) {
+      setCancelStatus({ tone: 'error', message: error?.message || 'Unable to cancel game.' });
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const sharePublicDestination = async (destination: { title: string; text: string; url?: string; label: string }) => {
     setShareStatus(null);
@@ -1434,6 +1467,25 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated }: { auth: Au
 
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
 
+          {canCancelGame ? (
+            <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-[0.04em] text-rose-700">Schedule management</div>
+                  <div className="mt-1 text-sm font-semibold text-rose-900">Cancel this game and notify the team chat.</div>
+                </div>
+                <button
+                  type="button"
+                  className="min-h-11 rounded-full bg-rose-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
+                  onClick={cancelGame}
+                  disabled={cancelling}
+                >
+                  {cancelling ? 'Cancelling game' : 'Cancel game'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {hubDestinations.map((destination) => (
               <GameHubDestinationCard
@@ -1452,6 +1504,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated }: { auth: Au
       </div>
 
       {shareStatus ? <Status tone={shareStatus.startsWith('Unable') ? 'error' : 'success'} message={shareStatus} /> : null}
+      {cancelStatus ? <Status tone={cancelStatus.tone} message={cancelStatus.message} /> : null}
       {!isPractice ? <GameReportSections event={event} /> : null}
     </section>
   );
