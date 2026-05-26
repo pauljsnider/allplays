@@ -578,7 +578,7 @@ els.albumDetail.addEventListener('click', async (event) => {
 
     const itemButton = event.target.closest('[data-item-move]');
     if (itemButton) {
-        const items = getFilteredItems(getItemsForFolder(itemButton.dataset.folderId));
+        const items = getItemsForFolder(itemButton.dataset.folderId);
         const reordered = moveInArray(items, itemButton.dataset.itemId, itemButton.dataset.itemMove);
         persistAndReload(() => reorderTeamMediaItems(state.teamId, reordered.map((item) => item.id)), 'Item order saved.');
     }
