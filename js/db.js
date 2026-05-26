@@ -1622,20 +1622,42 @@ export async function listTeamTrackingItems(teamId) {
     const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
     const snapshot = await getDocs(itemsRef);
     return snapshot.docs
-        .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-        .filter((item) => item.active !== false && item.scope === 'players')
+        .map((docSnap) => {
+            const data = docSnap.data();
+            return {
+                id: docSnap.id,
+                ...data,
+                title: data.title || data.name || ''
+            };
+        })
+        .filter((item) => item.active !== false && item.archived !== true && (!item.status || item.status === 'active') && (!item.scope || item.scope === 'players'))
         .sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
 }
 
-export async function createTeamTrackingItem(teamId, itemData) {
+export async function createTeamTrackingItem(teamId, itemData = {}) {
+    const currentUserId = auth.currentUser?.uid;
+    if (!currentUserId) {
+        throw new Error('You must be signed in to create tracking items');
+    }
+
+    const name = String(itemData.name || itemData.title || '').trim();
+    if (!name) {
+        throw new Error('Tracking item title is required');
+    }
+
     const itemsRef = collection(db, `teams/${teamId}/trackingItems`);
     const docRef = await addDoc(itemsRef, {
-        ...itemData,
         teamId,
-        scope: 'players',
-        active: itemData.active !== false,
+        name,
+        description: itemData.description || '',
+        visibility: itemData.visibility || 'private',
+        status: 'active',
+        active: true,
+        archived: false,
         createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        createdBy: currentUserId,
+        updatedAt: serverTimestamp(),
+        updatedBy: currentUserId
     });
     return docRef.id;
 }

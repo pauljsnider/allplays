@@ -19,6 +19,15 @@ describe('edit roster tracking status matrix wiring', () => {
         expect(source).toContain('await setTeamTrackingStatus(currentTeamId, trackingItemId, player.id, payload);');
     });
 
+    it('uses rules-compatible tracking item names in the selector and summary', () => {
+        const source = readEditRoster();
+
+        expect(source).toContain("from './js/db.js?v=33'");
+        expect(source).toContain("from './js/tracking-status-admin.js?v=2'");
+        expect(source).toContain('item.title || item.name || item.id');
+        expect(source).toContain("selectedItem.title || selectedItem.name || 'selected item'");
+    });
+
     it('escapes roster player values before inserting them into the table HTML', () => {
         const source = readEditRoster();
         const rosterRender = source.slice(source.indexOf('tbody.innerHTML = players.map(p => {'), source.indexOf("document.querySelectorAll('.deactivate-btn')"));
