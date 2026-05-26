@@ -338,6 +338,8 @@ function InsightsTab({ model }: { model: TeamDetailModel }) {
 function MoreTab({ model }: { model: TeamDetailModel }) {
   return (
     <div className="space-y-4">
+      {model.staffPermissions ? <StaffPermissionsCard model={model} /> : null}
+
       <section className="app-card p-4">
         <div className="text-sm font-black text-gray-950">Team links</div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -390,6 +392,62 @@ function MoreTab({ model }: { model: TeamDetailModel }) {
           </div>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+function StaffPermissionsCard({ model }: { model: TeamDetailModel }) {
+  const summary = model.staffPermissions;
+  if (!summary) return null;
+  const staffItems = [
+    ...summary.staff.map((member) => `${member.label} · ${member.role}`),
+    ...summary.pendingInvites.map((email) => `${email} · Pending admin invite`)
+  ];
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-gray-950">Team Staff &amp; Permissions</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Full admins can manage the team. Scoped helpers only cover game-day jobs like scorekeeping, Stream &amp; Score, video, and volunteer tasks.</div>
+        </div>
+        <button type="button" className="ghost-button !min-h-9 flex-none text-xs" onClick={() => openPublicUrl(model.team.editTeamUrl)}>
+          Manage staff
+          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
+          <div className="text-[11px] font-black uppercase tracking-[0.04em] text-indigo-700">Owner, admins, and invites</div>
+          <PillList items={staffItems} emptyText="No owner, admin staff, or pending admin invites found." tone="border-indigo-200 bg-white text-indigo-800" />
+        </div>
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
+          <div className="text-[11px] font-black uppercase tracking-[0.04em] text-emerald-700">Admin vs game-day helpers</div>
+          <p className="mt-2 text-xs font-semibold leading-5 text-emerald-800">Stream &amp; Score means scorekeeping plus streaming capability. It does not grant roster, schedule, RSVP, scoring setup, or full team settings access.</p>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {summary.helperPermissions.map((permission) => (
+          <div key={permission.key} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <div className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-700">{permission.title}</div>
+            <PillList items={permission.grants} emptyText={permission.emptyText} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PillList({ items, emptyText, tone = 'border-gray-200 bg-white text-gray-700' }: { items: string[]; emptyText: string; tone?: string }) {
+  if (!items.length) {
+    return <div className="mt-2 rounded-lg border border-dashed border-gray-300 bg-white/70 p-3 text-xs font-semibold italic text-gray-500">{emptyText}</div>;
+  }
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {items.map((item) => <span key={item} className={`rounded-full border px-2.5 py-1 text-xs font-black ${tone}`}>{item}</span>)}
     </div>
   );
 }
