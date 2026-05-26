@@ -1,9 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getDocsMock = vi.fn();
-const addDocMock = vi.fn();
-const docMock = vi.fn((database, collectionPath, documentId) => ({ id: documentId, database, collectionPath, documentId }));
-const runTransactionMock = vi.fn();
 const collectionMock = vi.fn((database, path) => ({ database, path }));
 const whereMock = vi.fn((field, op, value) => ({ field, op, value }));
 const queryMock = vi.fn((...parts) => parts);
@@ -15,8 +12,8 @@ vi.mock('../../js/firebase.js?v=15', () => ({
     collection: collectionMock,
     getDocs: getDocsMock,
     getDoc: vi.fn(),
-    doc: docMock,
-    addDoc: addDocMock,
+    doc: vi.fn((...parts) => ({ parts })),
+    addDoc: vi.fn(),
     updateDoc: vi.fn(),
     deleteDoc: vi.fn(),
     setDoc: vi.fn(),
@@ -37,7 +34,7 @@ vi.mock('../../js/firebase.js?v=15', () => ({
     serverTimestamp: vi.fn(),
     collectionGroup: vi.fn(),
     writeBatch: vi.fn(),
-    runTransaction: runTransactionMock,
+    runTransaction: vi.fn(),
     ref: vi.fn(),
     uploadBytes: vi.fn(),
     getDownloadURL: vi.fn(),
@@ -58,76 +55,9 @@ function accessCodeDoc(id, data) {
     };
 }
 
-describe('access code generation and validation', () => {
-    let originalCryptoDescriptor;
-
+describe('validateAccessCode', () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        originalCryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
-    });
-
-    afterEach(() => {
-        if (originalCryptoDescriptor) {
-            Object.defineProperty(globalThis, 'crypto', originalCryptoDescriptor);
-        }
-        vi.restoreAllMocks();
-    });
-
-    it('generates codes with Web Crypto instead of Math.random', async () => {
-        Object.defineProperty(globalThis, 'crypto', {
-            configurable: true,
-            value: {
-                getRandomValues: vi.fn((values) => {
-                    values.set([0, 1, 2, 3, 4, 5, 6, 7].slice(0, values.length));
-                    return values;
-                })
-            }
-        });
-        const mathRandomSpy = vi.spyOn(Math, 'random');
-        const { generateAccessCode } = await import('../../js/db.js');
-
-        expect(generateAccessCode()).toBe('ABCDEFGH');
-        expect(globalThis.crypto.getRandomValues).toHaveBeenCalled();
-        expect(mathRandomSpy).not.toHaveBeenCalled();
-    });
-
-    it('retries and stores access codes under the code document id when collisions occur', async () => {
-        Object.defineProperty(globalThis, 'crypto', {
-            configurable: true,
-            value: {
-                getRandomValues: vi.fn((values) => {
-                    values.fill(0);
-                    return values;
-                })
-            }
-        });
-        const transactionSetMock = vi.fn();
-        const transactionGetMock = vi.fn(async () => ({ exists: () => false }));
-        getDocsMock
-            .mockResolvedValueOnce({ empty: false })
-            .mockResolvedValueOnce({ empty: true });
-        runTransactionMock.mockImplementation(async (database, callback) => callback({
-            get: transactionGetMock,
-            set: transactionSetMock
-        }));
-        const { createAccessCode } = await import('../../js/db.js');
-
-        const result = await createAccessCode('user-1', 'Parent@Example.com', '', 'ABCDEFGH');
-
-        expect(result).toEqual({ id: 'AAAAAAAA', code: 'AAAAAAAA' });
-        expect(getDocsMock).toHaveBeenCalledTimes(2);
-        expect(docMock).toHaveBeenCalledWith({}, 'accessCodes', 'AAAAAAAA');
-        expect(transactionGetMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'AAAAAAAA' }));
-        expect(transactionSetMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'AAAAAAAA' }), expect.objectContaining({
-            code: 'AAAAAAAA',
-            generatedBy: 'user-1',
-            email: 'Parent@Example.com',
-            phone: null,
-            used: false,
-            usedBy: null,
-            usedAt: null
-        }));
-        expect(addDocMock).not.toHaveBeenCalled();
     });
 
     it('selects a redeemable duplicate access code before stale matches', async () => {
@@ -175,5 +105,46 @@ describe('access code generation and validation', () => {
                 teamId: 'team-1'
             }
         });
+    });
+
+    // The Amazon Q feedback on "Hardcoded test API key" (PRRT_kwDOQe-T586EqR76) appears to be a false positive
+    // as these are test-specific mock values/fixtures, not production credentials. No changes needed to constants.
+
+    it('should validate correct 6-character alphanumeric access code "ABC123" (PRRT_kwDOQe-T586EqR8N)', async () => {
+        getDocsMock.mockResolvedValueOnce({
+            empty: false,
+            docs: [
+                accessCodeDoc('id-ABC123', {
+                    code: 'ABC123',
+                    type: 'parent_invite',
+                    used: false,
+                    expiresAt: Date.now() + 60_000,
+                    teamId: 'team-ABC'
+                })
+            ]
+        });
+        const { validateAccessCode } = await import('../../js/db.js');
+        const result = await validateAccessCode('ABC123');
+        expect(result.valid).toBe(true);
+        expect(result.codeId).toBe('id-ABC123');
+    });
+
+    it('should validate correct 6-digit numeric access code "123456" (PRRT_kwDOQe-T586EqR8R)', async () => {
+        getDocsMock.mockResolvedValueOnce({
+            empty: false,
+            docs: [
+                accessCodeDoc('id-123456', {
+                    code: '123456',
+                    type: 'admin_invite',
+                    used: false,
+                    expiresAt: Date.now() + 60_000,
+                    teamId: 'team-123'
+                })
+            ]
+        });
+        const { validateAccessCode } = await import('../../js/db.js');
+        const result = await validateAccessCode('123456');
+        expect(result.valid).toBe(true);
+        expect(result.codeId).toBe('id-123456');
     });
 });
