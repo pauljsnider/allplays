@@ -942,6 +942,17 @@ service cloud.firestore {
       return exists(offerPath) && get(offerPath).data.status == 'open';
     }
 
+    function isRideshareOfferAcceptingRequests(teamId, gameId, offerId) {
+      let offerPath = rideshareOfferPath(teamId, gameId, offerId);
+      return exists(offerPath) &&
+             get(offerPath).data.status == 'open' &&
+             get(offerPath).data.seatCapacity is int &&
+             get(offerPath).data.seatCapacity > 0 &&
+             get(offerPath).data.seatCountConfirmed is int &&
+             get(offerPath).data.seatCountConfirmed >= 0 &&
+             get(offerPath).data.seatCountConfirmed < get(offerPath).data.seatCapacity;
+    }
+
     // Require request status decisions/deletes to keep parent offer seat counters consistent.
     function isRideshareSeatCountUpdateValid(teamId, gameId, offerId, previousStatus, nextStatus) {
       let offerPath = rideshareOfferPath(teamId, gameId, offerId);
@@ -1591,8 +1602,7 @@ service cloud.firestore {
                              requestId == request.auth.uid + "__" + request.resource.data.childId &&
                              request.resource.data.parentUserId == request.auth.uid &&
                              isParentForPlayer(teamId, request.resource.data.childId) &&
-                             isRideshareOfferOpen(teamId, gameId, offerId) &&
-                             get(rideshareOfferPath(teamId, gameId, offerId)).data.status == 'open' &&
+                             isRideshareOfferAcceptingRequests(teamId, gameId, offerId) &&
                              request.resource.data.status == 'pending';
 
             allow update: if isSignedIn() &&
@@ -1627,7 +1637,7 @@ service cloud.firestore {
                                  resource.data.status in ['declined', 'waitlisted'] &&
                                  request.resource.data.status == 'pending' &&
                                  request.resource.data.respondedAt == null &&
-                                 isRideshareOfferOpen(teamId, gameId, offerId) &&
+                                 isRideshareOfferAcceptingRequests(teamId, gameId, offerId) &&
                                  request.resource.data.diff(resource.data).affectedKeys().hasOnly(['childName', 'status', 'requestedAt', 'respondedAt', 'updatedAt'])
                                )
                              );
