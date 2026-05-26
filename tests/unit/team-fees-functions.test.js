@@ -9,6 +9,7 @@ const {
     getTeamFeeBalanceCents,
     getTeamFeeRefundedCents,
     getTeamFeeRefundableCents,
+    isOnlineTeamFeeCollection,
     isTeamFeeCheckoutEligible,
     isEligibleTeamFeePayer,
     buildTeamFeeCheckoutUrls,
@@ -34,13 +35,18 @@ describe('team fee checkout function helpers', () => {
         });
     });
 
-    it('computes current balance and rejects paid or canceled recipients', () => {
+    it('computes current balance and only allows checkout for online collection recipients', () => {
         expect(getTeamFeeBalanceCents({ amountCents: 12500, paidAmountCents: 2500 })).toBe(10000);
         expect(getTeamFeeBalanceCents({ balanceDueCents: 5000, paidAmountCents: 2500 })).toBe(5000);
-        expect(isTeamFeeCheckoutEligible({ status: 'unpaid', amountCents: 12500 })).toBe(true);
-        expect(isTeamFeeCheckoutEligible({ status: 'paid', amountCents: 12500 })).toBe(false);
-        expect(isTeamFeeCheckoutEligible({ status: 'canceled', amountCents: 12500 })).toBe(false);
-        expect(isTeamFeeCheckoutEligible({ status: 'unpaid', amountCents: 0 })).toBe(false);
+        expect(isOnlineTeamFeeCollection({ collectionMode: 'online_stripe' })).toBe(true);
+        expect(isOnlineTeamFeeCollection({ collectionMode: 'stripe_checkout' })).toBe(true);
+        expect(isOnlineTeamFeeCollection({ collectionMode: 'offline_manual' })).toBe(false);
+        expect(isTeamFeeCheckoutEligible({ collectionMode: 'online_stripe', status: 'unpaid', amountCents: 12500 })).toBe(true);
+        expect(isTeamFeeCheckoutEligible({ collectionMode: 'offline_manual', status: 'unpaid', amountCents: 12500 })).toBe(false);
+        expect(isTeamFeeCheckoutEligible({ status: 'unpaid', amountCents: 12500 })).toBe(false);
+        expect(isTeamFeeCheckoutEligible({ collectionMode: 'online_stripe', status: 'paid', amountCents: 12500 })).toBe(false);
+        expect(isTeamFeeCheckoutEligible({ collectionMode: 'online_stripe', status: 'canceled', amountCents: 12500 })).toBe(false);
+        expect(isTeamFeeCheckoutEligible({ collectionMode: 'online_stripe', status: 'unpaid', amountCents: 0 })).toBe(false);
     });
 
     it('allows owners, admins, linked parents, and direct recipients to pay', () => {
