@@ -37,6 +37,7 @@ import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailability
 import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
 import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
 import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
+import { buildScheduleNotificationTargets, postScheduleNotificationTargets } from '../../../../js/schedule-notifications.js';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import {
@@ -111,6 +112,11 @@ export type GameScoreInput = {
   homeScore: number;
   awayScore: number;
   scoreStreamSessionId?: string | null;
+};
+
+export type CancelScheduledGameResult = {
+  cancelled: true;
+  notificationError: string | null;
 };
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
@@ -307,6 +313,22 @@ export function normalizeGameScoreValue(value: unknown) {
   const parsed = Number.parseInt(String(value ?? 0), 10);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, parsed);
+}
+
+function formatCancelledGameDate(value: unknown) {
+  const eventDate = normalizeScheduleDate(value);
+  if (!eventDate) return 'date TBD';
+  return eventDate.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+export function buildCancelScheduledGameChatMessage(event: Pick<ParentScheduleEvent, 'opponent' | 'title' | 'date'>) {
+  const opponent = compactString(event.opponent);
+  const opponentLabel = opponent ? `vs. ${opponent}` : compactString(event.title) || 'Game';
+  return `⚠️ Game cancelled: ${opponentLabel} on ${formatCancelledGameDate(event.date)}`;
 }
 
 function isActiveTeam(team: Record<string, any> | null | undefined) {
@@ -1267,6 +1289,60 @@ export async function sendStaffRsvpReminder(event: ParentScheduleEvent, user: Au
   return {
     ...preview,
     emailSentCount
+  };
+}
+
+export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user: AuthUser): Promise<CancelScheduledGameResult> {
+  if (!event?.teamId || !event?.id || !event.isDbGame || event.type !== 'game') {
+    throw new Error('A scheduled game is required before cancelling.');
+  }
+  if (event.isCancelled) {
+    throw new Error('This game is already cancelled.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before cancelling the game.');
+  }
+  if (!event.canUpdateScore) {
+    throw new Error('Coach or admin access is required to cancel this game.');
+  }
+
+  const payload: Record<string, unknown> = {
+    status: 'cancelled',
+    cancelledAt: new Date(),
+    cancelledBy: user.uid
+  };
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Game cancellation');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST game cancellation:', error);
+    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
+  }
+
+  let notificationError: string | null = null;
+  try {
+    const { postChatMessage } = await import('../../../../js/db.js');
+    const targets = buildScheduleNotificationTargets({
+      teamId: event.teamId,
+      title: `vs. ${event.opponent || 'Opponent'}`
+    });
+    const result = await postScheduleNotificationTargets({
+      targets,
+      postChatMessage,
+      senderId: user.uid,
+      senderName: user.displayName || user.email,
+      senderEmail: user.email,
+      buildText: () => buildCancelScheduledGameChatMessage(event)
+    });
+    notificationError = result.failedCount > 0 ? result.errorMessage || 'Team chat notification failed.' : null;
+  } catch (error: any) {
+    notificationError = error?.message || 'Team chat notification failed.';
+  }
+
+  return {
+    cancelled: true,
+    notificationError
   };
 }
 
