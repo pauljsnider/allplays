@@ -193,8 +193,18 @@ describe('React app team detail model', () => {
         getAggregatedStatsForGames.mockResolvedValue({});
         getAdSpaceSponsors.mockResolvedValue([]);
         getLocalAttractionSponsors.mockResolvedValue([]);
+        const future = Date.now() + 60_000;
+        const past = Date.now() - 60_000;
         getDocs.mockResolvedValue({
-            docs: [{ id: 'invite-1', data: () => ({ email: 'pending@example.com', teamId: 'team-1', type: 'admin_invite', used: false }) }]
+            docs: [
+                { id: 'invite-1', data: () => ({ email: 'pending@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-2', data: () => ({ email: 'expired@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => past } }) },
+                { id: 'invite-3', data: () => ({ email: 'revoked@example.com', teamId: 'team-1', type: 'admin_invite', used: false, revoked: true, expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-4', data: () => ({ email: 'inactive@example.com', teamId: 'team-1', type: 'admin_invite', used: false, active: false, expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-5', data: () => ({ email: 'cancelled@example.com', teamId: 'team-1', type: 'admin_invite', used: false, status: 'cancelled', expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-6', data: () => ({ email: 'used@example.com', teamId: 'team-1', type: 'admin_invite', used: true, expiresAt: { toMillis: () => future } }) },
+                { id: 'invite-7', data: () => ({ email: 'standard@example.com', teamId: 'team-1', type: 'standard', used: false, expiresAt: { toMillis: () => future } }) }
+            ]
         });
 
         const adminModel = await loadParentTeamDetail('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });

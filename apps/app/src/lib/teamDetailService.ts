@@ -295,6 +295,23 @@ async function loadTeamConfigs(teamId: string) {
   ).catch(() => []);
 }
 
+function getExpirationTime(expiresAt: any): number | null {
+  if (expiresAt == null) return null;
+  if (typeof expiresAt?.toMillis === 'function') return expiresAt.toMillis();
+  if (expiresAt instanceof Date) return expiresAt.getTime();
+  const expiresAtMs = Number(expiresAt);
+  return Number.isFinite(expiresAtMs) ? expiresAtMs : null;
+}
+
+function isPendingAdminInvite(invite: any) {
+  if (invite?.type !== 'admin_invite') return false;
+  if (invite.used === true || invite.revoked === true || invite.active === false) return false;
+  const status = cleanString(invite.status).toLowerCase();
+  if (status && !['active', 'pending'].includes(status)) return false;
+  const expiresAtMs = getExpirationTime(invite.expiresAt);
+  return expiresAtMs == null || Date.now() < expiresAtMs;
+}
+
 async function loadPendingAdminInvites(teamId: string) {
   return readWithNativeFallback(
     `pending admin invites ${teamId}`,
@@ -304,7 +321,7 @@ async function loadPendingAdminInvites(teamId: string) {
     },
     async () => nativeRunQuery('accessCodes', 'teamId', 'EQUAL', teamId)
   ).then((invites: any[]) => (Array.isArray(invites) ? invites : [])
-    .filter((invite) => invite?.type === 'admin_invite' && invite?.used !== true));
+    .filter(isPendingAdminInvite));
 }
 
 export async function loadParentTeamDetail(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
