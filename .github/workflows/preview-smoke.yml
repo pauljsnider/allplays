@@ -37,6 +37,27 @@ jobs:
       - name: Start React app dev server
         run: npm --prefix apps/app run dev -- --host 127.0.0.1 --port 5174 >/tmp/allplays-app-preview-smoke.log 2>&1 &
 
+      - name: Wait for local smoke servers
+        run: |
+          set -euo pipefail
+          for url in http://127.0.0.1:4173 http://127.0.0.1:5174; do
+            for attempt in {1..60}; do
+              if curl --fail --silent --show-error --max-time 2 "$url" >/dev/null; then
+                echo "$url is ready"
+                break
+              fi
+              if [ "$attempt" -eq 60 ]; then
+                echo "Timed out waiting for $url" >&2
+                echo "Static server log:" >&2
+                cat /tmp/allplays-preview-smoke.log >&2 || true
+                echo "App server log:" >&2
+                cat /tmp/allplays-app-preview-smoke.log >&2 || true
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
