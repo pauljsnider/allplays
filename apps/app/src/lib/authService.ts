@@ -799,7 +799,13 @@ function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthU
     roles: rolesFromProfile(profile),
     parentOf: Array.isArray(profile.parentOf) ? profile.parentOf as Array<Record<string, unknown>> : [],
     coachOf,
-    isAdmin: profile.isAdmin === true
+    isAdmin: profile.isAdmin === true,
+    teamMediaUploadTeamIds: Array.isArray(profile.teamMediaUploadTeamIds)
+      ? profile.teamMediaUploadTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')
+      : undefined,
+    mediaUploadTeamIds: Array.isArray(profile.mediaUploadTeamIds)
+      ? profile.mediaUploadTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')
+      : undefined
   };
 }
 

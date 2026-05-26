@@ -51,6 +51,8 @@ export interface AuthUser {
   parentOf?: Array<Record<string, unknown>>;
   coachOf?: string[];
   isAdmin?: boolean;
+  teamMediaUploadTeamIds?: string[];
+  mediaUploadTeamIds?: string[];
 }
 
 export interface AuthState {
