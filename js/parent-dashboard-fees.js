@@ -86,8 +86,13 @@ function isPayActionAllowed(fee) {
     return fee.status === 'unpaid' || fee.status === 'partial' || fee.status === 'partially_paid';
 }
 
+function isOnlineTeamFeeCollection(fee) {
+    const collectionMode = String(fee?.collectionMode || '').trim().toLowerCase();
+    return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
+}
+
 function canInitiateCheckout(fee) {
-    return isPayActionAllowed(fee) && !fee.checkoutUrl && fee.teamId && fee.batchId && fee.recipientId;
+    return isOnlineTeamFeeCollection(fee) && isPayActionAllowed(fee) && !fee.checkoutUrl && fee.teamId && fee.batchId && fee.recipientId;
 }
 
 function formatCents(value) {
@@ -323,6 +328,7 @@ export function normalizeParentFeeRecord(fee) {
         dueDate: fee?.dueDate || fee?.dueAt || null,
         notes: fee?.notes || fee?.feeNotes || '',
         offlinePaymentInstructions: fee?.offlinePaymentInstructions || fee?.paymentInstructions || '',
+        collectionMode: fee?.collectionMode || '',
         totalAmountCents: getFeeTotalCents(fee),
         paidAmountCents: getFeePaidCents(fee),
         balanceDueCents: getFeeBalanceCents(fee),
@@ -366,7 +372,7 @@ export function renderParentTeamFees(fees) {
         const lineItems = renderInvoiceLineItems(fee);
         const installmentSchedule = renderInstallmentSchedule(fee);
         const receiptActivity = renderReceiptActivity(fee);
-        const payAction = fee.checkoutUrl && isPayActionAllowed(fee)
+        const payAction = isOnlineTeamFeeCollection(fee) && fee.checkoutUrl && isPayActionAllowed(fee)
             ? `<a class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700" href="${escapeHtml(fee.checkoutUrl)}">Pay online</a>`
             : canInitiateCheckout(fee)
                 ? `<button type="button" data-team-fee-checkout="true" data-team-id="${escapeHtml(fee.teamId)}" data-batch-id="${escapeHtml(fee.batchId)}" data-recipient-id="${escapeHtml(fee.recipientId)}" class="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70">Pay online</button>`
