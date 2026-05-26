@@ -21,10 +21,10 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
     setError('');
     setMessage('');
     try {
-      const verified = await reloadCurrentUser();
-      await auth.refresh();
-      if (verified) {
-        navigate(getRouteForUser(auth.user), { replace: true });
+      await reloadCurrentUser(); // Ensure native session is refreshed
+      const refreshedUser = await auth.refresh();
+      if (refreshedUser?.emailVerified === true) {
+        navigate(getRouteForUser(refreshedUser), { replace: true });
         return;
       }
       setShowSecondaryOptions(true);

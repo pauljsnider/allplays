@@ -37,7 +37,7 @@ function createAuth(overrides = {}) {
         isCoach: false,
         isAdmin: false,
         isPlatformAdmin: false,
-        refresh: vi.fn().mockResolvedValue(undefined),
+        refresh: vi.fn().mockResolvedValue(null),
         signOut: vi.fn().mockResolvedValue(undefined),
         ...overrides
     };
@@ -81,8 +81,12 @@ afterEach(() => {
 });
 
 describe('VerifyPending verification return flow', () => {
-    it('checks verification status before routing an unverified user away', async () => {
+    it('checks refreshed verification status before routing an unverified user away', async () => {
         const auth = createAuth();
+        auth.refresh.mockResolvedValueOnce({
+            ...auth.user,
+            emailVerified: true
+        });
         reloadCurrentUser.mockResolvedValueOnce(true);
         const { container, root } = await renderVerifyPending(auth);
 
@@ -102,8 +106,43 @@ describe('VerifyPending verification return flow', () => {
         await act(async () => root.unmount());
     });
 
-    it('stays on verify pending and exposes secondary options when still unverified', async () => {
-        const auth = createAuth();
+    it('routes onward when refreshed auth state verifies a stale native fallback user', async () => {
+        const refreshedUser = {
+            uid: 'user-1',
+            email: 'coach@example.com',
+            displayName: 'Coach Example',
+            emailVerified: true,
+            roles: []
+        };
+        const auth = createAuth({
+            refresh: vi.fn().mockResolvedValueOnce(refreshedUser)
+        });
+        reloadCurrentUser.mockResolvedValueOnce(false);
+        const { container, root } = await renderVerifyPending(auth);
+
+        await act(async () => {
+            buttonByText(container, "I've verified, continue").click();
+        });
+
+        expect(reloadCurrentUser).toHaveBeenCalledTimes(1);
+        expect(auth.refresh).toHaveBeenCalledTimes(1);
+        expect(container.textContent).toContain('Home dashboard');
+        expect(container.querySelector('[data-testid="location"]').textContent).toBe('/home');
+        expect(container.textContent).not.toContain('We could not confirm verification yet.');
+
+        await act(async () => root.unmount());
+    });
+
+    it('stays on verify pending and exposes secondary options when refreshed state is still unverified', async () => {
+        const auth = createAuth({
+            refresh: vi.fn().mockResolvedValueOnce({
+                uid: 'user-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Example',
+                emailVerified: false,
+                roles: []
+            })
+        });
         reloadCurrentUser.mockResolvedValueOnce(false);
         const { container, root } = await renderVerifyPending(auth);
 
