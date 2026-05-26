@@ -7,6 +7,7 @@ import type { ParentRegistrationCard, ParentRegistrationDetailModel } from '../l
 import {
   calculateRegistrationFeeSnapshot,
   decideRegistrationPlacement,
+  formatFeeSnapshotLines,
   getActiveRegistrationOptions,
   getPaymentPlanChoices,
   requiresRegistrationOption
@@ -14,6 +15,7 @@ import {
 import type { AuthState } from '../lib/types';
 
 type FieldErrors = Record<string, string>;
+type FeeSummaryLine = { label: string; amountCents: number; strong?: boolean };
 
 export function RegistrationDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', formId = '' } = useParams();
@@ -73,7 +75,8 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
     if (!form || !requiresRegistrationOption(form) || !selectedOptionId) return null;
     return decideRegistrationPlacement({ form, selectedOptionId, counts: form.registrationOptionCounts || {} });
   }, [form, selectedOptionId]);
-  const feeSnapshot = useMemo(() => form ? (form.feeSnapshot || calculateRegistrationFeeSnapshot(form, { quantity, now: new Date() })) : null, [form, quantity]);
+  const displayFeeSnapshot = useMemo(() => form ? calculateRegistrationFeeSnapshot(form, { quantity, now: new Date() }) : null, [form, quantity]);
+  const displayFeeLines = useMemo<FeeSummaryLine[]>(() => displayFeeSnapshot ? formatFeeSnapshotLines(displayFeeSnapshot) : [], [displayFeeSnapshot]);
 
   const updateParticipant = (fieldId: string, value: string) => setParticipant((current) => ({ ...current, [fieldId]: value }));
   const updateGuardian = (fieldId: string, value: string) => setGuardian((current) => ({ ...current, [fieldId]: value }));
@@ -231,7 +234,19 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
             </div>
           ) : null}
 
-          {feeSnapshot ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-black text-gray-900">Total due: {formatMoney(feeSnapshot.finalAmountDueCents, form.currency)}</div> : null}
+          {displayFeeSnapshot ? (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-900" aria-label="Registration fee summary">
+              <div className="mb-2 text-xs font-black uppercase tracking-wide text-gray-500">Fee summary</div>
+              <div className="grid gap-1.5">
+                {displayFeeLines.map((line, index) => (
+                  <div key={`${line.label}-${index}`} className={`flex items-center justify-between gap-3 ${line.strong ? 'border-t border-gray-200 pt-2 text-base font-black text-gray-950' : 'font-semibold text-gray-700'}`}>
+                    <span>{line.label}</span>
+                    <span className="tabular-nums">{formatMoney(line.amountCents, displayFeeSnapshot.currency || form.currency)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <button type="button" className="primary-button" onClick={submit} disabled={saving || Boolean(message)}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
@@ -282,6 +297,7 @@ async function loadRegistrationForm(user: any, teamId: string, formId: string): 
         description: detail.form.description || '',
         season: detail.form.season || '',
         currency: detail.form.currency || 'USD',
+        feeAmountCents: detail.form.feeAmountCents ?? detail.feeSnapshot?.originalFeeAmountCents ?? detail.feeSnapshot?.finalAmountDueCents ?? 0,
         feeLabel: detail.feeSnapshot?.finalAmountDueCents ? formatMoney(detail.feeSnapshot.finalAmountDueCents, detail.form.currency) : '',
         paymentNotice: detail.paymentNotice || '',
         onlineCheckout: detail.onlineCheckout,
