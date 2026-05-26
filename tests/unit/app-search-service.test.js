@@ -196,6 +196,7 @@ describe('React app search service', () => {
             kind: 'help',
             title: 'Reset a password',
             subtitle: 'Use password reset when a parent or coach cannot sign in.',
+            route: '/help/account-password-reset',
             href: 'https://allplays.ai/help-account.html',
             roles: ['parent', 'coach'],
             snippet: 'Use password reset when a parent or coach cannot sign in.'
