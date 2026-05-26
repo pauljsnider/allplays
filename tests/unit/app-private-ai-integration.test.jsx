@@ -158,7 +158,7 @@ describe('private AI chat page', () => {
         expect(container.textContent).toContain('Looked up get_schedule');
     });
 
-    it('renders desktop prompt rail and copies a suggestion into the composer', async () => {
+    it('renders desktop prompt rail and sends a selected suggestion', async () => {
         layoutMocks.isDesktopWeb = true;
         privateAiMocks.loadPrivateAiMessages.mockResolvedValueOnce([]);
 
@@ -170,7 +170,33 @@ describe('private AI chat page', () => {
         const suggestion = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Who still needs an RSVP?'));
         await click(suggestion);
 
-        expect(container.querySelector('textarea').value).toBe('Who still needs an RSVP?');
+        expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'Who still needs an RSVP?', 'default');
+        expect(container.querySelector('textarea').value).toBe('');
+    });
+
+    it('renders starter prompts in the empty mobile welcome state', async () => {
+        layoutMocks.isDesktopWeb = false;
+        privateAiMocks.loadPrivateAiMessages.mockResolvedValueOnce([]);
+
+        const { container } = await renderPrivateAi();
+
+        expect(container.querySelector('.messages-two-pane')).toBeFalsy();
+        expect(container.textContent).toContain('What do you need from ALL PLAYS?');
+        expect(container.textContent).toContain('What do I need to handle today?');
+        expect(container.textContent).toContain('What is my next game?');
+        expect(container.textContent).toContain('Show unread team messages');
+        expect(container.textContent).toContain('Who still needs an RSVP?');
+    });
+
+    it('sends a mobile starter prompt through the private AI service', async () => {
+        layoutMocks.isDesktopWeb = false;
+        privateAiMocks.loadPrivateAiMessages.mockResolvedValueOnce([]);
+
+        const { container } = await renderPrivateAi();
+        const starter = Array.from(container.querySelectorAll('.private-ai-starter-prompt')).find((button) => button.textContent.includes('What do I need to handle today?'));
+        await click(starter);
+
+        expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'What do I need to handle today?', 'default');
     });
 
     it('starts a new conversation and loads that thread', async () => {
