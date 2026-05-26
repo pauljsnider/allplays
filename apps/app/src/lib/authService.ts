@@ -1144,11 +1144,41 @@ export async function resendVerificationEmail() {
   await sendEmailVerification(user);
 }
 
+async function refreshNativeFallbackVerification() {
+  const session = readNativeAuthSession();
+  const fallbackUser = getNativeAuthFallbackUser();
+  if (!session || !fallbackUser?.getIdToken) {
+    return false;
+  }
+
+  const idToken = await fallbackUser.getIdToken(true);
+  const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
+    idToken
+  }) as { users?: NativeRestLookupUser[] };
+  const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
+  const verified = lookupUser.emailVerified === true;
+  const refreshedSession = readNativeAuthSession() || session;
+
+  writeNativeAuthSession({
+    ...refreshedSession,
+    idToken,
+    email: lookupUser.email || refreshedSession.email,
+    displayName: lookupUser.displayName || refreshedSession.displayName || null,
+    photoUrl: lookupUser.photoUrl || refreshedSession.photoUrl || null,
+    emailVerified: verified
+  });
+
+  return verified;
+}
+
 export async function reloadCurrentUser() {
   const user = getCurrentFirebaseUser();
   if (user?.reload) {
     await user.reload();
+    return user.emailVerified === true;
   }
+
+  return refreshNativeFallbackVerification();
 }
 
 export async function verifyResetCode(oobCode: string) {
