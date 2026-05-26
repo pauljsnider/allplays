@@ -75,7 +75,14 @@ function getTeamFeeBalanceCents(recipient = {}) {
     return Math.max(0, getTeamFeeTotalCents(recipient) - getTeamFeePaidCents(recipient));
 }
 
+function isOnlineTeamFeeCollection(recipient = {}) {
+    const collectionMode = normalizeString(recipient.collectionMode).toLowerCase();
+    return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
+}
+
 function isTeamFeeCheckoutEligible(recipient = {}) {
+    if (!isOnlineTeamFeeCollection(recipient)) return false;
+
     const status = normalizeString(recipient.status || 'unpaid').toLowerCase();
     if (status === 'paid' || status === 'canceled' || status === 'cancelled') return false;
     return getTeamFeeBalanceCents(recipient) > 0;
@@ -257,6 +264,7 @@ module.exports = {
     getTeamFeeBalanceCents,
     getTeamFeeRefundedCents,
     getTeamFeeRefundableCents,
+    isOnlineTeamFeeCollection,
     isTeamFeeCheckoutEligible,
     isEligibleTeamFeePayer,
     buildTeamFeeCheckoutUrls,

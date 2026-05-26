@@ -191,31 +191,41 @@ describe('parent dashboard team fees', () => {
         expect(html).not.toContain('admin-123');
     });
 
-    it('renders Pay online for eligible unpaid or partial fees with or without a stored checkout URL', () => {
+    it('renders Pay online only for Stripe collection fees with an unpaid balance', () => {
         const manualOnlyHtml = renderParentTeamFees([
-            { title: 'Manual collection', teamId: 'team-1', batchId: 'batch-1', id: 'recipient-1', amountCents: 1000 }
+            { title: 'Manual collection', collectionMode: 'offline_manual', teamId: 'team-1', batchId: 'batch-1', id: 'recipient-1', amountCents: 1000 }
+        ]);
+        const manualWithCheckoutUrlHtml = renderParentTeamFees([
+            { title: 'Manual with stale URL', collectionMode: 'offline_manual', amountCents: 1000, checkoutUrl: 'https://pay.example/offline' }
+        ]);
+        const onlineCheckoutHtml = renderParentTeamFees([
+            { title: 'Online collection', collectionMode: 'online_stripe', teamId: 'team-1', batchId: 'batch-1', id: 'recipient-1', amountCents: 1000 }
         ]);
         const checkoutHtml = renderParentTeamFees([
-            { title: 'Online collection', amountCents: 1000, checkoutUrl: 'https://pay.example/checkout' }
+            { title: 'Online collection', collectionMode: 'online_stripe', amountCents: 1000, checkoutUrl: 'https://pay.example/checkout' }
         ]);
         const partialPaymentLinkHtml = renderParentTeamFees([
-            { title: 'Partial collection', amountCents: 2000, paidAmountCents: 1000, status: 'partially_paid', paymentLink: 'https://pay.example/remaining' }
+            { title: 'Partial collection', collectionMode: 'online_stripe', amountCents: 2000, paidAmountCents: 1000, status: 'partially_paid', paymentLink: 'https://pay.example/remaining' }
         ]);
         const paidHtml = renderParentTeamFees([
-            { title: 'Paid collection', amountCents: 1000, balanceDueCents: 0, status: 'paid', checkoutUrl: 'https://pay.example/paid' }
+            { title: 'Paid collection', collectionMode: 'online_stripe', amountCents: 1000, balanceDueCents: 0, status: 'paid', checkoutUrl: 'https://pay.example/paid' }
         ]);
         const adjustedHtml = renderParentTeamFees([
-            { title: 'Adjusted collection', amountCents: 1000, status: 'adjusted', checkoutUrl: 'https://pay.example/adjusted' }
+            { title: 'Adjusted collection', collectionMode: 'online_stripe', amountCents: 1000, status: 'adjusted', checkoutUrl: 'https://pay.example/adjusted' }
         ]);
         const missingContextHtml = renderParentTeamFees([
-            { title: 'No context collection', amountCents: 1000 }
+            { title: 'No context collection', collectionMode: 'online_stripe', amountCents: 1000 }
         ]);
 
-        expect(manualOnlyHtml).toContain('data-team-fee-checkout="true"');
-        expect(manualOnlyHtml).toContain('data-team-id="team-1"');
-        expect(manualOnlyHtml).toContain('data-batch-id="batch-1"');
-        expect(manualOnlyHtml).toContain('data-recipient-id="recipient-1"');
-        expect(manualOnlyHtml).toContain('>Pay online</button>');
+        expect(manualOnlyHtml).not.toContain('Pay online');
+        expect(manualOnlyHtml).not.toContain('data-team-fee-checkout="true"');
+        expect(manualWithCheckoutUrlHtml).not.toContain('Pay online');
+        expect(manualWithCheckoutUrlHtml).not.toContain('https://pay.example/offline');
+        expect(onlineCheckoutHtml).toContain('data-team-fee-checkout="true"');
+        expect(onlineCheckoutHtml).toContain('data-team-id="team-1"');
+        expect(onlineCheckoutHtml).toContain('data-batch-id="batch-1"');
+        expect(onlineCheckoutHtml).toContain('data-recipient-id="recipient-1"');
+        expect(onlineCheckoutHtml).toContain('>Pay online</button>');
         expect(checkoutHtml).toContain('>Pay online</a>');
         expect(checkoutHtml).toContain('https://pay.example/checkout');
         expect(partialPaymentLinkHtml).toContain('>Pay online</a>');
