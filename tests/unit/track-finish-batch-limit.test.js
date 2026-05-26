@@ -123,7 +123,7 @@ describe('standard tracker finish batch limits', () => {
         ]);
     });
 
-    it('writes zero-stat roster players as player profile appearances', async () => {
+    it('marks untouched standard tracker roster players as did not appear', async () => {
         const harness = createFirestoreHarness();
 
         await commitStandardTrackerFinishData({
@@ -137,9 +137,13 @@ describe('standard tracker finish batch limits', () => {
             gameLog: [],
             players: [
                 { id: 'p1', name: 'Ava', number: '3' },
-                { id: 'p2', name: 'Ben', number: '8' }
+                { id: 'p2', name: 'Ben', number: '8' },
+                { id: 'p3', name: 'Cam', number: '11' }
             ],
-            playerStatsByPlayerId: { p1: { pts: 6, ast: 1 } },
+            playerStatsByPlayerId: {
+                p1: { pts: 6, ast: 1 },
+                p3: { pts: 0, ast: 0 }
+            },
             columns: ['PTS', 'AST'],
             finalHome: 6,
             finalAway: 4,
@@ -148,17 +152,28 @@ describe('standard tracker finish batch limits', () => {
         });
 
         const statsBatch = harness.batches[0];
-        const zeroStatWrite = statsBatch.operations.find((op) => op.ref.path === 'teams/team-1/games/game-1/aggregatedStats/p2');
+        const untouchedWrite = statsBatch.operations.find((op) => op.ref.path === 'teams/team-1/games/game-1/aggregatedStats/p2');
+        const explicitZeroStatWrite = statsBatch.operations.find((op) => op.ref.path === 'teams/team-1/games/game-1/aggregatedStats/p3');
 
-        expect(zeroStatWrite.data).toEqual({
+        expect(untouchedWrite.data).toEqual({
             playerName: 'Ben',
             playerNumber: '8',
+            participated: false,
+            participationStatus: 'did-not-appear',
+            participationSource: 'standard-tracker-finish',
+            didNotPlay: true,
+            stats: { pts: 0, ast: 0 }
+        });
+        expect(hasPlayerProfileParticipation(untouchedWrite.data)).toBe(false);
+        expect(explicitZeroStatWrite.data).toEqual({
+            playerName: 'Cam',
+            playerNumber: '11',
             participated: true,
             participationStatus: 'appeared',
             participationSource: 'standard-tracker-finish',
             stats: { pts: 0, ast: 0 }
         });
-        expect(hasPlayerProfileParticipation(zeroStatWrite.data)).toBe(true);
+        expect(hasPlayerProfileParticipation(explicitZeroStatWrite.data)).toBe(true);
     });
 
     it('writes private player stats to manager-only docs when finishing a standard tracker game', async () => {

@@ -33,14 +33,14 @@ export function buildNormalizedPlayerStats(playerStats = {}, columns = []) {
     return normalizedStats;
 }
 
-function hasTrackedPlayerActivity(playerStats = {}, normalizedStats = {}, includeTimeMs = false) {
+function hasTrackedPlayerActivity(playerStats = {}, normalizedStats = {}, includeTimeMs = false, hasPlayerStatsRecord = false) {
     const hasStatActivity = Object.entries(normalizedStats || {}).some(([key, value]) => {
         if (includeTimeMs && String(key).toLowerCase() === 'time') return false;
         return Number(value) !== 0;
     });
 
     if (hasStatActivity) return true;
-    if (!includeTimeMs) return true;
+    if (!includeTimeMs) return hasPlayerStatsRecord;
 
     return (Number(playerStats.time) || 0) > 0;
 }
@@ -52,10 +52,11 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
         : {};
 
     return safePlayers.map((player) => {
-        const playerStats = safeStatsByPlayerId[player.id] || {};
+        const hasPlayerStatsRecord = Object.prototype.hasOwnProperty.call(safeStatsByPlayerId, player.id);
+        const playerStats = hasPlayerStatsRecord ? safeStatsByPlayerId[player.id] || {} : {};
 
         const normalizedStats = buildNormalizedPlayerStats(playerStats, columns);
-        const playerAppeared = hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs);
+        const playerAppeared = hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs, hasPlayerStatsRecord);
         // If we are including timeMs, ensure the internal 'time' accumulator is not persisted as a stat.
         if (includeTimeMs && normalizedStats.time !== undefined) {
             delete normalizedStats.time;
