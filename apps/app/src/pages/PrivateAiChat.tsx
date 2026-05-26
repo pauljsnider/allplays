@@ -51,6 +51,13 @@ const suggestedPrompts = [
   'What is my next game?'
 ];
 
+const starterPrompts = [
+  'What do I need to handle today?',
+  'What is my next game?',
+  'Show unread team messages',
+  'Who still needs an RSVP?'
+];
+
 export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
   const [messages, setMessages] = useState<PrivateAiMessage[]>([]);
@@ -240,11 +247,9 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     startWebDictation();
   };
 
-  const sendMessage = async (event?: FormEvent) => {
-    event?.preventDefault();
-    if (!auth.user || sending) return;
-    const text = draft.trim();
-    if (!text) return;
+  const sendPrompt = async (text: string) => {
+    const trimmedText = text.trim();
+    if (!auth.user || sending || !trimmedText) return;
 
     setDraft('');
     setSending(true);
@@ -252,14 +257,14 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     const optimisticUser: PrivateAiMessage = {
       id: `local-user-${Date.now()}`,
       role: 'user',
-      text,
+      text: trimmedText,
       conversationId: activeConversationId,
       createdAt: new Date()
     };
     setMessages((current) => [...current, optimisticUser]);
 
     try {
-      const result = await sendPrivateAiMessage(auth.user, text, activeConversationId);
+      const result = await sendPrivateAiMessage(auth.user, trimmedText, activeConversationId);
       setMessages((current) => [
         ...current.filter((message) => message.id !== optimisticUser.id),
         result.userMessage,
@@ -268,7 +273,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       await refreshConversations(false);
     } catch (error: any) {
       setMessages((current) => current.filter((message) => message.id !== optimisticUser.id));
-      setDraft(text);
+      setDraft(trimmedText);
       setStatus({
         tone: 'error',
         message: error?.message || 'Unable to send message.'
@@ -278,8 +283,13 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     }
   };
 
+  const sendMessage = (event?: FormEvent) => {
+    event?.preventDefault();
+    void sendPrompt(draft);
+  };
+
   const sendSuggestion = (prompt: string) => {
-    setDraft(prompt);
+    void sendPrompt(prompt);
   };
 
   const startNewConversation = async () => {
@@ -327,6 +337,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       onDraftChange={setDraft}
       onSubmit={sendMessage}
       onToggleDictation={toggleDictation}
+      onStarterPrompt={sendSuggestion}
       dictating={dictating}
       status={status}
       bottomRef={bottomRef}
@@ -374,6 +385,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
                     type="button"
                     className="private-ai-prompt-button"
                     onClick={() => sendSuggestion(prompt)}
+                    disabled={sending}
                   >
                     <span>{prompt}</span>
                     <ChevronRight className="h-4 w-4 flex-none" aria-hidden="true" />
@@ -559,6 +571,7 @@ function PrivateAiThread({
   onDraftChange,
   onSubmit,
   onToggleDictation,
+  onStarterPrompt,
   dictating,
   status,
   bottomRef
@@ -570,6 +583,7 @@ function PrivateAiThread({
   onDraftChange: (value: string) => void;
   onSubmit: (event?: FormEvent) => void;
   onToggleDictation: () => void;
+  onStarterPrompt: (prompt: string) => void;
   dictating: boolean;
   status: ChatStatus | null;
   bottomRef: MutableRefObject<HTMLDivElement | null>;
@@ -585,7 +599,7 @@ function PrivateAiThread({
             </div>
           ) : null}
 
-          {!loading && !messages.length ? <PrivateAiWelcome /> : null}
+          {!loading && !messages.length ? <PrivateAiWelcome sending={sending} onStarterPrompt={onStarterPrompt} /> : null}
 
           {!loading ? messages.map((message, index) => (
             <PrivateAiBubble key={message.id} message={message} previous={messages[index - 1] || null} />
@@ -644,7 +658,13 @@ function PrivateAiThread({
   );
 }
 
-function PrivateAiWelcome() {
+function PrivateAiWelcome({
+  sending,
+  onStarterPrompt
+}: {
+  sending: boolean;
+  onStarterPrompt: (prompt: string) => void;
+}) {
   return (
     <div className="private-ai-welcome">
       <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
@@ -653,6 +673,20 @@ function PrivateAiWelcome() {
       <div className="mt-3 text-base font-black text-gray-950">What do you need from ALL PLAYS?</div>
       <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">
         Ask about your teams, schedule, messages, fees, player development, coaching ideas, registrations, and profile.
+      </div>
+      <div className="private-ai-starter-prompts" aria-label="Starter prompts">
+        {starterPrompts.map((prompt) => (
+          <button
+            key={prompt}
+            type="button"
+            className="private-ai-starter-prompt"
+            onClick={() => onStarterPrompt(prompt)}
+            disabled={sending}
+          >
+            <span>{prompt}</span>
+            <Send className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
+          </button>
+        ))}
       </div>
     </div>
   );
