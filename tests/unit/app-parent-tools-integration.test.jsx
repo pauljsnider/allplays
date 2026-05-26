@@ -9,6 +9,7 @@ const serviceMocks = vi.hoisted(() => ({
     buildParentScheduleIcs: vi.fn(() => 'BEGIN:VCALENDAR\r\nEND:VCALENDAR'),
     createParentFamilyShare: vi.fn(),
     createParentHouseholdMemberInvite: vi.fn(),
+    createTeamMediaAlbumForApp: vi.fn(),
     downloadIcs: vi.fn(),
     getAppleCalendarFeedUrl: vi.fn((url) => `webcal://${url.replace(/^https?:\/\//, '')}`),
     getCalendarEventShareText: vi.fn((event) => `${event.teamName} ${event.title || event.opponent}`),
@@ -133,6 +134,14 @@ async function changeValue(element, value) {
     await flush();
 }
 
+async function changeSelectValue(element, value) {
+    await act(async () => {
+        element.value = value;
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
     window.requestAnimationFrame = (callback) => {
@@ -227,6 +236,7 @@ beforeEach(() => {
     serviceMocks.uploadParentTeamMediaPhoto.mockResolvedValue('photo-2');
     serviceMocks.uploadParentTeamMediaFile.mockResolvedValue('file-1');
     serviceMocks.addParentTeamMediaLink.mockResolvedValue('link-1');
+    serviceMocks.createTeamMediaAlbumForApp.mockResolvedValue('folder-new');
 });
 
 afterEach(() => {
@@ -401,8 +411,6 @@ describe('React app parent tools integration', () => {
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
-
-
     it('filters team media albums by media type in the app', async () => {
         serviceMocks.loadTeamMediaForApp.mockResolvedValueOnce({
             team: { id: 'team-1', name: 'Bears' },
@@ -455,6 +463,77 @@ describe('React app parent tools integration', () => {
 
         expect(container.textContent).toContain('Videos0');
         expect(container.textContent).toContain('No videos in this album.');
+    });
+
+    it('creates the first team media album and unlocks add-media actions for managers', async () => {
+        serviceMocks.loadTeamMediaForApp
+            .mockResolvedValueOnce({
+                team: { id: 'team-1', name: 'Bears' },
+                canManage: true,
+                canContribute: true,
+                folders: []
+            })
+            .mockResolvedValueOnce({
+                team: { id: 'team-1', name: 'Bears' },
+                canManage: true,
+                canContribute: true,
+                folders: [{
+                    id: 'folder-new',
+                    name: 'Spring photos',
+                    visibility: 'team',
+                    itemCount: 0,
+                    items: []
+                }]
+            });
+        const { container } = await renderParentTools('/teams/team-1/media');
+        await waitForText(container, 'Create album');
+        expect(container.textContent).toContain('Start this media library');
+        expect(container.textContent).toContain('Team-visible');
+        expect(container.textContent).toContain('Private/admins only');
+        const submitButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim().includes('Create album'));
+        expect(submitButton.disabled).toBe(true);
+
+        await changeValue(container.querySelector('#team-media-album-name'), '  Spring photos  ');
+        await changeSelectValue(container.querySelector('#team-media-album-visibility'), 'team');
+        expect(submitButton.disabled).toBe(false);
+        await submitForm(container, 'Create album');
+
+        expect(serviceMocks.createTeamMediaAlbumForApp).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'team' });
+        await waitForText(container, 'Album created. You can add photos, files, or links now.');
+        expect(container.textContent).toContain('Add to Spring photos');
+        expect(container.textContent).toContain('Photo');
+        expect(container.textContent).toContain('File');
+        expect(container.textContent).toContain('Add link');
+    });
+
+    it('preserves the album draft and hides create controls from non-managers', async () => {
+        serviceMocks.loadTeamMediaForApp.mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            canManage: true,
+            canContribute: true,
+            folders: []
+        });
+        serviceMocks.createTeamMediaAlbumForApp.mockRejectedValueOnce(new Error('permission-denied'));
+        const { container, root } = await renderParentTools('/teams/team-1/media');
+        await waitForText(container, 'Create album');
+        await changeValue(container.querySelector('#team-media-album-name'), 'Private board notes');
+        await changeSelectValue(container.querySelector('#team-media-album-visibility'), 'private');
+        await submitForm(container, 'Create album');
+        await waitForText(container, 'permission-denied');
+        expect(container.querySelector('#team-media-album-name').value).toBe('Private board notes');
+        expect(container.querySelector('#team-media-album-visibility').value).toBe('private');
+
+        await act(async () => root.unmount());
+        document.body.innerHTML = '';
+        serviceMocks.loadTeamMediaForApp.mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            canManage: false,
+            canContribute: true,
+            folders: []
+        });
+        const nextRender = await renderParentTools('/teams/team-1/media');
+        await waitForText(nextRender.container, 'No albums are available yet.');
+        expect(nextRender.container.textContent).not.toContain('Create album');
     });
 
     it('loads team media, uploads photos/files, adds links, and opens media items', async () => {
