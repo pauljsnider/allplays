@@ -360,6 +360,13 @@
                                 <option value="rejected">Rejected</option>
                                 <option value="all">All</option>
                             </select>
+                            <details id="registration-export-options" class="relative rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm">
+                                <summary class="cursor-pointer font-semibold text-gray-700">Export options</summary>
+                                <div class="absolute right-0 z-20 mt-2 w-72 rounded-md border border-gray-200 bg-white p-3 shadow-lg">
+                                    <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">CSV columns</p>
+                                    <div id="registration-export-columns" class="max-h-72 space-y-2 overflow-y-auto"></div>
+                                </div>
+                            </details>
                             <button id="export-registration-csv-btn" type="button" class="rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50" disabled>Export CSV</button>
                         </div>
                     </div>
@@ -520,7 +527,7 @@
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';
-        import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename } from './js/registration-review.js?v=3';
+        import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions } from './js/registration-review.js?v=4';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
@@ -537,6 +544,7 @@
         let registrationForms = [];
         let selectedRegistrationFormId = '';
         let latestRegistrationReviews = [];
+        let selectedRegistrationExportColumns = getDefaultRegistrationReviewCsvColumnKeys();
         let registrationRosterImportPlan = null;
         let trackingItems = [];
         let selectedTrackingItemId = '';
@@ -587,10 +595,12 @@
             renderRegistrationRosterImport(team);
             document.getElementById('registration-form-filter').addEventListener('change', (event) => {
                 selectedRegistrationFormId = event.target.value;
+                renderRegistrationExportColumns();
                 loadRegistrationReviews();
             });
             document.getElementById('registration-status-filter').addEventListener('change', () => loadRegistrationReviews());
             document.getElementById('export-registration-csv-btn').addEventListener('click', exportRegistrationReviewsCsv);
+            document.getElementById('registration-export-columns').addEventListener('change', handleRegistrationExportColumnChange);
             document.getElementById('tracking-item-select').addEventListener('change', (event) => {
                 selectedTrackingItemId = event.target.value;
                 renderTrackingStatusMatrix();
@@ -985,6 +995,7 @@
             if (!registrationForms.length) {
                 select.innerHTML = '<option value="">No registration forms</option>';
                 selectedRegistrationFormId = '';
+                renderRegistrationExportColumns();
                 return;
             }
             select.innerHTML = registrationForms.map((form) => `
@@ -992,6 +1003,36 @@
                     ${escapeHtml(form.name || form.title || form.id)}
                 </option>
             `).join('');
+            renderRegistrationExportColumns();
+        }
+
+        function getSelectedRegistrationForm() {
+            return registrationForms.find((item) => item.id === selectedRegistrationFormId) || { id: selectedRegistrationFormId };
+        }
+
+        function renderRegistrationExportColumns() {
+            const container = document.getElementById('registration-export-columns');
+            if (!container) return;
+            const form = getSelectedRegistrationForm();
+            const definitions = getRegistrationReviewCsvColumnDefinitions(form);
+            const validKeys = new Set(definitions.map((definition) => definition.key));
+            const defaultKeys = getDefaultRegistrationReviewCsvColumnKeys();
+            const retainedKeys = selectedRegistrationExportColumns.filter((key) => validKeys.has(key));
+            selectedRegistrationExportColumns = retainedKeys.length ? retainedKeys : defaultKeys.filter((key) => validKeys.has(key));
+            container.innerHTML = definitions.map((definition) => `
+                <label class="flex items-start gap-2 text-sm text-gray-700">
+                    <input type="checkbox" class="registration-export-column mt-1 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" value="${escapeHtml(definition.key)}" ${selectedRegistrationExportColumns.includes(definition.key) ? 'checked' : ''}>
+                    <span>${escapeHtml(definition.label)}</span>
+                </label>
+            `).join('');
+        }
+
+        function handleRegistrationExportColumnChange() {
+            selectedRegistrationExportColumns = Array.from(document.querySelectorAll('.registration-export-column:checked')).map((input) => input.value);
+            setRegistrationExportState({
+                enabled: latestRegistrationReviews.length > 0 && selectedRegistrationExportColumns.length > 0,
+                message: selectedRegistrationExportColumns.length ? '' : 'Select at least one column before exporting.'
+            });
         }
 
         const screeningStatuses = ['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected'];
@@ -1060,8 +1101,12 @@
                 setRegistrationExportState({ enabled: false, message: 'No registrations match this filter. Choose a form or status with registrations before exporting.' });
                 return;
             }
-            const form = registrationForms.find((item) => item.id === selectedRegistrationFormId) || { id: selectedRegistrationFormId };
-            const csv = buildRegistrationReviewCsv(latestRegistrationReviews, form);
+            if (!selectedRegistrationExportColumns.length) {
+                setRegistrationExportState({ enabled: false, message: 'Select at least one column before exporting.' });
+                return;
+            }
+            const form = getSelectedRegistrationForm();
+            const csv = buildRegistrationReviewCsv(latestRegistrationReviews, form, selectedRegistrationExportColumns);
             const filename = buildRegistrationReviewCsvFilename({
                 teamId: currentTeamId,
                 formId: selectedRegistrationFormId,
@@ -1092,7 +1137,12 @@
                     container.innerHTML = '<p class="text-sm text-gray-500">No registrations match this filter.</p>';
                     return;
                 }
-                setRegistrationExportState({ enabled: true, message: 'Export includes applicant, guardian, status, option, fee, payment plan, submitted date, linked roster player, and decision note.' });
+                setRegistrationExportState({
+                    enabled: selectedRegistrationExportColumns.length > 0,
+                    message: selectedRegistrationExportColumns.length
+                        ? 'Export includes the selected standard and registration form columns.'
+                        : 'Select at least one column before exporting.'
+                });
                 container.innerHTML = registrations.map((registration) => {
                     const summary = registration.reviewSummary || {};
                     const statusLabel = summary.status || registration.status || 'pending';
