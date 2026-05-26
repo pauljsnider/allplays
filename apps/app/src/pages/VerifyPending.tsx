@@ -75,7 +75,7 @@ export function VerifyPending({ auth }: { auth: AuthState }) {
             Continue to dashboard
           </Link>
         ) : (
-          <button type="button" className="primary-button justify-center" onClick={checkVerificationAndContinue} disabled={busy}>
+          <button type="button" className="primary-button justify-center" onClick={checkVerificationAndContinue} disabled={busy} aria-label="Refresh status">
             I've verified, continue
           </button>
         )}
