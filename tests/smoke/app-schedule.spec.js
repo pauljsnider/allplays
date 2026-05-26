@@ -399,6 +399,14 @@ async function mockScheduleModules(page, options = {}) {
                     window.__scheduleCalls.rideshare.push({ action: 'status', offerId: offer.id, status });
                 }
 
+                export async function loadStaffRsvpReminderPreview() {
+                    return { missingPlayerCount: 0, eligibleEmailCount: 0, players: [] };
+                }
+
+                export async function sendStaffRsvpReminder() {
+                    return { missingPlayerCount: 0, eligibleEmailCount: 0, emailSentCount: 0, players: [] };
+                }
+
                 export function summarizeParentScheduleRideOffers(offers) {
                     return summarizeRideOffers(offers);
                 }
@@ -828,6 +836,7 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
     const mobileRows = page.locator('.schedule-list > a');
+    await page.waitForSelector('.schedule-list > a');
     await expect(mobileRows).toHaveCount(20);
     await expect(page.getByText('Showing 20 of 25 events')).toBeVisible();
     await page.getByRole('button', { name: 'Show 5 more' }).click();
