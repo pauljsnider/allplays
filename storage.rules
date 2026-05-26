@@ -30,6 +30,26 @@ service firebase.storage {
       return isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
     }
 
+    function hasTeamMediaUploadGrant(teamId) {
+      let userPath = /databases/(default)/documents/users/$(request.auth.uid);
+      return isSignedIn() &&
+        firestore.exists(userPath) &&
+        (teamId in firestore.get(userPath).data.get('teamMediaUploadTeamIds', []) ||
+         teamId in firestore.get(userPath).data.get('mediaUploadTeamIds', []));
+    }
+
+    function canUploadTeamMediaFolder(teamId, folderId) {
+      let folderPath = /databases/(default)/documents/teams/$(teamId)/mediaFolders/$(folderId);
+      return folderId.size() > 0 &&
+        firestore.exists(folderPath) &&
+        firestore.get(folderPath).data.get('visibility', 'team') == 'team';
+    }
+
+    function canCreateTeamMediaUpload(teamId, folderId) {
+      return isTeamOwnerOrAdmin(teamId) ||
+        (hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId));
+    }
+
     function isAllowedTeamMediaUploadType(contentType) {
       return contentType.matches('image/.*') ||
         contentType in [
@@ -48,7 +68,7 @@ service firebase.storage {
     match /team-media/{teamId}/{folderId}/{userId}/{fileName} {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
-      allow create: if canAccessTeamMedia(teamId) &&
+      allow create: if canCreateTeamMediaUpload(teamId, folderId) &&
         request.auth.uid == userId &&
         request.resource.size > 0 &&
         request.resource.size <= 10 * 1024 * 1024 &&
