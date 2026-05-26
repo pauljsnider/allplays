@@ -2,7 +2,7 @@
 import { Component, OnInit } from '@angular/core';
 import { getAuth } from 'firebase/auth';
 import type { User } from 'firebase/auth';
-import { collectionGroup, getDocs, getFirestore, query, where } from 'firebase/firestore';
+import { collectionGroup, doc, getDoc, getDocs, getFirestore, query, where } from 'firebase/firestore';
 import { app } from '../firebase-config';
 import { StripeService } from '../shared/services/stripe.service';
 
@@ -16,6 +16,16 @@ interface TeamFee {
   isPaid: boolean;
 }
 
+type ParentPlayerLink = {
+  teamId?: string;
+  playerId?: string;
+};
+
+type UserProfileData = {
+  parentOf?: ParentPlayerLink[];
+  parentPlayerKeys?: string[];
+};
+
 type FeeRecipientData = {
   title?: string;
   feeTitle?: string;
@@ -28,7 +38,46 @@ type FeeRecipientData = {
   isPaid?: boolean;
   teamId?: string;
   batchId?: string;
+  parentUserId?: string;
+  accountUserId?: string;
+  userId?: string;
+  playerId?: string;
+  childId?: string;
+  playerKey?: string;
 };
+
+
+function getParentPlayerKey(teamId: string, playerId: string): string {
+  return teamId && playerId ? `${teamId}::${playerId}` : '';
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function getAllowedParentPlayerKeys(profile: UserProfileData): string[] {
+  const profileKeys = Array.isArray(profile.parentPlayerKeys) ? profile.parentPlayerKeys : [];
+  const linkKeys = (Array.isArray(profile.parentOf) ? profile.parentOf : [])
+    .map((link) => getParentPlayerKey(String(link?.teamId || ''), String(link?.playerId || '')));
+  return uniqueStrings([...profileKeys, ...linkKeys]);
+}
+
+function getChildLinks(parentPlayerKeys: string[]): ParentPlayerLink[] {
+  return parentPlayerKeys
+    .map((key) => {
+      const [teamId, playerId] = key.split('::');
+      return { teamId: teamId || '', playerId: playerId || '' };
+    })
+    .filter((link) => link.teamId && link.playerId);
+}
+
+function isAllowedParentFeeRecipient(data: FeeRecipientData, userId: string, parentPlayerKeys: Set<string>): boolean {
+  if ([data.parentUserId, data.accountUserId, data.userId].includes(userId)) return true;
+  const teamId = data.teamId || '';
+  const playerId = data.playerId || data.childId || '';
+  const playerKey = data.playerKey || getParentPlayerKey(teamId, playerId);
+  return parentPlayerKeys.has(playerKey);
+}
 
 function getPathSegment(path: string, segment: string): string {
   const parts = path.split('/');
@@ -107,33 +156,71 @@ export class TeamFeesComponent implements OnInit {
   private async loadFeeRecipientsForUser(userId: string): Promise<TeamFee[]> {
     const db = getFirestore(app);
     const recipientsRef = collectionGroup(db, 'feeRecipients');
-    const snapshots = await Promise.all([
-      getDocs(query(recipientsRef, where('parentUserId', '==', userId))),
-      getDocs(query(recipientsRef, where('accountUserId', '==', userId))),
-      getDocs(query(recipientsRef, where('userId', '==', userId)))
-    ]);
+    const userProfile = await this.loadUserProfile(db, userId);
+    const parentPlayerKeys = new Set(getAllowedParentPlayerKeys(userProfile));
+    const childLinks = getChildLinks(Array.from(parentPlayerKeys));
+    const teamIds = uniqueStrings(childLinks.map((child) => String(child.teamId || '')));
+    const feeQueries = teamIds.length > 0
+      ? [
+          ...teamIds.flatMap((teamId) => [
+            query(recipientsRef, where('teamId', '==', teamId), where('parentUserId', '==', userId)),
+            query(recipientsRef, where('teamId', '==', teamId), where('accountUserId', '==', userId)),
+            query(recipientsRef, where('teamId', '==', teamId), where('userId', '==', userId))
+          ]),
+          ...childLinks.map((child) => query(
+            recipientsRef,
+            where('teamId', '==', child.teamId),
+            where('playerId', '==', child.playerId)
+          ))
+        ]
+      : [
+          query(recipientsRef, where('parentUserId', '==', userId)),
+          query(recipientsRef, where('accountUserId', '==', userId)),
+          query(recipientsRef, where('userId', '==', userId))
+        ];
+    const snapshots = await Promise.all(feeQueries.map((feeQuery) => getDocs(feeQuery)));
+    const uniqueDocs = new Map<string, { id: string; ref: { path: string }; data: () => unknown }>();
     const feesByPath = new Map<string, TeamFee>();
 
     snapshots.forEach((snapshot) => {
       snapshot.docs.forEach((docSnap) => {
-        const data = docSnap.data() as FeeRecipientData;
-        const teamId = data.teamId || getPathSegment(docSnap.ref.path, 'teams');
-        const batchId = data.batchId || getPathSegment(docSnap.ref.path, 'feeBatches');
-        if (!teamId || !batchId) return;
+        if (!uniqueDocs.has(docSnap.ref.path)) {
+          uniqueDocs.set(docSnap.ref.path, docSnap);
+        }
+      });
+    });
 
-        feesByPath.set(docSnap.ref.path, {
-          id: docSnap.id,
-          teamId,
-          batchId,
-          recipientId: docSnap.id,
-          name: data.title || data.feeTitle || data.name || 'Team Fee',
-          amount: normalizeAmount(data),
-          isPaid: isFeePaid(data)
-        });
+    uniqueDocs.forEach((docSnap) => {
+      const data = docSnap.data() as FeeRecipientData;
+      const teamId = data.teamId || getPathSegment(docSnap.ref.path, 'teams');
+      const batchId = data.batchId || getPathSegment(docSnap.ref.path, 'feeBatches');
+      if (!teamId || !batchId) return;
+
+      const normalizedData = { ...data, teamId };
+      if (parentPlayerKeys.size > 0 && !isAllowedParentFeeRecipient(normalizedData, userId, parentPlayerKeys)) return;
+
+      feesByPath.set(docSnap.ref.path, {
+        id: docSnap.id,
+        teamId,
+        batchId,
+        recipientId: docSnap.id,
+        name: data.title || data.feeTitle || data.name || 'Team Fee',
+        amount: normalizeAmount(data),
+        isPaid: isFeePaid(data)
       });
     });
 
     return Array.from(feesByPath.values());
+  }
+
+  private async loadUserProfile(db: ReturnType<typeof getFirestore>, userId: string): Promise<UserProfileData> {
+    try {
+      const userSnap = await getDoc(doc(db, 'users', userId));
+      return userSnap.exists() ? userSnap.data() as UserProfileData : {};
+    } catch (error) {
+      console.warn('Failed to load team fee parent links:', error);
+      return {};
+    }
   }
 
   isPaymentLoading(feeId: string): boolean {

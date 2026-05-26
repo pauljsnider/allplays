@@ -7,6 +7,7 @@ const mockAuth = {
   onAuthStateChanged: vi.fn()
 };
 const mockGetDocs = vi.fn();
+const mockGetDoc = vi.fn();
 const mockRecipientsRef = {};
 const mockDb = {};
 
@@ -21,6 +22,8 @@ vi.mock('firebase/auth', () => ({
 
 vi.mock('firebase/firestore', () => ({
   collectionGroup: vi.fn(() => mockRecipientsRef),
+  doc: vi.fn((...args) => ({ args })),
+  getDoc: mockGetDoc,
   getDocs: mockGetDocs,
   getFirestore: vi.fn(() => mockDb),
   query: vi.fn((...args) => ({ args })),
@@ -36,7 +39,7 @@ vi.mock('../shared/services/stripe.service', () => ({
 }));
 
 const { TeamFeesComponent } = await import('./team-fees.component');
-const { collectionGroup, getFirestore, query, where } = await import('firebase/firestore');
+const { collectionGroup, doc, getDoc, getFirestore, query, where } = await import('firebase/firestore');
 
 const template = readFileSync(resolve(process.cwd(), 'src/app/team-fees/team-fees.component.html'), 'utf8');
 
@@ -56,6 +59,7 @@ describe('TeamFeesComponent checkout flow', () => {
     vi.clearAllMocks();
     mockAuth.currentUser = { uid: 'parent-123' };
     mockAuth.onAuthStateChanged.mockReset();
+    mockGetDoc.mockResolvedValue({ exists: () => false, data: () => ({}) });
     mockGetDocs.mockResolvedValue({ docs: [] });
     stripeService = {
       initiateTeamFeeCheckout: vi.fn().mockResolvedValue('https://checkout.stripe.com/team-fee-session')
@@ -110,6 +114,71 @@ describe('TeamFeesComponent checkout flow', () => {
       }
     ]);
     expect(component.isLoadingFees).toBe(false);
+  });
+
+  it('deduplicates overlapping fee recipient query results before mapping fees', async () => {
+    const feeOne = feeDoc('teams/team-real/feeBatches/batch-real/feeRecipients/recipient-real', 'recipient-real', {
+      parentUserId: 'parent-123',
+      title: 'Spring registration',
+      balanceDueCents: 12500,
+      status: 'unpaid'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [feeOne, feeOne] })
+      .mockResolvedValueOnce({ docs: [feeOne] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(component.teamFees).toEqual([
+      {
+        id: 'recipient-real',
+        teamId: 'team-real',
+        batchId: 'batch-real',
+        recipientId: 'recipient-real',
+        name: 'Spring registration',
+        amount: 125,
+        isPaid: false
+      }
+    ]);
+  });
+
+  it('loads parent-assigned fee recipients by linked team and player when records omit user IDs', async () => {
+    mockGetDoc.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ parentOf: [{ teamId: 'team-real', playerId: 'player-real' }] })
+    });
+    const playerFee = feeDoc('teams/team-real/feeBatches/batch-real/feeRecipients/player-real', 'player-real', {
+      teamId: 'team-real',
+      playerId: 'player-real',
+      feeTitle: 'Roster fee',
+      amountCents: 7500,
+      status: 'unpaid'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [playerFee] });
+
+    await component.ngOnInit();
+
+    expect(doc).toHaveBeenCalledWith(mockDb, 'users', 'parent-123');
+    expect(getDoc).toHaveBeenCalled();
+    expect(where).toHaveBeenCalledWith('teamId', '==', 'team-real');
+    expect(where).toHaveBeenCalledWith('playerId', '==', 'player-real');
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(component.teamFees).toEqual([
+      {
+        id: 'player-real',
+        teamId: 'team-real',
+        batchId: 'batch-real',
+        recipientId: 'player-real',
+        name: 'Roster fee',
+        amount: 75,
+        isPaid: false
+      }
+    ]);
   });
 
   it('does not populate hard-coded mock team fees when no user is signed in', async () => {
