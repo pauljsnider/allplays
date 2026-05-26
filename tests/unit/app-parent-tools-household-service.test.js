@@ -1,0 +1,126 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const familyPlanMocks = vi.hoisted(() => ({
+    addPendingFamilyMember: vi.fn(),
+    readFamilyMembers: vi.fn()
+}));
+
+vi.mock('../../js/family-plan.js', () => familyPlanMocks);
+vi.mock('../../js/db.js', () => ({
+    createFamilyShareToken: vi.fn(),
+    createParentMembershipRequest: vi.fn(),
+    createRegistrationCheckoutSession: vi.fn(),
+    createTeamMediaLink: vi.fn(),
+    getPlayers: vi.fn(),
+    getTeam: vi.fn(),
+    getTeamMediaFolders: vi.fn(),
+    getTeamMediaItems: vi.fn(),
+    getTeams: vi.fn(),
+    listCertificatesForPlayer: vi.fn(),
+    listFamilyShareTokens: vi.fn(),
+    listMyParentMembershipRequests: vi.fn(),
+    listParentTeamFeeRecipients: vi.fn(),
+    listTeamRegistrationForms: vi.fn(),
+    revokeFamilyShareToken: vi.fn(),
+    updateFamilyShareTokenCalendars: vi.fn(),
+    uploadTeamMediaFile: vi.fn(),
+    uploadTeamMediaPhoto: vi.fn()
+}));
+vi.mock('../../js/firebase.js', () => ({
+    db: {},
+    doc: vi.fn(),
+    collection: vi.fn(),
+    serverTimestamp: vi.fn(),
+    runTransaction: vi.fn()
+}));
+vi.mock('../../js/parent-dashboard-fees.js', () => ({
+    formatParentFeeAmount: vi.fn(),
+    formatParentFeeDueDate: vi.fn(),
+    getParentFeeStatusMeta: vi.fn(),
+    normalizeParentFeeRecord: vi.fn((record) => record),
+    sortParentFeeRecords: vi.fn((records) => records)
+}));
+vi.mock('../../js/stripe-service.js', () => ({ initiateTeamFeeCheckout: vi.fn() }));
+vi.mock('../../js/registration-flow.js', () => ({
+    buildPendingRegistrationRecord: vi.fn(),
+    calculateRegistrationFeeSnapshot: vi.fn(),
+    decideRegistrationPlacement: vi.fn(),
+    getActiveRegistrationOptions: vi.fn(() => []),
+    getPaymentPlanChoices: vi.fn(() => []),
+    getRegistrationPaymentNotice: vi.fn(() => ''),
+    hasOnlineRegistrationCheckout: vi.fn(() => false),
+    normalizeRegistrationForm: vi.fn((form) => form),
+    requiresRegistrationOption: vi.fn(() => false)
+}));
+vi.mock('../../js/team-media-utils.js', () => ({
+    canContributeTeamMedia: vi.fn(() => false),
+    canManageTeamMedia: vi.fn(() => false),
+    canReadTeamMediaAlbum: vi.fn(() => true),
+    getTeamMediaItemUrl: vi.fn(() => ''),
+    isSafeTeamMediaUrl: vi.fn(() => true),
+    sortByMediaOrder: vi.fn((items) => items)
+}));
+vi.mock('../../apps/app/src/lib/authService.ts', () => ({
+    firebaseAuth: { currentUser: null },
+    getNativeAuthIdToken: vi.fn()
+}));
+vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({ loadParentSchedule: vi.fn() }));
+
+import {
+    createParentHouseholdMemberInvite,
+    loadParentHouseholdInviteModel
+} from '../../apps/app/src/lib/parentToolsService.ts';
+
+const user = {
+    uid: 'user-1',
+    parentOf: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }]
+};
+
+beforeEach(() => {
+    vi.clearAllMocks();
+    familyPlanMocks.readFamilyMembers.mockResolvedValue([]);
+    familyPlanMocks.addPendingFamilyMember.mockResolvedValue({ code: 'HOME1234', inviteUrl: 'accept-invite.html?code=HOME1234' });
+});
+
+describe('Parent Tools household invite service', () => {
+    it('loads linked players and pending family memberships for the signed-in parent', async () => {
+        familyPlanMocks.readFamilyMembers.mockResolvedValueOnce([{ id: 'member-1', email: 'home@example.com', status: 'pending', inviteUrl: 'accept-invite.html?code=HOME1234' }]);
+
+        const model = await loadParentHouseholdInviteModel(user);
+
+        expect(model.linkedPlayers).toEqual([expect.objectContaining({ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' })]);
+        expect(familyPlanMocks.readFamilyMembers).toHaveBeenCalledWith('user-1');
+        expect(model.members[0].inviteUrl).toBe('https://allplays.ai/accept-invite.html?code=HOME1234');
+    });
+
+    it('validates required fields before creating a household member invite', async () => {
+        await expect(createParentHouseholdMemberInvite(null, { playerKey: 'team-1::player-1', email: 'home@example.com', relation: 'Guardian' })).rejects.toThrow('Sign in');
+        await expect(createParentHouseholdMemberInvite(user, { playerKey: '', email: 'home@example.com', relation: 'Guardian' })).rejects.toThrow('Choose a linked player');
+        await expect(createParentHouseholdMemberInvite(user, { playerKey: 'team-1::player-1', email: 'bad-email', relation: 'Guardian' })).rejects.toThrow('valid email');
+        await expect(createParentHouseholdMemberInvite(user, { playerKey: 'team-1::player-1', email: 'home@example.com', relation: '' })).rejects.toThrow('relation');
+        expect(familyPlanMocks.addPendingFamilyMember).not.toHaveBeenCalled();
+    });
+
+    it('calls the legacy family plan creator with the selected linked player fields', async () => {
+        familyPlanMocks.readFamilyMembers.mockResolvedValueOnce([{ id: 'member-1', email: 'old@example.com', status: 'pending' }]);
+
+        const result = await createParentHouseholdMemberInvite(user, {
+            playerKey: 'team-1::player-1',
+            email: ' HOME@EXAMPLE.COM ',
+            displayName: ' Home Contact ',
+            relation: ' Guardian '
+        });
+
+        expect(familyPlanMocks.addPendingFamilyMember).toHaveBeenCalledWith('user-1', expect.objectContaining({
+            email: 'home@example.com',
+            displayName: 'Home Contact',
+            relation: 'Guardian',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Pat Star',
+            playerNumber: '9'
+        }), { existingMembers: [{ id: 'member-1', email: 'old@example.com', status: 'pending' }] });
+        expect(result).toEqual({ code: 'HOME1234', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME1234' });
+    });
+});

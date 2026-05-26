@@ -93,6 +93,15 @@ async function mockParentToolsModules(page) {
                     window.__accessRequests.push({ teamId, playerId, relation });
                     return { success: true };
                 }
+                export async function loadParentHouseholdInviteModel() {
+                    return {
+                        linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }],
+                        members: []
+                    };
+                }
+                export async function createParentHouseholdMemberInvite() {
+                    return { code: 'HOUSE123', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOUSE123' };
+                }
                 export async function loadParentFeesForApp() {
                     return [{
                         id: 'fee-1',
