@@ -2857,19 +2857,89 @@ export async function getTrackedCalendarEventUids(teamId) {
 }
 
 // Access Codes
-export function generateAccessCode() {
-    // Generate a random 8-character alphanumeric code
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars like 0, O, I, 1
-    let code = '';
-    for (let i = 0; i < 8; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+const ACCESS_CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous chars like 0, O, I, 1
+const ACCESS_CODE_LENGTH = 8;
+const ACCESS_CODE_MAX_ATTEMPTS = 5;
+
+function getCryptoRandomValues(length) {
+    const cryptoApi = globalThis.crypto || globalThis.msCrypto;
+    if (!cryptoApi?.getRandomValues) {
+        throw new Error('Secure random number generation is not available in this browser.');
     }
+
+    const values = new Uint8Array(length);
+    cryptoApi.getRandomValues(values);
+    return values;
+}
+
+export function generateAccessCode() {
+    const maxUnbiasedValue = Math.floor(256 / ACCESS_CODE_CHARS.length) * ACCESS_CODE_CHARS.length;
+    let code = '';
+
+    while (code.length < ACCESS_CODE_LENGTH) {
+        const randomValues = getCryptoRandomValues(ACCESS_CODE_LENGTH - code.length);
+        for (const value of randomValues) {
+            if (value >= maxUnbiasedValue) {
+                continue;
+            }
+            code += ACCESS_CODE_CHARS.charAt(value % ACCESS_CODE_CHARS.length);
+            if (code.length === ACCESS_CODE_LENGTH) {
+                break;
+            }
+        }
+    }
+
     return code;
+}
+
+async function accessCodeExists(code) {
+    const existingCodeQuery = query(
+        collection(db, "accessCodes"),
+        where("code", "==", code),
+        limit(1)
+    );
+    const existingCodes = await getDocs(existingCodeQuery);
+    return !existingCodes.empty;
+}
+
+async function createUniqueAccessCode(accessCodeData, preferredCode) {
+    for (let attempt = 0; attempt < ACCESS_CODE_MAX_ATTEMPTS; attempt += 1) {
+        const candidateCode = String(attempt === 0 && preferredCode ? preferredCode : generateAccessCode()).trim().toUpperCase();
+        if (!candidateCode) {
+            continue;
+        }
+        if (await accessCodeExists(candidateCode)) {
+            continue;
+        }
+
+        const codeRef = doc(db, "accessCodes", candidateCode);
+        const created = await runTransaction(db, async (transaction) => {
+            const codeSnapshot = await transaction.get(codeRef);
+            if (codeSnapshot.exists()) {
+                return null;
+            }
+
+            const payload = {
+                ...accessCodeData,
+                code: candidateCode
+            };
+            transaction.set(codeRef, payload);
+            return {
+                id: codeRef.id || candidateCode,
+                code: candidateCode
+            };
+        });
+
+        if (created) {
+            return created;
+        }
+    }
+
+    throw new Error('Could not generate a unique invite code. Please try again.');
 }
 
 export async function createAccessCode(userId, email, phone, code) {
     const accessCodeData = {
-        code,
         generatedBy: userId,
         email: email || null,
         phone: phone || null,
@@ -2878,8 +2948,7 @@ export async function createAccessCode(userId, email, phone, code) {
         usedBy: null,
         usedAt: null
     };
-    const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
-    return docRef.id;
+    return createUniqueAccessCode(accessCodeData, code);
 }
 
 export async function getUserAccessCodes(userId) {
@@ -3189,9 +3258,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     const player = players.find(p => p.id === playerId);
 
     const normalizedParentEmail = String(parentEmail || '').trim().toLowerCase();
-    const code = generateAccessCode();
     const accessCodeData = {
-        code,
         type: 'parent_invite',
         teamId,
         playerId,
@@ -3208,7 +3275,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         usedBy: null,
         usedAt: null
     };
-    const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
+    const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);
 
     // Check if user with this email already exists
     let existingUser = null;
@@ -3217,7 +3284,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
         existingUser = await getUserByEmail(normalizedParentEmail);
         if (existingUser) {
             try {
-                autoLinked = await autoAcceptParentInviteForExistingUser(docRef.id);
+                autoLinked = await autoAcceptParentInviteForExistingUser(accessCodeId);
             } catch (error) {
                 console.warn(`Could not auto-link existing parent invite: ${error?.message || 'Unknown error'}`);
             }
@@ -3225,7 +3292,7 @@ export async function inviteParent(teamId, playerId, playerNum, parentEmail, rel
     }
 
     return {
-        id: docRef.id,
+        id: accessCodeId,
         code,
         teamName: team?.name || null,
         playerName: player?.name || null,
@@ -3258,9 +3325,7 @@ export async function inviteAdmin(teamId, adminEmail) {
         throw new Error('Team not found');
     }
 
-    const code = generateAccessCode();
     const accessCodeData = {
-        code,
         type: 'admin_invite',
         teamId,
         teamName: team.name || null,
@@ -3273,13 +3338,13 @@ export async function inviteAdmin(teamId, adminEmail) {
         usedBy: null,
         usedAt: null
     };
-    const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
+    const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);
 
     // Check if user already exists
     const existingUser = await getUserByEmail(normalizedEmail);
 
     return {
-        id: docRef.id,
+        id: accessCodeId,
         code,
         teamName: team.name || null,
         existingUser: !!existingUser
@@ -3324,26 +3389,7 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
         throw new Error('Team or player not found');
     }
 
-    let code = '';
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-        const candidateCode = generateAccessCode();
-        const existingCodeQuery = query(
-            collection(db, "accessCodes"),
-            where("code", "==", candidateCode),
-            limit(1)
-        );
-        const existingCodes = await getDocs(existingCodeQuery);
-        if (existingCodes.empty) {
-            code = candidateCode;
-            break;
-        }
-    }
-    if (!code) {
-        throw new Error('Could not generate a unique invite code. Please try again.');
-    }
-
     const accessCodeData = {
-        code,
         type: 'coparent_invite', // New type for co-parent invites
         teamId,
         playerId,
@@ -3358,7 +3404,7 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
         usedBy: null,
         usedAt: null
     };
-    const docRef = await addDoc(collection(db, "accessCodes"), accessCodeData);
+    const { id: accessCodeId, code } = await createUniqueAccessCode(accessCodeData);
 
     // Check if user with this email already exists
     let existingUser = null;
@@ -3369,7 +3415,7 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
     }
 
     return {
-        id: docRef.id,
+        id: accessCodeId,
         code,
         teamName: team?.name || null,
         playerName: player?.name || playerName || null,
