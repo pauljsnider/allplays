@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     DEFAULT_TEAM_CONVERSATION_ID,
     buildChatAudienceMetadata,
+    buildEmailAudienceMetadata,
     extractAllPlaysQuestion,
     formatChatMessageHtml,
     getChatMemberDisplayName,
@@ -65,6 +66,37 @@ describe('React app chat logic', () => {
         })).toEqual({
             targetType: 'individuals',
             recipientIds: ['player:one', 'user:two'],
+            targetRole: null
+        });
+    });
+
+    it('maps email audience metadata from conversations and selected members', () => {
+        const recipientOptions = [
+            { id: 'user:coach-1', name: 'Coach Jamie' },
+            { id: 'email:parent@example.com', name: 'Pat Parent' }
+        ];
+
+        expect(buildEmailAudienceMetadata({
+            selectedConversation: { id: 'staff', participantRoles: ['staff'], participantIds: ['coach-1'] },
+            selectedConversationId: 'staff',
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: [],
+            recipientOptions
+        })).toEqual({
+            targetType: 'staff',
+            recipientIds: [],
+            targetRole: 'staff'
+        });
+
+        expect(buildEmailAudienceMetadata({
+            selectedConversation: { id: 'direct', participantIds: ['coach-1', 'email:parent@example.com', 'missing-user'] },
+            selectedConversationId: 'direct',
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: [],
+            recipientOptions
+        })).toEqual({
+            targetType: 'individuals',
+            recipientIds: ['user:coach-1', 'email:parent@example.com'],
             targetRole: null
         });
     });

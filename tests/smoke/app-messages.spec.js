@@ -202,6 +202,14 @@ async function mockMessagesModules(page, options = {}) {
                     window.__chatCalls.reads.push({ userId, teamId });
                 }
 
+                export async function sendTeamEmailMessage() {
+                    return { recipientCount: 1, status: 'queued' };
+                }
+
+                export async function loadSentTeamEmails() {
+                    return [];
+                }
+
                 export async function uploadTeamChatAttachment(teamId, file) {
                     return {
                         id: 'attachment-' + file.name,

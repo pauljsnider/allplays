@@ -14,12 +14,14 @@ const dbMocks = vi.hoisted(() => ({
     getGames: vi.fn(),
     getParentTeams: vi.fn(),
     getPlayers: vi.fn(),
+    getSentTeamEmails: vi.fn(),
     getTeam: vi.fn(),
     getUnreadChatCounts: vi.fn(),
     getUserByEmail: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeamsWithAccess: vi.fn(),
     postChatMessage: vi.fn(),
+    sendTeamEmail: vi.fn(),
     subscribeToChatMessages: vi.fn(),
     toggleChatReaction: vi.fn(),
     updateChatLastRead: vi.fn(),
@@ -62,6 +64,8 @@ beforeEach(() => {
     dbMocks.canModerateChat.mockImplementation((user, team) => team.id === 'team-coach');
     dbMocks.getUnreadChatCounts.mockResolvedValue({});
     dbMocks.getChatMessages.mockResolvedValue([]);
+    dbMocks.sendTeamEmail.mockResolvedValue({ recipientCount: 8, status: 'queued' });
+    dbMocks.getSentTeamEmails.mockResolvedValue([]);
 });
 
 describe('React app chat recipient service', () => {
@@ -292,6 +296,47 @@ describe('React app chat recipient service', () => {
 
         expect(dbMocks.postChatMessage).not.toHaveBeenCalled();
         expect(dbMocks.upsertChatConversation).not.toHaveBeenCalled();
+    });
+
+    it('sends team email through the backend callable wrapper', async () => {
+        const { sendTeamEmailMessage, loadSentTeamEmails } = await import('../../apps/app/src/lib/chatService.ts');
+
+        await expect(sendTeamEmailMessage({
+            teamId: 'team-1',
+            subject: ' Practice update ',
+            body: ' Bring jerseys ',
+            targetType: 'individuals',
+            recipientIds: ['user:coach-1']
+        })).resolves.toEqual({ recipientCount: 8, status: 'queued' });
+
+        expect(dbMocks.sendTeamEmail).toHaveBeenCalledWith('team-1', {
+            subject: 'Practice update',
+            body: 'Bring jerseys',
+            targetType: 'individuals',
+            recipientIds: ['user:coach-1']
+        });
+
+        await loadSentTeamEmails('team-1', { limit: 10 });
+        expect(dbMocks.getSentTeamEmails).toHaveBeenCalledWith('team-1', { limit: 10 });
+    });
+
+    it('validates team email subject, body, and selected recipients', async () => {
+        const { sendTeamEmailMessage } = await import('../../apps/app/src/lib/chatService.ts');
+
+        await expect(sendTeamEmailMessage({
+            teamId: 'team-1',
+            subject: '   ',
+            body: 'Body',
+            targetType: 'full_team'
+        })).rejects.toThrow('Subject and message are required.');
+        await expect(sendTeamEmailMessage({
+            teamId: 'team-1',
+            subject: 'Subject',
+            body: 'Body',
+            targetType: 'individuals',
+            recipientIds: []
+        })).rejects.toThrow('Choose at least one selected member before sending.');
+        expect(dbMocks.sendTeamEmail).not.toHaveBeenCalled();
     });
 
     it('cleans uploaded chat media if the message write fails', async () => {
