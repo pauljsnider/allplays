@@ -8,6 +8,7 @@ const dbMocks = vi.hoisted(() => ({
     getRsvps: vi.fn(),
     getRsvpSummaries: vi.fn(),
     getTeam: vi.fn(),
+    updateTeam: vi.fn(),
     getTrackedCalendarEventUids: vi.fn(),
     createRideOffer: vi.fn(),
     claimAssignmentSlot: vi.fn(),
@@ -114,7 +115,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { loadParentSchedule } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, loadParentSchedule } from '../../apps/app/src/lib/scheduleService.ts';
 
 function installWindow(protocol = 'http:') {
     vi.stubGlobal('window', {
@@ -375,4 +376,47 @@ describe('React app schedule service contract integration', () => {
         expect(result.events.some((event) => event.childId === 'player-from-user')).toBe(true);
         expect(result.events.some((event) => event.childId === 'player-1')).toBe(false);
     });
+
+    it('adds a new staff calendar URL and avoids duplicates', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'user-1',
+            calendarUrls: ['https://example.com/existing.ics']
+        });
+
+        const added = await addTeamCalendarUrl('team-1', '  https://example.com/new.ics  ', user());
+
+        expect(added).toEqual({
+            added: true,
+            calendarUrls: ['https://example.com/existing.ics', 'https://example.com/new.ics']
+        });
+        expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', {
+            calendarUrls: ['https://example.com/existing.ics', 'https://example.com/new.ics']
+        });
+
+        dbMocks.updateTeam.mockClear();
+        const duplicate = await addTeamCalendarUrl('team-1', 'https://example.com/existing.ics', user());
+
+        expect(duplicate).toEqual({
+            added: false,
+            calendarUrls: ['https://example.com/existing.ics']
+        });
+        expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when adding a calendar URL without team staff access', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'owner-2',
+            adminEmails: [],
+            calendarUrls: []
+        });
+
+        await expect(addTeamCalendarUrl('team-1', 'https://example.com/team.ics', user()))
+            .rejects.toThrow('You do not have permission to manage this team schedule.');
+        expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+    });
+
 });

@@ -5,6 +5,7 @@ import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
 import { MemoryRouter } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
 
 const scheduleMocks = vi.hoisted(() => ({
+    addTeamCalendarUrl: vi.fn(),
     loadParentSchedule: vi.fn()
 }));
 
@@ -92,6 +93,15 @@ async function clickButton(container, text) {
     });
 }
 
+
+async function changeInput(input, value) {
+    await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+}
+
 async function changeSelect(select, value) {
     await act(async () => {
         select.value = value;
@@ -102,6 +112,7 @@ async function changeSelect(select, value) {
 beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = '';
+    scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
     scheduleMocks.loadParentSchedule.mockResolvedValue({
         children: [
             { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
@@ -148,4 +159,46 @@ describe('React app desktop Schedule controls', () => {
         expect(selectByLabel(container, 'Team').value).toBe('team-1');
         expect(selectByLabel(container, 'Player').value).toBe('player-2');
     });
+
+    it('shows staff-only calendar import and refreshes after save', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Add external calendar');
+
+        const input = container.querySelector('input[aria-label="External .ics calendar URL"]');
+        expect(input).toBeTruthy();
+
+        await changeInput(input, 'https://example.com/team.ics');
+        await clickButton(container, 'Save calendar');
+
+        expect(scheduleMocks.addTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/team.ics', auth.user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        await waitForText(container, 'Calendar link saved and schedule refreshed.');
+    });
+
+    it('hides calendar import from parent-only teams and validates .ics input inline', async () => {
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Main Gym');
+        expect(container.textContent).not.toContain('Add external calendar');
+
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+        const staff = await renderSchedule();
+        await waitForText(staff.container, 'Add external calendar');
+        await clickButton(staff.container, 'Save calendar');
+
+        expect(staff.container.textContent).toContain('Enter a calendar .ics URL.');
+        expect(scheduleMocks.addTeamCalendarUrl).not.toHaveBeenCalled();
+    });
+
 });

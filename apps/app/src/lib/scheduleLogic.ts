@@ -201,6 +201,18 @@ export type ParentScheduleFilterOptions = {
   now?: Date;
 };
 
+
+export function validateExternalCalendarUrl(value: unknown) {
+  const normalizedUrl = String(value || '').trim();
+  if (!normalizedUrl) {
+    return { valid: false, url: '', error: 'Enter a calendar .ics URL.' };
+  }
+  if (!normalizedUrl.toLowerCase().includes('.ics')) {
+    return { valid: false, url: '', error: 'Calendar URL must be an .ics link.' };
+  }
+  return { valid: true, url: normalizedUrl, error: null };
+}
+
 export function normalizeScheduleDate(value: unknown): Date | null {
   if (!value) return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
