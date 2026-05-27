@@ -770,7 +770,8 @@ export async function sendTeamChatMessage({
   selectedConversationId,
   selectedRecipientTarget,
   selectedRecipientIds,
-  onProgress
+  onProgress,
+  aiMeta
 }: {
   teamId: string;
   user: AuthUser;
@@ -782,6 +783,7 @@ export async function sendTeamChatMessage({
   selectedRecipientTarget: ChatTargetType;
   selectedRecipientIds: string[];
   onProgress?: (stage: 'uploading' | 'posting') => void;
+  aiMeta?: Record<string, unknown> | null;
 }) {
   if (selectedRecipientTarget === 'individuals'
     && (selectedRecipientIds || []).map((id) => String(id || '').trim()).filter(Boolean).length === 0) {
@@ -828,6 +830,7 @@ export async function sendTeamChatMessage({
       senderPhotoUrl: profile.photoUrl || user.photoUrl || null,
       attachments,
       conversationId,
+      aiMeta: aiMeta || null,
       ...targetMetadata
     };
 
