@@ -1764,6 +1764,23 @@ service cloud.firestore {
         }
       }
 
+      // Team email templates are coach/admin-only reusable content and never trigger delivery.
+      match /emailTemplates/{templateId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create, update: if isTeamOwnerOrAdmin(teamId) &&
+          request.resource.data.keys().hasAll(['name', 'subject', 'body', 'updatedAt']) &&
+          request.resource.data.keys().hasOnly([
+            'name', 'subject', 'body', 'authorId', 'authorEmail', 'authorName', 'createdAt', 'updatedAt'
+          ]) &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0 &&
+          request.resource.data.subject is string &&
+          request.resource.data.subject.size() > 0 &&
+          request.resource.data.body is string &&
+          request.resource.data.body.size() > 0;
+        allow delete: if isTeamOwnerOrAdmin(teamId);
+      }
+
       // Team email drafts are coach/admin-only and never trigger delivery.
       match /emailDrafts/{draftId} {
         allow read: if isTeamOwnerOrAdmin(teamId);
