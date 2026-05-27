@@ -1557,7 +1557,7 @@
 
             const visibleConversations = conversations.length > 0
                 ? conversations
-                : [{ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', name: 'Team-wide' }];
+                : [buildDefaultTeamConversation(currentTeam)];
             list.innerHTML = visibleConversations.map((conversation) => {
                 const active = conversation.id === selectedConversationId;
                 const name = getConversationDisplayName(conversation, currentTeam);
