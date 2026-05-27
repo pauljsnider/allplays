@@ -16,6 +16,7 @@ const teamsCacheTtlMs = 10 * 60 * 1000;
 
 let cachedTeams: AppSearchTeam[] | null = null;
 let cachedTeamsLoadedAt = 0;
+let cachedTeamsUserKey = '';
 
 export type AppSearchKind = 'action' | 'team' | 'player' | 'social' | 'help';
 
@@ -43,6 +44,14 @@ export type AppSearchTeam = {
   adminEmails?: string[];
   photoUrl?: string | null;
   fromAppAccess?: boolean;
+  streamAccessMode?: string | null;
+  streamVolunteerEmails?: string[];
+  teamPermissions?: {
+    streaming?: {
+      mode?: string | null;
+      memberIds?: string[];
+    } | null;
+  } | null;
 };
 
 export type AppSearchPlayer = AppSearchItem & {
@@ -220,7 +229,8 @@ export function computeAppSearchResults({
 
 export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSearchTeam[]> {
   const now = Date.now();
-  if (cachedTeams && now - cachedTeamsLoadedAt < teamsCacheTtlMs) {
+  const userCacheKey = getAppSearchUserCacheKey(user);
+  if (cachedTeams && cachedTeamsUserKey === userCacheKey && now - cachedTeamsLoadedAt < teamsCacheTtlMs) {
     return cachedTeams;
   }
 
@@ -272,6 +282,7 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
   cachedTeams = Array.from(teamsById.values())
     .sort((a, b) => a.name.localeCompare(b.name));
   cachedTeamsLoadedAt = now;
+  cachedTeamsUserKey = userCacheKey;
   return cachedTeams;
 }
 
@@ -384,6 +395,7 @@ function getSearchHelpRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatfo
 export function resetAppSearchCacheForTests() {
   cachedTeams = null;
   cachedTeamsLoadedAt = 0;
+  cachedTeamsUserKey = '';
 }
 
 function rankSearchItems<T extends AppSearchItem>(items: T[], tokens: string[]) {
@@ -417,7 +429,10 @@ function normalizeTeams(teams: any[]): AppSearchTeam[] {
       active: team?.active,
       ownerId: cleanString(team?.ownerId),
       adminEmails: Array.isArray(team?.adminEmails) ? team.adminEmails : [],
-      photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl)
+      photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl),
+      streamAccessMode: cleanString(team?.streamAccessMode),
+      streamVolunteerEmails: Array.isArray(team?.streamVolunteerEmails) ? team.streamVolunteerEmails : [],
+      teamPermissions: normalizeSearchTeamPermissions(team?.teamPermissions)
     }))
     .filter((team) => team.id);
 }
@@ -433,7 +448,50 @@ function canUserDiscoverTeamInAppSearch(team: AppSearchTeam, user: AuthUser | nu
   const email = cleanString(user.email).toLowerCase();
   const adminEmails = (team.adminEmails || []).map((entry) => cleanString(entry).toLowerCase()).filter(Boolean);
   if (email && adminEmails.includes(email)) return true;
+  if (canUserDiscoverTeamViaSelectedStreaming(team, user, email)) return true;
   return Array.isArray(user.parentOf) && user.parentOf.some((link: any) => cleanString(link?.teamId) === team.id);
+}
+
+function canUserDiscoverTeamViaSelectedStreaming(team: AppSearchTeam, user: AuthUser, email: string) {
+  const streamingMode = normalizeAccessMode(team.teamPermissions?.streaming?.mode);
+  if (streamingMode === 'selected') {
+    const memberIds = Array.isArray(team.teamPermissions?.streaming?.memberIds)
+      ? team.teamPermissions?.streaming?.memberIds || []
+      : [];
+    if (memberIds.map((entry) => cleanString(entry)).filter(Boolean).includes(cleanString(user.uid))) {
+      return true;
+    }
+  }
+
+  const legacyMode = normalizeAccessMode(team.streamAccessMode);
+  if ((legacyMode === 'selected' || legacyMode === 'selected_volunteers') && email) {
+    const volunteerEmails = (team.streamVolunteerEmails || [])
+      .map((entry) => cleanString(entry).toLowerCase())
+      .filter(Boolean);
+    return volunteerEmails.includes(email);
+  }
+
+  return false;
+}
+
+function normalizeSearchTeamPermissions(teamPermissions: any) {
+  const streaming = teamPermissions?.streaming;
+  if (!streaming || typeof streaming !== 'object') return null;
+  return {
+    streaming: {
+      mode: cleanString(streaming.mode),
+      memberIds: Array.isArray(streaming.memberIds) ? streaming.memberIds : []
+    }
+  };
+}
+
+function normalizeAccessMode(value: unknown) {
+  return cleanString(value).toLowerCase();
+}
+
+function getAppSearchUserCacheKey(user: AuthUser | null) {
+  if (!user) return 'signed-out';
+  return `${cleanString(user.uid)}:${cleanString(user.email).toLowerCase()}`;
 }
 
 function canUserDiscoverPlayerInAppSearch(teamId: string, teamsById: Map<string, AppSearchTeam>, user: AuthUser | null) {
