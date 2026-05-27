@@ -208,6 +208,8 @@ describe('React app search service', () => {
         dbMocks.getTeams.mockResolvedValue([
             { id: 'team-public', name: 'Public Bears', sport: 'Soccer', isPublic: true },
             { id: 'team-inactive', name: 'Inactive Sharks', sport: 'Soccer', isPublic: true, active: false },
+            { id: 'team-archived', name: 'Archived Sharks', sport: 'Soccer', isPublic: true, archived: true },
+            { id: 'team-status-archived', name: 'Archived Status Sharks', sport: 'Soccer', isPublic: true, status: 'archived' },
             { id: 'team-private', name: 'Private Wolves', sport: 'Basketball', isPublic: false },
             { id: 'team-admin', name: 'Admin Lions', sport: 'Soccer', isPublic: false, adminEmails: ['parent@example.com'] },
             { id: 'team-owner', name: 'Owner Eagles', sport: 'Volleyball', isPublic: false, ownerId: 'user-1' },
@@ -234,6 +236,26 @@ describe('React app search service', () => {
                 eventCount: 0,
                 unreadCount: 0,
                 openActions: 0
+            }, {
+                teamId: 'team-archived-access',
+                teamName: 'Archived Access',
+                sport: 'Soccer',
+                archived: true,
+                players: [],
+                nextEvent: null,
+                eventCount: 0,
+                unreadCount: 0,
+                openActions: 0
+            }, {
+                teamId: 'team-status-archived-access',
+                teamName: 'Archived Status Access',
+                sport: 'Soccer',
+                status: 'archived',
+                players: [],
+                nextEvent: null,
+                eventCount: 0,
+                unreadCount: 0,
+                openActions: 0
             }]
         });
 
@@ -247,7 +269,11 @@ describe('React app search service', () => {
         });
         expect(teams.find((team) => team.id === 'team-private')).toBeUndefined();
         expect(teams.find((team) => team.id === 'team-inactive')).toBeUndefined();
+        expect(teams.find((team) => team.id === 'team-archived')).toBeUndefined();
+        expect(teams.find((team) => team.id === 'team-status-archived')).toBeUndefined();
         expect(teams.find((team) => team.id === 'team-inactive-access')).toBeUndefined();
+        expect(teams.find((team) => team.id === 'team-archived-access')).toBeUndefined();
+        expect(teams.find((team) => team.id === 'team-status-archived-access')).toBeUndefined();
     });
 
     it('caches loaded teams and falls back to app access when public team loading fails', async () => {

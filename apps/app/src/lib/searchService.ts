@@ -1,4 +1,5 @@
 import { getTeams } from '../../../../js/db.js';
+import { isTeamActive } from '../../../../js/team-visibility.js';
 import {
   db,
   collectionGroup,
@@ -39,6 +40,8 @@ export type AppSearchTeam = {
   state?: string | null;
   isPublic?: boolean;
   active?: boolean;
+  archived?: boolean;
+  status?: string | null;
   ownerId?: string | null;
   adminEmails?: string[];
   photoUrl?: string | null;
@@ -240,7 +243,7 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
   if (homeTeamsResult.status === 'fulfilled' && homeTeamsResult.value) {
     (homeTeamsResult.value.teams || []).forEach((team: any) => {
       if (!team?.teamId) return;
-      if (team.active === false) return;
+      if (!isTeamActive(team)) return;
       const existing = teamsById.get(team.teamId);
       teamsById.set(team.teamId, {
         ...existing,
@@ -252,6 +255,8 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
         state: existing?.state || '',
         isPublic: existing?.isPublic,
         active: team.active ?? existing?.active,
+        archived: team.archived ?? existing?.archived,
+        status: team.status ?? existing?.status,
         ownerId: existing?.ownerId,
         adminEmails: existing?.adminEmails || [],
         photoUrl: team.photoUrl || existing?.photoUrl || null,
@@ -415,6 +420,8 @@ function normalizeTeams(teams: any[]): AppSearchTeam[] {
       state: cleanString(team?.state),
       isPublic: team?.isPublic,
       active: team?.active,
+      archived: team?.archived,
+      status: cleanString(team?.status),
       ownerId: cleanString(team?.ownerId),
       adminEmails: Array.isArray(team?.adminEmails) ? team.adminEmails : [],
       photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl)
@@ -424,7 +431,7 @@ function normalizeTeams(teams: any[]): AppSearchTeam[] {
 
 function canUserDiscoverTeamInAppSearch(team: AppSearchTeam, user: AuthUser | null) {
   if (!team) return false;
-  if (team.active === false) return false;
+  if (!isTeamActive(team)) return false;
   if (team.fromAppAccess) return true;
   if (team.isPublic !== false) return true;
   if (!user) return false;

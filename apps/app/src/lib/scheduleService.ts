@@ -39,6 +39,7 @@ import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
 import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
 import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
 import { buildScheduleNotificationTargets, postScheduleNotificationTargets } from '../../../../js/schedule-notifications.js';
+import { isTeamActive } from '../../../../js/team-visibility.js';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import {
@@ -431,10 +432,6 @@ export function buildCancelScheduledGameChatMessage(event: Pick<ParentScheduleEv
   return `⚠️ Game cancelled: ${opponentLabel} on ${formatCancelledGameDate(event.date)}`;
 }
 
-function isActiveTeam(team: Record<string, any> | null | undefined) {
-  return team?.active !== false;
-}
-
 function normalizeEmail(value: unknown) {
   return compactString(value).toLowerCase();
 }
@@ -465,7 +462,7 @@ async function loadStaffTeams(user: AuthUser) {
       ]);
       const teamsById = new Map<string, any>();
       [...visibleTeams, ...coachTeams].filter(Boolean).forEach((team: any) => {
-        if (team?.id && isActiveTeam(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
+        if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
       return [...teamsById.values()];
     },
@@ -478,7 +475,7 @@ async function loadStaffTeams(user: AuthUser) {
       const coachTeams = await Promise.all(coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null)));
       const teamsById = new Map<string, any>();
       [...ownedTeams, ...adminTeams, ...coachTeams].forEach((team) => {
-        if (team?.id && isActiveTeam(team) && team.archived !== true && isTeamStaff(team, user)) teamsById.set(team.id, team);
+        if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
       return [...teamsById.values()];
     }
@@ -613,7 +610,7 @@ async function loadTeam(teamId: string) {
     () => Promise.resolve(getTeam(teamId)),
     () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)
   );
-  return isActiveTeam(team as Record<string, any> | null) ? team : null;
+  return isTeamActive(team as Record<string, any> | null) ? team : null;
 }
 
 async function loadGames(teamId: string) {
