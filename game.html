@@ -397,7 +397,7 @@
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
         import { resolveLiveStatConfig } from './js/live-game-state.js?v=3';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=2';
-        import { resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=1';
+        import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
         import { resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=3';
         import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from './js/live-game-video.js?v=3';
 
@@ -1768,7 +1768,7 @@ Write the match report now:`;
                     gameLogDiv.innerHTML = `
                         <div class="space-y-2">
                             ${events.map((event, index) => {
-                        const timestamp = event.timestamp ? new Date(event.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                        const timestamp = formatGameReportEventTimestamp(event.timestamp);
                         const period = event.period || 'Q1';
                         const gameTime = event.gameTime || '';
                         return `
