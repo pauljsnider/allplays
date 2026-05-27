@@ -85,6 +85,7 @@ const state = {
   replayStartAt: null,
 
   activeTab: 'plays',
+  hasUserSelectedTab: false,
   unsubscribers: [],
 
   lastStatChange: null,
@@ -309,6 +310,7 @@ function initTabs() {
   els.mobileTabs.forEach(tab => {
     tab.addEventListener('click', () => {
       state.activeTab = tab.dataset.tab;
+      state.hasUserSelectedTab = true;
       updateTabs();
     });
   });
@@ -321,7 +323,8 @@ function updateTabs() {
   const visibility = computePanelVisibility({
     isMobile,
     activeTab: state.activeTab,
-    hasVideoStream: state.hasVideoStream
+    hasVideoStream: state.hasVideoStream,
+    shouldDefaultToVideo: !state.hasUserSelectedTab
   });
   state.activeTab = visibility.activeTab;
 
