@@ -233,6 +233,10 @@ export function computeNativeStandings() {
 `;
 
 const STAT_STUB = `
+export async function aggregateSeasonStatsByPlayerId() {
+    return {};
+}
+
 export function buildPlayerLeaderboardSnapshot() {
     return null;
 }
@@ -403,7 +407,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: NATIVE_STUB
     }));
-    await page.route('**/js/stat-leaderboards.js?v=2', (route) => route.fulfill({
+    await page.route(/\/js\/stat-leaderboards\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: STAT_STUB

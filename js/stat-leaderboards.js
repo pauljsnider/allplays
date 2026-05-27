@@ -1,3 +1,5 @@
+import { inferSeasonLabelFromGame } from './season-record.js';
+
 function slugifyStatId(value) {
   return String(value || '')
     .trim()
@@ -403,6 +405,36 @@ function buildStatLeaderboard(definition, players = [], seasonStatsByPlayerId = 
     leader: leaders[0] || null,
     leaders
   };
+}
+
+export async function aggregateSeasonStatsByPlayerId({
+  games = [],
+  seasonLabel = '',
+  loadGameStats
+} = {}) {
+  if (typeof loadGameStats !== 'function') return {};
+
+  const seasonStatsByPlayerId = {};
+  const completedGames = (Array.isArray(games) ? games : []).filter((game) => {
+    const status = String(game?.status || '').toLowerCase();
+    const liveStatus = String(game?.liveStatus || '').toLowerCase();
+    if (status !== 'completed' && liveStatus !== 'completed') return false;
+    return !seasonLabel || inferSeasonLabelFromGame(game) === seasonLabel;
+  });
+
+  for (const game of completedGames) {
+    const statsByPlayerId = await loadGameStats(game);
+    Object.entries(statsByPlayerId || {}).forEach(([playerId, stats]) => {
+      if (!seasonStatsByPlayerId[playerId]) {
+        seasonStatsByPlayerId[playerId] = {};
+      }
+      Object.entries(stats || {}).forEach(([stat, value]) => {
+        seasonStatsByPlayerId[playerId][stat] = (seasonStatsByPlayerId[playerId][stat] || 0) + (Number(value) || 0);
+      });
+    });
+  }
+
+  return seasonStatsByPlayerId;
 }
 
 export function buildPlayerLeaderboardSnapshot({
