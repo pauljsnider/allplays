@@ -80,21 +80,43 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const emptyStateLabel = selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
   const featured = activeFolder?.items[0] || allItems[0] || null;
 
-  const uploadPhoto = async (file: File | null | undefined) => {
-    if (!file || !activeFolder || creatingAlbum) return;
+  const uploadPhotos = async (files: File[]) => {
+    if (!files.length || !activeFolder || creatingAlbum) return;
     setUploading('photo');
     setError('');
-    setMessage('Uploading photo...');
+    setMessage(`Uploading ${files.length} photo${files.length === 1 ? '' : 's'}...`);
+    let uploaded = 0;
+    let failed = 0;
     try {
-      await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file);
-      setMessage('Photo uploaded.');
-      await refresh({ showLoading: false });
-    } catch (uploadError: any) {
-      setError(uploadError?.message || 'Photo upload failed.');
-      setMessage('');
+      for (const file of files) {
+        if (!isSupportedPhotoUpload(file)) {
+          failed += 1;
+          continue;
+        }
+        try {
+          await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file);
+          uploaded += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+
+      if (uploaded > 0) {
+        const resultMessage = getPhotoUploadMessage(uploaded, failed);
+        await refresh({ showLoading: false, preferredFolderId: activeFolder.id });
+        if (failed > 0) {
+          setError(resultMessage);
+          setMessage('');
+        } else {
+          setMessage(resultMessage);
+        }
+        if (photoInputRef.current) photoInputRef.current.value = '';
+      } else {
+        setMessage('');
+        setError(failed > 0 ? 'No photos uploaded. Choose image files that are 10 MB or smaller.' : 'Photo upload failed.');
+      }
     } finally {
       setUploading('');
-      if (photoInputRef.current) photoInputRef.current.value = '';
     }
   };
 
@@ -280,7 +302,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               File
             </button>
           </div>
-          <input ref={photoInputRef} className="hidden" type="file" accept="image/*" onChange={(event) => uploadPhoto(event.target.files?.[0])} />
+          <input ref={photoInputRef} className="hidden" type="file" accept="image/*" multiple onChange={(event) => uploadPhotos(Array.from(event.target.files || []))} />
           <input ref={fileInputRef} className="hidden" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx" onChange={(event) => uploadFile(event.target.files?.[0])} />
           <form className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={addLink}>
             <input className="auth-input" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} placeholder="Video or link title" />
@@ -342,6 +364,17 @@ const MEDIA_TYPE_FILTERS: { id: MediaTypeFilter; label: string }[] = [
   { id: 'videos', label: 'Videos' },
   { id: 'files', label: 'Files' }
 ];
+const MAX_PHOTO_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+function isSupportedPhotoUpload(file: File) {
+  return Boolean(file?.type?.startsWith('image/')) && Number(file.size || 0) > 0 && Number(file.size || 0) <= MAX_PHOTO_UPLOAD_BYTES;
+}
+
+function getPhotoUploadMessage(uploaded: number, failed: number) {
+  const uploadedLabel = `${uploaded} photo${uploaded === 1 ? '' : 's'} uploaded`;
+  if (failed > 0) return `${uploadedLabel}; ${failed} failed.`;
+  return `${uploadedLabel}.`;
+}
 
 function isPhotoMediaItem(item: TeamMediaItem) {
   const type = String(item.type || '').toLowerCase();
