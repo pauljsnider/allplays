@@ -12,12 +12,14 @@ import {
   getGames,
   getParentTeams,
   getPlayers,
+  getSentTeamEmails,
   getTeam,
   getUnreadChatCounts,
   getUserByEmail,
   getUserProfile,
   getUserTeamsWithAccess,
   postChatMessage,
+  sendTeamEmail,
   subscribeToChatMessages,
   toggleChatReaction,
   updateChatLastRead,
@@ -113,6 +115,20 @@ export type ChatMessage = {
   targetRole?: string | null;
   conversationId?: string | null;
   _doc?: unknown;
+};
+
+export type SentTeamEmail = {
+  id: string;
+  subject?: string | null;
+  senderName?: string | null;
+  senderEmail?: string | null;
+  sentAt?: unknown;
+  recipientCount?: number | null;
+  status?: string | null;
+  delivery?: {
+    status?: string | null;
+    jobCount?: number | null;
+  } | null;
 };
 
 export type ChatInboxLoadResult = {
@@ -839,6 +855,40 @@ export async function sendTeamChatMessage({
     }
     throw error;
   }
+}
+
+export async function sendTeamEmailMessage({
+  teamId,
+  subject,
+  body,
+  targetType = 'full_team',
+  recipientIds = []
+}: {
+  teamId: string;
+  subject: string;
+  body: string;
+  targetType?: ChatTargetType;
+  recipientIds?: string[];
+}) {
+  const trimmedSubject = String(subject || '').trim();
+  const trimmedBody = String(body || '').trim();
+  if (!trimmedSubject || !trimmedBody) {
+    throw new Error('Subject and message are required.');
+  }
+  if (targetType === 'individuals' && recipientIds.map((id) => String(id || '').trim()).filter(Boolean).length === 0) {
+    throw new Error('Choose at least one selected member before sending.');
+  }
+
+  return withTimeout(Promise.resolve(sendTeamEmail(teamId, {
+    subject: trimmedSubject,
+    body: trimmedBody,
+    targetType,
+    recipientIds: targetType === 'individuals' ? recipientIds : []
+  })), 'Team email send');
+}
+
+export async function loadSentTeamEmails(teamId: string, { limit = 25 }: { limit?: number } = {}): Promise<SentTeamEmail[]> {
+  return withTimeout(Promise.resolve(getSentTeamEmails(teamId, { limit })), 'Sent email history') as Promise<SentTeamEmail[]>;
 }
 
 export async function editTeamChatMessage(teamId: string, messageId: string, text: string, conversationId: string) {
