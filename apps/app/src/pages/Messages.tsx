@@ -1880,6 +1880,13 @@ function Composer({
         </button>
       </div>
 
+      {notice ? (
+        <div className="chat-composer-notice" aria-live="polite">
+          {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />}
+          <span className="truncate">{notice}</span>
+        </div>
+      ) : null}
+
       <div className="chat-composer-toolbar">
         <button type="button" className="chat-tool-button" onClick={onAttach} aria-label="Add attachment">
           <Paperclip className="h-4 w-4" aria-hidden="true" />
@@ -1905,12 +1912,6 @@ function Composer({
             <Mail className="h-4 w-4 flex-none" aria-hidden="true" />
             <span className="truncate">Team Email</span>
           </button>
-        ) : null}
-        {notice ? (
-          <div className="chat-composer-notice" aria-live="polite">
-            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />}
-            <span className="truncate">{notice}</span>
-          </div>
         ) : null}
       </div>
     </form>
