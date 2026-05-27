@@ -103,7 +103,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
     setQuantity(currentQuantity);
     setSelectedPaymentPlanId(currentSelectedPaymentPlanId);
 
-    const nextErrors = validate(form, currentParticipant, currentGuardian, currentWaiverAccepted, currentSelectedOptionId, currentQuantity, currentSelectedPaymentPlanId);
+    const nextErrors = validate(form, currentParticipant, currentGuardian, currentWaiverAccepted, currentSelectedOptionId, currentQuantity, currentSelectedPaymentPlanId, hasQuantityDiscount);
     setFieldErrors(nextErrors);
     setError('');
     setMessage('');
