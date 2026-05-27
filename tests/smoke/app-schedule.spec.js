@@ -228,6 +228,11 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
+                export async function addTeamCalendarUrl(teamId, url) {
+                    window.__scheduleCalls.calendarUrls = (window.__scheduleCalls.calendarUrls || []).concat({ teamId, url });
+                    return { calendarUrls: [url], added: true };
+                }
+
                 export async function loadParentSchedule() {
                     if (${JSON.stringify(scheduleLoadError)}) {
                         throw new Error(${JSON.stringify(scheduleLoadError)});

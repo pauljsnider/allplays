@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, ListChecks, MapPin, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { loadParentSchedule, type ParentScheduleChild } from '../lib/scheduleService';
+import { addTeamCalendarUrl, loadParentSchedule, type ParentScheduleChild } from '../lib/scheduleService';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
@@ -15,6 +15,7 @@ import {
   getScheduleTitle,
   getScheduleMapHref,
   normalizeRsvpResponse,
+  validateExternalCalendarUrl,
   type CalendarScheduleEntry,
   type ParentScheduleEvent,
   type ParentScheduleFilter,
@@ -78,6 +79,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   });
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [desktopAdvancedControlsOpen, setDesktopAdvancedControlsOpen] = useState(false);
+  const [calendarUrl, setCalendarUrl] = useState('');
+  const [calendarUrlError, setCalendarUrlError] = useState<string | null>(null);
+  const [savingCalendarUrl, setSavingCalendarUrl] = useState(false);
 
   const refreshSchedule = async () => {
     if (!auth.user) return;
@@ -141,6 +145,41 @@ export function Schedule({ auth }: { auth: AuthState }) {
     packetsReady: packetRows.filter((row) => row.needsAction).length
   }), [packetRows, visibleEvents]);
   const webInsights = useMemo(() => buildScheduleWebInsights(visibleEvents), [visibleEvents]);
+  const manageableTeamOptions = useMemo(() => (
+    teamOptions.filter((team) => events.some((event) => event.teamId === team.teamId && event.isTeamStaff === true))
+  ), [events, teamOptions]);
+  const selectedCalendarTeam = useMemo(() => {
+    if (selectedTeamId) {
+      return manageableTeamOptions.find((team) => team.teamId === selectedTeamId) || null;
+    }
+    return manageableTeamOptions.length === 1 ? manageableTeamOptions[0] : null;
+  }, [manageableTeamOptions, selectedTeamId]);
+
+  const handleAddCalendarUrl = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedCalendarTeam || !auth.user) return;
+    const validation = validateExternalCalendarUrl(calendarUrl);
+    if (!validation.valid) {
+      setCalendarUrlError(validation.error || 'Enter a valid .ics calendar URL.');
+      return;
+    }
+
+    setSavingCalendarUrl(true);
+    setCalendarUrlError(null);
+    setStatusMessage(null);
+    setError(null);
+    try {
+      const result = await addTeamCalendarUrl(selectedCalendarTeam.teamId, validation.url, auth.user);
+      setCalendarUrl('');
+      setStatusMessage(result.added ? 'Calendar link saved. Refreshing schedule…' : 'Calendar link already exists. Refreshing schedule…');
+      await refreshSchedule();
+      setStatusMessage(result.added ? 'Calendar link saved and schedule refreshed.' : 'Calendar link already exists. Schedule refreshed.');
+    } catch (saveError: any) {
+      setCalendarUrlError(saveError?.message || 'Unable to save calendar link.');
+    } finally {
+      setSavingCalendarUrl(false);
+    }
+  };
 
   const handleExport = () => {
     const exportEvents = filterParentScheduleEvents(events, {
@@ -404,6 +443,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           ) : null}
 
+          {selectedCalendarTeam ? (
+            <CalendarSourcePanel
+              teamName={selectedCalendarTeam.teamName}
+              calendarUrl={calendarUrl}
+              error={calendarUrlError}
+              saving={savingCalendarUrl}
+              onCalendarUrlChange={(value) => {
+                setCalendarUrl(value);
+                if (calendarUrlError) setCalendarUrlError(null);
+              }}
+              onSubmit={handleAddCalendarUrl}
+            />
+          ) : null}
+
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
           {error ? <Status tone="error" message={error} /> : null}
 
@@ -434,6 +487,49 @@ export function Schedule({ auth }: { auth: AuthState }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function CalendarSourcePanel({ teamName, calendarUrl, error, saving, onCalendarUrlChange, onSubmit }: {
+  teamName: string;
+  calendarUrl: string;
+  error: string | null;
+  saving: boolean;
+  onCalendarUrlChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <section className="app-card p-4" aria-label="Calendar source">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <LinkIcon className="h-4 w-4" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="app-label">Staff schedule tools</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Add external calendar</h2>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Paste one .ics link for {teamName}. Imported events appear after the schedule refreshes.</p>
+        </div>
+      </div>
+      <form className="mt-3 space-y-2 sm:flex sm:items-start sm:gap-2 sm:space-y-0" onSubmit={onSubmit}>
+        <label className="block min-w-0 flex-1">
+          <span className="sr-only">External .ics calendar URL</span>
+          <input
+            className="auth-input min-h-10 !px-3 !py-2 text-sm font-semibold"
+            type="url"
+            inputMode="url"
+            placeholder="https://example.com/team.ics"
+            value={calendarUrl}
+            onChange={(event) => onCalendarUrlChange(event.target.value)}
+            aria-label="External .ics calendar URL"
+            aria-invalid={error ? 'true' : 'false'}
+          />
+        </label>
+        <button type="submit" className="primary-button w-full sm:w-auto" disabled={saving}>
+          {saving ? 'Saving…' : 'Save calendar'}
+        </button>
+      </form>
+      {error ? <div className="mt-2 text-xs font-bold text-rose-600" role="alert">{error}</div> : null}
+    </section>
   );
 }
 
