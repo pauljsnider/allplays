@@ -330,7 +330,7 @@
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=3';
-        import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=2';
+        import { aggregateSeasonStatsByPlayerId, buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=3';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
         import { checkAuth } from './js/auth.js?v=15';
         import { collection, getDocs, query, where } from "./js/firebase.js?v=15";
@@ -1334,6 +1334,12 @@
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
         }
 
+        function updateConfiguredTeamLeaderboardSection(snapshot, teamId) {
+            const container = document.getElementById('configured-team-leaderboards-section');
+            if (!container) return;
+            container.innerHTML = renderConfiguredTeamLeaderboards(snapshot, teamId);
+        }
+
         function renderConfiguredTeamLeaderboards(snapshot, teamId) {
             if (!snapshot?.topStats?.length) return '';
 
@@ -1590,28 +1596,36 @@
                     getGames(teamId),
                     getConfigs(teamId)
                 ]);
-                const seasonStatsByPlayerId = {};
                 const completedGames = dbGames.filter(g => g.status === 'completed');
-                for (const game of completedGames) {
-                    const snap = await getDocs(collection(db, `teams/${teamId}/games/${game.id}/aggregatedStats`));
+                const aggregatedStatsByGameId = new Map();
+                async function loadAggregatedStatsForGame(game) {
+                    const gameId = game?.id || game?.gameId;
+                    if (!gameId) return {};
+                    if (aggregatedStatsByGameId.has(gameId)) {
+                        return aggregatedStatsByGameId.get(gameId);
+                    }
+                    const snap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+                    const statsByPlayerId = {};
                     snap.forEach((docSnap) => {
-                        const stats = docSnap.data()?.stats || {};
-                        if (!seasonStatsByPlayerId[docSnap.id]) {
-                            seasonStatsByPlayerId[docSnap.id] = {};
-                        }
-                        Object.entries(stats).forEach(([stat, value]) => {
-                            seasonStatsByPlayerId[docSnap.id][stat] = (seasonStatsByPlayerId[docSnap.id][stat] || 0) + (Number(value) || 0);
-                        });
+                        statsByPlayerId[docSnap.id] = docSnap.data()?.stats || {};
                     });
+                    aggregatedStatsByGameId.set(gameId, statsByPlayerId);
+                    return statsByPlayerId;
                 }
                 const analyticsConfig = selectAnalyticsConfig(configs, team?.sport || '');
-                const leaderboardSnapshot = analyticsConfig
-                    ? buildPlayerLeaderboardSnapshot({
+                async function buildLeaderboardSnapshotForSeason(selectedSeason) {
+                    if (!analyticsConfig) return null;
+                    const seasonStatsByPlayerId = await aggregateSeasonStatsByPlayerId({
+                        games: dbGames,
+                        seasonLabel: selectedSeason,
+                        loadGameStats: loadAggregatedStatsForGame
+                    });
+                    return buildPlayerLeaderboardSnapshot({
                         config: analyticsConfig,
                         players,
                         seasonStatsByPlayerId
-                    })
-                    : null;
+                    });
+                }
 
                 teamGames = dbGames;
                 currentPlayers = players;
@@ -1840,9 +1854,11 @@
 
                 const seasonFilterEl = document.getElementById('season-record-filter');
                 if (seasonFilterEl) {
-                    seasonFilterEl.addEventListener('change', () => {
+                    seasonFilterEl.addEventListener('change', async () => {
                         seasonFilterLabel = seasonFilterEl.value;
                         updateSeasonRecordCard(dbGames, seasonFilterLabel);
+                        const updatedLeaderboardSnapshot = await buildLeaderboardSnapshotForSeason(seasonFilterLabel);
+                        updateConfiguredTeamLeaderboardSection(updatedLeaderboardSnapshot, teamId);
                     });
                 }
 
@@ -1903,6 +1919,7 @@
                     const goalDifferential = totalGoalsFor - totalGoalsAgainst;
 
                     teamAdvancedStatsDiv.innerHTML = `
+                        <div id="configured-team-leaderboards-section"></div>
                         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <!-- Team Form -->
                             <div class="bg-white rounded-xl p-6 shadow-md border border-gray-200">
@@ -2019,6 +2036,7 @@
                     `;
                 } else {
                     teamAdvancedStatsDiv.innerHTML = `
+                        <div id="configured-team-leaderboards-section"></div>
                         <div class="text-center py-12">
                             <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
@@ -2029,14 +2047,8 @@
                     `;
                 }
 
-                if (leaderboardSnapshot?.topStats?.length) {
-                    teamAdvancedStatsDiv.innerHTML = `
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            ${renderConfiguredTeamLeaderboards(leaderboardSnapshot, teamId)}
-                        </div>
-                        ${teamAdvancedStatsDiv.innerHTML}
-                    `;
-                }
+                const leaderboardSnapshot = await buildLeaderboardSnapshotForSeason(seasonFilterLabel);
+                updateConfiguredTeamLeaderboardSection(leaderboardSnapshot, teamId);
                 }
 
                 await renderPlayerTrackingSection(teamId, players);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  aggregateSeasonStatsByPlayerId,
   buildPlayerLeaderboardSnapshot,
   evaluateDerivedFormula,
   normalizeStatTrackerConfig,
@@ -11,6 +12,47 @@ import {
 } from '../../js/stat-leaderboards.js';
 
 describe('stat leaderboard helpers', () => {
+  it('aggregates team leaderboard stats only for the selected season', async () => {
+    const games = [
+      { id: 'spring-1', status: 'completed', seasonLabel: 'Spring 2026', date: '2026-03-01' },
+      { id: 'fall-1', status: 'completed', seasonLabel: 'Fall 2025', date: '2025-09-01' },
+      { id: 'spring-pending', status: 'scheduled', seasonLabel: 'Spring 2026', date: '2026-03-08' }
+    ];
+    const statsByGame = {
+      'spring-1': { p1: { pts: 12 }, p2: { pts: 8 } },
+      'fall-1': { p1: { pts: 30 }, p2: { pts: 4 } },
+      'spring-pending': { p1: { pts: 99 } }
+    };
+
+    const stats = await aggregateSeasonStatsByPlayerId({
+      games,
+      seasonLabel: 'Spring 2026',
+      loadGameStats: async (game) => statsByGame[game.id]
+    });
+
+    expect(stats).toEqual({
+      p1: { pts: 12 },
+      p2: { pts: 8 }
+    });
+
+    const snapshot = buildPlayerLeaderboardSnapshot({
+      config: {
+        columns: ['PTS'],
+        statDefinitions: [{ label: 'PTS', acronym: 'PTS', topStat: true }]
+      },
+      players: [
+        { id: 'p1', name: 'Ava Cole' },
+        { id: 'p2', name: 'Mia Brooks' }
+      ],
+      seasonStatsByPlayerId: stats
+    });
+
+    expect(snapshot.topStats[0].leader).toEqual(expect.objectContaining({
+      playerId: 'p1',
+      value: 12
+    }));
+  });
+
   it('normalizes legacy column-only configs into typed base stat definitions', () => {
     const normalized = normalizeStatTrackerConfig({
       name: 'Basketball Standard',
