@@ -125,6 +125,7 @@ export type ParentScheduleEvent = {
   homeScore?: number | null;
   awayScore?: number | null;
   canUpdateScore?: boolean;
+  gamePlan?: Record<string, any> | null;
   isHome?: boolean | null;
   kitColor?: string | null;
   arrivalTime?: Date | null;
@@ -154,6 +155,22 @@ export type ParentScheduleEvent = {
   practicePacketCompletions?: PracticePacketCompletion[];
   isTeamStaff?: boolean;
   isTeamRsvpReminderManager?: boolean;
+  gamePlan?: {
+    lineups?: Record<string, string>;
+    formationId?: string | null;
+    numPeriods?: number | null;
+    isPublished?: boolean;
+    publishedAt?: Date | null;
+    publishedBy?: string | null;
+    publishedByName?: string | null;
+    publishedVersion?: number;
+    publishedFormationId?: string | null;
+    publishedNumPeriods?: number | null;
+    publishedLineups?: Record<string, string>;
+    publishedRecipientPlayerIds?: string[];
+    publishedRecipientParentIds?: string[];
+    publishedReadBy?: string[];
+  } | null;
 };
 
 export type CalendarScheduleEntry = ParentScheduleEvent & {
