@@ -16,7 +16,8 @@ import {
     getScheduleRideshareSummary,
     isScheduleAssignmentClaimedByUser,
     isScheduleAssignmentOpen,
-    normalizeScheduleAssignment
+    normalizeScheduleAssignment,
+    validateExternalCalendarUrl
 } from '../../apps/app/src/lib/scheduleLogic';
 
 function event(overrides = {}) {
@@ -43,6 +44,17 @@ function event(overrides = {}) {
 }
 
 describe('React app parent schedule logic', () => {
+
+    it('validates external calendar .ics URLs like legacy schedule import', () => {
+        expect(validateExternalCalendarUrl('')).toMatchObject({ valid: false, error: 'Enter a calendar .ics URL.' });
+        expect(validateExternalCalendarUrl('https://example.com/calendar')).toMatchObject({ valid: false, error: 'Calendar URL must be an .ics link.' });
+        expect(validateExternalCalendarUrl('  https://example.com/team.ics?token=abc  ')).toEqual({
+            valid: true,
+            url: 'https://example.com/team.ics?token=abc',
+            error: null
+        });
+    });
+
     it('matches parent-dashboard upcoming and past filter behavior with a three-hour cutoff', () => {
         const now = new Date('2026-05-20T12:00:00Z');
         const events = [
