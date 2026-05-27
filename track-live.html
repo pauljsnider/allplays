@@ -675,7 +675,7 @@
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
         import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, runTrackLiveResetPersistence } from './js/track-live-state.js?v=3';
         import { getDefaultLivePeriod, getSportPeriodLabels, resolveLiveSport, isFootballSport } from './js/live-sport-config.js?v=3';
-        import { applyGoalSportScore, buildGoalSportEvent } from './js/live-scorekeeping-goal-sports.js?v=1';
+        import { applyGoalSportScore, buildGoalSportEvent, resolveGoalSportScorer } from './js/live-scorekeeping-goal-sports.js?v=2';
 
         import { applyVolleyballServeOutcome, createVolleyballUndoState, restoreVolleyballUndoState, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=2';
 
@@ -1221,6 +1221,37 @@
             }
         }
 
+        function getGoalSportStatKey() {
+            const goalColumn = currentConfig?.columns?.find((col) => String(col || '').toLowerCase() === 'goals');
+            return goalColumn ? goalColumn.toLowerCase() : 'goals';
+        }
+
+        function applyRecordedGoalSportScorerStat(teamSide, scorer) {
+            const statKey = getGoalSportStatKey();
+            const isOpponent = teamSide === 'away';
+            const scorerPool = isOpponent ? opponentPlayers : players;
+            const scorerPlayer = resolveGoalSportScorer(scorerPool, scorer);
+            if (!scorerPlayer?.id) return null;
+
+            const statsBucket = isOpponent ? gameState.opponentStats : gameState.playerStats;
+            if (!statsBucket[scorerPlayer.id]) {
+                statsBucket[scorerPlayer.id] = {};
+            }
+            const newValue = Number(statsBucket[scorerPlayer.id][statKey] || 0) + 1;
+            statsBucket[scorerPlayer.id][statKey] = newValue;
+
+            const statEl = document.getElementById(`stat-${scorerPlayer.id}-${statKey}`);
+            if (statEl) statEl.textContent = String(newValue);
+
+            if (isOpponent) {
+                scheduleOpponentStatsSync();
+            } else {
+                schedulePlayerStatsSync(scorerPlayer.id);
+            }
+
+            return scorerPlayer;
+        }
+
         async function recordGoalSportGoal(teamSide) {
             if (!currentGoalSportProfile) return;
             if (!gameState.isRunning && gameState.elapsed === 0) {
@@ -1241,6 +1272,7 @@
             }
             updateScoreDisplay();
             scheduleScoreSync();
+            const scorerPlayer = applyRecordedGoalSportScorerStat(teamSide, scorer);
 
             const event = buildGoalSportEvent({
                 teamSide,
@@ -1250,7 +1282,8 @@
                 gameClockMs: gameState.elapsed,
                 homeScore,
                 awayScore,
-                createdBy: currentUser?.uid || null
+                createdBy: currentUser?.uid || null,
+                player: scorerPlayer
             });
             const noteTeamLabel = teamSide === 'away'
                 ? resolveOpponentDisplayName(currentGame)
@@ -1264,8 +1297,11 @@
                 value: 1,
                 scorer: event.scorer,
                 note: event.note,
+                playerId: event.playerId,
                 playerName: event.playerName,
+                playerNumber: event.playerNumber,
                 opponentPlayerName: event.opponentPlayerName,
+                opponentPlayerNumber: event.opponentPlayerNumber,
                 liveNoteId: liveNote?.id || null,
                 liveNoteText: liveNote?.text || null
             });
