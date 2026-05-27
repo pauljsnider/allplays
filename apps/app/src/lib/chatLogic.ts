@@ -218,6 +218,52 @@ export function buildChatAudienceMetadata({
   };
 }
 
+export function buildEmailAudienceMetadata({
+  selectedConversation,
+  selectedConversationId,
+  selectedRecipientTarget,
+  selectedRecipientIds,
+  recipientOptions = []
+}: {
+  selectedConversation?: any;
+  selectedConversationId: string;
+  selectedRecipientTarget: ChatTargetType;
+  selectedRecipientIds: string[];
+  recipientOptions?: ChatRecipientOption[];
+}): ChatAudienceMetadata {
+  if (isStaffConversation(selectedConversation)) {
+    return {
+      targetType: 'staff',
+      recipientIds: [],
+      targetRole: 'staff'
+    };
+  }
+
+  if (selectedConversation && !isDefaultTeamConversation(selectedConversationId)) {
+    const optionIds = new Set(recipientOptions.map((option) => option.id));
+    const participantIds: unknown[] = Array.isArray(selectedConversation.participantIds) ? selectedConversation.participantIds : [];
+    const recipientIds = Array.from(new Set<string>(participantIds.flatMap((id: unknown) => {
+      const raw = String(id || '').trim();
+      if (!raw) return [];
+      if (raw.toLowerCase().startsWith('email:')) return [getRecipientOptionId('email', raw.slice(6))];
+      if (raw.toLowerCase().startsWith('user:')) return [getRecipientOptionId('user', raw.slice(5))];
+      return [raw, getRecipientOptionId('user', raw)];
+    }).filter((id: string) => optionIds.has(id))));
+    return {
+      targetType: 'individuals',
+      recipientIds,
+      targetRole: null
+    };
+  }
+
+  return buildChatAudienceMetadata({
+    selectedConversation,
+    selectedConversationId,
+    selectedRecipientTarget,
+    selectedRecipientIds
+  });
+}
+
 export function getAudienceSummaryText(metadata: ChatAudienceMetadata, recipientOptions: ChatRecipientOption[] = []) {
   if (metadata.targetType === 'staff') {
     return 'Staff only';
