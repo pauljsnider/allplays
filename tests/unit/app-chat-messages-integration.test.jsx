@@ -533,6 +533,66 @@ describe('React app messages integration', () => {
         expect(parentView.container.textContent).not.toContain('Team Email');
     });
 
+    it('preserves Team Email send success when sent history refresh fails', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Team Email');
+        chatMocks.loadSentTeamEmails.mockRejectedValueOnce(new Error('History refresh down'));
+        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Schedule');
+        await setFieldValue(bodyInput, 'Game moved.');
+        await click(container, 'Send email');
+
+        expect(chatMocks.sendTeamEmailMessage).toHaveBeenCalled();
+        expect(container.textContent).toContain('Queued 12 recipients for backend email delivery.');
+        expect(container.textContent).not.toContain('History refresh down');
+        expect(subjectInput.value).toBe('');
+        expect(bodyInput.value).toBe('');
+    });
+
+    it('keeps Team Email send success separate from stale history load errors', async () => {
+        let rejectInitialHistory;
+        const initialHistoryLoad = new Promise((resolve, reject) => {
+            rejectInitialHistory = reject;
+        });
+        chatMocks.loadSentTeamEmails
+            .mockImplementationOnce(() => initialHistoryLoad)
+            .mockResolvedValueOnce([
+                {
+                    id: 'email-2',
+                    subject: 'Schedule',
+                    senderName: 'Coach Jamie',
+                    sentAt: new Date('2026-05-22T15:00:00Z'),
+                    recipientCount: 12,
+                    status: 'queued'
+                }
+            ]);
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Team Email');
+        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Schedule');
+        await setFieldValue(bodyInput, 'Game moved.');
+        await click(container, 'Send email');
+
+        expect(container.textContent).toContain('Queued 12 recipients for backend email delivery.');
+
+        await act(async () => {
+            rejectInitialHistory(new Error('Initial history down'));
+            await initialHistoryLoad.catch(() => undefined);
+        });
+        await flush();
+
+        expect(container.textContent).toContain('Queued 12 recipients for backend email delivery.');
+        expect(container.textContent).toContain('Initial history down');
+        expect(subjectInput.value).toBe('');
+        expect(bodyInput.value).toBe('');
+    });
+
     it('keeps Team Email drafts when backend sending fails', async () => {
         chatMocks.sendTeamEmailMessage.mockRejectedValueOnce(new Error('Callable down'));
         const { container } = await renderMessages('/messages/team-1');
