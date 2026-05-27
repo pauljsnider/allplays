@@ -234,6 +234,10 @@ export function normalizeRegistrationDiscountRules(rules = []) {
         .filter(Boolean);
 }
 
+export function hasQuantityDiscountRule(rules = []) {
+    return normalizeRegistrationDiscountRules(rules).some(rule => rule.type === 'quantity' && rule.active !== false);
+}
+
 export function calculateRegistrationFeeSnapshot(form = {}, options = {}) {
     const currency = String(form.currency || 'USD').trim() || 'USD';
     const originalFeeAmountCents = Math.max(0, Math.round(Number(form.feeAmountCents || 0)));

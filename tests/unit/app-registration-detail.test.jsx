@@ -32,7 +32,9 @@ const registrationFlowMocks = vi.hoisted(() => ({
     const quantity = Math.max(1, Number(options.quantity || 1));
     const originalFeeAmountCents = Number(form.feeAmountCents || 10000);
     const subtotalAmountCents = originalFeeAmountCents * quantity;
-    const appliedDiscounts = quantity >= 2 ? [{ id: 'sibling', label: 'Sibling discount', amountCents: 2500 }] : [];
+    // Only apply sibling discount if a quantity discount rule is active in the form
+    const hasQuantityDiscountRuleActive = (form.discountRules || []).some(rule => rule.type === 'quantity' && rule.active !== false);
+    const appliedDiscounts = (quantity >= 2 && hasQuantityDiscountRuleActive) ? [{ id: 'sibling', label: 'Sibling discount', amountCents: 2500 }] : [];
     const finalAmountDueCents = subtotalAmountCents - appliedDiscounts.reduce((sum, discount) => sum + discount.amountCents, 0);
     return { originalFeeAmountCents, subtotalAmountCents, appliedDiscounts, finalAmountDueCents, currency: form.currency || 'USD' };
   }),
@@ -44,6 +46,7 @@ const registrationFlowMocks = vi.hoisted(() => ({
   getPaymentPlanChoices: vi.fn(() => ([{ id: 'pay_full', title: 'Pay in full' }])),
   getActiveRegistrationOptions: vi.fn(() => ([{ id: 'opt-1', title: 'Option 1', capacityLimit: 10 }])),
   requiresRegistrationOption: vi.fn(() => true),
+  hasQuantityDiscountRule: vi.fn(() => false), // Default mock for new helper
 }));
 
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
@@ -168,6 +171,7 @@ beforeEach(() => {
       guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
       waiverText: 'I agree to the terms and conditions.',
       url: '/registration.html?teamId=team-1&formId=form-1',
+      discountRules: [], // Default to no quantity discounts for most tests
     },
   ]);
   parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValue({
@@ -503,6 +507,27 @@ describe('RegistrationDetail page', () => {
   });
 
   it('renders fee summary rows and updates them when quantity changes', async () => {
+    registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(true);
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        season: 'Summer',
+        currency: 'USD',
+        feeAmountCents: 10000,
+        paymentNotice: 'Offline payment accepted.',
+        onlineCheckout: false,
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+        url: '/registration.html?teamId=team-1&formId=form-1',
+        discountRules: [{ id: 'qty-disc', type: 'quantity', active: true, amountType: 'fixed', amountValue: 2500, minimumQuantity: 2 }],
+      },
+    ]);
     const { container } = await renderRegistrationDetail();
     await waitForText(container, 'Summer Camp');
 
@@ -519,6 +544,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('does not let a loaded fee snapshot freeze the displayed quantity total', async () => {
+    registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(true);
     parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
@@ -535,6 +561,7 @@ describe('RegistrationDetail page', () => {
         participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
         guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
         waiverText: 'I agree to the terms and conditions.',
+        discountRules: [{ id: 'qty-disc', type: 'quantity', active: true, amountType: 'fixed', amountValue: 2500, minimumQuantity: 2 }],
       },
     ]);
 
@@ -592,6 +619,128 @@ describe('RegistrationDetail page', () => {
       1,
       12500,
       'cad'
+    );
+  });
+
+  it('does not render Quantity input for a form with no quantity discount rules', async () => {
+    // Default beforeEach setup has no discountRules, so hasQuantityDiscountRule should be false
+    registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(false);
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Summer Camp');
+
+    expect(container.querySelector('[data-quantity-field]')).toBeNull();
+    expect(container.textContent).not.toContain('Quantity');
+  });
+
+  it('passes quantity=1 to submission and checkout when Quantity is hidden', async () => {
+    registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(false);
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        season: 'Summer',
+        currency: 'USD',
+        onlineCheckout: true,
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+        discountRules: [],
+      },
+    ]);
+
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Summer Camp');
+
+    await changeInputValue(container, 'Participant Name', 'Test Participant');
+    await changeInputValue(container, 'Guardian Name', 'Test Guardian');
+    await changeInputValue(container, 'I accept the waiver.', true);
+    await changeInputValue(container, 'Registration option', 'opt-1');
+    await clickButton(container, 'Pay registration with Stripe');
+
+    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      expect.objectContaining({
+        quantity: 1, // Should be 1 because hasQuantityDiscountRule is false
+      })
+    );
+    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      'new-reg-1',
+      'opt-1',
+      'pay_full',
+      1, // Should be 1 because hasQuantityDiscountRule is false
+      expect.any(Number),
+      expect.any(String)
+    );
+  });
+
+  it('renders Quantity and updates fee summary when an active quantity discount rule exists', async () => {
+    registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(true);
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        season: 'Summer',
+        currency: 'USD',
+        feeAmountCents: 10000,
+        onlineCheckout: true,
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+        discountRules: [{ id: 'qty-disc', type: 'quantity', active: true, amountType: 'fixed', amountValue: 2500, minimumQuantity: 2 }],
+      },
+    ]);
+
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Summer Camp');
+
+    expect(container.textContent).toContain('Quantity'); // Quantity field should be visible
+    expect(container.querySelector('[data-quantity-field]')).not.toBeNull();
+
+    expect(container.textContent).toContain('Original fee');
+    expect(container.textContent).toContain('$100.00'); // For quantity 1
+    expect(container.textContent).toContain('Final amount due');
+    expect(container.textContent).toContain('$100.00');
+
+    await changeInputValue(container, 'Quantity', '2');
+
+    // Verify fee summary updates with discount
+    expect(container.textContent).toContain('Sibling discount'); // The mock calculateRegistrationFeeSnapshot adds this
+    expect(container.textContent).toContain('-$25.00');
+    expect(container.textContent).toContain('$175.00'); // (100*2) - 25 = 175
+
+    await changeInputValue(container, 'Participant Name', 'Test Participant');
+    await changeInputValue(container, 'Guardian Name', 'Test Guardian');
+    await changeInputValue(container, 'I accept the waiver.', true);
+    await changeInputValue(container, 'Registration option', 'opt-1');
+    await clickButton(container, 'Pay registration with Stripe');
+
+    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      expect.objectContaining({
+        quantity: 2, // Should be 2 because hasQuantityDiscountRule is true and input was changed
+      })
+    );
+    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      'new-reg-1',
+      'opt-1',
+      'pay_full',
+      2, // Should be 2 because hasQuantityDiscountRule is true and input was changed
+      expect.any(Number),
+      expect.any(String)
     );
   });
 

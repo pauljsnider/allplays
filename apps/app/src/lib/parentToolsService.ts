@@ -97,6 +97,17 @@ export type ParentFeeAppRecord = Record<string, any> & {
   ledgerEntries: Array<Record<string, any>>;
 };
 
+export type RegistrationDiscountRule = {
+  id: string;
+  type: 'early_bird' | 'quantity';
+  label: string;
+  amountType: 'percent' | 'fixed';
+  amountValue: number;
+  earlyBirdDeadline?: string;
+  minimumQuantity?: number;
+  active: boolean;
+};
+
 export type ParentRegistrationCard = Record<string, any> & {
   id: string;
   teamId: string;
@@ -108,6 +119,7 @@ export type ParentRegistrationCard = Record<string, any> & {
   paymentNotice: string;
   onlineCheckout: boolean;
   options: Array<Record<string, any>>;
+  discountRules?: RegistrationDiscountRule[];
   url: string;
 };
 
