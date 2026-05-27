@@ -661,6 +661,50 @@
             }
         }
 
+        async function handleRealtimeMessages(newMessages, oldestDoc) {
+            const container = document.getElementById('messages-container');
+            const wasNearBottom = isNearBottom(container);
+
+            liveOldestDoc = oldestDoc;
+            liveMessages = newMessages.reverse();
+
+            if (olderMessages.length === 0) {
+                hasMoreMessages = newMessages.length === 50;
+            }
+
+            await hydrateSenderPhotos(liveMessages);
+            await hydrateReactionUserNames(liveMessages);
+            messages = [...olderMessages, ...liveMessages];
+            renderMessages();
+            updateLoadMoreButton();
+
+            if (!initialSnapshotLoaded) {
+                initialSnapshotLoaded = true;
+                scrollToBottom();
+            } else if (pendingScrollToBottom || wasNearBottom) {
+                scrollToBottom();
+            }
+
+            maybeUpdateChatLastRead();
+            pendingScrollToBottom = false;
+        }
+
+        async function loadMessagesAfterRealtimeFailure(error) {
+            console.warn('Realtime chat messages unavailable; loading current messages once:', error);
+            try {
+                const fallbackMessages = await getChatMessages(teamId, { limit: 50, conversationId: selectedConversationId });
+                await handleRealtimeMessages(fallbackMessages, fallbackMessages.length ? fallbackMessages[fallbackMessages.length - 1]._doc : null);
+            } catch (fallbackError) {
+                console.error('Error loading chat messages after realtime failure:', fallbackError);
+                initialSnapshotLoaded = true;
+                liveMessages = [];
+                messages = [...olderMessages];
+                renderMessages();
+                updateLoadMoreButton();
+                showError('Unable to load chat messages. Please refresh and try again.');
+            }
+        }
+
         function startRealtimeUpdates() {
             if (unsubscribeChat) {
                 unsubscribeChat();
@@ -669,33 +713,17 @@
             liveMessages = [];
             liveOldestDoc = null;
 
-            unsubscribeChat = subscribeToChatMessages(teamId, { limit: 50, conversationId: selectedConversationId }, async (newMessages, oldestDoc) => {
-                const container = document.getElementById('messages-container');
-                const wasNearBottom = isNearBottom(container);
-
-                liveOldestDoc = oldestDoc;
-                liveMessages = newMessages.reverse();
-
-                if (olderMessages.length === 0) {
-                    hasMoreMessages = newMessages.length === 50;
-                }
-
-                await hydrateSenderPhotos(liveMessages);
-                await hydrateReactionUserNames(liveMessages);
-                messages = [...olderMessages, ...liveMessages];
-                renderMessages();
-                updateLoadMoreButton();
-
-                if (!initialSnapshotLoaded) {
-                    initialSnapshotLoaded = true;
-                    scrollToBottom();
-                } else if (pendingScrollToBottom || wasNearBottom) {
-                    scrollToBottom();
-                }
-
-                maybeUpdateChatLastRead();
-                pendingScrollToBottom = false;
-            });
+            try {
+                unsubscribeChat = subscribeToChatMessages(
+                    teamId,
+                    { limit: 50, conversationId: selectedConversationId },
+                    handleRealtimeMessages,
+                    loadMessagesAfterRealtimeFailure
+                );
+            } catch (error) {
+                unsubscribeChat = null;
+                loadMessagesAfterRealtimeFailure(error);
+            }
         }
 
         function maybeUpdateChatLastRead() {

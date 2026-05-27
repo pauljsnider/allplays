@@ -4960,13 +4960,19 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
  * Subscribe to chat messages in real time (newest first).
  * Returns an unsubscribe function.
  */
-export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages) {
+export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages, onError = null) {
     const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
         const oldestDoc = snapshot.docs.length ? snapshot.docs[snapshot.docs.length - 1] : null;
         onMessages(docs, oldestDoc);
+    }, (error) => {
+        if (onError) {
+            onError(error);
+        } else {
+            console.error('Error subscribing to chat messages:', error);
+        }
     });
 }
 
