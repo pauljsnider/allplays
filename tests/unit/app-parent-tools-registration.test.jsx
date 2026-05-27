@@ -12,8 +12,34 @@ const publicActionMocks = vi.hoisted(() => ({
     openPublicUrl: vi.fn()
 }));
 
+// Mock registration-flow.js
+const registrationFlowMocks = vi.hoisted(() => ({
+  hasQuantityDiscountRule: vi.fn(() => false),
+  requiresRegistrationOption: vi.fn(() => true),
+  decideRegistrationPlacement: vi.fn((params) => ({
+    status: 'pending',
+    message: 'Placement pending',
+    selectedOption: params.selectedOptionId ? { id: params.selectedOptionId, countKey: params.selectedOptionId } : null,
+    nextCounts: { enrolled: 1, waitlisted: 0 },
+  })),
+  calculateRegistrationFeeSnapshot: vi.fn((form = {}, options = {}) => {
+    const quantity = Math.max(1, Number(options.quantity || 1));
+    const originalFeeAmountCents = Number(form.feeAmountCents || 10000); // Access feeAmountCents directly from form
+    const subtotalAmountCents = originalFeeAmountCents * quantity;
+    const appliedDiscounts = quantity >= 2 ? [{ id: 'sibling', label: 'Sibling discount', amountCents: 2500 }] : [];
+    const finalAmountDueCents = subtotalAmountCents - appliedDiscounts.reduce((sum, discount) => sum + discount.amountCents, 0);
+    return { originalFeeAmountCents, subtotalAmountCents, appliedDiscounts, finalAmountDueCents, currency: form.currency || 'USD' };
+  }),
+  formatFeeSnapshotLines: vi.fn((snapshot = {}) => ([
+    { label: 'Original fee', amountCents: snapshot.subtotalAmountCents ?? snapshot.originalFeeAmountCents ?? 0 },
+    ...(snapshot.appliedDiscounts || []).map((discount) => ({ label: discount.label, amountCents: -Math.abs(Number(discount.amountCents || 0)) })),
+    { label: 'Final amount due', amountCents: snapshot.finalAmountDueCents ?? 0, strong: true },
+  ])),
+}));
+
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => serviceMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+vi.mock('../../js/registration-flow.js', () => registrationFlowMocks);
 
 import { RegistrationDetail } from '../../apps/app/src/pages/RegistrationDetail.tsx';
 
