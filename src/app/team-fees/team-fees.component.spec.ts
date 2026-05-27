@@ -195,6 +195,23 @@ describe('TeamFeesComponent checkout flow', () => {
     expect(component.paymentErrorMessage).toBeNull();
   });
 
+  it('gates the no-fees empty state behind completed fee loading', () => {
+    expect(template).toContain('*ngIf="isLoadingFees; else feesReady"');
+    expect(template).toContain('<ng-template #feesReady>');
+    expect(template).toContain('*ngIf="teamFees.length > 0; else noFees"');
+    expect(template.indexOf('else feesReady')).toBeLessThan(template.indexOf('else noFees'));
+  });
+
+  it('represents loading instead of the empty state while fees are still loading', () => {
+    component.isLoadingFees = true;
+    component.teamFees = [];
+
+    expect(component.isLoadingFees).toBe(true);
+    expect(component.teamFees).toHaveLength(0);
+    expect(template).toContain('Loading team fees...');
+    expect(template).toContain('*ngIf="isLoadingFees; else feesReady"');
+  });
+
   it('renders a Pay Team Fee button only for unpaid fees', async () => {
     mockGetDocs.mockResolvedValueOnce({
       docs: [feeDoc('teams/team-real/feeBatches/batch-real/feeRecipients/recipient-real', 'recipient-real', {

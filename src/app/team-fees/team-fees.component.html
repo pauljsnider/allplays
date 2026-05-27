@@ -4,18 +4,24 @@
 
 <div *ngIf="paymentErrorMessage" class="error-message">{{ paymentErrorMessage }}</div>
 
-<div *ngIf="teamFees.length > 0; else noFees">
-  <div *ngFor="let fee of teamFees" class="team-fee-item">
-    <h3>{{ fee.name }}</h3>
-    <p>Amount: {{ fee.amount | currency }}</p>
-    <p>Status: <span [class.paid]="fee.isPaid" [class.unpaid]="!fee.isPaid">{{ fee.isPaid ? 'Paid' : 'Unpaid' }}</span></p>
-
-    <button *ngIf="!fee.isPaid" (click)="handlePayFee(fee)" [disabled]="isPaymentPending()">
-      <span *ngIf="!isPaymentLoading(fee.id)">Pay Team Fee</span>
-      <span *ngIf="isPaymentLoading(fee.id)">Initiating Payment...</span>
-    </button>
-  </div>
+<div *ngIf="isLoadingFees; else feesReady">
+  <p>Loading team fees...</p>
 </div>
+
+<ng-template #feesReady>
+  <div *ngIf="teamFees.length > 0; else noFees">
+    <div *ngFor="let fee of teamFees" class="team-fee-item">
+      <h3>{{ fee.name }}</h3>
+      <p>Amount: {{ fee.amount | currency }}</p>
+      <p>Status: <span [class.paid]="fee.isPaid" [class.unpaid]="!fee.isPaid">{{ fee.isPaid ? 'Paid' : 'Unpaid' }}</span></p>
+
+      <button *ngIf="!fee.isPaid" (click)="handlePayFee(fee)" [disabled]="isPaymentPending()">
+        <span *ngIf="!isPaymentLoading(fee.id)">Pay Team Fee</span>
+        <span *ngIf="isPaymentLoading(fee.id)">Initiating Payment...</span>
+      </button>
+    </div>
+  </div>
+</ng-template>
 
 <ng-template #noFees>
   <p>No team fees to display.</p>
