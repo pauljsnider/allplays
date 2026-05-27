@@ -275,6 +275,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export async function addTeamCalendarUrl(teamId, url) {
+                    return { calendarUrls: [url], added: true };
+                }
+
                 export async function loadParentSchedule() {
                     return { children: [], events: [] };
                 }

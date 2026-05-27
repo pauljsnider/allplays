@@ -19,7 +19,7 @@ import {
   releaseAssignmentClaim,
   submitRsvpForPlayer,
   updateGame,
-  postChatMessage,
+  updateTeam,
   upsertPracticePacketCompletion
 } from '../../../../js/db.js';
 import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
@@ -51,6 +51,7 @@ import {
   normalizeRideRequestStatus,
   normalizeRsvpResponse,
   normalizeScheduleDate,
+  validateExternalCalendarUrl,
   buildStaffRsvpReminderMetadata,
   buildStaffRsvpReminderMessage,
   buildStaffRsvpReminderPreview,
@@ -482,6 +483,46 @@ async function loadStaffTeams(user: AuthUser) {
       return [...teamsById.values()];
     }
   );
+}
+
+async function saveTeamCalendarUrls(teamId: string, calendarUrls: string[]) {
+  if (isNativeRuntime()) {
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}`, { calendarUrls });
+    return;
+  }
+  await updateTeam(teamId, { calendarUrls });
+}
+
+export async function addTeamCalendarUrl(teamId: string, url: string, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) {
+    throw new Error('Team is required.');
+  }
+  if (!user?.uid) {
+    throw new Error('You need to sign in before adding a calendar.');
+  }
+
+  const validation = validateExternalCalendarUrl(url);
+  if (!validation.valid) {
+    throw new Error(validation.error || 'Enter a valid .ics calendar URL.');
+  }
+
+  const team = await loadTeam(normalizedTeamId);
+  const teamWithId = team ? { ...team, id: team.id || normalizedTeamId } : null;
+  if (!teamWithId || !isTeamStaff(teamWithId, user)) {
+    throw new Error('You do not have permission to manage this team schedule.');
+  }
+
+  const existingUrls = Array.isArray(teamWithId.calendarUrls)
+    ? teamWithId.calendarUrls.map(compactString).filter(Boolean)
+    : [];
+  if (existingUrls.includes(validation.url)) {
+    return { calendarUrls: existingUrls, added: false };
+  }
+
+  const calendarUrls = [...existingUrls, validation.url];
+  await saveTeamCalendarUrls(normalizedTeamId, calendarUrls);
+  return { calendarUrls, added: true };
 }
 
 async function loadPlayers(teamId: string) {
