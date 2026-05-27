@@ -125,7 +125,6 @@ export type ParentScheduleEvent = {
   homeScore?: number | null;
   awayScore?: number | null;
   canUpdateScore?: boolean;
-  gamePlan?: Record<string, any> | null;
   isHome?: boolean | null;
   kitColor?: string | null;
   arrivalTime?: Date | null;
@@ -242,21 +241,21 @@ function compactString(value: unknown) {
   return String(value || '').trim();
 }
 
-function uniqueStrings(values: unknown[]) {
+export function uniqueNonEmptyStrings(values: unknown[]) {
   return [...new Set(values.map(compactString).filter(Boolean))];
 }
 
 function uniqueEligibleEmails(values: unknown[]) {
-  return uniqueStrings(values).filter((email) => email.includes('@'));
+  return uniqueNonEmptyStrings(values).filter((email) => email.includes('@'));
 }
 
 function getRsvpPlayerIds(rsvp: any) {
   const playerIds = Array.isArray(rsvp?.playerIds) ? rsvp.playerIds : [];
-  return uniqueStrings([...playerIds, rsvp?.playerId, rsvp?.childId]);
+  return uniqueNonEmptyStrings([...playerIds, rsvp?.playerId, rsvp?.childId]);
 }
 
-function getPlayerParentUserIds(player: any) {
-  return uniqueStrings([
+export function getPlayerParentUserIds(player: any) {
+  return uniqueNonEmptyStrings([
     ...(Array.isArray(player?.parents) ? player.parents.map((parent: any) => parent?.userId) : []),
     player?.parentUserId,
     player?.guardianUserId

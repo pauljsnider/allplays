@@ -77,8 +77,8 @@ import {
   countLineupChanges,
   type GamePlanPublishPayloadInput
 } from './gameDayLineupPublish';
-import { sendTeamChatMessage, DEFAULT_TEAM_CONVERSATION_ID } from './chatService';
-import { buildLineupPublishMessage, buildLineupPublishPayload, countLineupChanges } from './gameDayLineupPublish';
+import { sendTeamChatMessage } from './chatService';
+import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -147,7 +147,7 @@ export async function publishGamePlanForApp(event: ParentScheduleEvent, user: Au
 
   const { teamId, id: gameId } = event;
   const currentTeamPlayers = await loadPlayers(teamId);
-  const recipientPlayerIds = uniqueNonEmptyStrings(currentTeamPlayers.map((p) => p.id));
+  const recipientPlayerIds = uniqueNonEmptyStrings(currentTeamPlayers.map((p: any) => p.id));
   const recipientParentIds = uniqueNonEmptyStrings(currentTeamPlayers.flatMap(getPlayerParentUserIds));
 
   const previousGamePlan = event.gamePlan;
@@ -786,6 +786,7 @@ function createScheduleEvent(input: {
   isTeamAdmin?: boolean;
   isTeamStaff?: boolean;
   isTeamRsvpReminderManager?: boolean;
+  gamePlan?: Record<string, any> | null;
 }): ParentScheduleEvent {
   const arrivalTime = normalizeScheduleDate(input.arrivalTime);
   const endDate = normalizeScheduleDate(input.endDate);
@@ -850,12 +851,11 @@ function createScheduleEvent(input: {
 
 async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
   const events: ParentScheduleEvent[] = [];
-  const [team, dbGames, trackedUids, practiceSessions, allPlayers] = await Promise.all([
+  const [team, dbGames, trackedUids, practiceSessions] = await Promise.all([
     loadTeam(teamId),
     loadGames(teamId),
     getTrackedCalendarEventUids(teamId).catch(() => []),
-    loadPracticeSessions(teamId),
-    loadPlayers(teamId)
+    loadPracticeSessions(teamId)
   ]);
   if (!team) return events;
 
