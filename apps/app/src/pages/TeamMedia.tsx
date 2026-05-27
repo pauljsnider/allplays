@@ -14,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Share2,
+  Trash2,
   Upload,
   Video
 } from 'lucide-react';
@@ -24,6 +25,7 @@ import {
   loadTeamMediaForApp,
   uploadParentTeamMediaFile,
   uploadParentTeamMediaPhoto,
+  deleteTeamMediaItemForApp,
   type TeamMediaFolder,
   type TeamMediaItem,
   type TeamMediaModel
@@ -64,6 +66,26 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       if (showLoading) setModel(null);
     } finally {
       if (showLoading) setLoading(false);
+    }
+  };
+
+  const handleDeleteItem = async (item: TeamMediaItem) => {
+    if (!teamId || !item?.id) return;
+    if (!window.confirm(`Are you sure you want to delete ${item.title || 'this media item'}? This cannot be undone.`)) {
+      return;
+    }
+
+    setLoading(true); // Indicate loading while deleting
+    setError('');
+    setMessage('');
+    try {
+      await deleteTeamMediaItemForApp(teamId, item);
+      setMessage('Media item deleted.');
+      await refresh({ showLoading: false }); // Refresh to remove the item from UI
+    } catch (deleteError: any) {
+      setError(deleteError?.message || 'Unable to delete media item.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -317,14 +339,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.length ? filteredItems.map((item) => (
-            <MediaItemCard
-              key={item.id}
-              item={item}
-              onStatus={(tone, statusMessage) => {
-                setError(tone === 'error' ? statusMessage : '');
-                setMessage(tone === 'success' ? statusMessage : '');
-              }}
-            />
+            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} onDeleteItem={handleDeleteItem} />
           )) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
@@ -372,7 +387,17 @@ function getMediaTypeCounts(items: TeamMediaItem[]) {
   };
 }
 
-function MediaItemCard({ item, onStatus }: { item: TeamMediaItem; onStatus: (tone: 'error' | 'success', message: string) => void }) {
+function TeamMediaItemCard({
+  item,
+  onStatus,
+  canManage,
+  onDeleteItem
+}: {
+  item: TeamMediaItem;
+  onStatus: (tone: 'error' | 'success', message: string) => void;
+  canManage: boolean;
+  onDeleteItem: (item: TeamMediaItem) => void;
+}) {
   const Icon = getItemIcon(item);
   const isPhoto = item.type === 'photo';
   const title = item.title || 'Team media';
@@ -441,6 +466,12 @@ function MediaItemCard({ item, onStatus }: { item: TeamMediaItem; onStatus: (ton
             <Copy className="h-3.5 w-3.5" aria-hidden="true" />
             Copy
           </button>
+          {canManage && (
+            <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs text-rose-700 hover:bg-rose-50" onClick={() => onDeleteItem(item)} aria-label={`Delete ${title}`}>
+              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+              Delete
+            </button>
+          )}
         </div>
       </div>
     </article>
