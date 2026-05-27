@@ -77,6 +77,26 @@ export function resolveReportStatColumns({ statsMap = {}, resolvedConfig = null 
   return { statKeys, statLabels };
 }
 
+export function formatGameReportEventTimestamp(timestamp) {
+  if (!timestamp) return '';
+
+  let date = null;
+
+  if (typeof timestamp === 'number') {
+    date = new Date(timestamp);
+  } else if (timestamp instanceof Date) {
+    date = timestamp;
+  } else if (typeof timestamp.toDate === 'function') {
+    date = timestamp.toDate();
+  } else if (typeof timestamp.seconds === 'number') {
+    date = new Date(timestamp.seconds * 1000);
+  }
+
+  if (!date || Number.isNaN(date.getTime())) return '';
+
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export function resolveOpponentReportStatColumns({ opponentStats = {}, resolvedConfig = null } = {}) {
   const metadataKeys = new Set(['name', 'number', 'notes', 'photoUrl']);
   let oppKeys = [];

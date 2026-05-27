@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildConfiguredStatFields, resolveReportStatColumns, resolveOpponentReportStatColumns } from '../../js/game-report-stats.js';
+import { buildConfiguredStatFields, formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from '../../js/game-report-stats.js';
 
 describe('game report stat helpers', () => {
   it('keeps soccer config labels even when no aggregated stats docs exist', () => {
@@ -97,5 +97,26 @@ describe('game report stat helpers', () => {
     expect(buildConfiguredStatFields(['GOALS'], [{ pts: 1 }])).toEqual([
       { fieldName: 'pts', label: 'GOALS' }
     ]);
+  });
+
+  it('formats numeric tracker event timestamps without Invalid Date', () => {
+    const timestamp = Date.UTC(2026, 0, 1, 15, 30, 0);
+
+    expect(formatGameReportEventTimestamp(timestamp)).toBe(
+      new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    );
+  });
+
+  it('formats Firestore Timestamp event timestamps', () => {
+    const timestamp = { seconds: Date.UTC(2026, 0, 1, 15, 30, 0) / 1000 };
+
+    expect(formatGameReportEventTimestamp(timestamp)).toBe(
+      new Date(timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    );
+  });
+
+  it('omits invalid event timestamps instead of rendering Invalid Date', () => {
+    expect(formatGameReportEventTimestamp({ seconds: undefined })).toBe('');
+    expect(formatGameReportEventTimestamp('not-a-date')).toBe('');
   });
 });
