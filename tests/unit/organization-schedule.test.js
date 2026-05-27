@@ -336,6 +336,23 @@ describe('organization schedule helpers', () => {
         expect(source).toContain('localStorage.setItem(`organizationScheduleDraft:${anchorTeam?.id || \'unknown\'}`');
     });
 
+    it('publishes generated draft slots instead of logging a placeholder request', () => {
+        const html = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
+        const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+
+        expect(html).toContain('draftSlots: draftGeneratorState.draftSlots');
+        expect(html).toContain('Generate at least one draft slot before publishing.');
+        expect(html).toContain('Published ${result.data.publishedCount || draftGeneratorState.draftSlots.length} draft schedule slot');
+        expect(html).not.toContain('Organization schedule draft publishing request logged successfully');
+
+        expect(functionsSource).toContain('exports.publishOrganizationScheduleDraft = functions.https.onCall');
+        expect(functionsSource).toContain('const draftSlots = Array.isArray(data?.draftSlots) ? data.draftSlots.map(normalizeOrganizationDraftSlot) : [];');
+        expect(functionsSource).toContain("firestore.collection(`teams/${slot.homeTeamId}/games`).doc()");
+        expect(functionsSource).toContain("firestore.collection(`teams/${slot.awayTeamId}/games`).doc()");
+        expect(functionsSource).toContain("createdVia: 'organizationScheduleDraftPublish'");
+        expect(functionsSource).toContain("message: 'Draft slots published to team schedules.'");
+    });
+
     it('caps organization schedule CSV imports before preview and import', () => {
         const source = readFileSync(new URL('../../organization-schedule.html', import.meta.url), 'utf8');
 
