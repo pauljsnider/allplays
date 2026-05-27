@@ -19,6 +19,7 @@ import {
   releaseAssignmentClaim,
   submitRsvpForPlayer,
   updateGame,
+  postChatMessage,
   upsertPracticePacketCompletion
 } from '../../../../js/db.js';
 import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
@@ -55,6 +56,8 @@ import {
   buildStaffRsvpReminderPreview,
   getStaffRsvpReminderMetadataTarget,
   resolveStaffRsvpReminderEmailSentCount,
+  getPlayerParentUserIds,
+  uniqueNonEmptyStrings,
   type ParentScheduleEvent,
   type PracticeHomePacket,
   type PracticePacketCompletion,
@@ -68,7 +71,14 @@ import {
   type ScheduleRideOffer,
   type ScheduleRideSummary
 } from './scheduleLogic';
+import {
+  buildLineupPublishPayload,
+  buildLineupPublishMessage,
+  countLineupChanges,
+  type GamePlanPublishPayloadInput
+} from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
+import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -116,6 +126,95 @@ export type GameScoreInput = {
 
 export type CancelScheduledGameResult = {
   cancelled: true;
+  notificationError: string | null;
+};
+
+export type PublishGamePlanResult = {
+  gamePlan: Record<string, any>;
+  notificationError: string | null;
+};
+
+export async function publishGamePlanForApp(event: ParentScheduleEvent, user: AuthUser): Promise<PublishGamePlanResult> {
+  if (!event.isDbGame) {
+    throw new Error('A scheduled game is required before publishing a lineup.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before publishing a lineup.');
+  }
+  if (!event.gamePlan || !Object.keys(event.gamePlan.lineups || {}).length) {
+    throw new Error('No lineup draft is available to publish.');
+  }
+
+  const { teamId, id: gameId } = event;
+  const currentTeamPlayers = await loadPlayers(teamId);
+  const recipientPlayerIds = uniqueNonEmptyStrings(currentTeamPlayers.map((p: any) => p.id));
+  const recipientParentIds = uniqueNonEmptyStrings(currentTeamPlayers.flatMap(getPlayerParentUserIds));
+
+  const previousGamePlan = event.gamePlan;
+  const nextGamePlan = buildLineupPublishPayload({
+    previousGamePlan,
+    publishedBy: user.uid,
+    publishedByName: user.displayName || user.email || 'Coach',
+    publishedAt: new Date(),
+    recipientPlayerIds,
+    recipientParentIds
+  });
+
+  const payload: Record<string, unknown> = {
+    gamePlan: nextGamePlan
+  };
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, payload)), 'Lineup publish');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST lineup publish updateGame:', error);
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
+  }
+
+  const changedAssignments = countLineupChanges(
+    previousGamePlan?.publishedLineups,
+    nextGamePlan.publishedLineups
+  );
+
+  let notificationError: string | null = null;
+  try {
+    await sendTeamChatMessage({
+      teamId: event.teamId,
+      user,
+      profile: {
+        fullName: user.displayName || null,
+        photoUrl: user.photoUrl || null
+      },
+      text: buildLineupPublishMessage({
+        opponentName: event.opponent || event.title || null,
+        publishedVersion: nextGamePlan.publishedVersion,
+        changedAssignments
+      }),
+      selectedConversationId: DEFAULT_TEAM_CONVERSATION_ID,
+      selectedRecipientTarget: 'full_team',
+      selectedRecipientIds: [],
+      aiMeta: {
+        type: 'lineup-published',
+        gameId: event.id,
+        publishedVersion: nextGamePlan.publishedVersion,
+        changedAssignments,
+        recipientPlayerIds,
+        recipientParentIds
+      }
+    });
+  } catch (error: any) {
+    console.error('[schedule-service] Failed to send lineup published chat message:', error);
+    notificationError = error?.message || 'Unknown chat notification error';
+  }
+
+  return { gamePlan: nextGamePlan, notificationError };
+}
+
+
+export type PublishScheduledGameLineupResult = {
+  gamePlan: Record<string, unknown>;
+  changedAssignments: number;
   notificationError: string | null;
 };
 
@@ -687,6 +786,7 @@ function createScheduleEvent(input: {
   isTeamAdmin?: boolean;
   isTeamStaff?: boolean;
   isTeamRsvpReminderManager?: boolean;
+  gamePlan?: Record<string, any> | null;
 }): ParentScheduleEvent {
   const arrivalTime = normalizeScheduleDate(input.arrivalTime);
   const endDate = normalizeScheduleDate(input.endDate);
@@ -744,7 +844,8 @@ function createScheduleEvent(input: {
     practiceHomePacket: packetSummary ? input.practiceHomePacket : null,
     practicePacketCompletions: [],
     isTeamStaff: input.isTeamStaff === true,
-    isTeamRsvpReminderManager: input.isTeamRsvpReminderManager === true
+    isTeamRsvpReminderManager: input.isTeamRsvpReminderManager === true,
+    gamePlan: input.gamePlan || null
   };
 }
 
@@ -820,7 +921,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             practiceSessionId: compactString(session?.id) || null,
             availabilityPreferences,
             isTeamStaff: isStaff,
-            isTeamRsvpReminderManager: isRsvpReminderManager
+            isTeamRsvpReminderManager: isRsvpReminderManager,
+            gamePlan: game.gamePlan || null
           }));
         });
       }
@@ -868,7 +970,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           practiceSessionId: isPractice ? compactString(session?.id) || null : null,
           availabilityPreferences,
           isTeamStaff: isStaff,
-          isTeamRsvpReminderManager: isRsvpReminderManager
+          isTeamRsvpReminderManager: isRsvpReminderManager,
+          gamePlan: game.gamePlan || null
         }));
       });
     }
