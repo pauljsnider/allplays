@@ -3,14 +3,15 @@ import { Link, useParams } from 'react-router-dom';
 import * as parentToolsService from '../lib/parentToolsService';
 import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Send, Ticket, type LucideIcon } from 'lucide-react';
 import { openPublicUrl } from '../lib/publicActions';
-import type { ParentRegistrationCard, ParentRegistrationDetailModel } from '../lib/parentToolsService';
+import type { ParentRegistrationCard, ParentRegistrationDetailModel, RegistrationDiscountRule } from '../lib/parentToolsService';
 import {
   calculateRegistrationFeeSnapshot,
   decideRegistrationPlacement,
   formatFeeSnapshotLines,
   getActiveRegistrationOptions,
   getPaymentPlanChoices,
-  requiresRegistrationOption
+  requiresRegistrationOption,
+  hasQuantityDiscountRule
 } from '../../../../js/registration-flow.js';
 import type { AuthState } from '../lib/types';
 
@@ -75,7 +76,9 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
     if (!form || !requiresRegistrationOption(form) || !selectedOptionId) return null;
     return decideRegistrationPlacement({ form, selectedOptionId, counts: form.registrationOptionCounts || {} });
   }, [form, selectedOptionId]);
-  const displayFeeSnapshot = useMemo(() => form ? calculateRegistrationFeeSnapshot(form, { quantity, now: new Date() }) : null, [form, quantity]);
+  const hasQuantityDiscount = useMemo(() => form ? hasQuantityDiscountRule(form.discountRules) : false, [form]);
+  const effectiveQuantity = useMemo(() => hasQuantityDiscount ? quantity : 1, [hasQuantityDiscount, quantity]);
+  const displayFeeSnapshot = useMemo(() => form ? calculateRegistrationFeeSnapshot(form, { quantity: effectiveQuantity, now: new Date() }) : null, [form, effectiveQuantity]);
   const displayFeeLines = useMemo<FeeSummaryLine[]>(() => displayFeeSnapshot ? formatFeeSnapshotLines(displayFeeSnapshot) : [], [displayFeeSnapshot]);
 
   const updateParticipant = (fieldId: string, value: string) => setParticipant((current) => ({ ...current, [fieldId]: value }));
@@ -89,7 +92,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
     const currentGuardian = collectFieldValues(formRef.current, 'guardian', guardian);
     const currentWaiverAccepted = Boolean((formRef.current?.querySelector('[data-waiver-field]') as HTMLInputElement | null)?.checked ?? waiverAccepted);
     const currentSelectedOptionId = String((formRef.current?.querySelector('[data-selected-option]') as HTMLSelectElement | null)?.value || selectedOptionId);
-    const currentQuantity = Math.max(1, Number((formRef.current?.querySelector('[data-quantity-field]') as HTMLInputElement | null)?.value || quantity) || 1);
+    const currentQuantity = hasQuantityDiscount ? Math.max(1, Number((formRef.current?.querySelector('[data-quantity-field]') as HTMLInputElement | null)?.value || quantity) || 1) : 1;
     const currentSelectedPaymentPlanId = String((formRef.current?.querySelector('[data-payment-plan]') as HTMLSelectElement | null)?.value || selectedPaymentPlanId);
     const currentSelectedOption = activeOptions.find((option) => option.id === currentSelectedOptionId) || selectedOption;
     const currentPlacement = placement;
@@ -112,7 +115,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
 
     setSaving(true);
     try {
-      const currentFeeSnapshot = calculateRegistrationFeeSnapshot(form, { quantity: currentQuantity, now: new Date() });
+      const currentFeeSnapshot = calculateRegistrationFeeSnapshot(form, { quantity: currentQuantity, now: new Date() }); // currentQuantity is already effective
       const result = await parentToolsService.submitOfflineRegistration(form.teamId, form.id, {
         participant: currentParticipant,
         guardian: currentGuardian,
@@ -137,7 +140,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
             result.registrationId,
             requiresRegistrationOption(form) ? currentSelectedOptionId : currentSelectedOptionId || '',
             currentSelectedPaymentPlanId,
-            currentQuantity,
+            currentQuantity, // currentQuantity is already effective
             checkoutFeeSnapshot.finalAmountDueCents,
             checkoutFeeSnapshot.currency || form.currency || 'USD'
           );
@@ -208,11 +211,13 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
             </fieldset>
           ) : null}
 
-          <label className="min-w-0">
-            <span className="app-label">Quantity</span>
-            <input className="auth-input mt-1" data-quantity-field type="number" min="1" value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} disabled={saving} />
-            {fieldErrors.quantity ? <InlineError message={fieldErrors.quantity} /> : null}
-          </label>
+          {hasQuantityDiscount ? (
+            <label className="min-w-0">
+              <span className="app-label">Quantity</span>
+              <input className="auth-input mt-1" data-quantity-field type="number" min="1" value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} disabled={saving} />
+              {fieldErrors.quantity ? <InlineError message={fieldErrors.quantity} /> : null}
+            </label>
+          ) : null}
 
           <label className="min-w-0">
             <span className="app-label">Payment plan</span>
@@ -268,7 +273,7 @@ function collectFieldValues(formElement: HTMLFormElement | null, group: string, 
   return values;
 }
 
-function validate(form: ParentRegistrationCard, participant: Record<string, string>, guardian: Record<string, string>, waiverAccepted: boolean, selectedOptionId: string, quantity: number, selectedPaymentPlanId: string) {
+function validate(form: ParentRegistrationCard, participant: Record<string, string>, guardian: Record<string, string>, waiverAccepted: boolean, selectedOptionId: string, quantity: number, selectedPaymentPlanId: string, hasQuantityDiscount: boolean) {
   const errors: FieldErrors = {};
   (form.participantFields || []).forEach((field: any) => {
     if (field.required && !String(participant[field.id] || '').trim()) errors[`participant.${field.id}`] = `${field.label} is required.`;
@@ -277,7 +282,8 @@ function validate(form: ParentRegistrationCard, participant: Record<string, stri
     if (field.required && !String(guardian[field.id] || '').trim()) errors[`guardian.${field.id}`] = `${field.label} is required.`;
   });
   if (requiresRegistrationOption(form) && !selectedOptionId) errors.selectedOption = 'Select a registration option.';
-  if (!Number.isFinite(quantity) || quantity < 1) errors.quantity = 'Quantity must be at least 1.';
+  // If quantity discount is not active, quantity is implicitly 1, so no validation needed here
+  if (hasQuantityDiscount && (!Number.isFinite(quantity) || quantity < 1)) errors.quantity = 'Quantity must be at least 1.'; // Only validate if the field is visible
   if (!selectedPaymentPlanId) errors.paymentPlan = 'Select a payment plan.';
   if (form.waiverText && !waiverAccepted) errors.waiver = 'Accept the waiver to submit.';
   return errors;
