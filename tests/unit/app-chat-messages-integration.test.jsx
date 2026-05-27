@@ -14,9 +14,11 @@ const chatMocks = vi.hoisted(() => ({
     loadChatRecipientOptions: vi.fn(),
     loadChatTeamContext: vi.fn(),
     loadOlderTeamChatMessages: vi.fn(),
+    loadSentTeamEmails: vi.fn(),
     markTeamChatRead: vi.fn(),
     sendAllPlaysChatAnswer: vi.fn(),
     sendTeamChatMessage: vi.fn(),
+    sendTeamEmailMessage: vi.fn(),
     subscribeToTeamChatMessages: vi.fn(),
     toggleTeamChatReaction: vi.fn()
 }));
@@ -291,6 +293,17 @@ beforeEach(() => {
         return { unsubscribe: vi.fn() };
     });
     chatMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
+    chatMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 12, status: 'queued' });
+    chatMocks.loadSentTeamEmails.mockResolvedValue([
+        {
+            id: 'email-1',
+            subject: 'Practice plan',
+            senderName: 'Coach Jamie',
+            sentAt: new Date('2026-05-21T15:00:00Z'),
+            recipientCount: 12,
+            status: 'queued'
+        }
+    ]);
     chatMocks.sendAllPlaysChatAnswer.mockResolvedValue(undefined);
     chatMocks.toggleTeamChatReaction.mockResolvedValue(true);
     chatMocks.editTeamChatMessage.mockResolvedValue(undefined);
@@ -472,6 +485,129 @@ describe('React app messages integration', () => {
             selectedRecipientTarget: 'individuals',
             selectedRecipientIds: ['user:coach-1']
         }));
+    });
+
+    it('shows Team Email only to moderators and queues email with the selected audience', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Audience: Full team');
+        await click(container, 'Selected members');
+        const coachCheckbox = Array.from(container.querySelectorAll('label')).find((label) => label.textContent.includes('Coach Jamie'))?.querySelector('input[type="checkbox"]');
+        await act(async () => {
+            coachCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await flush();
+        await click(container, 'Done');
+        await click(container, 'Team Email');
+
+        expect(chatMocks.loadSentTeamEmails).toHaveBeenCalledWith('team-1', { limit: 25 });
+        expect(container.textContent).toContain('Sends one backend roster email job');
+        expect(container.textContent).toContain('Audience: Coach Jamie (Staff)');
+        expect(container.textContent).toContain('Practice plan');
+        expect(container.textContent).not.toContain('coach@example.com');
+
+        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Tournament update');
+        await setFieldValue(bodyInput, 'Arrive at 8:30.');
+        await click(container, 'Send email');
+
+        expect(chatMocks.sendTeamEmailMessage).toHaveBeenCalledWith({
+            teamId: 'team-1',
+            subject: 'Tournament update',
+            body: 'Arrive at 8:30.',
+            targetType: 'individuals',
+            recipientIds: ['user:coach-1']
+        });
+        expect(subjectInput.value).toBe('');
+        expect(bodyInput.value).toBe('');
+        expect(container.textContent).toContain('Queued 12 recipients for backend email delivery.');
+
+        chatMocks.loadChatTeamContext.mockResolvedValueOnce({
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: false
+        });
+        const parentView = await renderMessages('/messages/team-1');
+        expect(parentView.container.textContent).not.toContain('Team Email');
+    });
+
+    it('preserves Team Email send success when sent history refresh fails', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Team Email');
+        chatMocks.loadSentTeamEmails.mockRejectedValueOnce(new Error('History refresh down'));
+        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Schedule');
+        await setFieldValue(bodyInput, 'Game moved.');
+        await click(container, 'Send email');
+
+        expect(chatMocks.sendTeamEmailMessage).toHaveBeenCalled();
+        expect(container.textContent).toContain('Queued 12 recipients for backend email delivery.');
+        expect(container.textContent).not.toContain('History refresh down');
+        expect(subjectInput.value).toBe('');
+        expect(bodyInput.value).toBe('');
+    });
+
+    it('keeps Team Email send success separate from stale history load errors', async () => {
+        let rejectInitialHistory;
+        const initialHistoryLoad = new Promise((resolve, reject) => {
+            rejectInitialHistory = reject;
+        });
+        chatMocks.loadSentTeamEmails
+            .mockImplementationOnce(() => initialHistoryLoad)
+            .mockResolvedValueOnce([
+                {
+                    id: 'email-2',
+                    subject: 'Schedule',
+                    senderName: 'Coach Jamie',
+                    sentAt: new Date('2026-05-22T15:00:00Z'),
+                    recipientCount: 12,
+                    status: 'queued'
+                }
+            ]);
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Team Email');
+        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Schedule');
+        await setFieldValue(bodyInput, 'Game moved.');
+        await click(container, 'Send email');
+
+        expect(container.textContent).toContain('Queued 12 recipients for backend email delivery.');
+
+        await act(async () => {
+            rejectInitialHistory(new Error('Initial history down'));
+            await initialHistoryLoad.catch(() => undefined);
+        });
+        await flush();
+
+        expect(container.textContent).toContain('Queued 12 recipients for backend email delivery.');
+        expect(container.textContent).toContain('Initial history down');
+        expect(subjectInput.value).toBe('');
+        expect(bodyInput.value).toBe('');
+    });
+
+    it('keeps Team Email drafts when backend sending fails', async () => {
+        chatMocks.sendTeamEmailMessage.mockRejectedValueOnce(new Error('Callable down'));
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Team Email');
+        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Schedule');
+        await setFieldValue(bodyInput, 'Game moved.');
+        await click(container, 'Send email');
+
+        expect(container.textContent).toContain('Callable down');
+        expect(subjectInput.value).toBe('Schedule');
+        expect(bodyInput.value).toBe('Game moved.');
     });
 
     it('blocks selected member sends until at least one recipient is checked', async () => {

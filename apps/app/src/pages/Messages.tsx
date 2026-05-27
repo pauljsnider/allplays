@@ -13,6 +13,7 @@ import {
   ImageIcon,
   Link2,
   Loader2,
+  Mail,
   MessageCircle,
   Mic,
   MoreVertical,
@@ -38,19 +39,23 @@ import {
   loadChatRecipientOptions,
   loadChatTeamContext,
   loadOlderTeamChatMessages,
+  loadSentTeamEmails,
   markTeamChatRead,
   sendAllPlaysChatAnswer,
   sendTeamChatMessage,
+  sendTeamEmailMessage,
   subscribeToTeamChatMessages,
   toggleTeamChatReaction,
   type ChatConversation,
   type ChatMessage,
+  type SentTeamEmail,
   type ChatTeam
 } from '../lib/chatService';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
   MAX_CHAT_MEDIA_SIZE,
   buildChatAudienceMetadata,
+  buildEmailAudienceMetadata,
   buildChatMediaShareDetails,
   chatReactions,
   collectThreadMedia,
@@ -76,6 +81,7 @@ import {
   shouldRetryChatLastReadOnViewReturn,
   shouldUpdateChatLastRead,
   type ChatRecipientOption,
+  type ChatAudienceMetadata,
   type ChatTargetType
 } from '../lib/chatLogic';
 import { sharePublicUrl } from '../lib/publicActions';
@@ -367,6 +373,14 @@ function ChatWindow({
   const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [showAttachSheet, setShowAttachSheet] = useState(false);
   const [showLinkSheet, setShowLinkSheet] = useState(false);
+  const [showEmailSheet, setShowEmailSheet] = useState(false);
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailLoadingHistory, setEmailLoadingHistory] = useState(false);
+  const [emailStatus, setEmailStatus] = useState<ChatStatus | null>(null);
+  const [emailHistoryStatus, setEmailHistoryStatus] = useState<ChatStatus | null>(null);
+  const [sentEmails, setSentEmails] = useState<SentTeamEmail[]>([]);
   const [linkDraft, setLinkDraft] = useState('');
   const [reactionMessageId, setReactionMessageId] = useState('');
   const [actionMessageId, setActionMessageId] = useState('');
@@ -399,6 +413,13 @@ function ChatWindow({
     selectedRecipientTarget,
     selectedRecipientIds
   }), [selectedConversation, selectedConversationId, selectedRecipientIds, selectedRecipientTarget]);
+  const emailAudienceMetadata = useMemo(() => buildEmailAudienceMetadata({
+    selectedConversation,
+    selectedConversationId,
+    selectedRecipientTarget,
+    selectedRecipientIds,
+    recipientOptions
+  }), [recipientOptions, selectedConversation, selectedConversationId, selectedRecipientIds, selectedRecipientTarget]);
   const audienceSummary = useMemo(() => getAudienceSummaryText(audienceMetadata, recipientOptions), [audienceMetadata, recipientOptions]);
   const mediaEntries = useMemo(() => collectThreadMedia(messages), [messages]);
   const teamName = team?.name || inboxTeam?.name || 'Team chat';
@@ -856,6 +877,64 @@ function ChatWindow({
     }
   };
 
+  const reloadSentEmailHistory = async ({ suppressErrorStatus = false } = {}) => {
+    if (!canModerate) return;
+    setEmailLoadingHistory(true);
+    try {
+      setSentEmails(await loadSentTeamEmails(teamId, { limit: 25 }));
+      setEmailHistoryStatus(null);
+    } catch (historyError: any) {
+      if (!suppressErrorStatus) {
+        setEmailHistoryStatus({ tone: 'error', message: historyError?.message || 'Could not load sent email history.' });
+      }
+    } finally {
+      setEmailLoadingHistory(false);
+    }
+  };
+
+  const openEmailSheet = () => {
+    if (!canModerate) return;
+    setShowEmailSheet(true);
+    setEmailStatus(null);
+    setEmailHistoryStatus(null);
+    void reloadSentEmailHistory();
+  };
+
+  const handleSendEmail = async (event?: FormEvent) => {
+    event?.preventDefault();
+    if (!canModerate || emailSending) return;
+    const subject = emailSubject.trim();
+    const body = emailBody.trim();
+    if (!subject || !body) {
+      setEmailStatus({ tone: 'error', message: 'Subject and message are required.' });
+      return;
+    }
+    if (emailAudienceMetadata.targetType === 'individuals' && emailAudienceMetadata.recipientIds.length === 0) {
+      setEmailStatus({ tone: 'error', message: 'Choose at least one selected member before sending.' });
+      return;
+    }
+
+    setEmailSending(true);
+    setEmailStatus({ tone: 'neutral', message: 'Creating backend mail jobs...' });
+    try {
+      const result = await sendTeamEmailMessage({
+        teamId,
+        subject,
+        body,
+        targetType: emailAudienceMetadata.targetType,
+        recipientIds: emailAudienceMetadata.recipientIds
+      });
+      setEmailSubject('');
+      setEmailBody('');
+      setEmailStatus({ tone: 'success', message: `Queued ${Number(result?.recipientCount || 0)} recipient${Number(result?.recipientCount || 0) === 1 ? '' : 's'} for backend email delivery.` });
+      await reloadSentEmailHistory({ suppressErrorStatus: true });
+    } catch (sendError: any) {
+      setEmailStatus({ tone: 'error', message: sendError?.message || 'Email send failed. Nothing was silently dropped.' });
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
   const toggleVoiceCapture = async () => {
     if (voiceListening) {
       stopVoiceCapture();
@@ -1187,6 +1266,7 @@ function ChatWindow({
         voiceListening={voiceListening}
         voiceSupported={voiceSupported}
         canModerate={canModerate && isDefaultTeamConversation(selectedConversationId)}
+        canSendTeamEmail={canModerate}
         audienceSummary={audienceSummary}
         onTextChange={setText}
         onSubmit={handleSend}
@@ -1194,6 +1274,7 @@ function ChatWindow({
         onRemoveFile={removeFile}
         onVoice={toggleVoiceCapture}
         onAudience={() => setShowAudienceSheet(true)}
+        onTeamEmail={openEmailSheet}
         onMention={insertAllPlaysMention}
       />
 
@@ -1237,6 +1318,27 @@ function ChatWindow({
           onChange={setLinkDraft}
           onAdd={addLinkToComposer}
           onClose={() => setShowLinkSheet(false)}
+        />
+      ) : null}
+
+      {showEmailSheet && canModerate ? (
+        <TeamEmailSheet
+          subject={emailSubject}
+          body={emailBody}
+          sending={emailSending}
+          loadingHistory={emailLoadingHistory}
+          status={emailStatus}
+          historyStatus={emailHistoryStatus}
+          sentEmails={sentEmails}
+          audienceSummary={getAudienceSummaryText(emailAudienceMetadata, recipientOptions)}
+          audienceMetadata={emailAudienceMetadata}
+          onSubjectChange={setEmailSubject}
+          onBodyChange={setEmailBody}
+          onSubmit={handleSendEmail}
+          onRefreshHistory={reloadSentEmailHistory}
+          onStatusClose={() => setEmailStatus(null)}
+          onHistoryStatusClose={() => setEmailHistoryStatus(null)}
+          onClose={() => setShowEmailSheet(false)}
         />
       ) : null}
 
@@ -1288,6 +1390,131 @@ function StatusBanner({ status, onClose }: { status: ChatStatus; onClose: () => 
       </button>
     </div>
   );
+}
+
+function TeamEmailSheet({
+  subject,
+  body,
+  sending,
+  loadingHistory,
+  status,
+  historyStatus,
+  sentEmails,
+  audienceSummary,
+  audienceMetadata,
+  onSubjectChange,
+  onBodyChange,
+  onSubmit,
+  onRefreshHistory,
+  onStatusClose,
+  onHistoryStatusClose,
+  onClose
+}: {
+  subject: string;
+  body: string;
+  sending: boolean;
+  loadingHistory: boolean;
+  status: ChatStatus | null;
+  historyStatus: ChatStatus | null;
+  sentEmails: SentTeamEmail[];
+  audienceSummary: string;
+  audienceMetadata: ChatAudienceMetadata;
+  onSubjectChange: (value: string) => void;
+  onBodyChange: (value: string) => void;
+  onSubmit: (event?: FormEvent) => void;
+  onRefreshHistory: () => void;
+  onStatusClose: () => void;
+  onHistoryStatusClose: () => void;
+  onClose: () => void;
+}) {
+  const missingSelectedRecipients = audienceMetadata.targetType === 'individuals' && audienceMetadata.recipientIds.length === 0;
+  const canSendEmail = Boolean(subject.trim() && body.trim()) && !missingSelectedRecipients && !sending;
+
+  return (
+    <Sheet title="Team Email" onClose={onClose}>
+      <form className="space-y-3" onSubmit={onSubmit}>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold leading-5 text-amber-800">
+          Sends one backend roster email job. This is separate from chat posting, and delivery jobs are queued.
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-700">
+          Audience: {audienceSummary}
+        </div>
+        {missingSelectedRecipients ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+            Choose at least one selected member before sending email.
+          </div>
+        ) : null}
+        <label className="block">
+          <span className="app-label">Subject</span>
+          <input
+            value={subject}
+            onChange={(event) => onSubjectChange(event.target.value)}
+            className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            placeholder="Team update"
+            maxLength={160}
+          />
+        </label>
+        <label className="block">
+          <span className="app-label">Message</span>
+          <textarea
+            value={body}
+            onChange={(event) => onBodyChange(event.target.value)}
+            className="mt-1 min-h-36 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            placeholder="Write the email body..."
+            maxLength={5000}
+          />
+        </label>
+        <button type="submit" className="primary-button w-full" disabled={!canSendEmail}>
+          {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Mail className="h-4 w-4" aria-hidden="true" />}
+          Send email
+        </button>
+        {status ? <StatusBanner status={status} onClose={onStatusClose} /> : null}
+      </form>
+
+      <div className="mt-5 border-t border-gray-100 pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-black text-gray-950">Sent email history</div>
+            <div className="text-xs font-semibold text-gray-500">Latest queued roster emails. Recipient email addresses are hidden.</div>
+          </div>
+          <button type="button" className="ghost-button !h-9 !min-h-9 text-xs" onClick={onRefreshHistory} disabled={loadingHistory}>
+            {loadingHistory ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+            Refresh
+          </button>
+        </div>
+        {historyStatus ? <StatusBanner status={historyStatus} onClose={onHistoryStatusClose} /> : null}
+        <div className="mt-3 space-y-2">
+          {loadingHistory && sentEmails.length === 0 ? (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-bold text-gray-500">Loading sent emails...</div>
+          ) : sentEmails.length === 0 ? (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-bold text-gray-500">No sent team emails yet.</div>
+          ) : sentEmails.map((email) => {
+            const delivery = email.delivery || {};
+            const statusLabel = String(delivery.status || email.status || 'queued');
+            return (
+              <div key={email.id} className="rounded-xl border border-gray-200 bg-white px-3 py-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black text-gray-950">{email.subject || '(No subject)'}</div>
+                    <div className="mt-0.5 text-xs font-semibold text-gray-500">From {email.senderName || 'Team admin'} · {formatEmailSentTime(email.sentAt)}</div>
+                  </div>
+                  <div className="flex-none text-right text-xs font-bold text-gray-500">
+                    {Number(email.recipientCount || 0)} recipients<br />{statusLabel}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+function formatEmailSentTime(value: unknown) {
+  const day = formatChatDay(value);
+  const time = formatChatTime(value);
+  return [day, time].filter(Boolean).join(' ') || 'Queued';
 }
 
 function MessageList({
@@ -1580,6 +1807,7 @@ function Composer({
   voiceListening,
   voiceSupported,
   canModerate,
+  canSendTeamEmail,
   audienceSummary,
   onTextChange,
   onSubmit,
@@ -1587,6 +1815,7 @@ function Composer({
   onRemoveFile,
   onVoice,
   onAudience,
+  onTeamEmail,
   onMention
 }: {
   teamName: string;
@@ -1598,6 +1827,7 @@ function Composer({
   voiceListening: boolean;
   voiceSupported: boolean;
   canModerate: boolean;
+  canSendTeamEmail: boolean;
   audienceSummary: string;
   onTextChange: (value: string) => void;
   onSubmit: (event?: FormEvent) => void;
@@ -1605,6 +1835,7 @@ function Composer({
   onRemoveFile: (index: number) => void;
   onVoice: () => void;
   onAudience: () => void;
+  onTeamEmail: () => void;
   onMention: () => void;
 }) {
   const canSend = Boolean(text.trim() || filePreviews.length) && !sending && !aiThinking;
@@ -1661,6 +1892,13 @@ function Composer({
         </button>
       </div>
 
+      {notice ? (
+        <div className="chat-composer-notice" aria-live="polite">
+          {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />}
+          <span className="truncate">{notice}</span>
+        </div>
+      ) : null}
+
       <div className="chat-composer-toolbar">
         <button type="button" className="chat-tool-button" onClick={onAttach} aria-label="Add attachment">
           <Paperclip className="h-4 w-4" aria-hidden="true" />
@@ -1681,11 +1919,11 @@ function Composer({
             <span className="truncate">Audience: {audienceSummary}</span>
           </button>
         ) : null}
-        {notice ? (
-          <div className="chat-composer-notice" aria-live="polite">
-            {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />}
-            <span className="truncate">{notice}</span>
-          </div>
+        {canSendTeamEmail ? (
+          <button type="button" className="chat-audience-pill" onClick={onTeamEmail} aria-label="Open Team Email">
+            <Mail className="h-4 w-4 flex-none" aria-hidden="true" />
+            <span className="truncate">Team Email</span>
+          </button>
         ) : null}
       </div>
     </form>
