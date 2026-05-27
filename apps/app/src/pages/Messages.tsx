@@ -379,6 +379,7 @@ function ChatWindow({
   const [emailSending, setEmailSending] = useState(false);
   const [emailLoadingHistory, setEmailLoadingHistory] = useState(false);
   const [emailStatus, setEmailStatus] = useState<ChatStatus | null>(null);
+  const [emailHistoryStatus, setEmailHistoryStatus] = useState<ChatStatus | null>(null);
   const [sentEmails, setSentEmails] = useState<SentTeamEmail[]>([]);
   const [linkDraft, setLinkDraft] = useState('');
   const [reactionMessageId, setReactionMessageId] = useState('');
@@ -876,13 +877,16 @@ function ChatWindow({
     }
   };
 
-  const reloadSentEmailHistory = async () => {
+  const reloadSentEmailHistory = async ({ suppressErrorStatus = false } = {}) => {
     if (!canModerate) return;
     setEmailLoadingHistory(true);
     try {
       setSentEmails(await loadSentTeamEmails(teamId, { limit: 25 }));
+      setEmailHistoryStatus(null);
     } catch (historyError: any) {
-      setEmailStatus({ tone: 'error', message: historyError?.message || 'Could not load sent email history.' });
+      if (!suppressErrorStatus) {
+        setEmailHistoryStatus({ tone: 'error', message: historyError?.message || 'Could not load sent email history.' });
+      }
     } finally {
       setEmailLoadingHistory(false);
     }
@@ -892,6 +896,7 @@ function ChatWindow({
     if (!canModerate) return;
     setShowEmailSheet(true);
     setEmailStatus(null);
+    setEmailHistoryStatus(null);
     void reloadSentEmailHistory();
   };
 
@@ -922,7 +927,7 @@ function ChatWindow({
       setEmailSubject('');
       setEmailBody('');
       setEmailStatus({ tone: 'success', message: `Queued ${Number(result?.recipientCount || 0)} recipient${Number(result?.recipientCount || 0) === 1 ? '' : 's'} for backend email delivery.` });
-      await reloadSentEmailHistory();
+      await reloadSentEmailHistory({ suppressErrorStatus: true });
     } catch (sendError: any) {
       setEmailStatus({ tone: 'error', message: sendError?.message || 'Email send failed. Nothing was silently dropped.' });
     } finally {
@@ -1323,6 +1328,7 @@ function ChatWindow({
           sending={emailSending}
           loadingHistory={emailLoadingHistory}
           status={emailStatus}
+          historyStatus={emailHistoryStatus}
           sentEmails={sentEmails}
           audienceSummary={getAudienceSummaryText(emailAudienceMetadata, recipientOptions)}
           audienceMetadata={emailAudienceMetadata}
@@ -1331,6 +1337,7 @@ function ChatWindow({
           onSubmit={handleSendEmail}
           onRefreshHistory={reloadSentEmailHistory}
           onStatusClose={() => setEmailStatus(null)}
+          onHistoryStatusClose={() => setEmailHistoryStatus(null)}
           onClose={() => setShowEmailSheet(false)}
         />
       ) : null}
@@ -1391,6 +1398,7 @@ function TeamEmailSheet({
   sending,
   loadingHistory,
   status,
+  historyStatus,
   sentEmails,
   audienceSummary,
   audienceMetadata,
@@ -1399,6 +1407,7 @@ function TeamEmailSheet({
   onSubmit,
   onRefreshHistory,
   onStatusClose,
+  onHistoryStatusClose,
   onClose
 }: {
   subject: string;
@@ -1406,6 +1415,7 @@ function TeamEmailSheet({
   sending: boolean;
   loadingHistory: boolean;
   status: ChatStatus | null;
+  historyStatus: ChatStatus | null;
   sentEmails: SentTeamEmail[];
   audienceSummary: string;
   audienceMetadata: ChatAudienceMetadata;
@@ -1414,6 +1424,7 @@ function TeamEmailSheet({
   onSubmit: (event?: FormEvent) => void;
   onRefreshHistory: () => void;
   onStatusClose: () => void;
+  onHistoryStatusClose: () => void;
   onClose: () => void;
 }) {
   const missingSelectedRecipients = audienceMetadata.targetType === 'individuals' && audienceMetadata.recipientIds.length === 0;
@@ -1471,6 +1482,7 @@ function TeamEmailSheet({
             Refresh
           </button>
         </div>
+        {historyStatus ? <StatusBanner status={historyStatus} onClose={onHistoryStatusClose} /> : null}
         <div className="mt-3 space-y-2">
           {loadingHistory && sentEmails.length === 0 ? (
             <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm font-bold text-gray-500">Loading sent emails...</div>
