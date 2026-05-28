@@ -35,6 +35,16 @@ describe('React app auth/profile capability parity', () => {
         expect(appRoutes).not.toContain('if (auth.loading) {');
     });
 
+    it('defaults a browser refresh on My Teams back to Home', () => {
+        const appRoutes = readProjectFile('apps/app/src/App.tsx');
+
+        expectContains(appRoutes, [
+            'location.pathname === \'/teams\'',
+            'isBrowserReload()',
+            'shouldDefaultReloadToHome ? <Navigate to="/home" replace />'
+        ]);
+    });
+
     it('hydrates team media upload grants into app auth users', () => {
         const authService = readProjectFile('apps/app/src/lib/authService.ts');
         const types = readProjectFile('apps/app/src/lib/types.ts');
