@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
+import { getCachedAppData, loadCachedAppData } from '../lib/appDataCache';
+import { startUxTimer } from '../lib/uxTiming';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
@@ -105,11 +107,28 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setLoading(true);
     setError(null);
     setStatusMessage(null);
+    const timer = startUxTimer('schedule summary load');
     try {
-      const result = await loadParentSchedule(auth.user, { hydrateDetails: false });
-      setChildren(result.children);
-      setEvents(result.events);
-      setLoading(false);
+      const cacheKey = 'app-schedule-summary'; // Placeholder for cache key
+      const scheduleCacheTtlMs = 60 * 1000 * 5; // Placeholder for cache TTL (5 minutes)
+      const force = false; // Placeholder for force refresh. Assuming initial refresh is not forced.
+      const cached = getCachedAppData(cacheKey); // Assuming getCachedAppData is available
+      const hasExistingSchedule = events.length > 0; // Check current state
+
+      const result = await loadCachedAppData(
+        cacheKey,
+        () => loadParentSchedule(auth.user, { hydrateDetails: false }),
+        { ttlMs: scheduleCacheTtlMs, force }
+      );
+
+      // Define applyScheduleResult here to access state setters
+      const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+        setChildren(data.children);
+        setEvents(data.events);
+      };
+      applyScheduleResult(result);
+
+      // Logic from HEAD that adjusts selectedPlayerId, selectedTeamId, and calendarMonth
       if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
         setSelectedPlayerId('');
       }
@@ -121,17 +140,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
         setCalendarMonth(new Date(firstUpcoming.date.getFullYear(), firstUpcoming.date.getMonth(), 1));
       }
 
-      void loadParentSchedule(auth.user)
-        .then((hydratedResult) => {
-          setChildren(hydratedResult.children);
-          setEvents(hydratedResult.events);
-        })
-        .catch((hydrateError: any) => {
-          console.warn('[app-schedule] Unable to hydrate schedule details:', hydrateError);
-        });
+      timer.end({
+        cacheHit: Boolean(cached) && !force,
+        force,
+        children: result.children.length,
+        eventRows: result.events.length,
+        groupedEvents: getCalendarScheduleEntries(result.events).length
+      });
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load schedule.');
-      setEvents([]);
+      if (!hasExistingSchedule) setEvents([]);
+      timer.end({ force: false, error: loadError?.message || 'Unable to load schedule.' }); // Use hardcoded false for force in catch
+    } finally {
       setLoading(false);
     }
   };
@@ -152,6 +172,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   }, [filter, selectedPlayerId, selectedTeamId, timeRange, view]);
 
   const calendarEntries = useMemo(() => getCalendarScheduleEntries(visibleEvents), [visibleEvents]);
+  const listEntries = calendarEntries;
   const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
   const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
   const selectedDayEntries = useMemo(() => {
@@ -164,13 +185,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
   }, [calendarEntries, selectedDay]);
 
   const counts = useMemo(() => ({
-    total: visibleEvents.length,
-    games: visibleEvents.filter((event) => event.type === 'game').length,
-    practices: visibleEvents.filter((event) => event.type === 'practice').length,
+    total: listEntries.length,
+    games: listEntries.filter((event) => event.type === 'game').length,
+    practices: listEntries.filter((event) => event.type === 'practice').length,
     rsvpNeeded: visibleEvents.filter((event) => event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded').length,
     packetsReady: packetRows.filter((row) => row.needsAction).length
-  }), [packetRows, visibleEvents]);
-  const webInsights = useMemo(() => buildScheduleWebInsights(visibleEvents), [visibleEvents]);
+  }), [listEntries, packetRows, visibleEvents]);
+  const webInsights = useMemo(() => buildScheduleWebInsights(listEntries), [listEntries]);
   const manageableTeamOptions = useMemo(() => (
     teamOptions.filter((team) => events.some((event) => event.teamId === team.teamId && event.isTeamStaff === true))
   ), [events, teamOptions]);
@@ -548,7 +569,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 setTimeRange('all');
               }}
             />
-            <ScheduleActionQueue events={visibleEvents} />
+            <ScheduleActionQueue events={listEntries} />
           </aside>
         ) : null}
 
@@ -617,13 +638,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : view === 'packets' ? (
             <PracticePacketsPanel rows={packetRows} />
           ) : view === 'compact' ? (
-            <CompactScheduleList events={visibleEvents} />
+            <CompactScheduleList events={listEntries} />
           ) : (
             <ScheduleList
-              events={visibleEvents}
+              events={listEntries}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
-              onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, visibleEvents.length))}
+              onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length))}
             />
           )}
         </div>
@@ -1143,7 +1164,7 @@ function LoadingSchedule() {
 }
 
 function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
-  events: ParentScheduleEvent[];
+  events: CalendarScheduleEntry[];
   visibleCount: number;
   pageSize: number;
   onShowMore: () => void;
@@ -1182,7 +1203,7 @@ function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
   );
 }
 
-function CompactScheduleList({ events }: { events: ParentScheduleEvent[] }) {
+function CompactScheduleList({ events }: { events: CalendarScheduleEntry[] }) {
   if (!events.length) {
     return (
       <div className="app-card p-8 text-center">
@@ -1209,7 +1230,7 @@ function CompactScheduleList({ events }: { events: ParentScheduleEvent[] }) {
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(event)}</div>
-                <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{event.childName} · {event.teamName} · {event.location || 'TBD'}</div>
+                <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{getScheduleChildLabel(event)} · {event.teamName} · {event.location || 'TBD'}</div>
               </div>
               <span className={`self-center rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
                 {rsvpLabels[rsvp]}
@@ -1284,6 +1305,7 @@ function ScheduleEventCard({ event }: {
   const metadataPills = getEventMetadataPills(event);
   const mapHref = getScheduleMapHref(event.location);
   const forecastHref = getScheduleForecastHref(event.location, event.date);
+  const childLabel = getScheduleChildLabel(event);
 
   return (
     <>
@@ -1299,7 +1321,7 @@ function ScheduleEventCard({ event }: {
               <h2 className={`truncate text-[15px] font-black leading-tight text-gray-950 ${event.isCancelled ? 'line-through' : ''}`}>{eventTitle}</h2>
             </div>
             <div className="mt-0.5 truncate text-xs font-bold leading-5 text-gray-600">
-              {event.childName} · {event.teamName}
+              {childLabel} · {event.teamName}
             </div>
             <div className="truncate text-xs font-semibold leading-5 text-gray-500">
               {event.location || 'TBD'}
@@ -1355,7 +1377,7 @@ function ScheduleEventCard({ event }: {
                 ) : null}
               </span>
             </div>
-            <div className="mt-1 text-xs font-semibold text-gray-500">For {event.childName} · {event.teamName}</div>
+            <div className="mt-1 text-xs font-semibold text-gray-500">For {childLabel} · {event.teamName}</div>
 
             {actionPills.length ? (
               <div className="schedule-card-pills mt-3 flex flex-wrap gap-1.5">
@@ -1387,6 +1409,13 @@ function getEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) 
   const params = new URLSearchParams();
   if (event.childId) params.set('childId', event.childId);
   return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${params.toString() ? `?${params}` : ''}`;
+}
+
+function getScheduleChildLabel(event: ParentScheduleEvent | CalendarScheduleEntry) {
+  const names = 'childNames' in event && event.childNames.length ? event.childNames : [];
+  if (names.length > 2) return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+  if (names.length) return names.join(', ');
+  return event.childName || 'Player';
 }
 
 function getEventPrimaryActionText(event: ParentScheduleEvent, rsvp: RsvpResponse) {

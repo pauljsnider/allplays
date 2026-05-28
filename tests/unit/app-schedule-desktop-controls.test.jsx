@@ -217,6 +217,24 @@ describe('React app desktop Schedule controls', () => {
         await waitForText(container, 'Calendar link removed and schedule refreshed.');
     });
 
+    it('groups duplicate family event rows into one visible schedule card', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+                { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [
+                event({ childId: 'player-1', childName: 'Pat', eventKey: 'team-1::game-1::player-1' }),
+                event({ childId: 'player-2', childName: 'Sam', eventKey: 'team-1::game-1::player-2' })
+            ]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Pat, Sam · Bears');
+
+        expect(container.querySelectorAll('.schedule-event-card')).toHaveLength(1);
+    });
+
     it('hides calendar import from parent-only teams and validates .ics input inline', async () => {
         const { container } = await renderSchedule();
         await waitForText(container, 'Main Gym');
