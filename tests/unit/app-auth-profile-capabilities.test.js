@@ -231,7 +231,47 @@ describe('React app auth/profile capability parity', () => {
         expect(turnOnGameDayAlerts).toContain('const currentPreferences = await loadNotificationPreferences(user.uid, teamId);');
         expect(turnOnGameDayAlerts).toContain('...currentPreferences,');
         expect(turnOnGameDayAlerts).not.toContain('...notificationPreferences,');
+        expect(turnOnGameDayAlerts.indexOf('await enablePushNotificationsForUser(user.uid);')).toBeLessThan(
+            turnOnGameDayAlerts.indexOf('saveNotificationPreferences(user.uid, teamId, nextPreferences)')
+        );
         expect(turnOnGameDayAlerts).toContain('saveNotificationPreferences(user.uid, teamId, nextPreferences)');
+    });
+
+    it('registers Profile game-day push on web and native devices before saving preferences', () => {
+        const pushService = readProjectFile('apps/app/src/lib/pushService.ts');
+
+        expectContains(pushService, [
+            "import { registerPushNotifications } from '../../../../js/push-notifications.js';",
+            'if (!Capacitor.isNativePlatform()) {',
+            'const { token } = await registerPushNotifications();',
+            'await saveNotificationDeviceToken(userId, {',
+            "platform: 'web'",
+            'FirebaseMessaging.requestPermissions()',
+            'getNativeMessagingToken()',
+            'platform = Capacitor.getPlatform()'
+        ]);
+        expect(pushService).not.toContain('Push registration for the web app still runs through the current website profile page.');
+    });
+
+    it('declares native push permissions and iOS registration hooks for the Profile CTA', () => {
+        const androidManifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
+        const iosEntitlements = readProjectFile('ios/App/App/App.entitlements');
+        const iosAppDelegate = readProjectFile('ios/App/App/AppDelegate.swift');
+
+        expectContains(androidManifest, [
+            'android.permission.POST_NOTIFICATIONS'
+        ]);
+        expectContains(iosEntitlements, [
+            'aps-environment',
+            '<string>development</string>'
+        ]);
+        expectContains(iosAppDelegate, [
+            'didRegisterForRemoteNotificationsWithDeviceToken',
+            'capacitorDidRegisterForRemoteNotifications',
+            'didFailToRegisterForRemoteNotificationsWithError',
+            'capacitorDidFailToRegisterForRemoteNotifications',
+            'didReceiveRemoteNotification'
+        ]);
     });
 
     it('covers team-chat.html messaging, conversations, media, reactions, targeting, and AI assistant features', () => {

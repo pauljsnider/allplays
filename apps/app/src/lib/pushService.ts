@@ -1,21 +1,32 @@
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging } from '@capacitor-firebase/messaging';
+import { registerPushNotifications } from '../../../../js/push-notifications.js';
 import { saveNotificationDeviceToken } from './profileService';
 
-type NativeRegistrationResult = {
+type PushRegistrationResult = {
   token: string;
   platform: string;
 };
 
 const nativePushTimeoutMs = 15000;
 
-export async function enablePushNotificationsForUser(userId: string): Promise<NativeRegistrationResult> {
+export async function enablePushNotificationsForUser(userId: string): Promise<PushRegistrationResult> {
   if (!userId) {
     throw new Error('No signed-in user is available for push registration.');
   }
 
   if (!Capacitor.isNativePlatform()) {
-    throw new Error('Push registration for the web app still runs through the current website profile page.');
+    const { token } = await registerPushNotifications();
+    await saveNotificationDeviceToken(userId, {
+      token,
+      platform: 'web',
+      userAgent: navigator.userAgent || ''
+    });
+
+    return {
+      token,
+      platform: 'web'
+    };
   }
 
   const supported = await FirebaseMessaging.isSupported().catch(() => ({ isSupported: true }));
