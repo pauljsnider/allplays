@@ -276,6 +276,46 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(shareCall.clipboardText).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
     });
 
+    it('renders the live period and clock chip beside the score for live games', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [
+                event({
+                    liveStatus: 'live',
+                    homeScore: 4,
+                    awayScore: 2,
+                    liveClockMs: 494000,
+                    liveClockRunning: false,
+                    liveClockPeriod: 'Q2',
+                    liveClockUpdatedAt: new Date('2026-05-28T07:10:00Z')
+                })
+            ]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Game hub');
+
+        expect(container.textContent).toContain('4-2');
+        expect(container.textContent).toContain('LIVE · Q2 · 08:14');
+        expect(container.querySelector('[aria-label="Live game clock"]')?.textContent).toBe('LIVE · Q2 · 08:14');
+    });
+
+    it('does not render a misleading clock chip for games without live clock data', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ liveStatus: 'scheduled', homeScore: 0, awayScore: 0 })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Game hub');
+
+        expect(container.textContent).toContain('0-0');
+        expect(container.querySelector('[aria-label="Live game clock"]')).toBeNull();
+        expect(container.textContent).not.toContain('00:00');
+    });
+
     it('lets authorized staff adjust and save the live score from the game hub', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [
