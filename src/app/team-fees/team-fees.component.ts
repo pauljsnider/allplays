@@ -13,7 +13,11 @@ interface TeamFee {
   recipientId: string;
   name: string;
   amount: number;
+  status: string;
   isPaid: boolean;
+  collectionMode: string;
+  canPayOnline: boolean;
+  offlinePaymentInstructions: string;
 }
 
 type ParentPlayerLink = {
@@ -34,6 +38,11 @@ type FeeRecipientData = {
   amountCents?: number;
   balanceDueCents?: number;
   status?: string;
+  collectionMode?: string;
+  offlinePaymentInstructions?: string;
+  paymentInstructions?: string;
+  manualPaymentInstructions?: string;
+  offlineInstructions?: string;
   paid?: boolean;
   isPaid?: boolean;
   teamId?: string;
@@ -92,11 +101,37 @@ function normalizeAmount(data: FeeRecipientData): number {
   return 0;
 }
 
+function getFeeStatus(data: FeeRecipientData): string {
+  return String(data.status || '').toLowerCase();
+}
+
 function isFeePaid(data: FeeRecipientData): boolean {
-  const status = String(data.status || '').toLowerCase();
+  const status = getFeeStatus(data);
   if (status === 'paid') return true;
   if (data.paid === true || data.isPaid === true) return true;
   return typeof data.balanceDueCents === 'number' && data.balanceDueCents <= 0;
+}
+
+function isFeeCanceled(data: FeeRecipientData): boolean {
+  return ['canceled', 'cancelled'].includes(getFeeStatus(data));
+}
+
+function normalizeCollectionMode(data: FeeRecipientData): string {
+  return String(data.collectionMode || '').toLowerCase();
+}
+
+function isOnlineStripeCollectionMode(collectionMode: string): boolean {
+  return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
+}
+
+function getOfflinePaymentInstructions(data: FeeRecipientData): string {
+  return String(
+    data.offlinePaymentInstructions
+    || data.paymentInstructions
+    || data.manualPaymentInstructions
+    || data.offlineInstructions
+    || ''
+  ).trim();
 }
 
 @Component({
@@ -199,6 +234,11 @@ export class TeamFeesComponent implements OnInit {
       const normalizedData = { ...data, teamId };
       if (parentPlayerKeys.size > 0 && !isAllowedParentFeeRecipient(normalizedData, userId, parentPlayerKeys)) return;
 
+      const collectionMode = normalizeCollectionMode(data);
+      const isPaid = isFeePaid(data);
+      const isCanceled = isFeeCanceled(data);
+      const canPayOnline = !isPaid && !isCanceled && isOnlineStripeCollectionMode(collectionMode) && Boolean(teamId && batchId && docSnap.id);
+
       feesByPath.set(docSnap.ref.path, {
         id: docSnap.id,
         teamId,
@@ -206,7 +246,11 @@ export class TeamFeesComponent implements OnInit {
         recipientId: docSnap.id,
         name: data.title || data.feeTitle || data.name || 'Team Fee',
         amount: normalizeAmount(data),
-        isPaid: isFeePaid(data)
+        status: isCanceled ? 'canceled' : isPaid ? 'paid' : 'unpaid',
+        isPaid,
+        collectionMode,
+        canPayOnline,
+        offlinePaymentInstructions: getOfflinePaymentInstructions(data)
       });
     });
 
@@ -232,7 +276,7 @@ export class TeamFeesComponent implements OnInit {
   }
 
   async handlePayFee(fee: TeamFee): Promise<void> {
-    if (this.isPaymentPending()) {
+    if (this.isPaymentPending() || !fee.canPayOnline) {
       return;
     }
 

@@ -101,7 +101,11 @@ describe('TeamFeesComponent checkout flow', () => {
         recipientId: 'recipient-real',
         name: 'Spring registration',
         amount: 125,
-        isPaid: false
+        status: 'unpaid',
+        isPaid: false,
+        collectionMode: '',
+        canPayOnline: false,
+        offlinePaymentInstructions: ''
       },
       {
         id: 'recipient-paid',
@@ -110,7 +114,11 @@ describe('TeamFeesComponent checkout flow', () => {
         recipientId: 'recipient-paid',
         name: 'Uniform fee',
         amount: 50,
-        isPaid: true
+        status: 'paid',
+        isPaid: true,
+        collectionMode: '',
+        canPayOnline: false,
+        offlinePaymentInstructions: ''
       }
     ]);
     expect(component.isLoadingFees).toBe(false);
@@ -138,7 +146,11 @@ describe('TeamFeesComponent checkout flow', () => {
         recipientId: 'recipient-real',
         name: 'Spring registration',
         amount: 125,
-        isPaid: false
+        status: 'unpaid',
+        isPaid: false,
+        collectionMode: '',
+        canPayOnline: false,
+        offlinePaymentInstructions: ''
       }
     ]);
   });
@@ -176,7 +188,11 @@ describe('TeamFeesComponent checkout flow', () => {
         recipientId: 'player-real',
         name: 'Roster fee',
         amount: 75,
-        isPaid: false
+        status: 'unpaid',
+        isPaid: false,
+        collectionMode: '',
+        canPayOnline: false,
+        offlinePaymentInstructions: ''
       }
     ]);
   });
@@ -212,20 +228,101 @@ describe('TeamFeesComponent checkout flow', () => {
     expect(template).toContain('*ngIf="isLoadingFees; else feesReady"');
   });
 
-  it('renders a Pay Team Fee button only for unpaid fees', async () => {
+  it('renders a Pay Team Fee button only for unpaid online Stripe fees', async () => {
     mockGetDocs.mockResolvedValueOnce({
       docs: [feeDoc('teams/team-real/feeBatches/batch-real/feeRecipients/recipient-real', 'recipient-real', {
         title: 'Spring registration',
         balanceDueCents: 12500,
-        status: 'unpaid'
+        status: 'unpaid',
+        collectionMode: 'online_stripe'
       })]
     });
 
     await component.ngOnInit();
 
-    expect(template).toContain('*ngIf="!fee.isPaid"');
+    expect(template).toContain('*ngIf="fee.canPayOnline"');
     expect(template).toContain('Pay Team Fee');
-    expect(component.teamFees.filter((fee) => !fee.isPaid)).toHaveLength(1);
+    expect(component.teamFees.filter((fee) => fee.canPayOnline)).toHaveLength(1);
+
+    const originalWindow = globalThis.window;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { href: 'https://allplays.test/team-fees' } }
+    });
+
+    await component.handlePayFee(component.teamFees[0]);
+
+    expect(stripeService.initiateTeamFeeCheckout).toHaveBeenCalledWith('team-real', 'batch-real', 'recipient-real');
+    expect(globalThis.window.location.href).toBe('https://checkout.stripe.com/team-fee-session');
+
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: originalWindow
+    });
+  });
+
+  it('maps unpaid offline manual fees without a pay action and keeps offline instructions', async () => {
+    const offlineFee = feeDoc('teams/team-real/feeBatches/batch-real/feeRecipients/recipient-offline', 'recipient-offline', {
+      parentUserId: 'parent-123',
+      title: 'Cash registration',
+      balanceDueCents: 6500,
+      status: 'unpaid',
+      collectionMode: 'offline_manual',
+      offlinePaymentInstructions: 'Bring cash or check to practice.'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [offlineFee] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(template).toContain('offline-payment-instructions');
+    expect(template).toContain('fee.offlinePaymentInstructions');
+    expect(template).toContain('*ngIf="fee.canPayOnline"');
+    expect(component.teamFees).toEqual([
+      {
+        id: 'recipient-offline',
+        teamId: 'team-real',
+        batchId: 'batch-real',
+        recipientId: 'recipient-offline',
+        name: 'Cash registration',
+        amount: 65,
+        status: 'unpaid',
+        isPaid: false,
+        collectionMode: 'offline_manual',
+        canPayOnline: false,
+        offlinePaymentInstructions: 'Bring cash or check to practice.'
+      }
+    ]);
+  });
+
+  it('does not allow paid or canceled fees to start checkout regardless of collection mode', async () => {
+    const paidFee = feeDoc('teams/team-real/feeBatches/batch-paid/feeRecipients/recipient-paid', 'recipient-paid', {
+      parentUserId: 'parent-123',
+      title: 'Paid registration',
+      balanceDueCents: 0,
+      status: 'paid',
+      collectionMode: 'online_stripe'
+    });
+    const canceledFee = feeDoc('teams/team-real/feeBatches/batch-canceled/feeRecipients/recipient-canceled', 'recipient-canceled', {
+      parentUserId: 'parent-123',
+      title: 'Canceled registration',
+      balanceDueCents: 6500,
+      status: 'canceled',
+      collectionMode: 'online_stripe'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [paidFee, canceledFee] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(component.teamFees.map((fee) => ({ id: fee.id, status: fee.status, canPayOnline: fee.canPayOnline }))).toEqual([
+      { id: 'recipient-paid', status: 'paid', canPayOnline: false },
+      { id: 'recipient-canceled', status: 'canceled', canPayOnline: false }
+    ]);
   });
 
   it('passes the selected fee recipient IDs to StripeService before redirecting', async () => {
@@ -236,7 +333,11 @@ describe('TeamFeesComponent checkout flow', () => {
       recipientId: 'recipient-real',
       name: 'Spring registration',
       amount: 125,
-      isPaid: false
+      status: 'unpaid',
+      isPaid: false,
+      collectionMode: 'online_stripe',
+      canPayOnline: true,
+      offlinePaymentInstructions: ''
     };
     component.teamFees = [selectedFee];
 
@@ -262,8 +363,8 @@ describe('TeamFeesComponent checkout flow', () => {
   });
 
   it('scopes the initiating payment state to the selected unpaid fee', async () => {
-    const selectedFee = { id: 'recipient-real', teamId: 'team-real', batchId: 'batch-real', recipientId: 'recipient-real', name: 'Registration', amount: 125, isPaid: false };
-    const otherUnpaidFee = { id: 'recipient-other', teamId: 'team-real', batchId: 'batch-other', recipientId: 'recipient-other', name: 'Tournament', amount: 75, isPaid: false };
+    const selectedFee = { id: 'recipient-real', teamId: 'team-real', batchId: 'batch-real', recipientId: 'recipient-real', name: 'Registration', amount: 125, status: 'unpaid', isPaid: false, collectionMode: 'online_stripe', canPayOnline: true, offlinePaymentInstructions: '' };
+    const otherUnpaidFee = { id: 'recipient-other', teamId: 'team-real', batchId: 'batch-other', recipientId: 'recipient-other', name: 'Tournament', amount: 75, status: 'unpaid', isPaid: false, collectionMode: 'online_stripe', canPayOnline: true, offlinePaymentInstructions: '' };
     let resolveCheckout: (checkoutUrl: string) => void = () => undefined;
     stripeService.initiateTeamFeeCheckout.mockReturnValue(new Promise((resolve) => {
       resolveCheckout = resolve;
@@ -297,8 +398,8 @@ describe('TeamFeesComponent checkout flow', () => {
   });
 
   it('ignores overlapping checkout attempts while another fee payment is pending', async () => {
-    const selectedFee = { id: 'recipient-real', teamId: 'team-real', batchId: 'batch-real', recipientId: 'recipient-real', name: 'Registration', amount: 125, isPaid: false };
-    const otherUnpaidFee = { id: 'recipient-other', teamId: 'team-real', batchId: 'batch-other', recipientId: 'recipient-other', name: 'Tournament', amount: 75, isPaid: false };
+    const selectedFee = { id: 'recipient-real', teamId: 'team-real', batchId: 'batch-real', recipientId: 'recipient-real', name: 'Registration', amount: 125, status: 'unpaid', isPaid: false, collectionMode: 'online_stripe', canPayOnline: true, offlinePaymentInstructions: '' };
+    const otherUnpaidFee = { id: 'recipient-other', teamId: 'team-real', batchId: 'batch-other', recipientId: 'recipient-other', name: 'Tournament', amount: 75, status: 'unpaid', isPaid: false, collectionMode: 'online_stripe', canPayOnline: true, offlinePaymentInstructions: '' };
     let resolveCheckout: (checkoutUrl: string) => void = () => undefined;
     stripeService.initiateTeamFeeCheckout.mockReturnValue(new Promise((resolve) => {
       resolveCheckout = resolve;
@@ -332,8 +433,8 @@ describe('TeamFeesComponent checkout flow', () => {
   });
 
   it('resets only the selected fee loading state and shows the existing error on checkout failure', async () => {
-    const selectedFee = { id: 'recipient-real', teamId: 'team-real', batchId: 'batch-real', recipientId: 'recipient-real', name: 'Registration', amount: 125, isPaid: false };
-    const otherUnpaidFee = { id: 'recipient-other', teamId: 'team-real', batchId: 'batch-other', recipientId: 'recipient-other', name: 'Tournament', amount: 75, isPaid: false };
+    const selectedFee = { id: 'recipient-real', teamId: 'team-real', batchId: 'batch-real', recipientId: 'recipient-real', name: 'Registration', amount: 125, status: 'unpaid', isPaid: false, collectionMode: 'online_stripe', canPayOnline: true, offlinePaymentInstructions: '' };
+    const otherUnpaidFee = { id: 'recipient-other', teamId: 'team-real', batchId: 'batch-other', recipientId: 'recipient-other', name: 'Tournament', amount: 75, status: 'unpaid', isPaid: false, collectionMode: 'online_stripe', canPayOnline: true, offlinePaymentInstructions: '' };
     stripeService.initiateTeamFeeCheckout.mockRejectedValue(new Error('Stripe unavailable'));
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
