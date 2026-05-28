@@ -126,6 +126,7 @@ export type TeamDetailModel = {
   leaderboards: TeamDetailLeaderboard[];
   trackingSummaries: TeamDetailTrackingSummary[];
   sponsors: TeamDetailSponsor[];
+  canManageTeam: boolean;
   staffPermissions: TeamStaffPermissionsSummary | null;
   counts: {
     games: number;
@@ -404,7 +405,8 @@ export function buildTeamDetailModel({
   const standings = buildStandings(team, games);
   const leaderboards = buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport);
   const trackingSummaries = buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses);
-  const staffPermissions = hasFullTeamAccess(user, team)
+  const canManageTeam = hasFullTeamAccess(user, team);
+  const staffPermissions = canManageTeam
     ? buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites)
     : null;
 
@@ -441,6 +443,7 @@ export function buildTeamDetailModel({
     leaderboards,
     trackingSummaries,
     sponsors: sponsors.slice(0, 4),
+    canManageTeam,
     staffPermissions,
     counts: {
       games: games.filter((game: any) => game?.type !== 'practice').length,

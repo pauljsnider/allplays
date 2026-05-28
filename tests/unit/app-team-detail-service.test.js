@@ -79,6 +79,7 @@ describe('React app team detail model', () => {
         expect(model.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
         expect(model.trackingSummaries[0].items[0]).toMatchObject({ title: 'Bring ball', isComplete: true });
         expect(model.sponsors[0].imageUrl).toBe('https://img.example.test/pizza.png');
+        expect(model.canManageTeam).toBe(false);
     });
 
     it('normalizes edge cases for linked players, events, streams, registration, and sponsors', () => {
@@ -165,6 +166,7 @@ describe('React app team detail model', () => {
             ]
         });
 
+        expect(adminModel.canManageTeam).toBe(true);
         expect(adminModel.staffPermissions.staff).toEqual([
             { label: 'owner@example.com', role: 'Owner' },
             { label: 'coach@example.com', role: 'Admin' }
@@ -182,6 +184,7 @@ describe('React app team detail model', () => {
             team,
             user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] }
         });
+        expect(parentModel.canManageTeam).toBe(false);
         expect(parentModel.staffPermissions).toBeNull();
     });
 
