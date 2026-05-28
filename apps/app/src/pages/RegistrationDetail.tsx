@@ -70,7 +70,8 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, teamId, formId, reloadKey]);
 
   const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
-  const paymentPlanChoices: any[] = useMemo(() => form ? (form.paymentPlans || getPaymentPlanChoices(form)) : [], [form]);
+  const paymentPlanChoices: any[] = useMemo(() => form ? ((Array.isArray(form.paymentPlans) && form.paymentPlans.length) ? form.paymentPlans : getPaymentPlanChoices(form)) : [], [form]);
+  const showPaymentPlanSelector = paymentPlanChoices.length > 1;
   const selectedOption = activeOptions.find((option) => option.id === selectedOptionId) || null;
   const placement = useMemo(() => {
     if (!form || !requiresRegistrationOption(form) || !selectedOptionId) return null;
@@ -219,13 +220,15 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
             </label>
           ) : null}
 
-          <label className="min-w-0">
-            <span className="app-label">Payment plan</span>
-            <select className="auth-input mt-1" data-payment-plan value={selectedPaymentPlanId} onChange={(event) => setSelectedPaymentPlanId(event.target.value)} disabled={saving}>
-              {paymentPlanChoices.map((plan) => <option key={plan.id} value={plan.id}>{plan.title}</option>)}
-            </select>
-            {fieldErrors.paymentPlan ? <InlineError message={fieldErrors.paymentPlan} /> : null}
-          </label>
+          {showPaymentPlanSelector ? (
+            <label className="min-w-0">
+              <span className="app-label">Payment plan</span>
+              <select className="auth-input mt-1" data-payment-plan value={selectedPaymentPlanId} onChange={(event) => setSelectedPaymentPlanId(event.target.value)} disabled={saving}>
+                {paymentPlanChoices.map((plan) => <option key={plan.id} value={plan.id}>{plan.title}</option>)}
+              </select>
+              {fieldErrors.paymentPlan ? <InlineError message={fieldErrors.paymentPlan} /> : null}
+            </label>
+          ) : null}
 
           {form.waiverText ? (
             <div className="space-y-2">
