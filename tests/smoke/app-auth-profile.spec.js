@@ -373,6 +373,9 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             contentType: 'application/javascript',
             body: `
                 export async function openPublicUrl() {}
+                export async function copyPublicText() {
+                    return 'copied';
+                }
                 export async function sharePublicUrl() {
                     return 'shared';
                 }

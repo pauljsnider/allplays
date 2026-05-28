@@ -52,6 +52,9 @@ async function mockSearchModules(page) {
                 export async function openPublicUrl(url) {
                     window.__openedPublicUrls.push(String(url));
                 }
+                export async function copyPublicText() {
+                    return 'copied';
+                }
                 export async function sharePublicUrl() {
                     return 'shared';
                 }
