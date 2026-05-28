@@ -8,6 +8,7 @@ const teamDetailMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn()
 }));
 const publicActionMocks = vi.hoisted(() => ({
+    copyPublicText: vi.fn(),
     openPublicUrl: vi.fn()
 }));
 
@@ -16,7 +17,7 @@ vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
 }));
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 
-import { TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
+import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl, TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -89,6 +90,8 @@ function model() {
             items: [{ id: 'item-1', title: 'Bring ball', description: 'For warmups', isComplete: false }]
         }],
         sponsors: [{ id: 'sponsor-1', name: 'Pizza Place', description: 'After the game', imageUrl: 'https://img.example.test/pizza.png', websiteUrl: 'https://pizza.example.test' }],
+        canManageTeam: false,
+        staffPermissions: null,
         counts: { games: 8, practices: 3, completedGames: 7 }
     };
 }
@@ -149,6 +152,7 @@ beforeEach(() => {
         callback(0);
         return 0;
     };
+    publicActionMocks.copyPublicText.mockResolvedValue('copied');
     teamDetailMocks.loadParentTeamDetail.mockResolvedValue(model());
 });
 
@@ -157,6 +161,11 @@ afterEach(() => {
 });
 
 describe('React app TeamDetail page', () => {
+    it('builds scoreboard widget URL and iframe embed code', () => {
+        expect(buildScoreboardWidgetUrl('team 1/blue', 'https://club.example.test/app/')).toBe('https://club.example.test/widget-scoreboard.html?teamId=team+1%2Fblue');
+        expect(buildScoreboardWidgetEmbedCode({ id: 'team 1/blue', name: 'Bears & Wolves' }, 'https://club.example.test/app/')).toBe('<iframe src="https://club.example.test/widget-scoreboard.html?teamId=team+1%2Fblue" title="Bears &amp; Wolves live scoreboard" style="width: 100%; max-width: 720px; height: 480px; border: 0;" loading="lazy"></iframe>');
+    });
+
     it('loads parent-facing team.html features with team and player photos', async () => {
         const { container } = await renderTeamDetail();
 
@@ -191,6 +200,36 @@ describe('React app TeamDetail page', () => {
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://youtube.example.test/watch');
         await clickLink(container, 'Pizza Place');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pizza.example.test');
+    });
+
+    it('renders scoreboard widget copy tools only for managers', async () => {
+        const managerModel = model();
+        managerModel.canManageTeam = true;
+        managerModel.team.id = 'team 1/blue';
+        managerModel.team.name = 'Bears & Wolves';
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+
+        const { container } = await renderTeamDetail();
+
+        await clickButton(container, 'More');
+        expect(container.textContent).toContain('Scoreboard widget');
+        const expectedUrl = 'http://localhost:3000/widget-scoreboard.html?teamId=team+1%2Fblue';
+        const expectedEmbed = '<iframe src="http://localhost:3000/widget-scoreboard.html?teamId=team+1%2Fblue" title="Bears &amp; Wolves live scoreboard" style="width: 100%; max-width: 720px; height: 480px; border: 0;" loading="lazy"></iframe>';
+        expect(container.querySelector('#scoreboard-widget-embed').value).toBe(expectedEmbed);
+
+        await clickButton(container, 'Copy Embed Code');
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(expectedEmbed);
+        expect(container.textContent).toContain('Embed code copied.');
+
+        await clickButton(container, 'Copy Link');
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(expectedUrl);
+        expect(container.textContent).toContain('Widget link copied.');
+
+        const parentModel = model();
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(parentModel);
+        const hidden = await renderTeamDetail();
+        await clickButton(hidden.container, 'More');
+        expect(hidden.container.textContent).not.toContain('Scoreboard widget');
     });
 
     it('exposes schedule, parent action links, and recent scores', async () => {
