@@ -14,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Share2,
+  Trash2,
   Upload,
   Video
 } from 'lucide-react';
@@ -24,6 +25,7 @@ import {
   loadTeamMediaForApp,
   uploadParentTeamMediaFile,
   uploadParentTeamMediaPhoto,
+  deleteTeamMediaItemForApp,
   type TeamMediaFolder,
   type TeamMediaItem,
   type TeamMediaModel
@@ -44,6 +46,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState('');
   const [creatingAlbum, setCreatingAlbum] = useState(false);
+  const [deletingItemId, setDeletingItemId] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -64,6 +67,26 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       if (showLoading) setModel(null);
     } finally {
       if (showLoading) setLoading(false);
+    }
+  };
+
+  const handleDeleteItem = async (item: TeamMediaItem) => {
+    if (!teamId || !item?.id) return;
+    if (!window.confirm(`Are you sure you want to delete ${item.title || 'this media item'}? This cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingItemId(item.id);
+    setError('');
+    setMessage('');
+    try {
+      await deleteTeamMediaItemForApp(teamId, item);
+      setMessage('Media item deleted.');
+      await refresh({ showLoading: false });
+    } catch (deleteError: any) {
+      setError(deleteError?.message || 'Unable to delete media item.');
+    } finally {
+      setDeletingItemId('');
     }
   };
 
@@ -317,14 +340,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.length ? filteredItems.map((item) => (
-            <MediaItemCard
-              key={item.id}
-              item={item}
-              onStatus={(tone, statusMessage) => {
-                setError(tone === 'error' ? statusMessage : '');
-                setMessage(tone === 'success' ? statusMessage : '');
-              }}
-            />
+            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} currentUserId={auth.user?.uid || ''} deleting={deletingItemId === item.id} onDeleteItem={handleDeleteItem} />
           )) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
@@ -372,10 +388,25 @@ function getMediaTypeCounts(items: TeamMediaItem[]) {
   };
 }
 
-function MediaItemCard({ item, onStatus }: { item: TeamMediaItem; onStatus: (tone: 'error' | 'success', message: string) => void }) {
+function TeamMediaItemCard({
+  item,
+  onStatus,
+  canManage,
+  currentUserId,
+  deleting,
+  onDeleteItem
+}: {
+  item: TeamMediaItem;
+  onStatus: (tone: 'error' | 'success', message: string) => void;
+  canManage: boolean;
+  currentUserId: string;
+  deleting: boolean;
+  onDeleteItem: (item: TeamMediaItem) => void;
+}) {
   const Icon = getItemIcon(item);
   const isPhoto = item.type === 'photo';
   const title = item.title || 'Team media';
+  const canDelete = canManage || (['photo', 'file'].includes(String(item.type || '').toLowerCase()) && item.uploadedBy === currentUserId);
 
   const copyLink = async () => {
     try {
@@ -441,6 +472,12 @@ function MediaItemCard({ item, onStatus }: { item: TeamMediaItem; onStatus: (ton
             <Copy className="h-3.5 w-3.5" aria-hidden="true" />
             Copy
           </button>
+          {canDelete && (
+            <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-60" onClick={() => onDeleteItem(item)} disabled={deleting} aria-label={`Delete ${title}`}>
+              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+              {deleting ? 'Deleting' : 'Delete'}
+            </button>
+          )}
         </div>
       </div>
     </article>
