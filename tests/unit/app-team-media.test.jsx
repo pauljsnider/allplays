@@ -1,0 +1,149 @@
+// @vitest-environment jsdom
+import React, { act } from '../../apps/app/node_modules/react/index.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
+import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
+
+const parentToolsServiceMocks = vi.hoisted(() => ({
+  addParentTeamMediaLink: vi.fn(),
+  createTeamMediaAlbumForApp: vi.fn(),
+  loadTeamMediaForApp: vi.fn(),
+  uploadParentTeamMediaFile: vi.fn(),
+  uploadParentTeamMediaPhoto: vi.fn(),
+  deleteTeamMediaItemForApp: vi.fn(),
+  updateTeamMediaItemForApp: vi.fn(),
+}));
+
+const publicActionsMocks = vi.hoisted(() => ({
+  openPublicUrl: vi.fn(),
+  sharePublicUrl: vi.fn().mockResolvedValue('shared'),
+}));
+
+vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
+vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
+
+import { TeamMedia } from '../../apps/app/src/pages/TeamMedia.tsx';
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+const auth = {
+  user: {
+    uid: 'user-1',
+    email: 'parent@example.com',
+    displayName: 'Pat Parent',
+  },
+  profile: {},
+  loading: false,
+  error: null,
+  roles: ['parent'],
+  isParent: true,
+  isCoach: false,
+  isAdmin: false,
+  isPlatformAdmin: false,
+  refresh: async () => {},
+  signOut: async () => {},
+};
+
+const mediaModel = (overrides = {}) => ({
+  team: { id: 'team-1', name: 'Bears' },
+  canManage: false,
+  canContribute: false,
+  folders: [{
+    id: 'folder-1',
+    name: 'Game media',
+    visibility: 'team',
+    itemCount: 2,
+    items: [
+      { id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' },
+      { id: 'other-file', title: 'Scouting PDF', type: 'file', url: 'https://example.test/scout.pdf', uploadedBy: 'user-2' },
+    ],
+  }],
+  ...overrides,
+});
+
+async function renderTeamMedia(model = mediaModel()) {
+  parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValue(model);
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  await act(async () => {
+    root.render(
+      <MemoryRouter initialEntries={["/teams/team-1/media"]}>
+        <Routes>
+          <Route path="/teams/:teamId/media" element={<TeamMedia auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+  });
+  await act(async () => {});
+
+  return { container, root };
+}
+
+function click(button) {
+  act(() => {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  });
+}
+
+function inputValue(input, value) {
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  parentToolsServiceMocks.updateTeamMediaItemForApp.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
+describe('React app TeamMedia rename flow', () => {
+  it('shows Rename only for managers or the original uploader', async () => {
+    const { container, root } = await renderTeamMedia();
+
+    expect(container.querySelector('[aria-label="Rename Tipoff"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Rename Scouting PDF"]')).toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  it('saves a trimmed rename and updates the rendered card title', async () => {
+    const { container, root } = await renderTeamMedia();
+
+    click(container.querySelector('[aria-label="Rename Tipoff"]'));
+    inputValue(container.querySelector('[aria-label="Media item title"]'), '  Opening tip  ');
+    await act(async () => {
+      container.querySelector('button.primary-button').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(parentToolsServiceMocks.updateTeamMediaItemForApp).toHaveBeenCalledWith('team-1', 'owned-photo', 'Opening tip');
+    expect(container.textContent).toContain('Opening tip');
+    expect(container.textContent).toContain('Media item renamed.');
+
+    await act(async () => root.unmount());
+  });
+
+  it('rejects blank rename attempts and keeps the old title visible', async () => {
+    const { container, root } = await renderTeamMedia();
+
+    click(container.querySelector('[aria-label="Rename Tipoff"]'));
+    inputValue(container.querySelector('[aria-label="Media item title"]'), '   ');
+    await act(async () => {
+      container.querySelector('button.primary-button').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(parentToolsServiceMocks.updateTeamMediaItemForApp).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Tipoff');
+    expect(container.textContent).toContain('Media item title cannot be empty.');
+
+    await act(async () => root.unmount());
+  });
+});

@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   ExternalLink,
+  Edit3,
   File,
   ImageIcon,
   LinkIcon,
@@ -26,6 +27,7 @@ import {
   uploadParentTeamMediaFile,
   uploadParentTeamMediaPhoto,
   deleteTeamMediaItemForApp,
+  updateTeamMediaItemForApp,
   type TeamMediaFolder,
   type TeamMediaItem,
   type TeamMediaModel
@@ -47,6 +49,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [uploading, setUploading] = useState('');
   const [creatingAlbum, setCreatingAlbum] = useState(false);
   const [deletingItemId, setDeletingItemId] = useState('');
+  const [renamingItemId, setRenamingItemId] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -67,6 +70,36 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       if (showLoading) setModel(null);
     } finally {
       if (showLoading) setLoading(false);
+    }
+  };
+
+  const handleRenameItem = async (item: TeamMediaItem, nextTitle: string) => {
+    if (!teamId || !item?.id) return;
+
+    const cleanTitle = nextTitle.trim();
+    if (!cleanTitle) {
+      setError('Media item title cannot be empty.');
+      setMessage('');
+      return;
+    }
+
+    setRenamingItemId(item.id);
+    setError('');
+    setMessage('');
+    try {
+      await updateTeamMediaItemForApp(teamId, item.id, cleanTitle);
+      setModel((current) => current ? {
+        ...current,
+        folders: current.folders.map((folder) => ({
+          ...folder,
+          items: folder.items.map((folderItem) => folderItem.id === item.id ? { ...folderItem, title: cleanTitle } : folderItem)
+        }))
+      } : current);
+      setMessage('Media item renamed.');
+    } catch (renameError: any) {
+      setError(renameError?.message || 'Unable to rename media item.');
+    } finally {
+      setRenamingItemId('');
     }
   };
 
@@ -362,7 +395,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.length ? filteredItems.map((item) => (
-            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} currentUserId={auth.user?.uid || ''} deleting={deletingItemId === item.id} onDeleteItem={handleDeleteItem} />
+            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} currentUserId={auth.user?.uid || ''} deleting={deletingItemId === item.id} renaming={renamingItemId === item.id} onRenameItem={handleRenameItem} onDeleteItem={handleDeleteItem} />
           )) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
@@ -427,6 +460,8 @@ function TeamMediaItemCard({
   canManage,
   currentUserId,
   deleting,
+  renaming,
+  onRenameItem,
   onDeleteItem
 }: {
   item: TeamMediaItem;
@@ -434,12 +469,32 @@ function TeamMediaItemCard({
   canManage: boolean;
   currentUserId: string;
   deleting: boolean;
+  renaming: boolean;
+  onRenameItem: (item: TeamMediaItem, title: string) => Promise<void>;
   onDeleteItem: (item: TeamMediaItem) => void;
 }) {
   const Icon = getItemIcon(item);
   const isPhoto = item.type === 'photo';
   const title = item.title || 'Team media';
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(title);
+  const canRename = canManage || item.uploadedBy === currentUserId;
   const canDelete = canManage || (['photo', 'file'].includes(String(item.type || '').toLowerCase()) && item.uploadedBy === currentUserId);
+
+  const startRename = () => {
+    setDraftTitle(title);
+    setIsRenaming(true);
+  };
+
+  const saveRename = async () => {
+    const cleanTitle = draftTitle.trim();
+    if (!cleanTitle) {
+      onStatus('error', 'Media item title cannot be empty.');
+      return;
+    }
+    await onRenameItem(item, cleanTitle);
+    setIsRenaming(false);
+  };
 
   const copyLink = async () => {
     try {
@@ -488,6 +543,26 @@ function TeamMediaItemCard({
           <Icon className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate text-sm font-black text-gray-950">{title}</span>
         </div>
+        {isRenaming ? (
+          <div className="mt-3 rounded-xl border border-primary-100 bg-primary-50 p-2">
+            <label className="sr-only" htmlFor={`rename-media-${item.id}`}>Media item title</label>
+            <input
+              id={`rename-media-${item.id}`}
+              className="auth-input min-h-10 w-full bg-white"
+              value={draftTitle}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              disabled={renaming}
+              aria-label="Media item title"
+            />
+            <div className="mt-2 flex gap-2">
+              <button type="button" className="primary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={saveRename} disabled={renaming}>
+                {renaming ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                Save
+              </button>
+              <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => setIsRenaming(false)} disabled={renaming}>Cancel</button>
+            </div>
+          </div>
+        ) : null}
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className="secondary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => openPublicUrl(item.url)} aria-label={`Open ${title}`}>
             <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
@@ -505,6 +580,12 @@ function TeamMediaItemCard({
             <Copy className="h-3.5 w-3.5" aria-hidden="true" />
             Copy
           </button>
+          {canRename && (
+            <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={startRename} disabled={renaming} aria-label={`Rename ${title}`}>
+              <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
+              Rename
+            </button>
+          )}
           {canDelete && (
             <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-60" onClick={() => onDeleteItem(item)} disabled={deleting} aria-label={`Delete ${title}`}>
               {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
