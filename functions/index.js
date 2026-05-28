@@ -2414,9 +2414,9 @@ function normalizeScheduleStatus(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-function formatScheduleUpdateDate(value, timeZone = 'UTC') {
+function formatScheduleUpdateDate(value, timeZone) {
   const date = coerceDate(value);
-  if (!date) return '';
+  if (!date || !timeZone) return '';
   return date.toLocaleString('en-US', {
     weekday: 'short',
     month: 'short',
@@ -2452,7 +2452,7 @@ function buildScheduleUpdateNotificationPayload(beforeGame, afterGame) {
   }
 
   if (dateChanged) {
-    const dateText = formatScheduleUpdateDate(afterGame?.date, afterGame?.timeZone || beforeGame?.timeZone || 'UTC');
+    const dateText = formatScheduleUpdateDate(afterGame?.date, afterGame?.timeZone || beforeGame?.timeZone);
     return {
       title: 'Schedule update',
       body: truncateNotificationBody(dateText

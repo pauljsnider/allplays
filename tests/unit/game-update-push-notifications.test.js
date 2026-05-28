@@ -33,14 +33,27 @@ describe('game schedule update push notifications', () => {
 
     it('builds a date/time payload with the new event time', () => {
         const payload = buildScheduleUpdateNotificationPayload(
-            { title: 'Practice', date: '2026-03-10T22:00:00.000Z' },
-            { title: 'Practice', date: '2026-03-11T00:30:00.000Z', timeZone: 'America/Chicago' }
+            { title: 'Practice', date: '2026-01-10T22:00:00.000Z' },
+            { title: 'Practice', date: '2026-01-11T01:30:00.000Z', timeZone: 'America/Chicago' }
         );
 
         expect(payload.title).toBe('Schedule update');
         expect(payload.body).toContain('Practice moved to');
-        expect(payload.body).toContain('Tue, Mar 10');
+        expect(payload.body).toContain('Sat, Jan 10');
         expect(payload.body).toContain('7:30 PM');
+        expect(payload.body.length).toBeLessThanOrEqual(120);
+    });
+
+    it('omits date/time details when no timezone is available', () => {
+        const payload = buildScheduleUpdateNotificationPayload(
+            { title: 'Practice', date: '2026-03-10T22:00:00.000Z' },
+            { title: 'Practice', date: '2026-03-11T00:30:00.000Z' }
+        );
+
+        expect(payload.title).toBe('Schedule update');
+        expect(payload.body).toBe('Practice date/time changed. Tap to review.');
+        expect(payload.body).not.toContain('UTC');
+        expect(payload.body).not.toContain('PM');
         expect(payload.body.length).toBeLessThanOrEqual(120);
     });
 
