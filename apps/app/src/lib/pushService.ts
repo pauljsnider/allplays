@@ -1,6 +1,5 @@
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging } from '@capacitor-firebase/messaging';
-import { registerPushNotifications } from '../../../../js/push-notifications.js';
 import { saveNotificationDeviceToken } from './profileService';
 
 type PushRegistrationResult = {
@@ -16,6 +15,7 @@ export async function enablePushNotificationsForUser(userId: string): Promise<Pu
   }
 
   if (!Capacitor.isNativePlatform()) {
+    const { registerPushNotifications } = await import('../../../../js/push-notifications.js');
     const { token } = await registerPushNotifications();
     await saveNotificationDeviceToken(userId, {
       token,
