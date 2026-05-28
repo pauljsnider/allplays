@@ -18,7 +18,8 @@ import {
   updateFamilyShareTokenCalendars,
   uploadTeamMediaFile,
   uploadTeamMediaPhoto,
-  deleteTeamMediaItem
+  deleteTeamMediaItem,
+  updateTeamMediaItem
 } from '../../../../js/db.js';
 import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
 import { db, doc, collection, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
@@ -212,6 +213,13 @@ export type TeamMediaModel = {
 export async function deleteTeamMediaItemForApp(teamId: string, item: TeamMediaItem) {
   if (!teamId || !item?.id) throw new Error('Missing team or media item ID.');
   await deleteTeamMediaItem(teamId, item);
+}
+
+export async function updateTeamMediaItemForApp(teamId: string, itemId: string, title: string) {
+  const cleanTitle = compactString(title);
+  if (!teamId || !itemId) throw new Error('Missing team or media item ID.');
+  if (!cleanTitle) throw new Error('Media item title cannot be empty.');
+  return updateTeamMediaItem(teamId, itemId, { title: cleanTitle });
 }
 
 export function getLegacyUrl(path: string, params: Record<string, string> = {}, hashParams: Record<string, string> = {}) {

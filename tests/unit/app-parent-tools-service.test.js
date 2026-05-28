@@ -31,6 +31,7 @@ const dbMocks = vi.hoisted(() => ({
     uploadTeamMediaFile: vi.fn(),
     uploadTeamMediaPhoto: vi.fn(),
     deleteTeamMediaItem: vi.fn(),
+    updateTeamMediaItem: vi.fn(),
     createRegistrationCheckoutSession: vi.fn()
 }));
 
@@ -163,6 +164,7 @@ import {
     uploadParentTeamMediaFile,
     uploadParentTeamMediaPhoto,
     deleteTeamMediaItemForApp,
+    updateTeamMediaItemForApp,
     initiateRegistrationCheckout,
     initiateParentTeamFeeCheckout,
     canInitiateParentTeamFeeCheckout,
@@ -759,6 +761,24 @@ describe('React app parent tools service', () => {
         stripeMocks.initiateTeamFeeCheckout.mockResolvedValueOnce('');
         await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
             .rejects.toThrow('Failed to get checkout URL.');
+    });
+
+    describe('updateTeamMediaItemForApp', () => {
+        it('trims and persists a media item title through the legacy update helper', async () => {
+            dbMocks.updateTeamMediaItem.mockResolvedValueOnce(undefined);
+
+            await expect(updateTeamMediaItemForApp('team-1', 'item-1', '  New title  ')).resolves.toBeUndefined();
+
+            expect(dbMocks.updateTeamMediaItem).toHaveBeenCalledWith('team-1', 'item-1', { title: 'New title' });
+        });
+
+        it('rejects missing IDs and blank titles before updating', async () => {
+            await expect(updateTeamMediaItemForApp('', 'item-1', 'New title')).rejects.toThrow('Missing team or media item ID.');
+            await expect(updateTeamMediaItemForApp('team-1', '', 'New title')).rejects.toThrow('Missing team or media item ID.');
+            await expect(updateTeamMediaItemForApp('team-1', 'item-1', '   ')).rejects.toThrow('Media item title cannot be empty.');
+
+            expect(dbMocks.updateTeamMediaItem).not.toHaveBeenCalled();
+        });
     });
 
     describe('deleteTeamMediaItemForApp', () => {
