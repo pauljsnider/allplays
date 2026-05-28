@@ -221,6 +221,24 @@ describe('team media item renaming', () => {
         expect(editContainerEl.classList.contains('hidden')).toBe(true);
     });
 
+    it('shows saved video-link items under the Videos filter', async () => {
+        mocks.getTeamMediaItems.mockResolvedValue([
+            { id: 'video1', folderId: 'folderA', title: 'Game Clip', type: 'video-link', url: 'https://youtu.be/abc123', uploadedBy: 'user123' }
+        ]);
+
+        const module = await loadModule();
+        await module.loadLibrary();
+
+        const albumDetail = document.getElementById('album-detail');
+        const videosFilter = albumDetail.querySelector('[data-media-type-filter="videos"]');
+        expect(videosFilter?.textContent).toContain('Videos 1');
+
+        videosFilter.click();
+
+        expect(albumDetail.innerHTML).toContain('Game Clip');
+        expect(albumDetail.textContent).not.toContain('No videos in this album.');
+    });
+
     it('ignores duplicate save attempts while a rename is in flight', async () => {
         let resolveRename;
         mocks.updateTeamMediaItem.mockImplementationOnce(() => new Promise((resolve) => {
