@@ -1,17 +1,19 @@
 import { listParentTeamFeeRecipients } from '../../../../js/db.js';
 import { normalizeParentFeeRecord } from '../../../../js/parent-dashboard-fees.js';
 import { loadChatInbox } from './chatService';
+import { startUxTimer } from './uxTiming';
 import {
   buildParentHomeModel,
   type ParentHomeInboxTeam,
   type ParentHomeModel
 } from './homeLogic';
 import { loadCachedAppData } from './appDataCache';
-import { loadParentSchedule, type ParentScheduleLoadResult } from './scheduleService';
+import { loadParentSchedule, type ParentScheduleChild, type ParentScheduleLoadResult } from './scheduleService';
 import type { AuthUser } from './types';
 
 const homeSummaryTtlMs = 45 * 1000;
 const homeSecondaryTtlMs = 30 * 1000;
+const teamsSummaryTtlMs = 30 * 1000;
 
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
   if (!user?.uid) {
@@ -50,6 +52,42 @@ export async function loadParentHomeSummary(user: AuthUser | null, options: { fo
     inboxTeams: [],
     fees: []
   });
+}
+
+export async function loadParentTeamsSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentHomeModel> {
+  if (!user?.uid) {
+    return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
+  }
+
+  return loadCachedAppData(
+    `teams-summary:${user.uid}`,
+    async () => {
+      const timer = startUxTimer('teams summary load');
+      try {
+        const chatInbox = await loadChatInbox(user, { includeLastMessages: false }).catch((error) => {
+          console.warn('[home-service] Unable to load team inbox summary:', error);
+          return { teams: [] };
+        });
+        const children = normalizeChildLinks(user, { parentOf: user.parentOf || [] });
+        const model = buildParentHomeModel({
+          children,
+          events: [],
+          inboxTeams: normalizeInboxTeams(chatInbox.teams || []),
+          fees: []
+        });
+        timer.end({
+          children: children.length,
+          teams: model.teams.length,
+          inboxTeams: chatInbox.teams?.length || 0
+        });
+        return model;
+      } catch (error: any) {
+        timer.end({ error: error?.message || 'Unable to load team summary.' });
+        throw error;
+      }
+    },
+    { ttlMs: teamsSummaryTtlMs, force: options.force }
+  );
 }
 
 export async function loadParentHomeWithSecondaryData(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentHomeModel> {
@@ -97,4 +135,32 @@ function normalizeInboxTeams(teams: any[]): ParentHomeInboxTeam[] {
     photoUrl: team.photoUrl || null,
     unreadCount: Number(team.unreadCount || 0)
   }));
+}
+
+function compactString(value: unknown) {
+  return String(value || '').trim();
+}
+
+function normalizeChildLinks(user: AuthUser, profile: Record<string, unknown>): ParentScheduleChild[] {
+  const parentOf = Array.isArray(profile.parentOf) && profile.parentOf.length > 0
+    ? profile.parentOf
+    : Array.isArray(user.parentOf) ? user.parentOf : [];
+
+  const seen = new Set<string>();
+  return parentOf
+    .map((entry: any) => {
+      const teamId = compactString(entry?.teamId);
+      const playerId = compactString(entry?.playerId || entry?.childId);
+      if (!teamId || !playerId) return null;
+      const key = `${teamId}::${playerId}`;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return {
+        teamId,
+        teamName: compactString(entry?.teamName),
+        playerId,
+        playerName: compactString(entry?.playerName || entry?.childName || entry?.name) || 'Player'
+      };
+    })
+    .filter(Boolean) as ParentScheduleChild[];
 }

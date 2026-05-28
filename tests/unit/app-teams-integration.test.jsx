@@ -6,7 +6,8 @@ import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-r
 
 const homeMocks = vi.hoisted(() => ({
     loadParentHome: vi.fn(),
-    loadParentHomeSummary: vi.fn()
+    loadParentHomeSummary: vi.fn(),
+    loadParentTeamsSummary: vi.fn()
 }));
 const publicActionMocks = vi.hoisted(() => ({
     openPublicUrl: vi.fn()
@@ -113,6 +114,7 @@ beforeEach(() => {
     };
     window.scrollTo = vi.fn();
     homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
+    homeMocks.loadParentTeamsSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
     homeMocks.loadParentHome.mockResolvedValue({
         players: [],
         upcomingEvents: [],
@@ -162,6 +164,7 @@ describe('React app Teams page', () => {
     it('renders the same parent and staff/admin teams used by the app inbox', async () => {
         const { container } = await renderTeams('/teams?selectedTeamId=team-staff&from=home');
 
+        expect(homeMocks.loadParentTeamsSummary).toHaveBeenCalledWith(auth.user, { force: false });
         expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledWith(auth.user, { force: false });
         expect(container.textContent).toContain('2 teams ready');
         expect(container.textContent).toContain('Choose a team');
@@ -225,7 +228,7 @@ describe('React app Teams page', () => {
     });
 
     it('refreshes team data without dropping into the loading shell', async () => {
-        homeMocks.loadParentHome
+        homeMocks.loadParentTeamsSummary
             .mockResolvedValueOnce({
                 players: [],
                 teams: [{
@@ -275,6 +278,14 @@ describe('React app Teams page', () => {
                 fees: [],
                 metrics: { players: 0, teams: 2, rsvpNeeded: 0, unreadMessages: 1, packetsReady: 0 }
             });
+        homeMocks.loadParentHomeSummary.mockResolvedValue({
+            players: [],
+            teams: [],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: { players: 0, teams: 0, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        });
 
         const { container } = await renderTeams('/teams');
         await waitForText(container, '1 team ready');
@@ -285,13 +296,13 @@ describe('React app Teams page', () => {
         await flush();
         await waitForText(container, '2 teams ready');
 
-        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledTimes(2);
+        expect(homeMocks.loadParentTeamsSummary).toHaveBeenCalledTimes(2);
         expect(container.textContent).toContain('Lions');
         expect(container.textContent).not.toContain('Loading teams');
     });
 
     it('uses a website Players resource for teams with multiple linked players', async () => {
-        homeMocks.loadParentHome.mockResolvedValueOnce({
+        const multiTeamModel = {
             players: [],
             teams: [{
                 teamId: 'team-multi',
@@ -311,7 +322,9 @@ describe('React app Teams page', () => {
             actionItems: [],
             fees: [],
             metrics: { players: 2, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
-        });
+        };
+        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(multiTeamModel);
+        homeMocks.loadParentHomeSummary.mockResolvedValueOnce(multiTeamModel);
 
         const { container } = await renderTeams('/teams');
         await waitForText(container, 'Multi Bears');
@@ -325,7 +338,7 @@ describe('React app Teams page', () => {
     });
 
     it('shows clear empty and error states instead of a spinner', async () => {
-        homeMocks.loadParentHome.mockRejectedValueOnce(new Error('Team service down'));
+        homeMocks.loadParentTeamsSummary.mockRejectedValueOnce(new Error('Team service down'));
 
         const { container } = await renderTeams('/teams');
 
@@ -335,7 +348,7 @@ describe('React app Teams page', () => {
     });
 
     it('handles signed-in accounts that do not have team access yet', async () => {
-        homeMocks.loadParentHome.mockResolvedValueOnce({
+        const emptyTeamsModel = {
             players: [],
             teams: [],
             upcomingEvents: [],
@@ -348,7 +361,9 @@ describe('React app Teams page', () => {
                 unreadMessages: 0,
                 packetsReady: 0
             }
-        });
+        };
+        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(emptyTeamsModel);
+        homeMocks.loadParentHomeSummary.mockResolvedValueOnce(emptyTeamsModel);
 
         const { container } = await renderTeams('/teams');
 

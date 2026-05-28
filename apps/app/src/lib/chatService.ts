@@ -138,6 +138,10 @@ export type ChatInboxLoadResult = {
   teams: ChatTeam[];
 };
 
+export type ChatInboxLoadOptions = {
+  includeLastMessages?: boolean;
+};
+
 export type ChatSubscribeResult = {
   unsubscribe: () => void;
 };
@@ -450,8 +454,9 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
   return getNewestChatMessage(messages);
 }
 
-export async function loadChatInbox(user: AuthUser | null): Promise<ChatInboxLoadResult> {
+export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
   if (!user?.uid) return { teams: [] };
+  const includeLastMessages = options.includeLastMessages !== false;
 
   const profile = await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load').catch(async (error) => {
     if (!isNativeRuntime()) throw error;
@@ -488,7 +493,7 @@ export async function loadChatInbox(user: AuthUser | null): Promise<ChatInboxLoa
     return {
       team,
       canModerate,
-      lastMessage: await getLatestMessagePreview(team.id, userWithProfile, team, canModerate)
+      lastMessage: includeLastMessages ? await getLatestMessagePreview(team.id, userWithProfile, team, canModerate) : null
     };
   }));
 
