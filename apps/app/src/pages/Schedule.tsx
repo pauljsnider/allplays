@@ -117,7 +117,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
       const result = await loadCachedAppData(
         cacheKey,
-        () => loadParentSchedule(auth.user, { hydrateDetails: false }),
+        () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
         { ttlMs: scheduleCacheTtlMs, force }
       );
 
@@ -173,6 +173,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const calendarEntries = useMemo(() => getCalendarScheduleEntries(visibleEvents), [visibleEvents]);
   const listEntries = calendarEntries;
+  const parentLinkedPlayerIds = useMemo(() => new Set(children.map((child) => child.playerId)), [children]);
   const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
   const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
   const selectedDayEntries = useMemo(() => {
@@ -188,9 +189,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
     total: listEntries.length,
     games: listEntries.filter((event) => event.type === 'game').length,
     practices: listEntries.filter((event) => event.type === 'practice').length,
-    rsvpNeeded: visibleEvents.filter((event) => event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded').length,
+    rsvpNeeded: visibleEvents.filter((event) => parentLinkedPlayerIds.has(event.childId) && event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded').length,
     packetsReady: packetRows.filter((row) => row.needsAction).length
-  }), [listEntries, packetRows, visibleEvents]);
+  }), [listEntries, packetRows, parentLinkedPlayerIds, visibleEvents]);
   const webInsights = useMemo(() => buildScheduleWebInsights(listEntries), [listEntries]);
   const manageableTeamOptions = useMemo(() => (
     teamOptions.filter((team) => events.some((event) => event.teamId === team.teamId && event.isTeamStaff === true))

@@ -104,6 +104,7 @@ export type ParentScheduleLoadResult = {
 
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
+  expandStaffPlayers?: boolean;
 };
 
 type FirestoreDocument = Record<string, any> & { id: string };
@@ -1402,6 +1403,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   }
   const timer = startUxTimer('parent schedule service load');
   const hydrateDetails = options.hydrateDetails !== false;
+  const expandStaffPlayers = options.expandStaffPlayers !== false;
 
   try {
     const profile = await loadProfileDocument(user.uid);
@@ -1416,13 +1418,25 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
       const teamId = compactString(team?.id);
       if (!teamId) return;
+      const teamName = compactString(team?.name) || teamId;
       const existingPlayerIds = new Set((byTeam.get(teamId) || []).map((child) => child.playerId));
+      if (!expandStaffPlayers) {
+        if (!existingPlayerIds.size) {
+          byTeam.set(teamId, [{
+            teamId,
+            teamName,
+            playerId: `staff-team-${teamId}`,
+            playerName: 'Team schedule'
+          }]);
+        }
+        return;
+      }
       const players = await loadPlayers(teamId).catch(() => []);
       const staffChildren = (Array.isArray(players) ? players : [])
         .filter((player: any) => player?.active !== false && compactString(player?.id) && !existingPlayerIds.has(compactString(player.id)))
         .map((player: any) => ({
           teamId,
-          teamName: compactString(team?.name) || teamId,
+          teamName,
           playerId: compactString(player.id),
           playerName: compactString(player.name) || compactString(player.displayName) || 'Player'
         }));
@@ -1447,6 +1461,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     }
     timer.end({
       hydrateDetails,
+      expandStaffPlayers,
       childLinks: children.length,
       teams: byTeam.size,
       staffTeams: staffTeams.length,
@@ -1454,7 +1469,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     });
     return { children, events };
   } catch (error: any) {
-    timer.end({ hydrateDetails, error: error?.message || 'Unable to load parent schedule.' });
+    timer.end({ hydrateDetails, expandStaffPlayers, error: error?.message || 'Unable to load parent schedule.' });
     throw error;
   }
 }

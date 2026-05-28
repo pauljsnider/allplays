@@ -186,11 +186,28 @@ describe('React app desktop Schedule controls', () => {
 
         expect(scheduleMocks.addTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/team.ics', auth.user);
         await waitForText(container, 'Calendar link saved and schedule refreshed.');
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(4);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(3, auth.user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(4, auth.user);
+<<<<<<< HEAD
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+    });
+
+    it('reuses the cached schedule when the route remounts', async () => {
+        const first = await renderSchedule();
+        await waitForText(first.container, 'Main Gym');
+
+        await act(async () => {
+            first.root.unmount();
+        });
+        first.container.remove();
+        scheduleMocks.loadParentSchedule.mockRejectedValue(new Error('network should not be needed'));
+
+        const second = await renderSchedule();
+        await waitForText(second.container, 'Main Gym');
+
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+        expect(second.container.textContent).not.toContain('Loading schedule');
+
     });
 
     it('shows saved staff calendar links and removes one after confirmation', async () => {

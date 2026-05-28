@@ -83,7 +83,7 @@ export async function loadParentScheduleSummary(user: AuthUser | null, options: 
   if (!user?.uid) return { children: [], events: [] };
   return loadCachedAppData(
     `schedule-summary:${user.uid}`,
-    () => loadParentSchedule(user, { hydrateDetails: false }),
+    () => loadParentSchedule(user, { hydrateDetails: false, expandStaffPlayers: false }),
     { ttlMs: homeSummaryTtlMs, force: options.force }
   );
 }
