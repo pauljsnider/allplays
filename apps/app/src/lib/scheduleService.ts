@@ -640,6 +640,38 @@ export async function addTeamCalendarUrl(teamId: string, url: string, user: Auth
   return { calendarUrls, added: true };
 }
 
+export async function removeTeamCalendarUrl(teamId: string, url: string, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) {
+    throw new Error('Team is required.');
+  }
+  if (!user?.uid) {
+    throw new Error('You need to sign in before removing a calendar.');
+  }
+
+  const normalizedUrl = compactString(url);
+  if (!normalizedUrl) {
+    throw new Error('Calendar URL is required.');
+  }
+
+  const team = await loadTeam(normalizedTeamId);
+  const teamWithId = team ? { ...team, id: team.id || normalizedTeamId } : null;
+  if (!teamWithId || !isTeamStaff(teamWithId, user)) {
+    throw new Error('You do not have permission to manage this team schedule.');
+  }
+
+  const existingUrls = Array.isArray(teamWithId.calendarUrls)
+    ? teamWithId.calendarUrls.map(compactString).filter(Boolean)
+    : [];
+  const calendarUrls = existingUrls.filter((calendarUrl: string) => calendarUrl !== normalizedUrl);
+  if (calendarUrls.length === existingUrls.length) {
+    return { calendarUrls: existingUrls, removed: false };
+  }
+
+  await saveTeamCalendarUrls(normalizedTeamId, calendarUrls);
+  return { calendarUrls, removed: true };
+}
+
 async function loadPlayers(teamId: string) {
   return readWithNativeFallback(
     `players ${teamId}`,
@@ -1025,6 +1057,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
+  const calendarUrls = Array.isArray(team.calendarUrls) ? team.calendarUrls.map(compactString).filter(Boolean) : [];
   const isStaff = isTeamStaff(teamWithId, user);
   const isRsvpReminderManager = isPublicRsvpReminderManager(teamWithId, user);
   teamChildren.forEach((child) => {
@@ -1149,8 +1182,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     }
   }
 
-  if (Array.isArray(team.calendarUrls) && team.calendarUrls.length > 0) {
-    const calendarResults = await Promise.all(team.calendarUrls.map(async (calendarUrl: string) => {
+  if (calendarUrls.length > 0) {
+    const calendarResults = await Promise.all(calendarUrls.map(async (calendarUrl: string) => {
       try {
         return await fetchAndParseCalendar(calendarUrl);
       } catch (error) {
@@ -1226,6 +1259,10 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         }));
       });
     });
+
+  events.forEach((event) => {
+    event.calendarUrls = calendarUrls;
+  });
 
   return events;
 }

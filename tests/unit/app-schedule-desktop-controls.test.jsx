@@ -8,7 +8,8 @@ const scheduleMocks = vi.hoisted(() => ({
     addTeamCalendarUrl: vi.fn(),
     createScheduleImportGame: vi.fn(),
     createScheduleImportPractice: vi.fn(),
-    loadParentSchedule: vi.fn()
+    loadParentSchedule: vi.fn(),
+    removeTeamCalendarUrl: vi.fn()
 }));
 
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
@@ -117,6 +118,8 @@ beforeEach(() => {
     scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-new');
+    scheduleMocks.removeTeamCalendarUrl.mockResolvedValue({ removed: true, calendarUrls: [] });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     scheduleMocks.loadParentSchedule.mockResolvedValue({
         children: [
             { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
@@ -184,6 +187,26 @@ describe('React app desktop Schedule controls', () => {
         expect(scheduleMocks.addTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/team.ics', auth.user);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
         await waitForText(container, 'Calendar link saved and schedule refreshed.');
+    });
+
+    it('shows saved staff calendar links and removes one after confirmation', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true, calendarUrls: ['https://example.com/stale.ics'] })]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Saved calendar links');
+        expect(container.textContent).toContain('https://example.com/stale.ics');
+
+        await clickButton(container, 'Remove');
+
+        expect(window.confirm).toHaveBeenCalledWith('Remove this external calendar link? Imported events from this feed will disappear after the schedule refreshes.');
+        expect(scheduleMocks.removeTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/stale.ics', auth.user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        await waitForText(container, 'Calendar link removed and schedule refreshed.');
     });
 
     it('hides calendar import from parent-only teams and validates .ics input inline', async () => {
