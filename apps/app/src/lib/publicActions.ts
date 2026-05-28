@@ -11,6 +11,8 @@ export type SharePublicUrlInput = {
 
 export type SharePublicUrlResult = 'shared' | 'copied' | 'failed' | 'cancelled';
 
+export type CopyPublicTextResult = 'copied' | 'failed';
+
 function isNativePluginAvailable(pluginName: string) {
   return Capacitor.isNativePlatform() && Boolean((Capacitor as any).isPluginAvailable?.(pluginName));
 }
@@ -33,6 +35,37 @@ export async function openPublicUrl(url: string) {
   const opened = window.open(url, '_blank', 'noopener,noreferrer');
   if (!opened) {
     window.location.href = url;
+  }
+}
+
+export async function copyPublicText(text: string): Promise<CopyPublicTextResult> {
+  const value = String(text || '');
+  if (!value) return 'failed';
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return 'copied';
+    }
+  } catch {
+    // Fall back to the textarea path below for WebViews or blocked clipboard APIs.
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const copied = document.execCommand?.('copy') === true;
+    document.body.removeChild(textarea);
+    return copied ? 'copied' : 'failed';
+  } catch {
+    return 'failed';
   }
 }
 
