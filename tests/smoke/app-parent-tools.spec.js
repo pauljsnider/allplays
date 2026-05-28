@@ -67,6 +67,10 @@ async function mockParentToolsModules(page) {
                 export async function openPublicUrl(url) {
                     window.__openedPublicUrls.push(String(url));
                 }
+                export async function copyPublicText(value) {
+                    window.__copiedText = String(value);
+                    return 'copied';
+                }
                 export async function sharePublicUrl(input) {
                     window.__sharedUrls.push(input);
                     return 'shared';
