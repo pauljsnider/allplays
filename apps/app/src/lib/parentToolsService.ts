@@ -17,7 +17,8 @@ import {
   revokeFamilyShareToken,
   updateFamilyShareTokenCalendars,
   uploadTeamMediaFile,
-  uploadTeamMediaPhoto
+  uploadTeamMediaPhoto,
+  deleteTeamMediaItem
 } from '../../../../js/db.js';
 import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
 import { db, doc, collection, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
@@ -207,6 +208,11 @@ export type TeamMediaModel = {
   canContribute: boolean;
   folders: TeamMediaFolder[];
 };
+
+export async function deleteTeamMediaItemForApp(teamId: string, item: TeamMediaItem) {
+  if (!teamId || !item?.id) throw new Error('Missing team or media item ID.');
+  await deleteTeamMediaItem(teamId, item);
+}
 
 export function getLegacyUrl(path: string, params: Record<string, string> = {}, hashParams: Record<string, string> = {}) {
   const url = new URL(path, legacyOrigin);
