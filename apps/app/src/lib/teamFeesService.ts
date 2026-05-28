@@ -146,7 +146,7 @@ export async function recordOfflineTeamFeePayment({ teamId, batchId, recipient, 
     date,
     note,
     actorId: user?.uid,
-    currentBalanceCents: recipient.remainingBalanceCents,
+    currentBalanceCents: recipient.amountDueCents,
     currentPaidCents: recipient.amountPaidCents
   });
 

@@ -125,6 +125,40 @@ describe('React app team fee offline payment service', () => {
         }));
     });
 
+    it('keeps recipients partial when a new offline payment does not cover the total amount due', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.updateTeamFeeRecipient.mockResolvedValue(undefined);
+
+        await recordOfflineTeamFeePayment({
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipient: {
+                id: 'recipient-1',
+                playerName: 'Pat Star',
+                parentName: '',
+                parentEmail: '',
+                status: 'partial',
+                amountDueCents: 10000,
+                amountPaidCents: 6000,
+                remainingBalanceCents: 4000,
+                paymentLedger: []
+            },
+            amount: '10.00',
+            date: '2026-05-28',
+            note: 'Cash',
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        });
+
+        expect(dbMocks.updateTeamFeeRecipient).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1', expect.objectContaining({
+            status: 'partial',
+            amountPaidCents: 7000,
+            remainingBalanceCents: 3000,
+            paidAt: null,
+            manualPayment: expect.objectContaining({ amountPaidCents: 1000, note: 'Cash' }),
+            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 1000 })]
+        }));
+    });
+
     it('blocks non-managers from recording offline payments', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
 
