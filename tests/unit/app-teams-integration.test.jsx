@@ -178,7 +178,8 @@ describe('React app Teams page', () => {
         expect(hrefs).toContain('https://allplays.ai/team.html#teamId=team-staff');
         expect(hrefs).toContain('https://allplays.ai/edit-roster.html#teamId=team-staff');
         expect(hrefs).toContain('https://allplays.ai/edit-schedule.html#teamId=team-staff');
-        expect(hrefs).toContain('https://allplays.ai/team-fees.html#teamId=team-staff');
+        expect(hrefs).toContain('/teams/team-staff/fees');
+        expect(hrefs).not.toContain('https://allplays.ai/team-fees.html#teamId=team-staff');
         expect(container.textContent).not.toContain('Practice command');
         expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Staff Wolves'))?.getAttribute('aria-pressed')).toBe('true');
 

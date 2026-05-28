@@ -1,0 +1,182 @@
+import { getTeam, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from '../../../../js/db.js';
+import { hasFullTeamAccess } from '../../../../js/team-access.js';
+import type { AuthUser } from './types';
+
+export type TeamFeeBatchSummary = {
+  id: string;
+  title: string;
+  dueDate: string;
+  amountCents: number;
+  status: string;
+};
+
+export type TeamFeeRecipientSummary = {
+  id: string;
+  playerName: string;
+  parentName: string;
+  parentEmail: string;
+  status: string;
+  amountDueCents: number;
+  amountPaidCents: number;
+  remainingBalanceCents: number;
+  paymentLedger: Array<Record<string, unknown>>;
+};
+
+export type TeamFeeManagementModel = {
+  team: {
+    id: string;
+    name: string;
+  };
+  batches: TeamFeeBatchSummary[];
+  selectedBatch: TeamFeeBatchSummary | null;
+  recipients: TeamFeeRecipientSummary[];
+  canManageFees: boolean;
+};
+
+export type ManualTeamFeePaymentInput = {
+  amount: string | number;
+  date: string;
+  note?: string;
+  actorId?: string;
+  currentBalanceCents?: string | number | null;
+  currentPaidCents?: string | number | null;
+};
+
+export function toFeeCents(value: string | number | null | undefined) {
+  const normalized = String(value ?? '').replace(/[$,]/g, '').trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100);
+}
+
+function normalizeString(value: unknown) {
+  return String(value || '').trim();
+}
+
+function normalizeLedgerStatus(balanceCents: number, amountPaidCents: number) {
+  if (amountPaidCents >= balanceCents) return 'paid';
+  return amountPaidCents > 0 ? 'partial' : 'unpaid';
+}
+
+export function buildManualPaymentUpdate({ amount, date, note, actorId, currentBalanceCents, currentPaidCents }: ManualTeamFeePaymentInput) {
+  const paymentAmountCents = toFeeCents(amount);
+  if (paymentAmountCents === null || paymentAmountCents <= 0) {
+    throw new Error('Enter a manual payment amount greater than $0.');
+  }
+  if (!date) throw new Error('Enter a manual payment date.');
+
+  const currentBalance = Number(currentBalanceCents);
+  const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : Number.MAX_SAFE_INTEGER;
+  const priorPaid = Number(currentPaidCents);
+  const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
+  const amountPaidCents = priorPaidCents + paymentAmountCents;
+  const remainingBalanceCents = Math.max(0, balanceCents - amountPaidCents);
+  const status = normalizeLedgerStatus(balanceCents, amountPaidCents);
+  const noteText = normalizeString(note);
+  const ledgerEntry = {
+    type: 'offline_payment',
+    amountCents: paymentAmountCents,
+    paymentDate: date,
+    note: noteText,
+    recordedBy: actorId || null
+  };
+
+  return {
+    status,
+    amountPaidCents,
+    remainingBalanceCents,
+    paidAt: status === 'paid' ? date : null,
+    manualPayment: {
+      amountPaidCents: paymentAmountCents,
+      paidAt: date,
+      note: noteText,
+      recordedBy: actorId || null
+    },
+    ledgerEntries: [ledgerEntry]
+  };
+}
+
+export async function loadTeamFeeManagementModel(teamId: string, batchId: string | undefined, user: AuthUser | null): Promise<TeamFeeManagementModel> {
+  if (!teamId) throw new Error('Missing team context.');
+  const team = await Promise.resolve(getTeam(teamId));
+  if (!team?.id) throw new Error('Team not found.');
+
+  const canManageFees = hasFullTeamAccess(user, team);
+  if (!canManageFees) {
+    return {
+      team: { id: team.id, name: team.name || 'Team' },
+      batches: [],
+      selectedBatch: null,
+      recipients: [],
+      canManageFees: false
+    };
+  }
+
+  const batches = ((await Promise.resolve(listTeamFeeBatches(teamId))) as any[]).map(toBatchSummary);
+  const selectedBatch = batches.find((batch) => batch.id === batchId) || batches[0] || null;
+  const recipients = selectedBatch
+    ? ((await Promise.resolve(listTeamFeeRecipients(teamId, selectedBatch.id))) as any[]).map(toRecipientSummary)
+    : [];
+
+  return {
+    team: { id: team.id, name: team.name || 'Team' },
+    batches,
+    selectedBatch,
+    recipients,
+    canManageFees: true
+  };
+}
+
+export async function recordOfflineTeamFeePayment({ teamId, batchId, recipient, amount, date, note, user }: {
+  teamId: string;
+  batchId: string;
+  recipient: TeamFeeRecipientSummary;
+  amount: string;
+  date: string;
+  note?: string;
+  user: AuthUser | null;
+}) {
+  if (!teamId || !batchId || !recipient?.id) throw new Error('Missing fee recipient context.');
+  const team = await Promise.resolve(getTeam(teamId));
+  if (!hasFullTeamAccess(user, team)) throw new Error('You do not have access to record team fee payments.');
+
+  const updates = buildManualPaymentUpdate({
+    amount,
+    date,
+    note,
+    actorId: user?.uid,
+    currentBalanceCents: recipient.remainingBalanceCents,
+    currentPaidCents: recipient.amountPaidCents
+  });
+
+  await Promise.resolve(updateTeamFeeRecipient(teamId, batchId, recipient.id, updates));
+  return updates;
+}
+
+function toBatchSummary(batch: any): TeamFeeBatchSummary {
+  return {
+    id: String(batch?.id || ''),
+    title: normalizeString(batch?.title) || 'Team fee',
+    dueDate: normalizeString(batch?.dueDate),
+    amountCents: Number(batch?.amountCents ?? batch?.amountDueCents ?? 0) || 0,
+    status: normalizeString(batch?.status) || 'open'
+  };
+}
+
+function toRecipientSummary(recipient: any): TeamFeeRecipientSummary {
+  const amountDueCents = Number(recipient?.amountDueCents ?? recipient?.amountCents ?? 0) || 0;
+  const amountPaidCents = Number(recipient?.amountPaidCents ?? recipient?.paidAmountCents ?? 0) || 0;
+  const explicitBalance = Number(recipient?.remainingBalanceCents ?? recipient?.balanceDueCents);
+  return {
+    id: String(recipient?.id || recipient?.recipientId || recipient?.playerId || ''),
+    playerName: normalizeString(recipient?.playerName || recipient?.childName) || 'Recipient',
+    parentName: normalizeString(recipient?.parentName),
+    parentEmail: normalizeString(recipient?.parentEmail),
+    status: normalizeString(recipient?.status) || 'unpaid',
+    amountDueCents,
+    amountPaidCents,
+    remainingBalanceCents: Number.isFinite(explicitBalance) ? Math.max(0, explicitBalance) : Math.max(0, amountDueCents - amountPaidCents),
+    paymentLedger: Array.isArray(recipient?.paymentLedger) ? recipient.paymentLedger : []
+  };
+}
