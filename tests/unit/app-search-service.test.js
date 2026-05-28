@@ -10,6 +10,7 @@ const homeMocks = vi.hoisted(() => ({
 
 const firebaseMocks = vi.hoisted(() => ({
     db: {},
+    collection: vi.fn((db, collectionName) => ({ db, collectionName })),
     collectionGroup: vi.fn((db, collectionName) => ({ db, collectionName })),
     getDocs: vi.fn(),
     query: vi.fn((...parts) => ({ parts })),
@@ -53,6 +54,14 @@ function firestorePlayer(path, data) {
     return {
         id: path.split('/').pop(),
         ref: { path },
+        data: () => data
+    };
+}
+
+function firestoreTeam(id, data) {
+    return {
+        id,
+        ref: { path: `teams/${id}` },
         data: () => data
     };
 }
@@ -250,6 +259,94 @@ describe('React app search service', () => {
         expect(teams.find((team) => team.id === 'team-inactive-access')).toBeUndefined();
     });
 
+    it('loads private selected stream-volunteer teams before checking search access', async () => {
+        dbMocks.getTeams.mockResolvedValue([
+            { id: 'team-public', name: 'Public Bears', sport: 'Soccer', isPublic: true }
+        ]);
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [] });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({
+                docs: [firestoreTeam('team-stream-member', {
+                    name: 'Stream Member Bears',
+                    sport: 'Soccer',
+                    isPublic: false,
+                    teamPermissions: {
+                        streaming: {
+                            mode: 'selected',
+                            memberIds: ['user-1']
+                        }
+                    }
+                })]
+            })
+            .mockResolvedValueOnce({
+                docs: [firestoreTeam('team-stream-email', {
+                    name: 'Stream Email Wolves',
+                    sport: 'Basketball',
+                    isPublic: false,
+                    streamAccessMode: 'selected_volunteers',
+                    streamVolunteerEmails: ['parent@example.com']
+                })]
+            });
+
+        const teams = await loadAppSearchTeams(auth.user);
+
+        expect(firebaseMocks.collection).toHaveBeenCalledWith(firebaseMocks.db, 'teams');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('teamPermissions.streaming.memberIds', 'array-contains', 'user-1');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('streamVolunteerEmails', 'array-contains', 'parent@example.com');
+        expect(teams.map((team) => team.id)).toEqual(['team-public', 'team-stream-email', 'team-stream-member']);
+    });
+
+    it('lets selected stream volunteers discover private teams by uid or legacy email only', async () => {
+        dbMocks.getTeams.mockResolvedValue([
+            {
+                id: 'team-stream-member',
+                name: 'Stream Member Bears',
+                sport: 'Soccer',
+                isPublic: false,
+                teamPermissions: {
+                    streaming: {
+                        mode: 'selected',
+                        memberIds: ['user-1']
+                    }
+                }
+            },
+            {
+                id: 'team-stream-email',
+                name: 'Stream Email Wolves',
+                sport: 'Basketball',
+                isPublic: false,
+                streamAccessMode: 'selected_volunteers',
+                streamVolunteerEmails: ['Parent@Example.com']
+            },
+            {
+                id: 'team-stream-hidden',
+                name: 'Stream Hidden Hawks',
+                sport: 'Baseball',
+                isPublic: false,
+                teamPermissions: {
+                    streaming: {
+                        mode: 'selected',
+                        memberIds: ['other-user']
+                    }
+                },
+                streamAccessMode: 'selected_volunteers',
+                streamVolunteerEmails: ['other@example.com']
+            }
+        ]);
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [] });
+
+        const teams = await loadAppSearchTeams(auth.user);
+
+        expect(teams.map((team) => team.id)).toEqual(['team-stream-email', 'team-stream-member']);
+
+        const unrelatedUser = { ...auth.user, uid: 'unrelated-user', email: 'unrelated@example.com', parentOf: [] };
+        const unrelatedTeams = await loadAppSearchTeams(unrelatedUser);
+        expect(unrelatedTeams).toEqual([]);
+
+        const signedOutTeams = await loadAppSearchTeams(null);
+        expect(signedOutTeams).toEqual([]);
+    });
+
     it('caches loaded teams and falls back to app access when public team loading fails', async () => {
         dbMocks.getTeams.mockResolvedValue([
             { id: 'team-1', name: 'Bears', sport: 'Soccer', isPublic: true }
@@ -314,6 +411,44 @@ describe('React app search service', () => {
             teamId: 'team-1',
             playerId: 'player-1'
         }]);
+    });
+
+    it('returns players from private selected-stream teams for eligible users only', async () => {
+        const streamTeam = {
+            id: 'team-stream',
+            name: 'Stream Wolves',
+            sport: 'Basketball',
+            isPublic: false,
+            teamPermissions: {
+                streaming: {
+                    mode: 'selected',
+                    memberIds: ['user-1']
+                }
+            }
+        };
+        const visibleTeams = new Map([
+            ['team-stream', streamTeam]
+        ]);
+        firebaseMocks.getDocs.mockResolvedValue({
+            docs: [
+                firestorePlayer('teams/team-stream/players/player-1', { name: 'Pat Stream', number: '7' })
+            ]
+        });
+
+        const players = await searchAppPlayers('pat', visibleTeams, auth.user);
+        expect(players).toEqual([{
+            id: 'player:team-stream:player-1',
+            kind: 'player',
+            title: '#7 Pat Stream',
+            subtitle: 'Stream Wolves',
+            route: '/players/team-stream/player-1',
+            teamId: 'team-stream',
+            playerId: 'player-1'
+        }]);
+
+        const unrelatedUser = { ...auth.user, uid: 'unrelated-user', email: 'unrelated@example.com', parentOf: [] };
+        const unrelatedPlayers = await searchAppPlayers('pat', visibleTeams, unrelatedUser);
+        expect(unrelatedPlayers).toEqual([]);
     });
 
     it('searches player jersey numbers and encodes player routes', async () => {
