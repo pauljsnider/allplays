@@ -1406,6 +1406,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
   const isPractice = event.type === 'practice';
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
+  const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
 
   const cancelGame = async () => {
@@ -1477,7 +1478,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
 
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
 
-          {!isPractice && event.isDbGame && event.canUpdateScore ? (
+          {canPublishLineup ? (
             <GameHubLineupPublishPanel auth={auth} event={event} onGamePlanPublished={onGamePlanPublished} />
           ) : null}
 

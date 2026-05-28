@@ -394,9 +394,28 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(container.textContent).not.toContain('Lineup publish');
     });
 
+    it('keeps lineup publish controls hidden for non-staff scorekeepers', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({
+                canUpdateScore: true,
+                isTeamStaff: false,
+                gamePlan: { lineups: { 'H1-keeper': 'p1' } }
+            })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+
+        expect(container.textContent).toContain('Live score');
+        expect(container.textContent).not.toContain('Lineup publish');
+        expect(container.textContent).not.toContain('Publish lineup');
+    });
+
     it('shows lineup publish status and disables publish when staff has no draft', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
-            events: [event({ canUpdateScore: true, gamePlan: { lineups: {} } })]
+            events: [event({ canUpdateScore: true, isTeamStaff: true, gamePlan: { lineups: {} } })]
         });
 
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
@@ -423,7 +442,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             publishedReadBy: []
         };
         scheduleMocks.loadParentSchedule.mockResolvedValue({
-            events: [event({ canUpdateScore: true, gamePlan: draftGamePlan })]
+            events: [event({ canUpdateScore: true, isTeamStaff: true, gamePlan: draftGamePlan })]
         });
         scheduleMocks.publishGamePlanForApp.mockResolvedValue({
             gamePlan: publishedGamePlan,
