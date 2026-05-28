@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { RoleBadge } from '../components/Badges';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
-import { loadParentHome } from '../lib/homeService';
+import { loadParentHomeSummary } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
@@ -73,7 +73,7 @@ export function Teams({ auth }: { auth: AuthState }) {
     }
     setError('');
     try {
-      setHome(await loadParentHome(auth.user));
+      setHome(await loadParentHomeSummary(auth.user, { force: !showLoading }));
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load teams.');
       setHome(emptyHome());

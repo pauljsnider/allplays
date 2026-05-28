@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const scheduleMocks = vi.hoisted(() => ({
     loadParentSchedule: vi.fn()
@@ -61,6 +62,7 @@ function event(overrides = {}) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    clearAppDataCache();
     scheduleMocks.loadParentSchedule.mockResolvedValue({
         children: [
             {
@@ -110,7 +112,7 @@ describe('React app Home service', () => {
 
         const home = await loadParentHome(user);
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false });
         expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user);
         expect(dbMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith(user.uid, [
             expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })
@@ -169,6 +171,24 @@ describe('React app Home service', () => {
         expect(warn).toHaveBeenCalledWith('[home-service] Unable to load chat inbox:', expect.any(Error));
         expect(warn).toHaveBeenCalledWith('[home-service] Unable to load parent team fees:', expect.any(Error));
         warn.mockRestore();
+    });
+
+    it('composes the fast Home summary without optional secondary data', async () => {
+        const { loadParentHomeSummary } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentHomeSummary(user, { force: true });
+
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false });
+        expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
+        expect(dbMocks.listParentTeamFeeRecipients).not.toHaveBeenCalled();
+        expect(home.players).toHaveLength(1);
+        expect(home.metrics).toEqual(expect.objectContaining({
+            players: 1,
+            teams: 1,
+            rsvpNeeded: 1,
+            unreadMessages: 0
+        }));
+        expect(home.fees).toEqual([]);
     });
 
     it('returns an empty model without touching Firebase when signed out', async () => {

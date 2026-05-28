@@ -5,7 +5,8 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 const homeMocks = vi.hoisted(() => ({
-    loadParentHome: vi.fn()
+    loadParentHome: vi.fn(),
+    loadParentHomeSummary: vi.fn()
 }));
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -81,6 +82,7 @@ beforeEach(() => {
     firebaseMocks.getDoc.mockReset();
     resetAppSearchCacheForTests();
     helpMocks.searchHelpKnowledge.mockReturnValue([]);
+    homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
 });
 
 describe('React app search service', () => {
@@ -450,7 +452,7 @@ describe('React app search service', () => {
 
         expect(second).toBe(first);
         expect(dbMocks.getTeams).toHaveBeenCalledTimes(1);
-        expect(homeMocks.loadParentHome).toHaveBeenCalledTimes(1);
+        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1);
         expect(first.map((team) => team.id)).toEqual(['team-1', 'team-home']);
 
         resetAppSearchCacheForTests();

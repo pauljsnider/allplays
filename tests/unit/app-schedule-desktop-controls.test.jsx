@@ -182,8 +182,12 @@ describe('React app desktop Schedule controls', () => {
         await clickButton(container, 'Save calendar');
 
         expect(scheduleMocks.addTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/team.ics', auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
         await waitForText(container, 'Calendar link saved and schedule refreshed.');
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(4);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(3, auth.user, { hydrateDetails: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(4, auth.user);
     });
 
     it('hides calendar import from parent-only teams and validates .ics input inline', async () => {
