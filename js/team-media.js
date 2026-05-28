@@ -127,7 +127,7 @@ const MEDIA_TYPE_FILTERS = [
 ];
 
 function isVideoMediaItem(item = {}) {
-    return String(item.type || '').toLowerCase() === 'video_link';
+    return String(item.type || '').toLowerCase().replace(/-/g, '_') === 'video_link';
 }
 
 function matchesMediaTypeFilter(item, filterId = 'all') {
