@@ -2409,6 +2409,81 @@ function getEventTitle(event) {
   return event?.opponent ? `vs. ${event.opponent}` : 'Game';
 }
 
+
+function normalizeScheduleStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function formatScheduleUpdateDate(value, timeZone) {
+  const date = coerceDate(value);
+  if (!date || !timeZone) return '';
+  return date.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone
+  });
+}
+
+function truncateNotificationBody(text, maxLength = 120) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function buildScheduleUpdateNotificationPayload(beforeGame, afterGame) {
+  const eventTitle = getEventTitle(afterGame || beforeGame || {});
+  const beforeStatus = normalizeScheduleStatus(beforeGame?.status);
+  const afterStatus = normalizeScheduleStatus(afterGame?.status);
+  const isCanceled = afterStatus === 'cancelled' || afterStatus === 'canceled';
+  const becameCanceled = isCanceled && beforeStatus !== afterStatus;
+  const dateChanged = valuesDiffer(beforeGame?.date ?? null, afterGame?.date ?? null);
+  const locationChanged = valuesDiffer(beforeGame?.location ?? null, afterGame?.location ?? null);
+  const titleChanged = valuesDiffer(beforeGame?.title ?? null, afterGame?.title ?? null) ||
+    valuesDiffer(beforeGame?.opponent ?? null, afterGame?.opponent ?? null);
+
+  if (becameCanceled) {
+    return {
+      title: 'Event canceled',
+      body: truncateNotificationBody(`${eventTitle} was canceled. Tap to review the latest details.`)
+    };
+  }
+
+  if (dateChanged) {
+    const dateText = formatScheduleUpdateDate(afterGame?.date, afterGame?.timeZone || beforeGame?.timeZone);
+    return {
+      title: 'Schedule update',
+      body: truncateNotificationBody(dateText
+        ? `${eventTitle} moved to ${dateText}.`
+        : `${eventTitle} date/time changed. Tap to review.`)
+    };
+  }
+
+  if (locationChanged) {
+    const location = String(afterGame?.location || '').trim();
+    return {
+      title: 'Schedule update',
+      body: truncateNotificationBody(location
+        ? `${eventTitle} moved to ${location}.`
+        : `${eventTitle} location changed. Tap to review.`)
+    };
+  }
+
+  if (titleChanged) {
+    return {
+      title: 'Schedule update',
+      body: truncateNotificationBody(`Schedule updated: ${eventTitle}. Tap to review.`)
+    };
+  }
+
+  return {
+    title: 'Schedule update',
+    body: 'A team event was updated. Tap to review the latest details.'
+  };
+}
+
 function getReminderDueAt(event) {
   const notifications = event?.scheduleNotifications || {};
   const explicitDueAt = coerceDate(notifications.nextReminderAt);
@@ -2844,12 +2919,14 @@ exports.notifyGameUpdated = functions.firestore
       });
     }
 
+    const payload = buildScheduleUpdateNotificationPayload(before, after);
+
     return sendCategoryNotification({
       teamId,
       gameId,
       category,
-      title: 'Schedule update',
-      body: 'A team event was updated. Tap to review the latest details.',
+      title: payload.title,
+      body: payload.body,
       actorUid
     });
   });
