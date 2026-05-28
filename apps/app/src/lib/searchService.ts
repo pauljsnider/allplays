@@ -1,6 +1,7 @@
 import { getTeams } from '../../../../js/db.js';
 import {
   db,
+  collection,
   collectionGroup,
   getDocs,
   query,
@@ -234,9 +235,10 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
     return cachedTeams;
   }
 
-  const [siteTeamsResult, homeTeamsResult] = await Promise.allSettled([
+  const [siteTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
     Promise.resolve(getTeams()),
-    user ? loadParentHome(user) : Promise.resolve(null)
+    user ? loadParentHome(user) : Promise.resolve(null),
+    user ? loadStreamVolunteerSearchTeams(user) : Promise.resolve([])
   ]);
 
   const teamsById = new Map<string, AppSearchTeam>();
@@ -270,12 +272,20 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
     });
   }
 
+  if (streamVolunteerTeamsResult.status === 'fulfilled') {
+    normalizeTeams(streamVolunteerTeamsResult.value).forEach((team) => {
+      if (canUserDiscoverTeamInAppSearch(team, user)) teamsById.set(team.id, team);
+    });
+  }
+
   if (!teamsById.size) {
     const firstError = siteTeamsResult.status === 'rejected'
       ? siteTeamsResult.reason
       : homeTeamsResult.status === 'rejected'
         ? homeTeamsResult.reason
-        : null;
+        : streamVolunteerTeamsResult.status === 'rejected'
+          ? streamVolunteerTeamsResult.reason
+          : null;
     if (firstError) throw firstError;
   }
 
@@ -398,6 +408,45 @@ export function resetAppSearchCacheForTests() {
   cachedTeamsUserKey = '';
 }
 
+async function loadStreamVolunteerSearchTeams(user: AuthUser): Promise<AppSearchTeam[]> {
+  const uid = cleanString(user.uid);
+  const email = cleanString(user.email).toLowerCase();
+  if (!uid && !email) return [];
+
+  const teamsRef = collection(db, 'teams');
+  const teamQueries = [];
+  if (uid) {
+    teamQueries.push(getDocs(query(
+      teamsRef,
+      where('teamPermissions.streaming.memberIds', 'array-contains', uid)
+    )));
+  }
+  if (email) {
+    teamQueries.push(getDocs(query(
+      teamsRef,
+      where('streamVolunteerEmails', 'array-contains', email)
+    )));
+  }
+
+  const snapshots = await Promise.allSettled(teamQueries);
+  const rejected = snapshots.filter((snapshot) => snapshot.status === 'rejected').map((snapshot: any) => snapshot.reason).filter(Boolean);
+  const hasFulfilled = snapshots.some((snapshot) => snapshot.status === 'fulfilled');
+
+  if (!hasFulfilled && rejected.length) {
+    throw rejected[0];
+  }
+
+  const teamsById = new Map<string, any>();
+  snapshots.forEach((snapshot: any) => {
+    if (snapshot.status !== 'fulfilled') return;
+    (snapshot.value?.docs || []).forEach((doc: any) => {
+      teamsById.set(doc.id, { id: doc.id, ...(typeof doc.data === 'function' ? doc.data() || {} : {}) });
+    });
+  });
+
+  return normalizeTeams(Array.from(teamsById.values()));
+}
+
 function rankSearchItems<T extends AppSearchItem>(items: T[], tokens: string[]) {
   return items
     .map((item) => ({ item, score: scoreSearchText(`${item.title} ${item.subtitle}`, tokens) }))
@@ -456,7 +505,7 @@ function canUserDiscoverTeamViaSelectedStreaming(team: AppSearchTeam, user: Auth
   const streamingMode = normalizeAccessMode(team.teamPermissions?.streaming?.mode);
   if (streamingMode === 'selected') {
     const memberIds = Array.isArray(team.teamPermissions?.streaming?.memberIds)
-      ? team.teamPermissions?.streaming?.memberIds || []
+      ? team.teamPermissions.streaming.memberIds
       : [];
     if (memberIds.map((entry) => cleanString(entry)).filter(Boolean).includes(cleanString(user.uid))) {
       return true;

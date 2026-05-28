@@ -10,6 +10,7 @@ const homeMocks = vi.hoisted(() => ({
 
 const firebaseMocks = vi.hoisted(() => ({
     db: {},
+    collection: vi.fn((db, collectionName) => ({ db, collectionName })),
     collectionGroup: vi.fn((db, collectionName) => ({ db, collectionName })),
     getDocs: vi.fn(),
     query: vi.fn((...parts) => ({ parts })),
@@ -53,6 +54,14 @@ function firestorePlayer(path, data) {
     return {
         id: path.split('/').pop(),
         ref: { path },
+        data: () => data
+    };
+}
+
+function firestoreTeam(id, data) {
+    return {
+        id,
+        ref: { path: `teams/${id}` },
         data: () => data
     };
 }
@@ -248,6 +257,43 @@ describe('React app search service', () => {
         expect(teams.find((team) => team.id === 'team-private')).toBeUndefined();
         expect(teams.find((team) => team.id === 'team-inactive')).toBeUndefined();
         expect(teams.find((team) => team.id === 'team-inactive-access')).toBeUndefined();
+    });
+
+    it('loads private selected stream-volunteer teams before checking search access', async () => {
+        dbMocks.getTeams.mockResolvedValue([
+            { id: 'team-public', name: 'Public Bears', sport: 'Soccer', isPublic: true }
+        ]);
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [] });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({
+                docs: [firestoreTeam('team-stream-member', {
+                    name: 'Stream Member Bears',
+                    sport: 'Soccer',
+                    isPublic: false,
+                    teamPermissions: {
+                        streaming: {
+                            mode: 'selected',
+                            memberIds: ['user-1']
+                        }
+                    }
+                })]
+            })
+            .mockResolvedValueOnce({
+                docs: [firestoreTeam('team-stream-email', {
+                    name: 'Stream Email Wolves',
+                    sport: 'Basketball',
+                    isPublic: false,
+                    streamAccessMode: 'selected_volunteers',
+                    streamVolunteerEmails: ['parent@example.com']
+                })]
+            });
+
+        const teams = await loadAppSearchTeams(auth.user);
+
+        expect(firebaseMocks.collection).toHaveBeenCalledWith(firebaseMocks.db, 'teams');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('teamPermissions.streaming.memberIds', 'array-contains', 'user-1');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('streamVolunteerEmails', 'array-contains', 'parent@example.com');
+        expect(teams.map((team) => team.id)).toEqual(['team-public', 'team-stream-email', 'team-stream-member']);
     });
 
     it('lets selected stream volunteers discover private teams by uid or legacy email only', async () => {
