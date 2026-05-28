@@ -238,6 +238,9 @@ async function mockParentToolsModules(page) {
                     window.__mediaLinks.push({ teamId, folderId, title, url });
                     return 'link-1';
                 }
+                export async function deleteTeamMediaItemForApp() {
+                    return undefined;
+                }
             `
         });
     });
