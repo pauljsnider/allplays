@@ -3097,6 +3097,15 @@ export async function redeemAdminInviteAtomicPersistence({
             throw new Error('Access code team does not match admin invite target');
         }
 
+        const invitedEmail = String(codeData.email || '').trim().toLowerCase();
+        if (!invitedEmail) {
+            throw new Error('Admin invite is missing invited email');
+        }
+
+        if (normalizedEmail !== invitedEmail) {
+            throw new Error('Admin invite email does not match signed-in user');
+        }
+
         if (codeData.used === true) {
             throw new Error('Access code has already been used');
         }
@@ -3137,6 +3146,13 @@ export async function redeemAdminInviteAtomicPersistence({
             }
             if ((latestCodeData.teamId || null) !== teamId) {
                 throw new Error('Access code team does not match admin invite target');
+            }
+            const latestInvitedEmail = String(latestCodeData.email || '').trim().toLowerCase();
+            if (!latestInvitedEmail) {
+                throw new Error('Admin invite is missing invited email');
+            }
+            if (normalizedEmail !== latestInvitedEmail) {
+                throw new Error('Admin invite email does not match signed-in user');
             }
             if (latestCodeData.used === true) {
                 throw new Error('Access code has already been used');
@@ -3231,6 +3247,15 @@ export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail 
         const userEmail = (userData.email || authEmail || fallbackEmail || '').toLowerCase().trim();
         if (!userEmail) {
             throw new Error('Unable to determine user email for admin invite');
+        }
+
+        const invitedEmail = String(codeData.email || '').trim().toLowerCase();
+        if (!invitedEmail) {
+            throw new Error('Admin invite is missing invited email');
+        }
+
+        if (userEmail !== invitedEmail) {
+            throw new Error('Admin invite email does not match signed-in user');
         }
 
         transaction.set(teamRef, {
