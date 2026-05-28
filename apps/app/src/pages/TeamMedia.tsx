@@ -46,6 +46,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState('');
   const [creatingAlbum, setCreatingAlbum] = useState(false);
+  const [deletingItemId, setDeletingItemId] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -75,17 +76,17 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       return;
     }
 
-    setLoading(true); // Indicate loading while deleting
+    setDeletingItemId(item.id);
     setError('');
     setMessage('');
     try {
       await deleteTeamMediaItemForApp(teamId, item);
       setMessage('Media item deleted.');
-      await refresh({ showLoading: false }); // Refresh to remove the item from UI
+      await refresh({ showLoading: false });
     } catch (deleteError: any) {
       setError(deleteError?.message || 'Unable to delete media item.');
     } finally {
-      setLoading(false);
+      setDeletingItemId('');
     }
   };
 
@@ -339,7 +340,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.length ? filteredItems.map((item) => (
-            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} onDeleteItem={handleDeleteItem} />
+            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} currentUserId={auth.user?.uid || ''} deleting={deletingItemId === item.id} onDeleteItem={handleDeleteItem} />
           )) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
@@ -391,16 +392,21 @@ function TeamMediaItemCard({
   item,
   onStatus,
   canManage,
+  currentUserId,
+  deleting,
   onDeleteItem
 }: {
   item: TeamMediaItem;
   onStatus: (tone: 'error' | 'success', message: string) => void;
   canManage: boolean;
+  currentUserId: string;
+  deleting: boolean;
   onDeleteItem: (item: TeamMediaItem) => void;
 }) {
   const Icon = getItemIcon(item);
   const isPhoto = item.type === 'photo';
   const title = item.title || 'Team media';
+  const canDelete = canManage || (['photo', 'file'].includes(String(item.type || '').toLowerCase()) && item.uploadedBy === currentUserId);
 
   const copyLink = async () => {
     try {
@@ -466,10 +472,10 @@ function TeamMediaItemCard({
             <Copy className="h-3.5 w-3.5" aria-hidden="true" />
             Copy
           </button>
-          {canManage && (
-            <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs text-rose-700 hover:bg-rose-50" onClick={() => onDeleteItem(item)} aria-label={`Delete ${title}`}>
-              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-              Delete
+          {canDelete && (
+            <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-60" onClick={() => onDeleteItem(item)} disabled={deleting} aria-label={`Delete ${title}`}>
+              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />}
+              {deleting ? 'Deleting' : 'Delete'}
             </button>
           )}
         </div>

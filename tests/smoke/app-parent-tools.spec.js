@@ -18,6 +18,7 @@ async function mockParentToolsModules(page) {
         window.__familyCreates = [];
         window.__mediaUploads = [];
         window.__mediaLinks = [];
+        window.__mediaDeletes = [];
         Object.defineProperty(navigator, 'clipboard', {
             configurable: true,
             value: {
@@ -223,7 +224,7 @@ async function mockParentToolsModules(page) {
                             name: 'Game photos',
                             visibility: 'team',
                             itemCount: 1,
-                            items: [{ id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/tipoff.jpg' }]
+                            items: [{ id: 'photo-1', title: 'Tipoff', type: 'photo', uploadedBy: 'user-1', url: 'https://img.example.test/tipoff.jpg' }]
                         }]
                     };
                 }
@@ -242,7 +243,9 @@ async function mockParentToolsModules(page) {
                     window.__mediaLinks.push({ teamId, folderId, title, url });
                     return 'link-1';
                 }
-                export async function deleteTeamMediaItemForApp() {
+                export async function deleteTeamMediaItemForApp(teamId, item) {
+                    window.__mediaDeletes.push({ teamId, itemId: item.id });
+                    await new Promise((resolve) => setTimeout(resolve, 50));
                     return undefined;
                 }
             `
@@ -320,7 +323,12 @@ test('team media route supports photo upload, file upload, link add, and media o
     await page.getByRole('button', { name: /Add link/ }).click();
     await expect.poll(() => page.evaluate(() => window.__mediaLinks.at(-1))).toEqual({ teamId: 'team-1', folderId: 'folder-1', title: 'Replay', url: 'https://video.example.test/replay' });
 
-    await page.getByRole('button', { name: /Tipoff/ }).click();
+    await page.getByRole('button', { name: 'Open Tipoff' }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://img.example.test/tipoff.jpg');
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await page.getByRole('button', { name: /Delete Tipoff/ }).click();
+    await expect(page.getByRole('button', { name: /Game photos/ })).toBeEnabled();
+    await expect.poll(() => page.evaluate(() => window.__mediaDeletes.at(-1))).toEqual({ teamId: 'team-1', itemId: 'photo-1' });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
