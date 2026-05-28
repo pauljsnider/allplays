@@ -30,6 +30,7 @@ const dbMocks = vi.hoisted(() => ({
     updateFamilyShareTokenCalendars: vi.fn(),
     uploadTeamMediaFile: vi.fn(),
     uploadTeamMediaPhoto: vi.fn(),
+    deleteTeamMediaItem: vi.fn(),
     createRegistrationCheckoutSession: vi.fn()
 }));
 
@@ -161,6 +162,7 @@ import {
     updateParentFamilyShareCalendars,
     uploadParentTeamMediaFile,
     uploadParentTeamMediaPhoto,
+    deleteTeamMediaItemForApp,
     initiateRegistrationCheckout,
     initiateParentTeamFeeCheckout,
     canInitiateParentTeamFeeCheckout,
@@ -757,5 +759,33 @@ describe('React app parent tools service', () => {
         stripeMocks.initiateTeamFeeCheckout.mockResolvedValueOnce('');
         await expect(initiateParentTeamFeeCheckout('team-1', 'batch-1', 'recipient-1'))
             .rejects.toThrow('Failed to get checkout URL.');
+    });
+
+    describe('deleteTeamMediaItemForApp', () => {
+        it('correctly calls deleteTeamMediaItem with teamId and item', async () => {
+            const teamId = 'test-team';
+            const item = { id: 'media-item-1', title: 'Test Photo', type: 'photo', storagePath: 'photos/test.jpg' };
+            dbMocks.deleteTeamMediaItem.mockResolvedValueOnce(true);
+
+            await expect(deleteTeamMediaItemForApp(teamId, item)).resolves.toBeUndefined();
+            expect(dbMocks.deleteTeamMediaItem).toHaveBeenCalledWith(teamId, item);
+        });
+
+        it('throws an error if teamId or itemId are missing', async () => {
+            const item = { id: 'media-item-1', title: 'Test Photo', type: 'photo', storagePath: 'photos/test.jpg' };
+            await expect(deleteTeamMediaItemForApp('', item)).rejects.toThrow('Missing team or media item ID.');
+            await expect(deleteTeamMediaItemForApp('team-id', { id: '', title: 'Test Photo', type: 'photo' })).rejects.toThrow('Missing team or media item ID.');
+            expect(dbMocks.deleteTeamMediaItem).not.toHaveBeenCalled();
+        });
+
+        it('propagates errors from deleteTeamMediaItem', async () => {
+            const teamId = 'test-team';
+            const item = { id: 'media-item-1', title: 'Test Photo', type: 'photo', storagePath: 'photos/test.jpg' };
+            const mockError = new Error('Firestore delete failed');
+            dbMocks.deleteTeamMediaItem.mockRejectedValueOnce(mockError);
+
+            await expect(deleteTeamMediaItemForApp(teamId, item)).rejects.toThrow('Firestore delete failed');
+            expect(dbMocks.deleteTeamMediaItem).toHaveBeenCalledWith(teamId, item);
+        });
     });
 });
