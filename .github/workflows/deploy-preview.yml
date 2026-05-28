@@ -134,7 +134,10 @@ jobs:
           CURRENT_CHANNEL: pr-${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          open_channels="$(gh api --paginate repos/${{ github.repository }}/pulls?state=open\&per_page=100 --jq '.[].number' | sed 's/^/pr-/')"
+          if ! open_channels="$(gh pr list --repo "${{ github.repository }}" --state open --limit 200 --json number --jq '.[].number' | sed 's/^/pr-/')"; then
+            echo "Warning: unable to list open PRs; skipping stale Firebase preview channel pruning."
+            exit 0
+          fi
           channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
           prune_file="$RUNNER_TEMP/firebase-preview-prune.txt"
           npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
