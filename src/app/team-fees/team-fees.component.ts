@@ -36,7 +36,15 @@ type FeeRecipientData = {
   name?: string;
   amount?: number;
   amountCents?: number;
+  amountDueCents?: number;
+  adjustedAmountCents?: number;
+  totalAmountCents?: number;
   balanceDueCents?: number;
+  remainingBalanceCents?: number;
+  paidAmountCents?: number;
+  amountPaidCents?: number;
+  totalPaidCents?: number;
+  paidCents?: number;
   status?: string;
   collectionMode?: string;
   offlinePaymentInstructions?: string;
@@ -99,6 +107,32 @@ function normalizeAmount(data: FeeRecipientData): number {
   if (typeof data.amountCents === 'number') return data.amountCents / 100;
   if (typeof data.amount === 'number') return data.amount;
   return 0;
+}
+
+function getCentsValue(...values: Array<number | undefined>): number {
+  const value = values.find((candidate) => candidate !== undefined);
+  if (value === undefined) return 0;
+  const cents = Number(value);
+  return Number.isFinite(cents) ? Math.max(0, cents) : 0;
+}
+
+function getFeeBalanceCents(data: FeeRecipientData): number {
+  if (data.balanceDueCents !== undefined) return getCentsValue(data.balanceDueCents);
+  if (data.remainingBalanceCents !== undefined) return getCentsValue(data.remainingBalanceCents);
+
+  const totalCents = getCentsValue(
+    data.amountDueCents,
+    data.adjustedAmountCents,
+    data.amountCents,
+    data.totalAmountCents
+  );
+  const paidCents = getCentsValue(
+    data.paidAmountCents,
+    data.amountPaidCents,
+    data.totalPaidCents,
+    data.paidCents
+  );
+  return Math.max(0, totalCents - paidCents);
 }
 
 function getFeeStatus(data: FeeRecipientData): string {
@@ -237,7 +271,8 @@ export class TeamFeesComponent implements OnInit {
       const collectionMode = normalizeCollectionMode(data);
       const isPaid = isFeePaid(data);
       const isCanceled = isFeeCanceled(data);
-      const canPayOnline = !isPaid && !isCanceled && isOnlineStripeCollectionMode(collectionMode) && Boolean(teamId && batchId && docSnap.id);
+      const balanceCents = getFeeBalanceCents(data);
+      const canPayOnline = !isPaid && !isCanceled && balanceCents > 0 && isOnlineStripeCollectionMode(collectionMode) && Boolean(teamId && batchId && docSnap.id);
 
       feesByPath.set(docSnap.ref.path, {
         id: docSnap.id,

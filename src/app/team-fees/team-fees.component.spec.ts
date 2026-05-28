@@ -261,6 +261,35 @@ describe('TeamFeesComponent checkout flow', () => {
     });
   });
 
+  it('hides checkout for online Stripe fees without a positive remaining balance', async () => {
+    const zeroAmountFee = feeDoc('teams/team-real/feeBatches/batch-zero/feeRecipients/recipient-zero', 'recipient-zero', {
+      parentUserId: 'parent-123',
+      title: 'Zero registration',
+      amountCents: 0,
+      status: 'unpaid',
+      collectionMode: 'online_stripe'
+    });
+    const fullyPaidFee = feeDoc('teams/team-real/feeBatches/batch-paid/feeRecipients/recipient-paid', 'recipient-paid', {
+      parentUserId: 'parent-123',
+      title: 'Fully paid registration',
+      amountCents: 12500,
+      paidAmountCents: 12500,
+      status: 'unpaid',
+      collectionMode: 'online_stripe'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [zeroAmountFee, fullyPaidFee] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(component.teamFees.map((fee) => ({ id: fee.id, canPayOnline: fee.canPayOnline }))).toEqual([
+      { id: 'recipient-zero', canPayOnline: false },
+      { id: 'recipient-paid', canPayOnline: false }
+    ]);
+  });
+
   it('maps unpaid offline manual fees without a pay action and keeps offline instructions', async () => {
     const offlineFee = feeDoc('teams/team-real/feeBatches/batch-real/feeRecipients/recipient-offline', 'recipient-offline', {
       parentUserId: 'parent-123',
