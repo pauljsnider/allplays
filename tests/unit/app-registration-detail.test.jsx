@@ -218,6 +218,69 @@ describe('RegistrationDetail page', () => {
     await waitForText(container, 'Registration submitted. Your registration is pending review.');
   });
 
+  it('hides the payment plan selector for a single pay-in-full plan and submits the default', async () => {
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Summer Camp');
+
+    expect(container.querySelector('[data-payment-plan]')).toBeNull();
+    expect(container.textContent).not.toContain('Payment plan');
+
+    await changeInputValue(container, 'Participant Name', 'Test Participant');
+    await changeInputValue(container, 'Guardian Name', 'Test Guardian');
+    await changeInputValue(container, 'I accept the waiver.', true);
+    await changeInputValue(container, 'Registration option', 'opt-1');
+    await clickButton(container, 'Submit registration');
+
+    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      expect.objectContaining({
+        selectedPaymentPlanId: 'pay_full',
+      })
+    );
+  });
+
+  it('shows the payment plan selector for multiple choices and submits the selected plan', async () => {
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        season: 'Summer',
+        onlineCheckout: false,
+        paymentPlans: [
+          { id: 'pay_full', title: 'Pay in full' },
+          { id: 'installments', title: 'Installment plan' },
+        ],
+        options: [{ id: 'opt-1', title: 'Option 1' }],
+        registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+      },
+    ]);
+
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Summer Camp');
+
+    expect(container.querySelector('[data-payment-plan]')).not.toBeNull();
+    expect(container.textContent).toContain('Payment plan');
+
+    await changeInputValue(container, 'Participant Name', 'Test Participant');
+    await changeInputValue(container, 'Guardian Name', 'Test Guardian');
+    await changeInputValue(container, 'Registration option', 'opt-1');
+    await changeInputValue(container, 'Payment plan', 'installments');
+    await clickButton(container, 'Submit registration');
+
+    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      expect.objectContaining({
+        selectedPaymentPlanId: 'installments',
+      })
+    );
+  });
+
   it('shows an error if required fields are missing', async () => {
     const { container } = await renderRegistrationDetail();
     await waitForText(container, 'Summer Camp');
