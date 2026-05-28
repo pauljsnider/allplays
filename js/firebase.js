@@ -1,4 +1,4 @@
-import { initializeApp } from "./vendor/firebase-app.js";
+import { getApp, getApps, initializeApp } from "./vendor/firebase-app.js";
 import {
     getAuth,
     indexedDBLocalPersistence,
@@ -55,7 +55,7 @@ import { resolvePrimaryFirebaseConfig } from "./firebase-runtime-config.js?v=8";
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 function isCapacitorNativeRuntime() {
     const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
     if (protocol === 'capacitor:' || protocol === 'ionic:') {
