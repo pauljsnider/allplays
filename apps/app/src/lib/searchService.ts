@@ -2,6 +2,7 @@ import { getTeams } from '../../../../js/db.js';
 import { isTeamActive } from '../../../../js/team-visibility.js';
 import {
   db,
+  collection,
   collectionGroup,
   getDocs,
   query,
@@ -17,6 +18,7 @@ const teamsCacheTtlMs = 10 * 60 * 1000;
 
 let cachedTeams: AppSearchTeam[] | null = null;
 let cachedTeamsLoadedAt = 0;
+let cachedTeamsUserKey = '';
 
 export type AppSearchKind = 'action' | 'team' | 'player' | 'social' | 'help';
 
@@ -46,6 +48,14 @@ export type AppSearchTeam = {
   adminEmails?: string[];
   photoUrl?: string | null;
   fromAppAccess?: boolean;
+  streamAccessMode?: string | null;
+  streamVolunteerEmails?: string[];
+  teamPermissions?: {
+    streaming?: {
+      mode?: string | null;
+      memberIds?: string[];
+    } | null;
+  } | null;
 };
 
 export type AppSearchPlayer = AppSearchItem & {
@@ -223,13 +233,15 @@ export function computeAppSearchResults({
 
 export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSearchTeam[]> {
   const now = Date.now();
-  if (cachedTeams && now - cachedTeamsLoadedAt < teamsCacheTtlMs) {
+  const userCacheKey = getAppSearchUserCacheKey(user);
+  if (cachedTeams && cachedTeamsUserKey === userCacheKey && now - cachedTeamsLoadedAt < teamsCacheTtlMs) {
     return cachedTeams;
   }
 
-  const [siteTeamsResult, homeTeamsResult] = await Promise.allSettled([
+  const [siteTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
     Promise.resolve(getTeams()),
-    user ? loadParentHome(user) : Promise.resolve(null)
+    user ? loadParentHome(user) : Promise.resolve(null),
+    user ? loadStreamVolunteerSearchTeams(user) : Promise.resolve([])
   ]);
 
   const teamsById = new Map<string, AppSearchTeam>();
@@ -265,18 +277,27 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
     });
   }
 
+  if (streamVolunteerTeamsResult.status === 'fulfilled') {
+    normalizeTeams(streamVolunteerTeamsResult.value).forEach((team) => {
+      if (canUserDiscoverTeamInAppSearch(team, user)) teamsById.set(team.id, team);
+    });
+  }
+
   if (!teamsById.size) {
     const firstError = siteTeamsResult.status === 'rejected'
       ? siteTeamsResult.reason
       : homeTeamsResult.status === 'rejected'
         ? homeTeamsResult.reason
-        : null;
+        : streamVolunteerTeamsResult.status === 'rejected'
+          ? streamVolunteerTeamsResult.reason
+          : null;
     if (firstError) throw firstError;
   }
 
   cachedTeams = Array.from(teamsById.values())
     .sort((a, b) => a.name.localeCompare(b.name));
   cachedTeamsLoadedAt = now;
+  cachedTeamsUserKey = userCacheKey;
   return cachedTeams;
 }
 
@@ -389,6 +410,46 @@ function getSearchHelpRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatfo
 export function resetAppSearchCacheForTests() {
   cachedTeams = null;
   cachedTeamsLoadedAt = 0;
+  cachedTeamsUserKey = '';
+}
+
+async function loadStreamVolunteerSearchTeams(user: AuthUser): Promise<AppSearchTeam[]> {
+  const uid = cleanString(user.uid);
+  const email = cleanString(user.email).toLowerCase();
+  if (!uid && !email) return [];
+
+  const teamsRef = collection(db, 'teams');
+  const teamQueries = [];
+  if (uid) {
+    teamQueries.push(getDocs(query(
+      teamsRef,
+      where('teamPermissions.streaming.memberIds', 'array-contains', uid)
+    )));
+  }
+  if (email) {
+    teamQueries.push(getDocs(query(
+      teamsRef,
+      where('streamVolunteerEmails', 'array-contains', email)
+    )));
+  }
+
+  const snapshots = await Promise.allSettled(teamQueries);
+  const rejected = snapshots.filter((snapshot) => snapshot.status === 'rejected').map((snapshot: any) => snapshot.reason).filter(Boolean);
+  const hasFulfilled = snapshots.some((snapshot) => snapshot.status === 'fulfilled');
+
+  if (!hasFulfilled && rejected.length) {
+    throw rejected[0];
+  }
+
+  const teamsById = new Map<string, any>();
+  snapshots.forEach((snapshot: any) => {
+    if (snapshot.status !== 'fulfilled') return;
+    (snapshot.value?.docs || []).forEach((doc: any) => {
+      teamsById.set(doc.id, { id: doc.id, ...(typeof doc.data === 'function' ? doc.data() || {} : {}) });
+    });
+  });
+
+  return normalizeTeams(Array.from(teamsById.values()));
 }
 
 function rankSearchItems<T extends AppSearchItem>(items: T[], tokens: string[]) {
@@ -424,7 +485,10 @@ function normalizeTeams(teams: any[]): AppSearchTeam[] {
       status: cleanString(team?.status),
       ownerId: cleanString(team?.ownerId),
       adminEmails: Array.isArray(team?.adminEmails) ? team.adminEmails : [],
-      photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl)
+      photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl),
+      streamAccessMode: cleanString(team?.streamAccessMode),
+      streamVolunteerEmails: Array.isArray(team?.streamVolunteerEmails) ? team.streamVolunteerEmails : [],
+      teamPermissions: normalizeSearchTeamPermissions(team?.teamPermissions)
     }))
     .filter((team) => team.id);
 }
@@ -440,7 +504,50 @@ function canUserDiscoverTeamInAppSearch(team: AppSearchTeam, user: AuthUser | nu
   const email = cleanString(user.email).toLowerCase();
   const adminEmails = (team.adminEmails || []).map((entry) => cleanString(entry).toLowerCase()).filter(Boolean);
   if (email && adminEmails.includes(email)) return true;
+  if (canUserDiscoverTeamViaSelectedStreaming(team, user, email)) return true;
   return Array.isArray(user.parentOf) && user.parentOf.some((link: any) => cleanString(link?.teamId) === team.id);
+}
+
+function canUserDiscoverTeamViaSelectedStreaming(team: AppSearchTeam, user: AuthUser, email: string) {
+  const streamingMode = normalizeAccessMode(team.teamPermissions?.streaming?.mode);
+  if (streamingMode === 'selected') {
+    const memberIds = Array.isArray(team.teamPermissions?.streaming?.memberIds)
+      ? team.teamPermissions.streaming.memberIds
+      : [];
+    if (memberIds.map((entry) => cleanString(entry)).filter(Boolean).includes(cleanString(user.uid))) {
+      return true;
+    }
+  }
+
+  const legacyMode = normalizeAccessMode(team.streamAccessMode);
+  if ((legacyMode === 'selected' || legacyMode === 'selected_volunteers') && email) {
+    const volunteerEmails = (team.streamVolunteerEmails || [])
+      .map((entry) => cleanString(entry).toLowerCase())
+      .filter(Boolean);
+    return volunteerEmails.includes(email);
+  }
+
+  return false;
+}
+
+function normalizeSearchTeamPermissions(teamPermissions: any) {
+  const streaming = teamPermissions?.streaming;
+  if (!streaming || typeof streaming !== 'object') return null;
+  return {
+    streaming: {
+      mode: cleanString(streaming.mode),
+      memberIds: Array.isArray(streaming.memberIds) ? streaming.memberIds : []
+    }
+  };
+}
+
+function normalizeAccessMode(value: unknown) {
+  return cleanString(value).toLowerCase();
+}
+
+function getAppSearchUserCacheKey(user: AuthUser | null) {
+  if (!user) return 'signed-out';
+  return `${cleanString(user.uid)}:${cleanString(user.email).toLowerCase()}`;
 }
 
 function canUserDiscoverPlayerInAppSearch(teamId: string, teamsById: Map<string, AppSearchTeam>, user: AuthUser | null) {
