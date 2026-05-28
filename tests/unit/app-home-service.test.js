@@ -112,7 +112,7 @@ describe('React app Home service', () => {
 
         const home = await loadParentHome(user);
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: true });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false });
         expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user);
         expect(dbMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith(user.uid, [
             expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })
