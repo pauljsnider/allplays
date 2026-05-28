@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const nativeState = vi.hoisted(() => ({
@@ -106,6 +107,26 @@ describe('React app public URL actions', () => {
 
         expect(result).toBe('copied');
         expect(writeText).toHaveBeenCalledWith('Bears vs Falcons · May 21\nhttps://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+    });
+
+    it('copies public text with clipboard and textarea fallback paths', async () => {
+        const { copyPublicText } = await loadPublicActions();
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText }
+        });
+
+        await expect(copyPublicText('<iframe src="https://allplays.ai/widget-scoreboard.html?teamId=team-1"></iframe>')).resolves.toBe('copied');
+        expect(writeText).toHaveBeenCalledWith('<iframe src="https://allplays.ai/widget-scoreboard.html?teamId=team-1"></iframe>');
+
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: undefined
+        });
+        document.execCommand = vi.fn(() => true);
+        await expect(copyPublicText('https://allplays.ai/widget-scoreboard.html?teamId=team-1')).resolves.toBe('copied');
+        expect(document.execCommand).toHaveBeenCalledWith('copy');
     });
 
     it('falls back to web share for browser builds', async () => {

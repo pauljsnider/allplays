@@ -6,6 +6,8 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronRight,
+  Code2,
+  Copy,
   DollarSign,
   ExternalLink,
   ImageIcon,
@@ -20,7 +22,7 @@ import {
   UserRound,
   Users
 } from 'lucide-react';
-import { openPublicUrl } from '../lib/publicActions';
+import { copyPublicText, openPublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { loadParentTeamDetail, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
@@ -339,6 +341,7 @@ function MoreTab({ model }: { model: TeamDetailModel }) {
   return (
     <div className="space-y-4">
       {model.staffPermissions ? <StaffPermissionsCard model={model} /> : null}
+      {model.canManageTeam ? <ScoreboardWidgetCard model={model} /> : null}
 
       <section className="app-card p-4">
         <div className="text-sm font-black text-gray-950">Team links</div>
@@ -394,6 +397,79 @@ function MoreTab({ model }: { model: TeamDetailModel }) {
       ) : null}
     </div>
   );
+}
+
+function ScoreboardWidgetCard({ model }: { model: TeamDetailModel }) {
+  const widgetUrl = buildScoreboardWidgetUrl(model.team.id);
+  const embedCode = buildScoreboardWidgetEmbedCode(model.team);
+  const [copyStatus, setCopyStatus] = useState<{ kind: 'embed' | 'link'; success: boolean } | null>(null);
+
+  async function copyValue(kind: 'embed' | 'link', value: string) {
+    const result = await copyPublicText(value);
+    setCopyStatus({ kind, success: result === 'copied' });
+  }
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <Code2 className="h-5 w-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-gray-950">Scoreboard widget</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Copy a read-only public link or iframe embed for this team&apos;s live scoreboard.</div>
+          <label className="mt-3 block text-[11px] font-black uppercase tracking-[0.04em] text-gray-500" htmlFor="scoreboard-widget-embed">Embed code</label>
+          <textarea
+            id="scoreboard-widget-embed"
+            className="mt-1 h-24 w-full resize-none rounded-xl border border-gray-200 bg-gray-50 p-3 font-mono text-xs font-semibold text-gray-700"
+            readOnly
+            value={embedCode}
+          />
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="primary-button !min-h-9 text-xs" onClick={() => copyValue('embed', embedCode)}>
+              <Copy className="h-4 w-4" aria-hidden="true" />
+              Copy Embed Code
+            </button>
+            <button type="button" className="secondary-button !min-h-9 text-xs" onClick={() => copyValue('link', widgetUrl)}>
+              <LinkIcon className="h-4 w-4" aria-hidden="true" />
+              Copy Link
+            </button>
+          </div>
+          {copyStatus ? (
+            <div className={`mt-2 flex items-center gap-2 text-xs font-black ${copyStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              {copyStatus.success
+                ? `${copyStatus.kind === 'embed' ? 'Embed code' : 'Widget link'} copied.`
+                : `Unable to copy ${copyStatus.kind === 'embed' ? 'embed code' : 'widget link'}. Select the field and copy manually.`}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function buildScoreboardWidgetUrl(teamId: string, baseUrl = getPublicBaseUrl()) {
+  const url = new URL('/widget-scoreboard.html', baseUrl);
+  url.searchParams.set('teamId', teamId);
+  return url.toString();
+}
+
+export function buildScoreboardWidgetEmbedCode(team: { id: string; name: string }, baseUrl?: string) {
+  const widgetUrl = buildScoreboardWidgetUrl(team.id, baseUrl);
+  const title = escapeHtmlAttribute(`${team.name || 'Team'} live scoreboard`);
+  return `<iframe src="${escapeHtmlAttribute(widgetUrl)}" title="${title}" style="width: 100%; max-width: 720px; height: 480px; border: 0;" loading="lazy"></iframe>`;
+}
+
+function getPublicBaseUrl() {
+  if (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol)) {
+    return window.location.origin;
+  }
+  return 'https://allplays.ai';
+}
+
+function escapeHtmlAttribute(value: string) {
+  return String(value || '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char));
 }
 
 function StaffPermissionsCard({ model }: { model: TeamDetailModel }) {
