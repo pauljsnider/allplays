@@ -671,26 +671,35 @@
                 const successUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=success`;
                 const cancelUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=cancelled`;
 
-                const checkoutUrl = await initiateStripeCheckout({
-                    teamId,
-                    formId,
-                    registrationId: result.registrationId,
-                    amount: amountCents,
-                    currency,
-                    successUrl,
-                    cancelUrl,
-                    metadata: {
+                let checkoutUrl = '';
+                try {
+                    checkoutUrl = await initiateStripeCheckout({
                         teamId,
                         formId,
-                        selectedOptionId: submission.selectedOptionId,
-                        paymentPlanId: submission.selectedPaymentPlanId,
-                        quantity: submission.feeSnapshot.quantity
-                    }
-                });
+                        registrationId: result.registrationId,
+                        amount: amountCents,
+                        currency,
+                        successUrl,
+                        cancelUrl,
+                        metadata: {
+                            teamId,
+                            formId,
+                            selectedOptionId: submission.selectedOptionId,
+                            paymentPlanId: submission.selectedPaymentPlanId,
+                            quantity: submission.feeSnapshot.quantity
+                        }
+                    });
+                } catch (checkoutError) {
+                    await releaseCancelledStripeRegistration(result.registrationId);
+                    preparedCheckoutRegistration = null;
+                    throw checkoutError;
+                }
 
                 if (checkoutUrl) {
                     window.location.href = checkoutUrl;
                 } else {
+                    await releaseCancelledStripeRegistration(result.registrationId);
+                    preparedCheckoutRegistration = null;
                     showFormError('Failed to get Stripe checkout URL.');
                 }
             } catch (error) {

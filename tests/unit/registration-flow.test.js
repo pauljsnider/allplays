@@ -339,6 +339,8 @@ describe('public registration flow', () => {
         expect(page).toContain('const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);');
         expect(page).toContain('preparedCheckoutRegistration?.retryKey === retryKey');
         expect(page).toContain('preparedCheckoutRegistration = { retryKey, result };');
+        expect(page).toContain('await releaseCancelledStripeRegistration(result.registrationId);');
+        expect(page).toContain('preparedCheckoutRegistration = null;');
         expect(page).toContain('return { status: \'pending\', registrationId: registrationRef.id };');
         expect(page).toContain('return { status: placement.status, registrationId: registrationRef.id };');
         expect(page).toContain("paymentLoadingState.classList.add('hidden');");
@@ -384,7 +386,7 @@ describe('public registration flow', () => {
         expect(rules).toContain('data.keys().size() <= 20');
     });
 
-    it('does not create a second pending registration when online checkout retry follows a Stripe failure', async () => {
+    it('releases and prepares a fresh pending registration when online checkout retry follows a Stripe failure', async () => {
         const page = fs.readFileSync('registration.html', 'utf8');
         const dom = new JSDOM(page, { url: 'https://example.test/registration.html?teamId=team-1&formId=form-1' });
         const document = dom.window.document;
@@ -413,6 +415,7 @@ describe('public registration flow', () => {
         const initiateStripeCheckout = vi.fn()
             .mockRejectedValueOnce(new Error('Stripe unavailable'))
             .mockRejectedValueOnce(new Error('Stripe unavailable again'));
+        const releaseCancelledStripeRegistration = vi.fn();
         let preparedCheckoutRegistration = null;
 
         const readGroupValues = (groupName, fields) => collectFieldValues(fields, Array.from(formElement.querySelectorAll(`[data-group="${groupName}"]`)).reduce((values, input) => {
@@ -463,8 +466,16 @@ describe('public registration flow', () => {
                 : await submitRegistrationWithoutCapacity(submission);
             preparedCheckoutRegistration = { retryKey, result };
             try {
-                await initiateStripeCheckout({ registrationId: result.registrationId, amount: amountCents, currency });
+                const checkoutUrl = await initiateStripeCheckout({ registrationId: result.registrationId, amount: amountCents, currency });
+                if (!checkoutUrl) {
+                    await releaseCancelledStripeRegistration(result.registrationId);
+                    preparedCheckoutRegistration = null;
+                    errorMessage.textContent = 'Failed to get Stripe checkout URL.';
+                    errorMessage.classList.remove('hidden');
+                }
             } catch (error) {
+                await releaseCancelledStripeRegistration(result.registrationId);
+                preparedCheckoutRegistration = null;
                 errorMessage.textContent = 'Failed to initiate payment. Please try again later.';
                 errorMessage.classList.remove('hidden');
             } finally {
@@ -477,14 +488,17 @@ describe('public registration flow', () => {
         await clickPayRegistration();
 
         expect(errorMessage.textContent).toBe('Failed to initiate payment. Please try again later.');
-        expect(submitRegistrationWithoutCapacity).toHaveBeenCalledTimes(1);
-        expect(createdRegistrations).toHaveLength(1);
+        expect(submitRegistrationWithoutCapacity).toHaveBeenCalledTimes(2);
+        expect(createdRegistrations).toHaveLength(2);
+        expect(releaseCancelledStripeRegistration).toHaveBeenCalledTimes(2);
+        expect(releaseCancelledStripeRegistration).toHaveBeenNthCalledWith(1, 'registration-1');
+        expect(releaseCancelledStripeRegistration).toHaveBeenNthCalledWith(2, 'registration-2');
         expect(initiateStripeCheckout).toHaveBeenCalledTimes(2);
-        expect(initiateStripeCheckout.mock.calls[1][0].registrationId).toBe('registration-1');
+        expect(initiateStripeCheckout.mock.calls[1][0].registrationId).toBe('registration-2');
         expect(payRegistrationButton.disabled).toBe(false);
     });
 
-    it('does not increment capacity counts twice when checkout retry follows a Stripe failure', async () => {
+    it('releases capacity and prepares a fresh reservation when checkout retry follows a Stripe failure', async () => {
         const page = fs.readFileSync('registration.html', 'utf8');
         const dom = new JSDOM(page, { url: 'https://example.test/registration.html?teamId=team-1&formId=form-1' });
         const document = dom.window.document;
@@ -512,9 +526,19 @@ describe('public registration flow', () => {
             waiverText: 'Waiver'
         }, { teamId: 'team-1', formId: 'form-1' });
         let registrationOptionCounts = { u10: { enrolled: 0, waitlisted: 0 } };
+        let capacityRegistrationCount = 0;
         const initiateStripeCheckout = vi.fn()
             .mockRejectedValueOnce(new Error('Stripe unavailable'))
             .mockRejectedValueOnce(new Error('Stripe unavailable again'));
+        const releaseCancelledStripeRegistration = vi.fn(async () => {
+            registrationOptionCounts = {
+                ...registrationOptionCounts,
+                u10: {
+                    ...registrationOptionCounts.u10,
+                    enrolled: Math.max(0, Number(registrationOptionCounts.u10.enrolled || 0) - 1)
+                }
+            };
+        });
         let preparedCheckoutRegistration = null;
 
         const readGroupValues = (groupName, fields) => collectFieldValues(fields, Array.from(formElement.querySelectorAll(`[data-group="${groupName}"]`)).reduce((values, input) => {
@@ -543,7 +567,8 @@ describe('public registration flow', () => {
                 ...registrationOptionCounts,
                 [placement.selectedOption.countKey]: placement.nextCounts
             };
-            return { status: placement.status, registrationId: 'registration-capacity-1' };
+            capacityRegistrationCount += 1;
+            return { status: placement.status, registrationId: `registration-capacity-${capacityRegistrationCount}` };
         });
         const clickPayRegistration = async () => {
             errorMessage.classList.add('hidden');
@@ -565,8 +590,16 @@ describe('public registration flow', () => {
                 : await submitRegistrationWithCapacity(submission);
             preparedCheckoutRegistration = { retryKey, result };
             try {
-                await initiateStripeCheckout({ registrationId: result.registrationId, amount: amountCents, currency });
+                const checkoutUrl = await initiateStripeCheckout({ registrationId: result.registrationId, amount: amountCents, currency });
+                if (!checkoutUrl) {
+                    await releaseCancelledStripeRegistration(result.registrationId);
+                    preparedCheckoutRegistration = null;
+                    errorMessage.textContent = 'Failed to get Stripe checkout URL.';
+                    errorMessage.classList.remove('hidden');
+                }
             } catch (error) {
+                await releaseCancelledStripeRegistration(result.registrationId);
+                preparedCheckoutRegistration = null;
                 errorMessage.textContent = 'Failed to initiate payment. Please try again later.';
                 errorMessage.classList.remove('hidden');
             } finally {
@@ -579,10 +612,63 @@ describe('public registration flow', () => {
         await clickPayRegistration();
 
         expect(errorMessage.textContent).toBe('Failed to initiate payment. Please try again later.');
-        expect(submitRegistrationWithCapacity).toHaveBeenCalledTimes(1);
-        expect(registrationOptionCounts.u10).toEqual({ enrolled: 1, waitlisted: 0 });
+        expect(submitRegistrationWithCapacity).toHaveBeenCalledTimes(2);
+        expect(registrationOptionCounts.u10).toEqual({ enrolled: 0, waitlisted: 0 });
+        expect(releaseCancelledStripeRegistration).toHaveBeenCalledTimes(2);
         expect(initiateStripeCheckout).toHaveBeenCalledTimes(2);
-        expect(initiateStripeCheckout.mock.calls[1][0].registrationId).toBe('registration-capacity-1');
+        expect(initiateStripeCheckout.mock.calls[1][0].registrationId).toBe('registration-capacity-2');
+    });
+
+    it('releases a prepared capacity reservation when checkout returns no URL', async () => {
+        const activeForm = normalizeRegistrationForm({
+            programName: 'Clinic',
+            published: true,
+            feeAmountCents: 5000,
+            paymentSettings: { onlineCheckoutEnabled: true },
+            participantFields: [{ id: 'playerName', label: 'Player name', required: true }],
+            guardianFields: [{ id: 'email', label: 'Guardian email', required: true }],
+            registrationOptions: [{ id: 'u10', title: 'U10', capacityLimit: 1, waitlistEnabled: false }],
+            waiverText: 'Waiver'
+        }, { teamId: 'team-1', formId: 'form-1' });
+        let registrationOptionCounts = { u10: { enrolled: 0, waitlisted: 0 } };
+        let preparedCheckoutRegistration = null;
+        const releaseCancelledStripeRegistration = vi.fn(async () => {
+            registrationOptionCounts = {
+                ...registrationOptionCounts,
+                u10: { ...registrationOptionCounts.u10, enrolled: Math.max(0, registrationOptionCounts.u10.enrolled - 1) }
+            };
+        });
+        const initiateStripeCheckout = vi.fn().mockResolvedValueOnce('');
+        const submission = {
+            participant: { playerName: 'Sam' },
+            guardian: { email: 'parent@example.com' },
+            waiverAccepted: true,
+            selectedPaymentPlanId: 'pay_full',
+            selectedOptionId: 'u10',
+            feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: 1, now: new Date('2026-05-23T00:00:00Z') })
+        };
+        const placement = decideRegistrationPlacement({
+            form: activeForm,
+            selectedOptionId: submission.selectedOptionId,
+            counts: registrationOptionCounts
+        });
+        registrationOptionCounts = {
+            ...registrationOptionCounts,
+            [placement.selectedOption.countKey]: placement.nextCounts
+        };
+        const result = { status: placement.status, registrationId: 'registration-capacity-1' };
+        preparedCheckoutRegistration = { retryKey: 'retry-key', result };
+
+        const checkoutUrl = await initiateStripeCheckout({ registrationId: result.registrationId, amount: 5000, currency: 'usd' });
+        if (!checkoutUrl) {
+            await releaseCancelledStripeRegistration(result.registrationId);
+            preparedCheckoutRegistration = null;
+        }
+
+        expect(initiateStripeCheckout).toHaveBeenCalledWith({ registrationId: 'registration-capacity-1', amount: 5000, currency: 'usd' });
+        expect(releaseCancelledStripeRegistration).toHaveBeenCalledWith('registration-capacity-1');
+        expect(registrationOptionCounts.u10).toEqual({ enrolled: 0, waitlisted: 0 });
+        expect(preparedCheckoutRegistration).toBeNull();
     });
 
     it('wires registration Stripe checkout to deployed functions', () => {
@@ -597,6 +683,9 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain("form.paymentSettings?.onlineCheckoutEnabled !== true");
         expect(functionsSource).toContain("checkoutStatus: 'open'");
         expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
+        expect(functionsSource).toContain('canReleasePreCheckoutReservation');
+        expect(functionsSource).toContain("['pending', 'waitlisted'].includes(registration.status)");
+        expect(functionsSource).toContain('Registration checkout is not releasable.');
         expect(functionsSource).toContain('shouldProcessRegistrationCheckoutEvent(event)');
     });
 

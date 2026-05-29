@@ -266,8 +266,13 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
       transaction.set(registrationRef, registrationUpdate, { merge: true });
       return { released: false, reason: 'already-released' };
     }
-    if (registration.checkoutStatus !== 'open' && registration.paymentStatus !== 'checkout_open') {
-      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not open.');
+
+    const checkoutIsOpen = registration.checkoutStatus === 'open' || registration.paymentStatus === 'checkout_open';
+    const canReleasePreCheckoutReservation = !registration.checkoutStatus
+      && !registration.paymentStatus
+      && ['pending', 'waitlisted'].includes(registration.status);
+    if (!checkoutIsOpen && !canReleasePreCheckoutReservation) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not releasable.');
     }
 
     const selectedOption = registration.selectedOption || {};
