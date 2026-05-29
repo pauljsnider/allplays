@@ -13,7 +13,11 @@ interface TeamFee {
   recipientId: string;
   name: string;
   amount: number;
+  status: string;
   isPaid: boolean;
+  collectionMode: string;
+  canPayOnline: boolean;
+  offlinePaymentInstructions: string;
 }
 
 type ParentPlayerLink = {
@@ -32,8 +36,21 @@ type FeeRecipientData = {
   name?: string;
   amount?: number;
   amountCents?: number;
+  amountDueCents?: number;
+  adjustedAmountCents?: number;
+  totalAmountCents?: number;
   balanceDueCents?: number;
+  remainingBalanceCents?: number;
+  paidAmountCents?: number;
+  amountPaidCents?: number;
+  totalPaidCents?: number;
+  paidCents?: number;
   status?: string;
+  collectionMode?: string;
+  offlinePaymentInstructions?: string;
+  paymentInstructions?: string;
+  manualPaymentInstructions?: string;
+  offlineInstructions?: string;
   paid?: boolean;
   isPaid?: boolean;
   teamId?: string;
@@ -92,11 +109,63 @@ function normalizeAmount(data: FeeRecipientData): number {
   return 0;
 }
 
+function getCentsValue(...values: Array<number | undefined>): number {
+  const value = values.find((candidate) => candidate !== undefined);
+  if (value === undefined) return 0;
+  const cents = Number(value);
+  return Number.isFinite(cents) ? Math.max(0, cents) : 0;
+}
+
+function getFeeBalanceCents(data: FeeRecipientData): number {
+  if (data.balanceDueCents !== undefined) return getCentsValue(data.balanceDueCents);
+  if (data.remainingBalanceCents !== undefined) return getCentsValue(data.remainingBalanceCents);
+
+  const totalCents = getCentsValue(
+    data.amountDueCents,
+    data.adjustedAmountCents,
+    data.amountCents,
+    data.totalAmountCents
+  );
+  const paidCents = getCentsValue(
+    data.paidAmountCents,
+    data.amountPaidCents,
+    data.totalPaidCents,
+    data.paidCents
+  );
+  return Math.max(0, totalCents - paidCents);
+}
+
+function getFeeStatus(data: FeeRecipientData): string {
+  return String(data.status || '').toLowerCase();
+}
+
 function isFeePaid(data: FeeRecipientData): boolean {
-  const status = String(data.status || '').toLowerCase();
+  const status = getFeeStatus(data);
   if (status === 'paid') return true;
   if (data.paid === true || data.isPaid === true) return true;
   return typeof data.balanceDueCents === 'number' && data.balanceDueCents <= 0;
+}
+
+function isFeeCanceled(data: FeeRecipientData): boolean {
+  return ['canceled', 'cancelled'].includes(getFeeStatus(data));
+}
+
+function normalizeCollectionMode(data: FeeRecipientData): string {
+  return String(data.collectionMode || '').toLowerCase();
+}
+
+function isOnlineStripeCollectionMode(collectionMode: string): boolean {
+  return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
+}
+
+function getOfflinePaymentInstructions(data: FeeRecipientData): string {
+  return String(
+    data.offlinePaymentInstructions
+    || data.paymentInstructions
+    || data.manualPaymentInstructions
+    || data.offlineInstructions
+    || ''
+  ).trim();
 }
 
 @Component({
@@ -199,6 +268,12 @@ export class TeamFeesComponent implements OnInit {
       const normalizedData = { ...data, teamId };
       if (parentPlayerKeys.size > 0 && !isAllowedParentFeeRecipient(normalizedData, userId, parentPlayerKeys)) return;
 
+      const collectionMode = normalizeCollectionMode(data);
+      const isPaid = isFeePaid(data);
+      const isCanceled = isFeeCanceled(data);
+      const balanceCents = getFeeBalanceCents(data);
+      const canPayOnline = !isPaid && !isCanceled && balanceCents > 0 && isOnlineStripeCollectionMode(collectionMode) && Boolean(teamId && batchId && docSnap.id);
+
       feesByPath.set(docSnap.ref.path, {
         id: docSnap.id,
         teamId,
@@ -206,7 +281,11 @@ export class TeamFeesComponent implements OnInit {
         recipientId: docSnap.id,
         name: data.title || data.feeTitle || data.name || 'Team Fee',
         amount: normalizeAmount(data),
-        isPaid: isFeePaid(data)
+        status: isCanceled ? 'canceled' : isPaid ? 'paid' : 'unpaid',
+        isPaid,
+        collectionMode,
+        canPayOnline,
+        offlinePaymentInstructions: getOfflinePaymentInstructions(data)
       });
     });
 
@@ -232,7 +311,7 @@ export class TeamFeesComponent implements OnInit {
   }
 
   async handlePayFee(fee: TeamFee): Promise<void> {
-    if (this.isPaymentPending()) {
+    if (this.isPaymentPending() || !fee.canPayOnline) {
       return;
     }
 
