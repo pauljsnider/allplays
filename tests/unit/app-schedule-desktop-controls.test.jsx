@@ -6,6 +6,8 @@ import { MemoryRouter } from '../../apps/app/node_modules/react-router-dom/dist/
 
 const scheduleMocks = vi.hoisted(() => ({
     addTeamCalendarUrl: vi.fn(),
+    createScheduleImportGame: vi.fn(),
+    createScheduleImportPractice: vi.fn(),
     loadParentSchedule: vi.fn()
 }));
 
@@ -113,6 +115,8 @@ beforeEach(() => {
     vi.clearAllMocks();
     document.body.innerHTML = '';
     scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
+    scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
+    scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-new');
     scheduleMocks.loadParentSchedule.mockResolvedValue({
         children: [
             { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
@@ -199,6 +203,112 @@ describe('React app desktop Schedule controls', () => {
 
         expect(staff.container.textContent).toContain('Enter a calendar .ics URL.');
         expect(scheduleMocks.addTeamCalendarUrl).not.toHaveBeenCalled();
+    });
+
+    it('previews and imports staff CSV schedule rows while hiding import from parents', async () => {
+        const parentOnly = await renderSchedule();
+        await waitForText(parentOnly.container, 'Main Gym');
+        expect(parentOnly.container.textContent).not.toContain('Import schedule CSV');
+
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Import schedule CSV');
+        const input = container.querySelector('input[aria-label="Schedule CSV file"]');
+        const file = new File([
+            'Type,Date,Start,End,Opponent,Title,Location\n',
+            'Game,4/2/2026,6:30 PM,8:00 PM,Tigers,,Field 1\n',
+            'Practice,4/4/2026,7:00 AM,8:30 AM,,Speed Session,Field 2'
+        ], 'schedule.csv', { type: 'text/csv' });
+
+        await act(async () => {
+            Object.defineProperty(input, 'files', { value: [file], configurable: true });
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await Promise.resolve();
+        });
+
+        await clickButton(container, 'Preview rows');
+        await waitForText(container, 'Game vs Tigers');
+        expect(container.textContent).toContain('Speed Session');
+
+        await clickButton(container, 'Import rows');
+        expect(scheduleMocks.createScheduleImportGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            eventType: 'game',
+            opponent: 'Tigers'
+        }), auth.user);
+        expect(scheduleMocks.createScheduleImportPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            eventType: 'practice',
+            title: 'Speed Session'
+        }), auth.user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+        await waitForText(container, 'Imported 2 schedule row(s) and refreshed the schedule.');
+    });
+
+    it('blocks CSV import when preview contains invalid rows', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Import schedule CSV');
+        const input = container.querySelector('input[aria-label="Schedule CSV file"]');
+        const file = new File([
+            'Type,Date,Start,Opponent\n',
+            'Game,4/2/2026,not-a-time,'
+        ], 'bad-schedule.csv', { type: 'text/csv' });
+
+        await act(async () => {
+            Object.defineProperty(input, 'files', { value: [file], configurable: true });
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await Promise.resolve();
+        });
+
+        await clickButton(container, 'Preview rows');
+        await waitForText(container, 'Start time is invalid.');
+        expect(buttonByText(container, 'Import rows').disabled).toBe(true);
+        expect(scheduleMocks.createScheduleImportGame).not.toHaveBeenCalled();
+    });
+
+    it('leaves failed CSV rows available after a partial import failure', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+        scheduleMocks.createScheduleImportGame.mockRejectedValueOnce(new Error('Firestore write failed'));
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Import schedule CSV');
+        const input = container.querySelector('input[aria-label="Schedule CSV file"]');
+        const file = new File([
+            'Type,Date,Start,Opponent,Location\n',
+            'Game,4/2/2026,6:30 PM,Tigers,Field 1\n',
+            'Practice,4/4/2026,7:00 AM,,Field 2'
+        ], 'partial-schedule.csv', { type: 'text/csv' });
+
+        await act(async () => {
+            Object.defineProperty(input, 'files', { value: [file], configurable: true });
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await Promise.resolve();
+        });
+
+        await clickButton(container, 'Preview rows');
+        await waitForText(container, 'Game vs Tigers');
+        await clickButton(container, 'Import rows');
+
+        await waitForText(container, 'Imported 1 row(s); 1 row(s) failed and remain below for retry.');
+        expect(container.textContent).toContain('Firestore write failed');
+        expect(container.textContent).toContain('Game vs Tigers');
+        expect(container.textContent).not.toContain('Row 3: Practice');
     });
 
 });

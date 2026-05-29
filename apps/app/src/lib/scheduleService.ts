@@ -8,6 +8,8 @@ import {
   getRsvpSummaries,
   getTeam,
   getTeams,
+  addGame,
+  addPractice,
   getTrackedCalendarEventUids,
   createRideOffer,
   claimAssignmentSlot,
@@ -491,6 +493,122 @@ async function saveTeamCalendarUrls(teamId: string, calendarUrls: string[]) {
     return;
   }
   await updateTeam(teamId, { calendarUrls });
+}
+
+
+export type ScheduleImportNormalizedRow = {
+  rowNumber?: number;
+  eventType: 'game' | 'practice';
+  startsAt: string;
+  endsAt?: string | null;
+  opponent?: string | null;
+  title?: string | null;
+  location?: string | null;
+  arrivalTime?: string | null;
+  isHome?: boolean | null;
+  notes?: string | null;
+};
+
+function requireScheduleImportStaff(teamId: string, user: AuthUser | null) {
+  if (!user?.uid) {
+    throw new Error('You need to sign in before importing schedule rows.');
+  }
+  return loadTeam(teamId).then((team) => {
+    const teamWithId = team ? { ...team, id: team.id || teamId } : null;
+    if (!teamWithId || !isTeamStaff(teamWithId, user)) {
+      throw new Error('You do not have permission to manage this team schedule.');
+    }
+    return teamWithId;
+  });
+}
+
+function parseScheduleImportDate(value: string | null | undefined, label: string) {
+  const date = new Date(String(value || ''));
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return date;
+}
+
+function buildScheduleImportGamePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
+  const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
+  return {
+    type: 'game',
+    date: startDate,
+    end: row.endsAt ? parseScheduleImportDate(row.endsAt, 'End time') : null,
+    opponent: compactString(row.opponent),
+    title: null,
+    location: compactString(row.location),
+    isHome: row.isHome === null || row.isHome === undefined ? null : row.isHome === true,
+    arrivalTime: row.arrivalTime ? parseScheduleImportDate(row.arrivalTime, 'Arrival time') : null,
+    notes: compactString(row.notes),
+    assignments: [],
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    competitionType: 'league',
+    countsTowardSeasonRecord: true,
+    statTrackerConfigId: null,
+    createdBy: user.uid
+  };
+}
+
+function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
+  const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
+  return {
+    type: 'practice',
+    title: compactString(row.title) || 'Practice',
+    date: startDate,
+    end: row.endsAt ? parseScheduleImportDate(row.endsAt, 'End time') : null,
+    opponent: null,
+    location: compactString(row.location),
+    arrivalTime: row.arrivalTime ? parseScheduleImportDate(row.arrivalTime, 'Arrival time') : null,
+    notes: compactString(row.notes),
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    statTrackerConfigId: null,
+    createdBy: user.uid
+  };
+}
+
+export async function createScheduleImportGame(teamId: string, row: ScheduleImportNormalizedRow, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduleImportGamePayload(row, user as AuthUser);
+  if (!payload.opponent) throw new Error('Game rows require an opponent.');
+
+  try {
+    return await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Schedule import game create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST schedule import game create:', error);
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...payload,
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
+}
+
+export async function createScheduleImportPractice(teamId: string, row: ScheduleImportNormalizedRow, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduleImportPracticePayload(row, user as AuthUser);
+
+  try {
+    return await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Schedule import practice create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST schedule import practice create:', error);
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...payload,
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
 }
 
 export async function addTeamCalendarUrl(teamId: string, url: string, user: AuthUser | null) {
