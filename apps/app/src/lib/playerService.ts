@@ -340,7 +340,14 @@ export async function saveParentAthleteProfileDraft({
     uploadedProfilePhoto = await uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' });
   }
   if (highlightClipFile) {
-    uploadedHighlightClip = await uploadAthleteProfileMedia(user!.uid, workingProfileId, highlightClipFile, { kind: 'clip' });
+    try {
+      uploadedHighlightClip = await uploadAthleteProfileMedia(user!.uid, workingProfileId, highlightClipFile, { kind: 'clip' });
+    } catch (error) {
+      if (uploadedProfilePhoto?.storagePath) {
+        await deleteAthleteProfileMediaByPath(uploadedProfilePhoto.storagePath).catch(() => undefined);
+      }
+      throw error;
+    }
   }
   const profilePhoto = uploadedProfilePhoto || (resetProfilePhoto ? null : draft.profilePhoto);
   const clips = [
