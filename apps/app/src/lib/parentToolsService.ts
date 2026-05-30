@@ -617,13 +617,10 @@ export async function loadPublicRegistrationDetail(
     throw new Error('Team and form are required.');
   }
 
-  const [team, formSnap] = await Promise.all([
-    Promise.resolve(getTeam(teamId)).catch(() => null),
-    Promise.resolve(getDoc(doc(db, 'teams', teamId, 'registrationForms', formId))).catch(() => null)
-  ]);
+  const formSnap = await Promise.resolve(getDoc(doc(db, 'teams', teamId, 'registrationForms', formId))).catch(() => null);
 
   const form = formSnap?.exists?.() ? { id: formId, ...(formSnap.data() || {}) } : null;
-  if (!form || !team) throw new Error('Registration form not found.');
+  if (!form) throw new Error('Registration form not found.');
 
   const normalizedForm = normalizeRegistrationForm(form, { teamId, formId });
   if (!normalizedForm.published || normalizedForm.status === 'closed' || normalizedForm.status === 'archived') {
@@ -637,7 +634,7 @@ export async function loadPublicRegistrationDetail(
   const legacyUrl = getRegistrationUrl(teamId, formId);
 
   return {
-    teamName: compactString(team.name) || 'Team',
+    teamName: getPublicRegistrationTeamName(form),
     isPublished: true,
     onlineCheckout,
     legacyUrl,
@@ -647,6 +644,10 @@ export async function loadPublicRegistrationDetail(
     paymentNotice,
     paymentPlans
   };
+}
+
+function getPublicRegistrationTeamName(form: Record<string, any>) {
+  return compactString(form.teamName || form.team?.name || form.organizationName || form.clubName) || 'Team';
 }
 
 export async function loadTeamMediaForApp(user: AuthUser | null, teamId: string): Promise<TeamMediaModel> {

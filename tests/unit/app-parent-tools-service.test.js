@@ -633,12 +633,13 @@ describe('React app parent tools service', () => {
         });
     });
 
-    it('loads a public registration detail without requiring linked family access', async () => {
-        dbMocks.getTeam.mockResolvedValue({ id: 'team-public', name: 'Public Bears' });
+    it('loads a public registration detail without requiring public team document access', async () => {
+        dbMocks.getTeam.mockRejectedValue(new Error('permission-denied'));
         firebaseMocks.getDoc.mockResolvedValue({
             exists: () => true,
             data: () => ({
                 id: 'form-public',
+                teamName: 'Public Bears',
                 programName: 'Open Clinic',
                 status: 'published',
                 published: true,
@@ -657,12 +658,12 @@ describe('React app parent tools service', () => {
         expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
             path: 'teams/team-public/registrationForms/form-public'
         }));
+        expect(dbMocks.getTeam).not.toHaveBeenCalled();
     });
 
     it('rejects unavailable public registration details with safe errors', async () => {
         await expect(loadPublicRegistrationDetail('', 'form-1')).rejects.toThrow('Team and form are required.');
 
-        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
         firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: false, status: 'published' }) });
         await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
 
