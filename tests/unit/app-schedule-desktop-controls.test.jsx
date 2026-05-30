@@ -40,11 +40,7 @@ function event(overrides = {}) {
         teamId: overrides.teamId || 'team-1',
         teamName: overrides.teamName || 'Bears',
         type: overrides.type || 'game',
-<<<<<<< HEAD
         date: overrides.date || futureDate(7 * 24),
-=======
-        date: overrides.date || futureDate(7 * 24),
->>>>>>> deaa7c3b (Fix app review regressions)
         location: overrides.location || 'Main Gym',
         opponent: overrides.opponent || 'Falcons',
         title: overrides.title || null,
