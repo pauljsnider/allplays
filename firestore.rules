@@ -385,6 +385,13 @@ service cloud.firestore {
              (data.get('options', []) is list && data.get('options', []).size() > 0);
     }
 
+    function isCurrentUserRegistrationGuardian(data) {
+      return isSignedIn() &&
+             request.auth.token.email is string &&
+             request.auth.token.email != '' &&
+             data.get('guardian', {}).get('email', '') == request.auth.token.email.lower();
+    }
+
     function isRegistrationPaymentSettingsPayloadValid(settings) {
       return settings is map &&
              settings.keys().hasOnly(['offlinePaymentEnabled', 'onlineCheckoutEnabled']) &&
@@ -1158,6 +1165,10 @@ service cloud.firestore {
     match /{path=**}/players/{playerId} {
       allow read: if !hasRestrictedRosterFieldValues(resource.data);
     }
+    // Collection group rule for registrations - allows parent dashboard to query own applications.
+    match /{path=**}/registrations/{registrationId} {
+      allow read: if isCurrentUserRegistrationGuardian(resource.data);
+    }
 
     // Collection group rule for assigned team fee recipient records.
     // Parents can only read records tied to a team they are linked to and directly assigned recipients.
@@ -1387,7 +1398,7 @@ service cloud.firestore {
         allow update: if isTeamOwnerOrAdmin(teamId) || isPublicRegistrationCapacityCounterUpdate(teamId, formId);
 
         match /registrations/{registrationId} {
-          allow read: if isTeamOwnerOrAdmin(teamId);
+          allow read: if isTeamOwnerOrAdmin(teamId) || isCurrentUserRegistrationGuardian(resource.data);
           allow update: if isTeamOwnerOrAdmin(teamId);
           allow delete: if isTeamOwnerOrAdmin(teamId);
           allow create: if (isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending') ||
