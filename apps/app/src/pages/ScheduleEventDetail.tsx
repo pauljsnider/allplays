@@ -44,6 +44,7 @@ import {
   formatEventDateLabel,
   formatEventTimeLabel,
   getScheduleMapHref,
+  getScheduleForecastHref,
   getScheduleAssignmentStatus,
   getScheduleRideRequestCounts,
   getScheduleRideSeatInfo,
@@ -653,6 +654,7 @@ function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: 
   if (!open) return null;
   const rows = getEventDetailRows(event);
   const mapHref = getScheduleMapHref(event.location);
+  const forecastHref = getScheduleForecastHref(event.location);
 
   return (
     <div className="mt-3 rounded-xl border border-gray-200 bg-white">
@@ -669,12 +671,20 @@ function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: 
           </div>
         ))}
       </dl>
-      {mapHref ? (
-        <div className="border-t border-gray-100 p-3">
-          <a href={mapHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 w-full px-3 py-2 text-xs">
-            <MapPin className="h-4 w-4" aria-hidden="true" />
-            Open map
-          </a>
+      {(mapHref || forecastHref) ? (
+        <div className="flex flex-wrap gap-2 border-t border-gray-100 p-3">
+          {mapHref ? (
+            <a href={mapHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">
+              <MapPin className="h-4 w-4" aria-hidden="true" />
+              Directions
+            </a>
+          ) : null}
+          {forecastHref ? (
+            <a href={forecastHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              Forecast
+            </a>
+          ) : null}
         </div>
       ) : null}
     </div>
