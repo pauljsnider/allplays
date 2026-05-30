@@ -1586,8 +1586,8 @@
             printRoot.id = 'roster-print-root';
             printRoot.innerHTML = html;
             document.body.appendChild(printRoot);
+            window.addEventListener('afterprint', () => printRoot.remove(), { once: true });
             window.print();
-            window.setTimeout(() => printRoot.remove(), 0);
         }
 
         let currentInvitePlayer = null;
