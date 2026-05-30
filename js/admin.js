@@ -8,7 +8,7 @@ import {
     getTelemetryEventDaily,
     getTelemetrySessions
 } from './db.js?v=32';
-import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=15';
+import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=16';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=15';
 import {
