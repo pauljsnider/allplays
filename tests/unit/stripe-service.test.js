@@ -29,7 +29,8 @@ describe('Stripe Service', () => {
             formId: 'form-1',
             registrationId: 'reg-123',
             amount: 10000,
-            currency: 'usd'
+            currency: 'usd',
+            checkoutAttemptToken: 'attempt-token-123456'
         };
 
         const checkoutUrl = await initiateStripeCheckout(params);
@@ -57,7 +58,7 @@ describe('Stripe Service', () => {
         mockInnerCallable.mockResolvedValueOnce({
             data: { released: true }
         });
-        const params = { teamId: 'team-1', formId: 'form-1', registrationId: 'reg-123' };
+        const params = { teamId: 'team-1', formId: 'form-1', registrationId: 'reg-123', checkoutAttemptToken: 'attempt-token-123456' };
 
         const result = await cancelStripeRegistrationCheckout(params);
 

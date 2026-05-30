@@ -518,6 +518,7 @@ service cloud.firestore {
                'waitlistedAt',
                'selectedOption',
                'feeSnapshot',
+               'checkoutAttemptToken',
                'screeningRequired',
                'screeningStatus',
                'screeningProvider',
@@ -535,6 +536,7 @@ service cloud.firestore {
              isRegistrationPaymentPlanValid(data.paymentPlan) &&
              data.keys().hasAny(['feeSnapshot']) &&
              isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
+             (!data.keys().hasAny(['checkoutAttemptToken']) || (data.checkoutAttemptToken is string && data.checkoutAttemptToken.matches('^[A-Za-z0-9_-]{16,128}$'))) &&
              (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&
              (!data.keys().hasAny(['screeningRequired', 'screeningStatus', 'screeningProvider', 'screeningProviderReference']) || (
                get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('enabled', false) == true &&
