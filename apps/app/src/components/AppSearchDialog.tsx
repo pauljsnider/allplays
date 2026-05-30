@@ -44,7 +44,15 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
   const results = useMemo(() => computeAppSearchResults({ queryText: query, auth, teams, players }), [auth, players, query, teams]);
-  const helpResults = results.help ?? [];
+  const helpResults = useMemo(() => {
+    const matchingHelp = results.help ?? [];
+    if (selectedHelpRole === 'all') return matchingHelp;
+    return matchingHelp.filter((item) => item.roles?.includes(selectedHelpRole));
+  }, [results.help, selectedHelpRole]);
+  const flatResults = useMemo(
+    () => [...results.actions, ...results.teams, ...helpResults, ...results.players],
+    [helpResults, results.actions, results.players, results.teams]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -115,10 +123,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   }, [query, selectedHelpRole]);
 
   useEffect(() => {
-    if (activeIndex >= results.flat.length) {
-      setActiveIndex(Math.max(0, results.flat.length - 1));
+    if (activeIndex >= flatResults.length) {
+      setActiveIndex(Math.max(0, flatResults.length - 1));
     }
-  }, [activeIndex, results.flat.length]);
+  }, [activeIndex, flatResults.length]);
 
   if (!open) return null;
 
@@ -143,7 +151,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActiveIndex((value) => Math.min(results.flat.length - 1, value + 1));
+      setActiveIndex((value) => Math.min(flatResults.length - 1, value + 1));
       return;
     }
     if (event.key === 'ArrowUp') {
@@ -153,7 +161,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     }
     if (event.key === 'Enter') {
       event.preventDefault();
-      openResult(results.flat[activeIndex]);
+      openResult(flatResults[activeIndex]);
     }
   };
 
@@ -267,7 +275,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               onHover={setActiveIndex}
             />
 
-            {!teamsLoading && !playersLoading && results.flat.length === 0 ? (
+            {!teamsLoading && !playersLoading && flatResults.length === 0 ? (
               <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">
                 No results
               </div>

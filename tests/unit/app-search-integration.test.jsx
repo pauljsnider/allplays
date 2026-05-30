@@ -198,7 +198,7 @@ describe('React app shell search', () => {
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-1/player-1');
     });
 
-    it('renders help role filter chips and manages local selected state', async () => {
+    it('filters help matches by selected role and opens the filtered help result with Enter', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([
             {
                 id: 'coach-roster-help',
@@ -239,7 +239,8 @@ describe('React app shell search', () => {
             expect(roleButton(label)).toBeTruthy();
         });
         expect(roleButton('All').getAttribute('aria-pressed')).toBe('true');
-        expect(roleButton('Parent').getAttribute('aria-pressed')).toBe('false');
+        expect(container.textContent).toContain('Manage a roster');
+        expect(container.textContent).toContain('Reset a password');
 
         const helpSearchCallCount = helpMocks.searchHelpKnowledge.mock.calls.length;
         await act(async () => {
@@ -249,17 +250,32 @@ describe('React app shell search', () => {
 
         expect(roleButton('All').getAttribute('aria-pressed')).toBe('false');
         expect(roleButton('Parent').getAttribute('aria-pressed')).toBe('true');
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledTimes(helpSearchCallCount);
+        expect(container.textContent).not.toContain('Manage a roster');
+        expect(container.textContent).toContain('Reset a password');
 
+        await pressDialogKey(container, 'Enter');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/help/parent-password-help');
+        expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'help');
+        const reopenedFilterGroup = container.querySelector('[aria-label="Filter help by role"]');
+        const reopenedRoleButton = (label) => {
+            const button = Array.from(reopenedFilterGroup.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === label);
+            if (!button) throw new Error(`Role filter button not found after reopen: ${label}`);
+            return button;
+        };
         await act(async () => {
-            roleButton('Member').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            reopenedRoleButton('Member').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         });
         await flush();
 
-        expect(roleButton('Parent').getAttribute('aria-pressed')).toBe('false');
-        expect(roleButton('Member').getAttribute('aria-pressed')).toBe('true');
-        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledTimes(helpSearchCallCount);
-        expect(container.textContent).toContain('Manage a roster');
-        expect(container.textContent).toContain('Reset a password');
+        expect(reopenedRoleButton('Parent').getAttribute('aria-pressed')).toBe('false');
+        expect(reopenedRoleButton('Member').getAttribute('aria-pressed')).toBe('true');
+        expect(container.textContent).not.toContain('Manage a roster');
+        expect(container.textContent).not.toContain('Reset a password');
+        expect(container.textContent).toContain('No matching help articles');
         expect(container.querySelector('input[aria-label="Search teams, players, actions, help"]')).toBeTruthy();
     });
 
