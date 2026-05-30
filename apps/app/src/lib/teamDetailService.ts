@@ -7,8 +7,12 @@ import {
   getPlayers,
   getPlayerTrackingStatuses,
   getPublicTrackingItems,
-  getTeam
+  getTeam,
+  inviteAdmin,
+  addTeamAdminEmail
 } from '../../../../js/db.js';
+import { sendInviteEmail } from '../../../../js/auth.js';
+import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
 import { collection, db, getDocs, query, where } from '../../../../js/firebase.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
@@ -86,6 +90,16 @@ export type TeamStaffPermissionsSummary = {
     emptyText: string;
   }>;
   hasAnyStaff: boolean;
+};
+
+
+export type InviteTeamAdminForAppResult = {
+  email: string;
+  status: 'sent' | 'existing_user' | 'fallback_code';
+  code: string | null;
+  teamName: string | null;
+  acceptInviteUrl: string | null;
+  reason?: string;
 };
 
 export type TeamDetailModel = {
@@ -323,6 +337,47 @@ async function loadPendingAdminInvites(teamId: string) {
     async () => nativeRunQuery('accessCodes', 'teamId', 'EQUAL', teamId)
   ).then((invites: any[]) => (Array.isArray(invites) ? invites : [])
     .filter(isPendingAdminInvite));
+}
+
+
+export async function inviteTeamAdminForApp(teamId: string, email: string): Promise<InviteTeamAdminForAppResult> {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedEmail = cleanString(email).toLowerCase();
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedEmail) throw new Error('Admin email is required.');
+
+  const result = await inviteExistingTeamAdmin({
+    teamId: normalizedTeamId,
+    email: normalizedEmail,
+    inviteAdmin,
+    addTeamAdminEmail,
+    sendInviteEmail
+  });
+  const code = cleanString(result?.code) || null;
+  return {
+    email: normalizedEmail,
+    status: result?.status || 'fallback_code',
+    code,
+    teamName: result?.teamName || null,
+    acceptInviteUrl: code ? buildAdminAcceptInviteUrl(code) : null,
+    ...(result?.reason ? { reason: result.reason } : {})
+  };
+}
+
+export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseUrl()) {
+  const inviteCode = cleanString(code);
+  if (!inviteCode) return null;
+  const url = new URL('/accept-invite', baseUrl);
+  url.searchParams.set('code', inviteCode);
+  url.searchParams.set('type', 'admin');
+  return url.toString();
+}
+
+function getPublicBaseUrl() {
+  if (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol)) {
+    return window.location.origin;
+  }
+  return 'https://allplays.ai';
 }
 
 export async function loadParentTeamDetail(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
