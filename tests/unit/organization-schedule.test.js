@@ -347,6 +347,10 @@ describe('organization schedule helpers', () => {
 
         expect(functionsSource).toContain('exports.publishOrganizationScheduleDraft = functions.https.onCall');
         expect(functionsSource).toContain('const draftSlots = Array.isArray(data?.draftSlots) ? data.draftSlots.map(normalizeOrganizationDraftSlot) : [];');
+        expect(functionsSource).toContain("const inaccessibleTeamId = teamIds.find((teamId) => !hasTeamAdminAccess({");
+        expect(functionsSource).toContain('team: teamsById.get(teamId),');
+        expect(functionsSource).toContain("Only team admins can publish draft slots to every selected team.");
+        expect(functionsSource.indexOf('const inaccessibleTeamId = teamIds.find')).toBeLessThan(functionsSource.indexOf('const batch = firestore.batch();'));
         expect(functionsSource).toContain("firestore.collection(`teams/${slot.homeTeamId}/games`).doc()");
         expect(functionsSource).toContain("firestore.collection(`teams/${slot.awayTeamId}/games`).doc()");
         expect(functionsSource).toContain("createdVia: 'organizationScheduleDraftPublish'");

@@ -430,6 +430,16 @@ exports.publishOrganizationScheduleDraft = functions.https.onCall(async (data, c
     }
   }
 
+  const inaccessibleTeamId = teamIds.find((teamId) => !hasTeamAdminAccess({
+    team: teamsById.get(teamId),
+    user,
+    uid,
+    email: callerEmail
+  }));
+  if (inaccessibleTeamId) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team admins can publish draft slots to every selected team.');
+  }
+
   const now = admin.firestore.Timestamp.now();
   const batch = firestore.batch();
   draftSlots.forEach((slot) => {
