@@ -4818,6 +4818,10 @@ function getTeamEmailDraftsRef(teamId) {
     return collection(db, 'teams', teamId, 'emailDrafts');
 }
 
+function getTeamEmailTemplatesRef(teamId) {
+    return collection(db, 'teams', teamId, 'emailTemplates');
+}
+
 function normalizeEmailDraftRecipient(recipient = {}) {
     const email = String(recipient.email || '').trim().toLowerCase();
     return {
@@ -4825,6 +4829,25 @@ function normalizeEmailDraftRecipient(recipient = {}) {
         email,
         name: String(recipient.name || email).trim(),
         detail: String(recipient.detail || '').trim()
+    };
+}
+
+function normalizeTeamEmailTemplatePayload(template = {}) {
+    const name = String(template.name || '').trim();
+    const subject = String(template.subject || '').trim();
+    const body = String(template.body || '').trim();
+
+    if (!name) throw new Error('Enter a template name before saving.');
+    if (!subject) throw new Error('Enter a subject before saving.');
+    if (!body) throw new Error('Enter a body before saving.');
+
+    return {
+        name,
+        subject,
+        body,
+        authorId: template.authorId || auth.currentUser?.uid || null,
+        authorEmail: template.authorEmail || auth.currentUser?.email || null,
+        authorName: template.authorName || null
     };
 }
 
@@ -4851,6 +4874,50 @@ function normalizeTeamEmailDraftPayload(draft = {}) {
         authorName: draft.authorName || null,
         status: 'draft'
     };
+}
+
+export async function getTeamEmailTemplates(teamId) {
+    if (!teamId) return [];
+    const templatesRef = getTeamEmailTemplatesRef(teamId);
+    try {
+        const snapshot = await getDocs(query(templatesRef, orderBy('updatedAt', 'desc')));
+        return snapshot.docs.map((templateDoc) => ({ id: templateDoc.id, ...templateDoc.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(templatesRef);
+        return snapshot.docs
+            .map((templateDoc) => ({ id: templateDoc.id, ...templateDoc.data() }))
+            .sort((a, b) => {
+                const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
+                const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
+                return bTime - aTime;
+            });
+    }
+}
+
+export async function saveTeamEmailTemplate(teamId, template, { templateId = null } = {}) {
+    if (!teamId) throw new Error('Team is required to save an email template.');
+    const now = Timestamp.now();
+    const payload = {
+        ...normalizeTeamEmailTemplatePayload(template),
+        updatedAt: now
+    };
+
+    if (templateId) {
+        const templateRef = doc(db, 'teams', teamId, 'emailTemplates', templateId);
+        await setDoc(templateRef, payload, { merge: true });
+        return { id: templateId, ...payload };
+    }
+
+    const templateRef = await addDoc(getTeamEmailTemplatesRef(teamId), {
+        ...payload,
+        createdAt: now
+    });
+    return { id: templateRef.id, ...payload, createdAt: now };
+}
+
+export async function deleteTeamEmailTemplate(teamId, templateId) {
+    if (!teamId || !templateId) throw new Error('Team and template are required.');
+    await deleteDoc(doc(db, 'teams', teamId, 'emailTemplates', templateId));
 }
 
 export async function getTeamEmailDrafts(teamId) {
@@ -4997,13 +5064,19 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
  * Subscribe to chat messages in real time (newest first).
  * Returns an unsubscribe function.
  */
-export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages) {
+export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages, onError = null) {
     const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
     const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
         const oldestDoc = snapshot.docs.length ? snapshot.docs[snapshot.docs.length - 1] : null;
         onMessages(docs, oldestDoc);
+    }, (error) => {
+        if (onError) {
+            onError(error);
+        } else {
+            console.error('Error subscribing to chat messages:', error);
+        }
     });
 }
 
