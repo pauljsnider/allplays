@@ -922,6 +922,10 @@ function createScheduleEvent(input: {
   isCancelled?: boolean;
   status?: string | null;
   liveStatus?: string | null;
+  liveClockMs?: unknown;
+  liveClockRunning?: unknown;
+  liveClockPeriod?: string | null;
+  liveClockUpdatedAt?: unknown;
   homeScore?: unknown;
   awayScore?: unknown;
   isHome?: boolean | null;
@@ -972,6 +976,10 @@ function createScheduleEvent(input: {
     isCancelled: input.isCancelled === true,
     status: input.status || null,
     liveStatus: input.liveStatus || null,
+    liveClockMs: toNullableScore(input.liveClockMs),
+    liveClockRunning: typeof input.liveClockRunning === 'boolean' ? input.liveClockRunning : null,
+    liveClockPeriod: input.liveClockPeriod || null,
+    liveClockUpdatedAt: normalizeScheduleDate(input.liveClockUpdatedAt),
     homeScore: toNullableScore(input.homeScore),
     awayScore: toNullableScore(input.awayScore),
     canUpdateScore: input.canUpdateScore === true,
@@ -1062,6 +1070,10 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             isCancelled,
             status: game.status || null,
             liveStatus: game.liveStatus || null,
+            liveClockMs: game.liveClockMs ?? null,
+            liveClockRunning: game.liveClockRunning ?? null,
+            liveClockPeriod: game.liveClockPeriod || null,
+            liveClockUpdatedAt: game.liveClockUpdatedAt || null,
             homeScore: game.homeScore ?? null,
             awayScore: game.awayScore ?? null,
             canUpdateScore: false,
@@ -1108,6 +1120,10 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           isCancelled,
           status: game.status || null,
           liveStatus: game.liveStatus || null,
+          liveClockMs: game.liveClockMs ?? null,
+          liveClockRunning: game.liveClockRunning ?? null,
+          liveClockPeriod: game.liveClockPeriod || null,
+          liveClockUpdatedAt: game.liveClockUpdatedAt || null,
           homeScore: game.homeScore ?? null,
           awayScore: game.awayScore ?? null,
           canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),

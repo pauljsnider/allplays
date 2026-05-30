@@ -196,6 +196,10 @@ beforeEach(() => {
             opponent: 'Owls',
             status: 'final',
             liveStatus: 'completed',
+            liveClockMs: 494000,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q2',
+            liveClockUpdatedAt: new Date('2026-05-28T07:10:00Z'),
             homeScore: 4,
             awayScore: 2
         }
@@ -352,6 +356,10 @@ describe('React app schedule service contract integration', () => {
         expect(final).toMatchObject({
             status: 'final',
             liveStatus: 'completed',
+            liveClockMs: 494000,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q2',
+            liveClockUpdatedAt: new Date('2026-05-28T07:10:00Z'),
             homeScore: 4,
             awayScore: 2
         });
