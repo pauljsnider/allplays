@@ -1,1 +1,1 @@
-$(cat /tmp/push_ready/firestore.rules)
+rules_version = '2';
