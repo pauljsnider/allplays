@@ -112,7 +112,7 @@ export function PublicTeamSearch(props: PublicTeamSearchProps) {
           <div className="mt-1 text-xs font-semibold text-gray-500">Fetching teams across all regions.</div>
         </div>
       ) : error ? (
-        <Status tone="error" message={error} /> // Assuming Status component is available or will be created
+        <Status tone="error" message={error} />
       ) : Object.keys(groupedTeams).length ? (
         <div className="space-y-4">
           {Object.entries(groupedTeams).map(([location, teams]) => (

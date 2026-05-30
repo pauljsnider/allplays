@@ -24,6 +24,6 @@ export function resolveZip(zipOrCity: string): string {
         return `ZIP: ${normalizedInput}`;
       }
       // Otherwise, return capitalized input
-      return normalizedInput.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+      return normalizedInput.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') || 'Unknown Location';
   }
 }

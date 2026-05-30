@@ -32,10 +32,10 @@ describe('resolveZip', () => {
     expect(resolveZip('la')).toBe('Los Angeles, CA');
   });
 
-  it('should return empty string for null, undefined or empty input', () => {
-    expect(resolveZip(null as any)).toBe(''); // Type assertion for null
-    expect(resolveZip(undefined as any)).toBe(''); // Type assertion for undefined
-    expect(resolveZip('')).toBe('');
-    expect(resolveZip('   ')).toBe('');
+  it('should return "Unknown Location" for null, undefined or empty input', () => {
+    expect(resolveZip(null as any)).toBe('Unknown Location');
+    expect(resolveZip(undefined as any)).toBe('Unknown Location');
+    expect(resolveZip('')).toBe('Unknown Location');
+    expect(resolveZip('   ')).toBe('Unknown Location');
   });
 });

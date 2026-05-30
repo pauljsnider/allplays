@@ -1,123 +1,28 @@
-import { type ParentHomeTeam } from '../lib/homeLogic';
+import { getTeams } from '../../../../js/db.js';
+import { type ParentHomeTeam } from './homeLogic';
 
-// This is a placeholder for the actual backend call.
-// In a real scenario, this would interact with a Firebase function, GraphQL API, or REST endpoint.
-// The issue mentions `js/db.js:getTeams` which supports `locationFilter` and `publicOnly: true`.
-// For now, it will return mock data or simulate an empty array.
+function teamLocation(team: { city?: string; state?: string; zip?: string }): string | null {
+    if (team.city && team.state) return `${team.city}, ${team.state}`;
+    if (team.zip) return team.zip;
+    return null;
+}
+
 export async function getPublicTeamsByLocation(locationFilter?: string): Promise<ParentHomeTeam[]> {
-  console.log(`Fetching public teams with location filter: ${locationFilter || 'none'}`);
-
-  // Simulate an API call delay
-  await new Promise(resolve => setTimeout(resolve, 500));
-
-  // Mock data for demonstration
-  const mockTeams: ParentHomeTeam[] = [
-    {
-      teamId: 'team-atl-1',
-      teamName: 'Atlanta United',
-      photoUrl: '',
-      role: 'Fan',
-      sport: 'Soccer',
-      location: 'Atlanta, GA',
-      players: [],
-      eventCount: 0,
-      unreadCount: 0,
-      openActions: 0,
-      nextEvent: null,
-      appAccess: true,
-      webAccess: true,
-      isPublic: true,
-    },
-    {
-      teamId: 'team-atl-2',
-      teamName: 'Atlanta Hawks',
-      photoUrl: '',
-      role: 'Fan',
-      sport: 'Basketball',
-      location: 'Atlanta, GA',
-      players: [],
-      eventCount: 0,
-      unreadCount: 0,
-      openActions: 0,
-      nextEvent: null,
-      appAccess: true,
-      webAccess: true,
-      isPublic: true,
-    },
-    {
-      teamId: 'team-nyc-1',
-      teamName: 'New York Knicks',
-      photoUrl: '',
-      role: 'Fan',
-      sport: 'Basketball',
-      location: 'New York, NY',
-      players: [],
-      eventCount: 0,
-      unreadCount: 0,
-      openActions: 0,
-      nextEvent: null,
-      appAccess: true,
-      webAccess: true,
-      isPublic: true,
-    },
-    {
-      teamId: 'team-nyc-2',
-      teamName: 'New York Yankees',
-      photoUrl: '',
-      role: 'Fan',
-      sport: 'Baseball',
-      location: 'New York, NY',
-      players: [],
-      eventCount: 0,
-      unreadCount: 0,
-      openActions: 0,
-      nextEvent: null,
-      appAccess: true,
-      webAccess: true,
-      isPublic: true,
-    },
-    {
-      teamId: 'team-la-1',
-      teamName: 'LA Lakers',
-      photoUrl: '',
-      role: 'Fan',
-      sport: 'Basketball',
-      location: 'Los Angeles, CA',
-      players: [],
-      eventCount: 0,
-      unreadCount: 0,
-      openActions: 0,
-      nextEvent: null,
-      appAccess: true,
-      webAccess: true,
-      isPublic: true,
-    },
-    {
-      teamId: 'team-chi-1',
-      teamName: 'Chicago Bulls',
-      photoUrl: '',
-      role: 'Fan',
-      sport: 'Basketball',
-      location: 'Chicago, IL',
-      players: [],
-      eventCount: 0,
-      unreadCount: 0,
-      openActions: 0,
-      nextEvent: null,
-      appAccess: true,
-      webAccess: true,
-      isPublic: true,
-    },
-  ];
-
-  if (locationFilter) {
-    const lowerCaseFilter = locationFilter.toLowerCase();
-    return mockTeams.filter(team => 
-      team.location?.toLowerCase().includes(lowerCaseFilter)
-      // Basic zip code simulation: if filter is numeric, check if it matches a mock zip
-      || (/\d{5}/.test(lowerCaseFilter) && team.location?.toLowerCase().includes(locationFilter))
-    );
-  } else {
-    return mockTeams;
-  }
+    const teams = await getTeams({ publicOnly: true, locationFilter: locationFilter || '' });
+    return teams.map((team: { id: string; name: string; sport?: string | null; photoUrl?: string | null; city?: string; state?: string; zip?: string; appAccess?: boolean; webAccess?: boolean; isPublic?: boolean }) => ({
+        teamId: team.id,
+        teamName: team.name,
+        role: 'Public',
+        sport: team.sport ?? null,
+        photoUrl: team.photoUrl ?? null,
+        location: teamLocation(team),
+        appAccess: team.appAccess ?? false,
+        webAccess: team.webAccess ?? false,
+        isPublic: true,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        unreadCount: 0,
+        openActions: 0,
+    }));
 }
