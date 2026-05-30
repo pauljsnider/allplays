@@ -30,6 +30,27 @@ async function mockScheduleModules(page, options = {}) {
     }).join(',\n                            ');
 
     await page.addInitScript(() => {
+        const RealDate = Date;
+        const fixedNow = new RealDate('2026-05-20T12:00:00Z').getTime();
+        class FixedDate extends RealDate {
+            constructor(...args) {
+                if (args.length === 0) {
+                    super(fixedNow);
+                } else {
+                    super(...args);
+                }
+            }
+            static now() {
+                return fixedNow;
+            }
+            static parse(value) {
+                return RealDate.parse(value);
+            }
+            static UTC(...args) {
+                return RealDate.UTC(...args);
+            }
+        }
+        window.Date = FixedDate;
         window.__scheduleCalls = {
             loads: 0,
             rsvps: [],
