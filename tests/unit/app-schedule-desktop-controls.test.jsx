@@ -18,6 +18,7 @@ vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({
 }));
 
 import { Schedule } from '../../apps/app/src/pages/Schedule.tsx';
+import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -118,6 +119,7 @@ async function changeSelect(select, value) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    clearAppDataCache('app-schedule-summary');
     document.body.innerHTML = '';
     scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
@@ -190,7 +192,6 @@ describe('React app desktop Schedule controls', () => {
 
         expect(scheduleMocks.addTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/team.ics', auth.user);
         await waitForText(container, 'Calendar link saved and schedule refreshed.');
-<<<<<<< HEAD
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
         expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
@@ -267,6 +268,7 @@ describe('React app desktop Schedule controls', () => {
             ],
             events: [event({ isTeamStaff: true })]
         });
+        clearAppDataCache('app-schedule-summary');
         const staff = await renderSchedule();
         await waitForText(staff.container, 'Add external calendar');
         await clickButton(staff.container, 'Save calendar');
@@ -286,6 +288,7 @@ describe('React app desktop Schedule controls', () => {
             ],
             events: [event({ isTeamStaff: true })]
         });
+        clearAppDataCache('app-schedule-summary');
 
         const { container } = await renderSchedule();
         await waitForText(container, 'Import schedule CSV');

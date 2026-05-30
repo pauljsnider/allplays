@@ -102,18 +102,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
 
-  const refreshSchedule = async () => {
+  const refreshSchedule = async (force = false) => {
     if (!auth.user) return;
     setLoading(true);
     setError(null);
     setStatusMessage(null);
     const timer = startUxTimer('schedule summary load');
+    const hasExistingSchedule = events.length > 0; // Check current state
     try {
-      const cacheKey = 'app-schedule-summary'; // Placeholder for cache key
+      const cacheKey = `app-schedule-summary:${auth.user.uid}`;
       const scheduleCacheTtlMs = 60 * 1000 * 5; // Placeholder for cache TTL (5 minutes)
-      const force = false; // Placeholder for force refresh. Assuming initial refresh is not forced.
       const cached = getCachedAppData(cacheKey); // Assuming getCachedAppData is available
-      const hasExistingSchedule = events.length > 0; // Check current state
 
       const result = await loadCachedAppData(
         cacheKey,
@@ -272,7 +271,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
 
     setCsvPreviewRows(failedRows);
-    await refreshSchedule();
+    await refreshSchedule(true);
     setStatusMessage(failedRows.length
       ? `Imported ${importedCount} row(s); ${failedRows.length} row(s) failed and remain below for retry.`
       : `Imported ${importedCount} schedule row(s) and refreshed the schedule.`);
@@ -296,7 +295,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       const result = await addTeamCalendarUrl(selectedCalendarTeam.teamId, validation.url, auth.user);
       setCalendarUrl('');
       setStatusMessage(result.added ? 'Calendar link saved. Refreshing schedule…' : 'Calendar link already exists. Refreshing schedule…');
-      await refreshSchedule();
+      await refreshSchedule(true);
       setStatusMessage(result.added ? 'Calendar link saved and schedule refreshed.' : 'Calendar link already exists. Schedule refreshed.');
     } catch (saveError: any) {
       setCalendarUrlError(saveError?.message || 'Unable to save calendar link.');
@@ -385,7 +384,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           </div>
           <div className="flex flex-none gap-1.5">
-            <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={refreshSchedule} disabled={loading} aria-label="Refresh schedule">
+            <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={() => refreshSchedule(true)} disabled={loading} aria-label="Refresh schedule">
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
             </button>
             <button type="button" className="secondary-button !h-9 !min-h-9 !w-9 !p-0" onClick={handleExport} aria-label="Export calendar">
@@ -469,7 +468,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={refreshSchedule} disabled={loading}>
+              <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={() => refreshSchedule(true)} disabled={loading}>
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
                 Refresh
               </button>
@@ -557,7 +556,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onPlayerChange={setSelectedPlayerId}
               onTeamChange={setSelectedTeamId}
               onTimeRangeChange={setTimeRange}
-              onRefresh={refreshSchedule}
+              onRefresh={() => refreshSchedule(true)}
               onExport={handleExport}
               advancedControlsOpen={desktopAdvancedControlsOpen}
               onAdvancedControlsOpenChange={setDesktopAdvancedControlsOpen}
