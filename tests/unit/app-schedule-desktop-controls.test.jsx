@@ -249,7 +249,7 @@ describe('React app desktop Schedule controls', () => {
             eventType: 'practice',
             title: 'Speed Session'
         }), auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(6);
         await waitForText(container, 'Imported 2 schedule row(s) and refreshed the schedule.');
     });
 

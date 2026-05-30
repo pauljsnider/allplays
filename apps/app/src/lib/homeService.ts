@@ -58,7 +58,25 @@ export async function loadParentHomeWithSecondaryData(user: AuthUser | null, opt
   }
 
   const cacheKey = `home-secondary:${user.uid}`;
-  return loadCachedAppData(cacheKey, async () => loadParentHome(user), { ttlMs: homeSecondaryTtlMs, force: options.force });
+  return loadCachedAppData(cacheKey, async () => {
+    const schedule = await loadParentSchedule(user, { hydrateDetails: true });
+    const [chatInbox, rawFees] = await Promise.all([
+      loadChatInbox(user).catch((error) => {
+        console.warn('[home-service] Unable to load chat inbox:', error);
+        return { teams: [] };
+      }),
+      Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
+        console.warn('[home-service] Unable to load parent team fees:', error);
+        return [];
+      })
+    ]);
+    return buildParentHomeModel({
+      children: schedule.children,
+      events: schedule.events,
+      inboxTeams: normalizeInboxTeams(chatInbox.teams || []),
+      fees: (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee))
+    });
+  }, { ttlMs: homeSecondaryTtlMs, force: options.force });
 }
 
 export async function loadParentScheduleSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentScheduleLoadResult> {
