@@ -123,8 +123,36 @@ describe('public registration flow', () => {
         });
     });
 
-    it('adds initial manual screening fields for background-check-enabled forms', () => {
+
+
+    it('stores checkout attempt tokens only when provided by the checkout flow', () => {
         const form = normalizeRegistrationForm({
+            programName: 'Clinic',
+            feeAmountCents: 5000,
+            paymentSettings: { onlineCheckoutEnabled: true },
+            published: true,
+            waiverText: 'Waiver'
+        }, { teamId: 'team-1', formId: 'form-1' });
+        const now = { sentinel: 'serverTimestamp' };
+
+        expect(buildPendingRegistrationRecord({
+            form,
+            participant: {},
+            guardian: {},
+            waiverAccepted: true,
+            now,
+            checkoutAttemptToken: 'attempt-token-123456'
+        })).toMatchObject({ checkoutAttemptToken: 'attempt-token-123456' });
+        expect(buildPendingRegistrationRecord({
+            form,
+            participant: {},
+            guardian: {},
+            waiverAccepted: true,
+            now
+        })).not.toHaveProperty('checkoutAttemptToken');
+    });
+
+    it('adds initial manual screening fields for background-check-enabled forms', () => {        const form = normalizeRegistrationForm({
             programName: 'Volunteer Coach',
             published: true,
             backgroundCheck: { enabled: true, initialScreeningStatus: 'pending', providerName: 'Protect Youth Sports' }
@@ -338,14 +366,18 @@ describe('public registration flow', () => {
         expect(page).toContain('let preparedCheckoutRegistration = null;');
         expect(page).toContain('const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);');
         expect(page).toContain('preparedCheckoutRegistration?.retryKey === retryKey');
-        expect(page).toContain('preparedCheckoutRegistration = { retryKey, result };');
-        expect(page).toContain('await releaseCancelledStripeRegistration(result.registrationId);');
+        expect(page).toContain('preparedCheckoutRegistration = { retryKey, result, checkoutAttemptToken };');
+        expect(page).toContain('await releaseCancelledStripeRegistration(result.registrationId, checkoutAttemptToken);');
         expect(page).toContain('preparedCheckoutRegistration = null;');
         expect(page).toContain('return { status: \'pending\', registrationId: registrationRef.id };');
         expect(page).toContain('return { status: placement.status, registrationId: registrationRef.id };');
         expect(page).toContain("paymentLoadingState.classList.add('hidden');");
-        expect(page).toContain('cancelStripeRegistrationCheckout({ teamId, formId, registrationId });');
-        expect(page).toContain('releaseCancelledStripeRegistration(cancelledRegistrationId)');
+        expect(page).toContain('cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken });');
+        expect(page).toContain('releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken)');
+        expect(page).toContain('function createCheckoutAttemptToken()');
+        expect(page).toContain('? preparedCheckoutRegistration.checkoutAttemptToken');
+        expect(page).toContain(': createCheckoutAttemptToken();');
+        expect(page).toContain('checkoutAttemptToken,');
         expect(page).toContain('runTransaction(db, async (transaction)');
         expect(page).toContain('decideRegistrationPlacement');
         expect(page).toContain('registrationCapacityUpdateId: registrationRef.id');
@@ -369,6 +401,7 @@ describe('public registration flow', () => {
         expect(rules).toContain("'paymentPlan'");
         expect(rules).toContain('isRegistrationPaymentPlanValid');
         expect(rules).toContain("'feeSnapshot'");
+        expect(rules).toContain("'checkoutAttemptToken'");
         expect(rules).toContain("'screeningRequired'");
         expect(rules).toContain("'screeningStatus'");
         expect(rules).toContain("!data.keys().hasAny(['screeningRequired', 'screeningStatus', 'screeningProvider', 'screeningProviderReference'])");
@@ -684,6 +717,12 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain("checkoutStatus: 'open'");
         expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
         expect(functionsSource).toContain('canReleasePreCheckoutReservation');
+        expect(functionsSource).toContain('normalizeCheckoutAttemptToken');
+        expect(functionsSource).toContain('registrationCheckoutAttemptMatches(registration, input)');
+        expect(functionsSource).toContain('Registration checkout attempt does not match.');
+        expect(functionsSource).toContain('Registration checkout attempt is required to release this reservation.');
+        expect(functionsSource).toContain('checkoutAttemptToken: input.checkoutAttemptToken ||');
+        expect(functionsSource).toContain("ignoredReason: 'checkout_attempt_mismatch'");
         expect(functionsSource).toContain("['pending', 'waitlisted'].includes(registration.status)");
         expect(functionsSource).toContain('Registration checkout is not releasable.');
         expect(functionsSource).toContain('shouldProcessRegistrationCheckoutEvent(event)');

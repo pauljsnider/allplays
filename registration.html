@@ -148,8 +148,9 @@
                 confirmationMessage.classList.remove('hidden');
             } else if (stripeStatus === 'cancelled') {
                 const cancelledRegistrationId = urlParams.get('registrationId') || '';
+                const cancelledCheckoutAttemptToken = urlParams.get('checkoutAttemptToken') || '';
                 if (cancelledRegistrationId) {
-                    void releaseCancelledStripeRegistration(cancelledRegistrationId);
+                    void releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken);
                 }
                 errorMessage.textContent = 'Stripe payment was cancelled. You can try again.';
                 errorMessage.classList.remove('hidden');
@@ -164,9 +165,18 @@
         spinner.setAttribute('aria-hidden', 'true');
         submitButton.prepend(spinner); // Add spinner to the button
 
-        async function releaseCancelledStripeRegistration(registrationId) {
+        function createCheckoutAttemptToken() {
+            const bytes = new Uint8Array(16);
+            if (window.crypto?.getRandomValues) {
+                window.crypto.getRandomValues(bytes);
+                return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+            }
+            return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`;
+        }
+
+        async function releaseCancelledStripeRegistration(registrationId, checkoutAttemptToken = '') {
             try {
-                await cancelStripeRegistrationCheckout({ teamId, formId, registrationId });
+                await cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken });
             } catch (error) {
                 console.error('Failed to release cancelled registration checkout:', error);
             }
@@ -644,11 +654,15 @@
                 }
 
                 const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);
+                const checkoutAttemptToken = preparedCheckoutRegistration?.retryKey === retryKey
+                    ? preparedCheckoutRegistration.checkoutAttemptToken
+                    : createCheckoutAttemptToken();
+                const checkoutSubmission = { ...submission, checkoutAttemptToken };
                 const result = preparedCheckoutRegistration?.retryKey === retryKey
                     ? preparedCheckoutRegistration.result
                     : requiresRegistrationOption(activeForm)
-                        ? await submitRegistrationWithCapacity(submission)
-                        : await submitRegistrationWithoutCapacity(submission);
+                        ? await submitRegistrationWithCapacity(checkoutSubmission)
+                        : await submitRegistrationWithoutCapacity(checkoutSubmission);
 
                 if (result.status === 'waitlisted') {
                     formElement.classList.add('hidden');
@@ -661,12 +675,13 @@
                 if (!result.registrationId) {
                     throw new Error('Registration could not be prepared for checkout.');
                 }
-                preparedCheckoutRegistration = { retryKey, result };
+                preparedCheckoutRegistration = { retryKey, result, checkoutAttemptToken };
 
                 const returnParams = new URLSearchParams({
                     teamId,
                     formId,
-                    registrationId: result.registrationId
+                    registrationId: result.registrationId,
+                    checkoutAttemptToken
                 });
                 const successUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=success`;
                 const cancelUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=cancelled`;
@@ -679,6 +694,7 @@
                         registrationId: result.registrationId,
                         amount: amountCents,
                         currency,
+                        checkoutAttemptToken,
                         successUrl,
                         cancelUrl,
                         metadata: {
@@ -690,7 +706,7 @@
                         }
                     });
                 } catch (checkoutError) {
-                    await releaseCancelledStripeRegistration(result.registrationId);
+                    await releaseCancelledStripeRegistration(result.registrationId, checkoutAttemptToken);
                     preparedCheckoutRegistration = null;
                     throw checkoutError;
                 }
@@ -698,7 +714,7 @@
                 if (checkoutUrl) {
                     window.location.href = checkoutUrl;
                 } else {
-                    await releaseCancelledStripeRegistration(result.registrationId);
+                    await releaseCancelledStripeRegistration(result.registrationId, checkoutAttemptToken);
                     preparedCheckoutRegistration = null;
                     showFormError('Failed to get Stripe checkout URL.');
                 }

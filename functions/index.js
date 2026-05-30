@@ -130,6 +130,15 @@ function normalizeFirestoreId(value, label) {
   return id;
 }
 
+function normalizeCheckoutAttemptToken(value, label = 'checkoutAttemptToken') {
+  const token = String(value || '').trim();
+  if (!token) return '';
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return token;
+}
+
 function normalizeRegistrationCheckoutInput(data = {}) {
   const amountCents = Math.round(Number(data.amount ?? data.amountCents ?? 0));
   const currency = String(data.currency || 'usd').trim().toLowerCase();
@@ -144,7 +153,8 @@ function normalizeRegistrationCheckoutInput(data = {}) {
     formId: normalizeFirestoreId(data.formId, 'formId'),
     registrationId: normalizeFirestoreId(data.registrationId, 'registrationId'),
     amountCents,
-    currency
+    currency,
+    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)
   };
 }
 
@@ -152,7 +162,8 @@ function normalizeRegistrationCheckoutCancelInput(data = {}) {
   return {
     teamId: normalizeFirestoreId(data.teamId, 'teamId'),
     formId: normalizeFirestoreId(data.formId, 'formId'),
-    registrationId: normalizeFirestoreId(data.registrationId, 'registrationId')
+    registrationId: normalizeFirestoreId(data.registrationId, 'registrationId'),
+    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)
   };
 }
 
@@ -171,6 +182,9 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
     formId: input.formId,
     registrationId: input.registrationId
   });
+  if (input.checkoutAttemptToken) {
+    params.set('checkoutAttemptToken', input.checkoutAttemptToken);
+  }
   return {
     successUrl: `${baseUrl}/registration.html?${params.toString()}&status=success`,
     cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
@@ -188,12 +202,22 @@ function getRegistrationCustomerEmail(registration = {}) {
     .find(Boolean) || undefined;
 }
 
-function canReuseRegistrationCheckoutSession(registration = {}, amountCents) {
+function getRegistrationCheckoutAttemptToken(registration = {}) {
+  return normalizeCheckoutAttemptToken(registration.checkoutAttemptToken);
+}
+
+function registrationCheckoutAttemptMatches(registration = {}, input = {}) {
+  const registrationToken = getRegistrationCheckoutAttemptToken(registration);
+  return !registrationToken || registrationToken === input.checkoutAttemptToken;
+}
+
+function canReuseRegistrationCheckoutSession(registration = {}, amountCents, input = {}) {
   return Boolean(
     registration.checkoutUrl
     && registration.stripeCheckoutSessionId
     && registration.checkoutStatus === 'open'
     && Number(registration.checkoutAmountCents || 0) === amountCents
+    && registrationCheckoutAttemptMatches(registration, input)
   );
 }
 
@@ -203,6 +227,7 @@ function buildRegistrationCheckoutMetadata({ input, registration }) {
     teamId: input.teamId,
     formId: input.formId,
     registrationId: input.registrationId,
+    checkoutAttemptToken: input.checkoutAttemptToken || '',
     selectedOptionId: String(registration.selectedOption?.id || ''),
     paymentPlanId: String(registration.paymentPlan?.id || '')
   };
@@ -273,6 +298,13 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
       && ['pending', 'waitlisted'].includes(registration.status);
     if (!checkoutIsOpen && !canReleasePreCheckoutReservation) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not releasable.');
+    }
+    const registrationCheckoutAttemptToken = getRegistrationCheckoutAttemptToken(registration);
+    if (canReleasePreCheckoutReservation && !registrationCheckoutAttemptToken) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to release this reservation.');
+    }
+    if (!registrationCheckoutAttemptMatches(registration, input)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
     }
 
     const selectedOption = registration.selectedOption || {};
@@ -1404,7 +1436,10 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   if (input.amountCents !== expectedAmountCents) {
     throw new functions.https.HttpsError('failed-precondition', 'Checkout amount does not match the registration fee.');
   }
-  if (canReuseRegistrationCheckoutSession(registration, input.amountCents)) {
+  if (!registrationCheckoutAttemptMatches(registration, input)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
+  }
+  if (canReuseRegistrationCheckoutSession(registration, input.amountCents, input)) {
     return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
   }
 
@@ -1441,6 +1476,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     stripeCheckoutSessionId: session.id,
     stripePaymentStatus: session.payment_status || 'unpaid',
     checkoutAmountCents: input.amountCents,
+    checkoutAttemptToken: input.checkoutAttemptToken || null,
     checkoutCreatedAt: now,
     updatedAt: now
   }, { merge: true });
@@ -1529,6 +1565,18 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         } else {
           const form = formSnap.data() || {};
           const registration = registrationSnap.data() || {};
+          if (!registrationCheckoutAttemptMatches(registration, registrationInput)) {
+            transaction.set(eventRef, {
+              provider: 'stripe',
+              product: 'registration',
+              type: event.type,
+              checkoutSessionId: session.id || null,
+              registrationPath: registrationRef.path,
+              ignoredReason: 'checkout_attempt_mismatch',
+              receivedAt
+            });
+            return;
+          }
           const selectedOption = registration.selectedOption || {};
           const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();
           const counts = form.registrationOptionCounts || {};
