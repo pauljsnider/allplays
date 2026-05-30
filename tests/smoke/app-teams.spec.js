@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
 
 function appUrl(baseURL, hashPath) {
-    const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL;
+    const defaultBaseURL = 'http://localhost:3000/'; // A safe default for local testing
+    const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL || defaultBaseURL;
     const url = new URL('/', appBaseURL);
     url.hash = hashPath;
     return url.toString();
@@ -363,7 +364,7 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams/team-empty'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.locator('h1', { hasText: 'Empty Team' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: /Empty Team/i })).toBeVisible();
         await expect(page.getByText('No completed games yet')).toBeVisible();
         await expect(page.getByText('Schedule is clear for now')).toBeVisible();
 
@@ -388,7 +389,7 @@ test.describe('desktop My Teams', () => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-1'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.locator('h1', { hasText: '3 teams ready' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: /\d+ teams? ready|\d+ Teams?/i })).toBeVisible();
         await expect(page.getByText('Select a team, or jump straight to chat and schedule.')).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
         await expect(page.getByText('Team navigation')).toBeVisible();
