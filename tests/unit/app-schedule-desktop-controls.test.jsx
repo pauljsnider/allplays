@@ -33,7 +33,7 @@ function event(overrides = {}) {
         teamId: overrides.teamId || 'team-1',
         teamName: overrides.teamName || 'Bears',
         type: overrides.type || 'game',
-        date: overrides.date || new Date('2026-05-28T18:00:00Z'),
+        date: overrides.date || new Date('2030-05-28T18:00:00Z'),
         location: overrides.location || 'Main Gym',
         opponent: overrides.opponent || 'Falcons',
         title: overrides.title || null,
