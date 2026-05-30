@@ -20,6 +20,7 @@ const dbMocks = vi.hoisted(() => ({
     submitRsvpForPlayer: vi.fn(),
     upsertPracticePacketCompletion: vi.fn(),
     updateGame: vi.fn(),
+    broadcastLiveEvent: vi.fn(),
     postChatMessage: vi.fn()
 }));
 
@@ -63,7 +64,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     mergeAssignmentsWithClaims: vi.fn((assignments = []) => assignments)
 }));
 
-import { buildCancelScheduledGameChatMessage, cancelScheduledGameForApp, normalizeGameScoreValue, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
+import { buildCancelScheduledGameChatMessage, cancelScheduledGameForApp, normalizeGameScoreValue, publishLiveScoreUpdateEvent, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
 
 const user = {
     uid: 'user-1',
@@ -105,6 +106,31 @@ describe('React app schedule score updates', () => {
         }));
         expect(dbMocks.updateGame.mock.calls[0][2].scoreUpdatedAt).toBeInstanceOf(Date);
         expect(payload).toEqual(dbMocks.updateGame.mock.calls[0][2]);
+    });
+
+    it('publishes a live play-by-play score update event', async () => {
+        dbMocks.broadcastLiveEvent.mockResolvedValue({ id: 'event-1' });
+
+        const payload = await publishLiveScoreUpdateEvent('team-1', 'game-1', {
+            homeScore: 5,
+            awayScore: 2
+        }, user, {
+            homeScore: 4,
+            awayScore: 2
+        });
+
+        expect(dbMocks.broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+            type: 'score_update',
+            description: 'Score update: Home 5, Away 2.',
+            homeScore: 5,
+            awayScore: 2,
+            previousHomeScore: 4,
+            previousAwayScore: 2,
+            createdBy: 'user-1',
+            createdByName: 'Coach Pat'
+        }));
+        expect(dbMocks.broadcastLiveEvent.mock.calls[0][2].createdAt).toBeInstanceOf(Date);
+        expect(payload).toEqual(dbMocks.broadcastLiveEvent.mock.calls[0][2]);
     });
 
     it('writes cancellation metadata and posts the legacy-style team chat notice', async () => {
