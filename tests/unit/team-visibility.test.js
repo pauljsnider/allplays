@@ -16,11 +16,21 @@ describe('team visibility helpers', () => {
         expect(isTeamActive({ id: 't1', active: false })).toBe(false);
     });
 
+    it('treats archived and inactive status markers as inactive', () => {
+        expect(isTeamActive({ id: 't1', archived: true })).toBe(false);
+        expect(isTeamActive({ id: 't2', status: 'archived' })).toBe(false);
+        expect(isTeamActive({ id: 't3', status: 'inactive' })).toBe(false);
+        expect(isTeamActive({ id: 't4', status: 'disabled' })).toBe(false);
+        expect(isTeamActive({ id: 't5', status: 'active' })).toBe(true);
+    });
+
     it('filters inactive teams by default', () => {
         const teams = [
             { id: 'a', active: true },
             { id: 'b', active: false },
-            { id: 'c' }
+            { id: 'c' },
+            { id: 'd', archived: true },
+            { id: 'e', status: 'archived' }
         ];
         expect(filterTeamsByActive(teams)).toEqual([
             { id: 'a', active: true },
