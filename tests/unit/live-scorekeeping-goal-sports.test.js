@@ -52,11 +52,37 @@ describe('goal sport scorekeeping helpers', () => {
     const html = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
 
     expect(html).toContain('resolveGoalSportScorer');
-    expect(html).toContain('const scorerPlayer = applyRecordedGoalSportScorerStat(teamSide, scorer);');
+    expect(html).toContain('applyRecordedGoalSportScorerStat(teamSide, scorerPlayer);');
     expect(html).toContain('gameState.playerStats');
     expect(html).toContain('schedulePlayerStatsSync(scorerPlayer.id);');
     expect(html).toContain('scheduleOpponentStatsSync();');
     expect(html).toContain('player: scorerPlayer');
+  });
+
+  it('validates scorer text before mutating score state', () => {
+    const html = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
+
+    const validationIndex = html.indexOf('const scorerPlayer = resolveGoalSportScorerForSide(teamSide, scorer);');
+    const scoreMutationIndex = html.indexOf('const nextScore = applyGoalSportScore({ homeScore, awayScore }, teamSide);');
+
+    expect(validationIndex).toBeGreaterThan(-1);
+    expect(scoreMutationIndex).toBeGreaterThan(-1);
+    expect(validationIndex).toBeLessThan(scoreMutationIndex);
+    expect(html).toContain('if (scorer.trim() && !scorerPlayer)');
+    expect(html).toContain('leave scorer blank for a team goal');
+    expect(html).toContain('scorerInput?.focus();');
+  });
+
+  it('rolls back scorer stats when undoing a goal entry', () => {
+    const html = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
+
+    expect(html).toContain("if (undoData && undoData.type === 'goal')");
+    expect(html).toContain('const statKey = undoData.statKey || getGoalSportStatKey();');
+    expect(html).toContain('if (undoData.playerId)');
+    expect(html).toContain('statsBucket[undoData.playerId][statKey] = newVal;');
+    expect(html).toContain('schedulePlayerStatsSync(undoData.playerId);');
+    expect(html).toContain('broadcastReversedStatEvent({');
+    expect(html).toContain('description: `Undo stat: ${entry.text}`');
   });
 
   it('resolves scorer text to roster players by name or jersey number', () => {

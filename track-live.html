@@ -1226,11 +1226,15 @@
             return goalColumn ? goalColumn.toLowerCase() : 'goals';
         }
 
-        function applyRecordedGoalSportScorerStat(teamSide, scorer) {
-            const statKey = getGoalSportStatKey();
+        function resolveGoalSportScorerForSide(teamSide, scorer) {
             const isOpponent = teamSide === 'away';
             const scorerPool = isOpponent ? opponentPlayers : players;
-            const scorerPlayer = resolveGoalSportScorer(scorerPool, scorer);
+            return resolveGoalSportScorer(scorerPool, scorer);
+        }
+
+        function applyRecordedGoalSportScorerStat(teamSide, scorerPlayer) {
+            const statKey = getGoalSportStatKey();
+            const isOpponent = teamSide === 'away';
             if (!scorerPlayer?.id) return null;
 
             const statsBucket = isOpponent ? gameState.opponentStats : gameState.playerStats;
@@ -1263,6 +1267,13 @@
             const noteInput = document.getElementById('goal-note-input');
             const scorer = scorerInput?.value || '';
             const note = noteInput?.value || '';
+            const scorerPlayer = resolveGoalSportScorerForSide(teamSide, scorer);
+            if (scorer.trim() && !scorerPlayer) {
+                alert('Enter an exact roster/opponent player name or jersey number, or leave scorer blank for a team goal.');
+                scorerInput?.focus();
+                return;
+            }
+
             const nextScore = applyGoalSportScore({ homeScore, awayScore }, teamSide);
             homeScore = nextScore.homeScore;
             awayScore = nextScore.awayScore;
@@ -1272,7 +1283,7 @@
             }
             updateScoreDisplay();
             scheduleScoreSync();
-            const scorerPlayer = applyRecordedGoalSportScorerStat(teamSide, scorer);
+            applyRecordedGoalSportScorerStat(teamSide, scorerPlayer);
 
             const event = buildGoalSportEvent({
                 teamSide,
@@ -2881,6 +2892,7 @@
             if (undoData && undoData.type === 'goal') {
                 removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText);
                 const goalValue = Number(undoData.value) || 1;
+                const statKey = undoData.statKey || getGoalSportStatKey();
                 if (undoData.teamSide === 'away') {
                     awayScore = Math.max(0, awayScore - goalValue);
                 } else {
@@ -2892,6 +2904,34 @@
                 }
                 updateScoreDisplay();
                 scheduleScoreSync();
+                if (undoData.playerId) {
+                    const isOpponent = !!undoData.isOpponent;
+                    const statsBucket = isOpponent ? gameState.opponentStats : gameState.playerStats;
+                    if (!statsBucket[undoData.playerId]) statsBucket[undoData.playerId] = {};
+                    const currentVal = Number(statsBucket[undoData.playerId][statKey] || 0);
+                    const newVal = Math.max(0, currentVal - goalValue);
+                    const appliedDelta = currentVal - newVal;
+                    statsBucket[undoData.playerId][statKey] = newVal;
+
+                    const statEl = document.getElementById(`stat-${undoData.playerId}-${statKey}`);
+                    if (statEl) statEl.textContent = `${newVal}`;
+
+                    if (isOpponent) {
+                        scheduleOpponentStatsSync();
+                    } else {
+                        schedulePlayerStatsSync(undoData.playerId);
+                    }
+
+                    if (appliedDelta > 0) {
+                        broadcastReversedStatEvent({
+                            playerId: undoData.playerId,
+                            statKey,
+                            value: -appliedDelta,
+                            isOpponent,
+                            description: `Undo stat: ${entry.text}`
+                        });
+                    }
+                }
                 scheduleLiveHasData();
                 broadcastLiveEvent(currentTeamId, currentGameId, {
                     type: 'undo',
