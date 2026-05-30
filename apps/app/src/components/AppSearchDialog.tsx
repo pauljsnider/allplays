@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { openPublicUrl } from '../lib/publicActions';
@@ -19,6 +19,16 @@ type AppSearchDialogProps = {
   onClose: () => void;
 };
 
+type HelpRoleFilter = 'all' | 'parent' | 'coach' | 'admin' | 'member';
+
+const helpRoleFilters: { value: HelpRoleFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'parent', label: 'Parent' },
+  { value: 'coach', label: 'Coach' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'member', label: 'Member' }
+];
+
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
   const [teams, setTeams] = useState<AppSearchTeam[]>([]);
@@ -28,6 +38,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [selectedHelpRole, setSelectedHelpRole] = useState<HelpRoleFilter>('all');
   const searchRequestId = useRef(0);
   const navigate = useNavigate();
 
@@ -42,6 +53,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersError('');
     setPlayersLoading(false);
     setActiveIndex(0);
+    setSelectedHelpRole('all');
     setTeamsLoading(true);
     setTeamsError('');
 
@@ -100,7 +112,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     setActiveIndex(0);
-  }, [query]);
+  }, [query, selectedHelpRole]);
 
   useEffect(() => {
     if (activeIndex >= results.flat.length) {
@@ -234,6 +246,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               activeIndex={activeIndex}
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
+              headerAccessory={
+                <HelpRoleFilterChips
+                  selectedRole={selectedHelpRole}
+                  onChange={setSelectedHelpRole}
+                />
+              }
               onOpen={openResult}
               onHover={setActiveIndex}
             />
@@ -261,6 +279,35 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   );
 }
 
+
+function HelpRoleFilterChips({ selectedRole, onChange }: {
+  selectedRole: HelpRoleFilter;
+  onChange: (role: HelpRoleFilter) => void;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-1" role="group" aria-label="Filter help by role">
+      {helpRoleFilters.map((option) => {
+        const selected = selectedRole === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className={`min-h-9 rounded-full border px-3 py-1 text-[11px] font-extrabold transition ${
+              selected
+                ? 'border-primary-600 bg-primary-600 text-white shadow-sm'
+                : 'border-gray-200 bg-white text-gray-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
+            }`}
+            aria-pressed={selected}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function SearchSection({
   title,
   items,
@@ -268,6 +315,7 @@ function SearchSection({
   offset,
   status = '',
   statusTone = 'neutral',
+  headerAccessory,
   onOpen,
   onHover
 }: {
@@ -277,6 +325,7 @@ function SearchSection({
   offset: number;
   status?: string;
   statusTone?: 'neutral' | 'error';
+  headerAccessory?: ReactNode;
   onOpen: (item: AppSearchItem) => void;
   onHover: (index: number) => void;
 }) {
@@ -284,7 +333,10 @@ function SearchSection({
 
   return (
     <section>
-      <div className="mb-2 px-1 text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">{title}</div>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
+        <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">{title}</div>
+        {headerAccessory}
+      </div>
       <div className="space-y-2">
         {items.map((item, index) => (
           <SearchResultRow

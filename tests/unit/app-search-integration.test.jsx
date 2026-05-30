@@ -198,6 +198,71 @@ describe('React app shell search', () => {
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-1/player-1');
     });
 
+    it('renders help role filter chips and manages local selected state', async () => {
+        helpMocks.searchHelpKnowledge.mockReturnValue([
+            {
+                id: 'coach-roster-help',
+                title: 'Manage a roster',
+                file: 'help-coach.html',
+                url: 'https://allplays.ai/help-coach.html',
+                roles: ['coach', 'admin'],
+                summary: 'Keep player details current.',
+                snippet: 'Update roster information before game day.',
+                score: 30
+            },
+            {
+                id: 'parent-password-help',
+                title: 'Reset a password',
+                file: 'help-account.html',
+                url: 'https://allplays.ai/help-account.html',
+                roles: ['parent'],
+                summary: 'Recover account access.',
+                snippet: 'Use password reset when a parent cannot sign in.',
+                score: 20
+            }
+        ]);
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'help');
+
+        const filterGroup = container.querySelector('[aria-label="Filter help by role"]');
+        expect(filterGroup).toBeTruthy();
+
+        const roleButton = (label) => {
+            const button = Array.from(filterGroup.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === label);
+            if (!button) throw new Error(`Role filter button not found: ${label}`);
+            return button;
+        };
+
+        ['All', 'Parent', 'Coach', 'Admin', 'Member'].forEach((label) => {
+            expect(roleButton(label)).toBeTruthy();
+        });
+        expect(roleButton('All').getAttribute('aria-pressed')).toBe('true');
+        expect(roleButton('Parent').getAttribute('aria-pressed')).toBe('false');
+
+        const helpSearchCallCount = helpMocks.searchHelpKnowledge.mock.calls.length;
+        await act(async () => {
+            roleButton('Parent').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+        await flush();
+
+        expect(roleButton('All').getAttribute('aria-pressed')).toBe('false');
+        expect(roleButton('Parent').getAttribute('aria-pressed')).toBe('true');
+
+        await act(async () => {
+            roleButton('Member').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+        await flush();
+
+        expect(roleButton('Parent').getAttribute('aria-pressed')).toBe('false');
+        expect(roleButton('Member').getAttribute('aria-pressed')).toBe('true');
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledTimes(helpSearchCallCount);
+        expect(container.textContent).toContain('Manage a roster');
+        expect(container.textContent).toContain('Reset a password');
+        expect(container.querySelector('input[aria-label="Search teams, players, actions, help"]')).toBeTruthy();
+    });
+
     it('renders help matches and opens help articles inside the app', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([{
             id: 'account-password-reset',
