@@ -14,6 +14,7 @@ import {
   getPracticePacketRows,
   getScheduleTitle,
   getScheduleMapHref,
+  getScheduleForecastHref,
   normalizeRsvpResponse,
   validateExternalCalendarUrl,
   type CalendarScheduleEntry,
@@ -1225,6 +1226,7 @@ function ScheduleEventCard({ event }: {
   const actionPills = getEventCardActionPills(event, rsvp);
   const metadataPills = getEventMetadataPills(event);
   const mapHref = getScheduleMapHref(event.location);
+  const forecastHref = getScheduleForecastHref(event.location, event.date);
 
   return (
     <>
@@ -1287,6 +1289,11 @@ function ScheduleEventCard({ event }: {
                 {mapHref ? (
                   <a href={mapHref} target="_blank" rel="noreferrer" className="ml-1 flex-none text-xs font-black text-primary-700 hover:underline" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                     Map
+                  </a>
+                ) : null}
+                {forecastHref ? (
+                  <a href={forecastHref} target="_blank" rel="noreferrer" className="ml-1 flex-none text-xs font-black text-primary-700 hover:underline" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                    Forecast
                   </a>
                 ) : null}
               </span>
