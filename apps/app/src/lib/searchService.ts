@@ -73,7 +73,10 @@ export type AppSearchHelp = AppSearchItem & {
   snippet: string;
 };
 
-export type AppSearchHelpRoleFilter = UserRole | 'member' | 'all';
+export type AppSearchHelpRoleFilter = 'All' | UserRole | 'member' | string;
+export type AppSearchHelpRole = UserRole | 'member';
+
+const allSearchHelpRoles: AppSearchHelpRole[] = ['parent', 'coach', 'admin', 'platformAdmin', 'member'];
 
 export function normalizeSearchQuery(queryText: string) {
   return String(queryText || '').trim().toLowerCase();
@@ -367,13 +370,23 @@ function buildAppSearchHelpResults(
   const normalized = normalizeSearchQuery(queryText);
   if (normalized.length < 2) return [];
 
+  const rawHelpRoleFilter = cleanString(helpRoleFilter);
+  const usesDisplayHelpRoleFilter = rawHelpRoleFilter !== '' && rawHelpRoleFilter[0] !== rawHelpRoleFilter[0].toLowerCase();
   const normalizedRoleFilter = normalizeAppSearchHelpRoleFilter(helpRoleFilter);
-  return searchHelpKnowledge({
-    query: queryText,
-    roles: getSearchHelpAuthRoles(auth),
-    roleFilter: normalizedRoleFilter,
-    limit: 5
-  })
+  const helpSearchRequest = usesDisplayHelpRoleFilter
+    ? {
+        query: queryText,
+        roles: getSearchHelpRoles(auth, helpRoleFilter),
+        limit: 5
+      }
+    : {
+        query: queryText,
+        roles: getSearchHelpAuthRoles(auth),
+        roleFilter: normalizedRoleFilter,
+        limit: 5
+      };
+
+  return searchHelpKnowledge(helpSearchRequest)
     .filter((result) => normalizedRoleFilter === 'all' || helpResultMatchesRole(result.roles, normalizedRoleFilter))
     .map((result) => ({
       id: `help:${result.id}`,
@@ -390,15 +403,51 @@ function buildAppSearchHelpResults(
 
 function getSearchHelpAuthRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
   const roles = new Set<UserRole>();
-  (auth.roles || auth.user?.roles || []).forEach((role) => roles.add(normalizeAppSearchHelpRoleFilter(role) as UserRole));
+  (auth.roles || auth.user?.roles || []).forEach((role) => {
+    const normalizedRole = normalizeAppSearchHelpRoleFilter(role);
+    if (normalizedRole && normalizedRole !== 'all') roles.add(normalizedRole as UserRole);
+  });
   if (auth.isAdmin || auth.user?.isAdmin || auth.isPlatformAdmin) roles.add('admin');
   if (auth.isParent) roles.add('parent');
   if (auth.isCoach) roles.add('coach');
   return [...roles];
 }
 
-function normalizeAppSearchHelpRoleFilter(role: AppSearchHelpRoleFilter): Exclude<AppSearchHelpRoleFilter, 'platformAdmin'> {
-  return role === 'platformAdmin' ? 'admin' : role;
+export function getSearchHelpRoles(
+  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>,
+  helpRoleFilter?: AppSearchHelpRoleFilter
+): AppSearchHelpRole[] {
+  const normalizedFilter = normalizeSearchHelpRole(helpRoleFilter);
+  if (normalizedFilter === 'all') return allSearchHelpRoles;
+  if (normalizedFilter) return [normalizedFilter];
+
+  const roles = new Set<AppSearchHelpRole>();
+  (auth.roles || auth.user?.roles || []).forEach((role) => {
+    const normalizedRole = normalizeSearchHelpRole(role);
+    if (normalizedRole && normalizedRole !== 'all') roles.add(normalizedRole);
+  });
+  if (auth.isAdmin || auth.user?.isAdmin) roles.add('admin');
+  if (auth.isPlatformAdmin) roles.add('platformAdmin');
+  if (auth.isParent) roles.add('parent');
+  if (auth.isCoach) roles.add('coach');
+  return [...roles];
+}
+
+function normalizeAppSearchHelpRoleFilter(role: unknown): Exclude<AppSearchHelpRoleFilter, 'platformAdmin'> | '' {
+  const normalized = normalizeSearchHelpRole(role);
+  return normalized === 'platformAdmin' ? 'admin' : normalized;
+}
+
+function normalizeSearchHelpRole(role: unknown): AppSearchHelpRole | 'all' | '' {
+  const normalized = cleanString(role).toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'all') return 'all';
+  if (normalized === 'administrator') return 'admin';
+  if (normalized === 'parents') return 'parent';
+  if (normalized === 'coaches') return 'coach';
+  if (normalized === 'platformadmin' || normalized === 'platform admin') return 'platformAdmin';
+  if (normalized === 'parent' || normalized === 'coach' || normalized === 'admin' || normalized === 'member') return normalized;
+  return '';
 }
 
 function helpResultMatchesRole(resultRoles: string[] = [], helpRoleFilter: Exclude<AppSearchHelpRoleFilter, 'platformAdmin'>) {

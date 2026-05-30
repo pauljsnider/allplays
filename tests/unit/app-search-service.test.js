@@ -34,6 +34,7 @@ vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
 import {
     buildAppSearchActions,
     computeAppSearchResults,
+    getSearchHelpRoles,
     loadAppSearchTeams,
     resetAppSearchCacheForTests,
     scoreSearchText,
@@ -169,6 +170,61 @@ describe('React app search service', () => {
         expect(defaultResults.actions.map((item) => item.id)).toEqual(['browse-teams', 'dashboard', 'my-teams', 'schedule', 'messages', 'social-feed', 'find-friends', 'create-social-post', 'profile']);
         expect(defaultResults.teams).toHaveLength(20);
         expect(defaultResults.players).toHaveLength(20);
+    });
+
+    it('translates help role filters without affecting non-help search results', () => {
+        expect(getSearchHelpRoles(auth, 'All')).toEqual(['parent', 'coach', 'admin', 'platformAdmin', 'member']);
+        expect(getSearchHelpRoles(auth, 'Coach')).toEqual(['coach']);
+        expect(getSearchHelpRoles(auth, 'Member')).toEqual(['member']);
+        expect(getSearchHelpRoles({ ...auth, roles: ['coach'], isCoach: true, isParent: true })).toEqual(['coach', 'parent']);
+
+        helpMocks.searchHelpKnowledge.mockReturnValue([{
+            id: 'coach-schedule',
+            title: 'Plan Schedule',
+            file: 'workflow-schedule.html',
+            url: 'https://allplays.ai/workflow-schedule.html',
+            roles: ['coach', 'admin'],
+            summary: 'Schedule games and practices.',
+            snippet: 'Coach and admin scheduling guidance.',
+            score: 38
+        }]);
+
+        const teams = [{ id: 'team-1', name: 'Schedule Bears', sport: 'Basketball', isPublic: true }];
+        const players = [{
+            id: 'player:team-1:player-1',
+            kind: 'player',
+            title: 'Schedule Striker',
+            subtitle: 'Schedule Bears',
+            route: '/players/team-1/player-1',
+            teamId: 'team-1',
+            playerId: 'player-1'
+        }];
+        const withoutFilter = computeAppSearchResults({
+            queryText: 'schedule',
+            auth,
+            teams,
+            players
+        });
+        const withCoachFilter = computeAppSearchResults({
+            queryText: 'schedule',
+            auth,
+            teams,
+            players,
+            helpRoleFilter: 'Coach'
+        });
+
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'schedule',
+            roles: ['coach'],
+            limit: 5
+        });
+        expect(withoutFilter.teams).toEqual(withCoachFilter.teams);
+        expect(withoutFilter.players).toEqual(withCoachFilter.players);
+        expect(withoutFilter.actions).toEqual(withCoachFilter.actions);
+        expect(withCoachFilter.help[0]).toMatchObject({
+            id: 'help:coach-schedule',
+            roles: ['coach', 'admin']
+        });
     });
 
     it('adds limited help results for meaningful queries without changing app result ordering', () => {

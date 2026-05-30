@@ -17,6 +17,19 @@ describe('app help knowledge service', () => {
         ]));
     });
 
+    it('filters functional workflow help by requested role', async () => {
+        const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const results = searchHelpKnowledge({
+            query: 'schedule',
+            roles: ['member'],
+            limit: 8
+        });
+
+        expect(results.length).toBeGreaterThan(0);
+        expect(results.every((result) => result.roles.includes('member') || result.roles.includes('all'))).toBe(true);
+        expect(results.map((result) => result.id)).not.toContain('schedule');
+    });
+
     it('finds functional workflow help with source pages and snippets', async () => {
         const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
         const results = searchHelpKnowledge({

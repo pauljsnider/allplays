@@ -95,7 +95,9 @@ export function searchHelpKnowledge({
   const maxResults = Math.min(Math.max(Number(limit) || 5, 1), 8);
 
   return getHelpKnowledgeDocs()
-    .filter((doc) => roleFilterMatches(doc.roles, normalizedRoleFilter))
+    .filter((doc) => normalizedRoleFilter
+      ? roleFilterMatches(doc.roles, normalizedRoleFilter)
+      : (!roleTokens.length || roleMatches(doc.roles, roleTokens)))
     .map((doc) => {
       const score = scoreHelpDoc(doc, cleanQuery, queryTokens, roleTokens);
       return {
