@@ -557,6 +557,8 @@ function refreshVideoPanel({ force = false } = {}) {
       hasStreamScoreContext
     );
     state.hasVideoStream = Boolean(state.videoPlayback?.hasVideo || shouldShowVideoPanel);
+    const videoTab = document.querySelector('#mobile-tabs [data-tab="video"]');
+    if (videoTab) videoTab.classList.toggle('hidden', !shouldShowVideoPanel);
     renderRecordedReplayTools();
     renderGameMediaHub();
     renderReplayAvailabilityState({ shouldShowVideoPanel });
