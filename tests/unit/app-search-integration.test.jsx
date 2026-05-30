@@ -305,6 +305,60 @@ describe('React app shell search', () => {
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
+    it('updates help results immediately when the role filter changes', async () => {
+        helpMocks.searchHelpKnowledge.mockImplementation(({ roles }) => {
+            if (roles.includes('coach')) {
+                return [{
+                    id: 'live-tracker-coach-guide',
+                    title: 'Track Live Games with the Live Tracker',
+                    file: 'help-live-tracker.html',
+                    url: 'https://allplays.ai/help-live-tracker.html',
+                    roles: ['coach', 'admin'],
+                    summary: 'Use the live tracker from tip-off to final buzzer.',
+                    snippet: 'Coaches and admins can run live tracker game flows.',
+                    score: 42
+                }];
+            }
+            if (roles.includes('member')) {
+                return [];
+            }
+            return [{
+                id: 'watch-live-games',
+                title: 'Watch Live Games and Replays',
+                file: 'help-watch-chat.html',
+                url: 'https://allplays.ai/help-watch-chat.html',
+                roles: ['parent', 'member'],
+                summary: 'Open a game and follow it live.',
+                snippet: 'Parents and members can watch live games and replay links.',
+                score: 21
+            }];
+        });
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'live tracker');
+        expect(container.textContent).toContain('Watch Live Games and Replays');
+
+        await clickButton(container, 'Coach');
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'live tracker',
+            roles: ['coach'],
+            limit: 5
+        });
+        expect(container.textContent).toContain('Track Live Games with the Live Tracker');
+        expect(container.textContent).toContain('coach');
+        expect(container.textContent).toContain('admin');
+
+        await clickButton(container, 'Member');
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'live tracker',
+            roles: ['member'],
+            limit: 5
+        });
+        expect(container.textContent).not.toContain('Track Live Games with the Live Tracker');
+        expect(container.textContent).toContain('No Member help articles match this search');
+    });
+
     it('opens website-only search actions through the public URL adapter', async () => {
         const { container } = await renderShell();
 
