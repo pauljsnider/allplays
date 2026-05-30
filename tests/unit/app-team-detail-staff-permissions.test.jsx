@@ -13,6 +13,10 @@ const publicActionMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => teamDetailMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
+    loadStaffRsvpReminderPreview: vi.fn(),
+    sendStaffRsvpReminder: vi.fn()
+}));
 
 import { TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
 
