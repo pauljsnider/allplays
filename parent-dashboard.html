@@ -74,7 +74,18 @@
                         </div>
                     </div>
                 </div>
-                
+
+                <!-- Registration Applications -->
+                <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 bg-gray-50">
+                        <h2 class="text-lg font-bold text-gray-900">Registration Applications</h2>
+                        <p class="text-xs text-gray-500 mt-1">Read-only status updates for submitted player registrations.</p>
+                    </div>
+                    <div id="registration-applications-list" class="p-4 space-y-3">
+                        <div class="text-xs text-gray-500">Loading applications...</div>
+                    </div>
+                </div>
+
                 <!-- My Teams -->
                 <div class="bg-white rounded-2xl shadow-md border border-gray-200 overflow-hidden">
                     <div class="p-4 border-b border-gray-100 bg-gray-50">
@@ -377,7 +388,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=36';
+        } from './js/db.js?v=37';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=10';
         import {
             getIncentiveRules,
@@ -1533,6 +1544,7 @@
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
                 renderPlayers(data.children);
+                renderRegistrationApplications(data.registrationApplications || []);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
                     if (!child?.teamId) return;
@@ -1553,7 +1565,7 @@
                 document.getElementById('redeem-code-btn').addEventListener('click', async () => {
                     const code = document.getElementById('redeem-code-input').value.trim();
                     if(!code) return alert('Please enter a code');
-                    
+
                     const btn = document.getElementById('redeem-code-btn');
                     const originalText = btn.textContent;
                     btn.textContent = 'Processing...';
@@ -2511,6 +2523,47 @@
 
         function closePracticePacketPreview() {
             document.getElementById('packet-preview-modal')?.classList.add('hidden');
+        }
+
+        function renderRegistrationApplications(applications) {
+            const container = document.getElementById('registration-applications-list');
+            if (!container) return;
+            if (!applications || applications.length === 0) {
+                container.innerHTML = `<div class="text-center py-4 text-gray-500 text-sm">No registration applications submitted yet.</div>`;
+                return;
+            }
+
+            const statusClasses = {
+                pending: 'bg-amber-50 text-amber-700 border-amber-200',
+                waitlisted: 'bg-purple-50 text-purple-700 border-purple-200',
+                'offer-extended': 'bg-blue-50 text-blue-700 border-blue-200',
+                'offer-accepted': 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                enrolled: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                released: 'bg-gray-50 text-gray-700 border-gray-200',
+                rejected: 'bg-red-50 text-red-700 border-red-200'
+            };
+
+            container.innerHTML = applications.map((application) => {
+                const statusClass = statusClasses[application.status] || statusClasses.pending;
+                const optionLabel = application.selectedOptionLabel
+                    ? `<div class="text-xs text-gray-500 mt-1">Option: ${escapeHtml(application.selectedOptionLabel)}</div>`
+                    : '';
+                return `
+                    <div class="rounded-xl border border-gray-200 p-3 bg-white">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="font-semibold text-gray-900 truncate">${escapeHtml(application.playerName)}</div>
+                                <div class="text-xs text-gray-500 truncate">${escapeHtml(application.programName)} · ${escapeHtml(application.teamName)}</div>
+                                ${optionLabel}
+                            </div>
+                            <span class="flex-shrink-0 inline-flex items-center px-2 py-1 rounded-full border text-xs font-semibold ${statusClass}">
+                                ${escapeHtml(application.statusLabel)}
+                            </span>
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-2">Status is read-only and controlled by the team admin.</div>
+                    </div>
+                `;
+            }).join('');
         }
 
         function renderPlayers(children) {

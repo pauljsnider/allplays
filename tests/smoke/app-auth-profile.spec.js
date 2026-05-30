@@ -279,6 +279,14 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return { calendarUrls: [url], added: true };
                 }
 
+                export async function createScheduleImportGame() {
+                    return 'imported-game';
+                }
+
+                export async function createScheduleImportPractice() {
+                    return 'imported-practice';
+                }
+
                 export async function loadParentSchedule() {
                     return { children: [], events: [] };
                 }
@@ -309,6 +317,19 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function cancelScheduledGameForApp() {
                     return { status: 'cancelled', isCancelled: true };
+                }
+
+                export async function publishGamePlanForApp(event) {
+                    return {
+                        gamePlan: {
+                            ...(event?.gamePlan || {}),
+                            isPublished: true,
+                            publishedVersion: 1,
+                            publishedLineups: event?.gamePlan?.lineups || {},
+                            publishedReadBy: []
+                        },
+                        notificationError: ''
+                    };
                 }
 
                 export async function createParentScheduleRideOffer() {}

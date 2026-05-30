@@ -124,9 +124,9 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
     {
       id: 'fees',
       label: 'Fees',
-      detail: 'Balances, payment links, offline payments',
-      href: getTeamWebsiteHashHref('team-fees.html', teamId),
-      kind: 'website'
+      detail: 'Record offline payments in the app; use the website for full fee setup',
+      href: `/teams/${encodeURIComponent(teamId)}/fees`,
+      kind: 'native'
     },
     {
       id: 'practice-command',
