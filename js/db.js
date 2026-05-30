@@ -4895,6 +4895,7 @@ export async function getTeamEmailTemplates(teamId) {
 }
 
 export async function saveTeamEmailTemplate(teamId, template, { templateId = null } = {}) {
+    if (!teamId) throw new Error('Team is required to save an email template.');
     const now = Timestamp.now();
     const payload = {
         ...normalizeTeamEmailTemplatePayload(template),
