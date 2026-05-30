@@ -14,6 +14,7 @@ import {
 import { normalizeTeamNotificationPreferences } from '../../../../js/notification-preferences.js';
 import { resolveImageFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { isTeamActive } from '../../../../js/team-visibility.js';
 
 const profileTimeoutMs = 8000;
 const primaryDataTimeoutMs = 3000;
@@ -241,7 +242,7 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
 }
 
 function filterActiveTeams(teams: any[]) {
-  return teams.filter((team) => team && team.active !== false && team.archived !== true);
+  return teams.filter(isTeamActive);
 }
 
 async function nativeLoadProfileDocument(userId: string): Promise<ProfileDocument> {
