@@ -41,6 +41,7 @@ const firebaseMocks = vi.hoisted(() => {
         db: { _is_mock_db_instance: true },
         serverTimestamp: vi.fn(() => ({ _serverTimestamp: true })),
         collection: vi.fn((db, ...segments) => ({ path: segments.join('/') })),
+        getDoc: vi.fn(),
         doc: vi.fn((dbOrCollection, ...segments) => {
             if (segments.length === 0) {
                 const id = `registration-${nextDocId++}`;
@@ -144,6 +145,7 @@ import {
     getAppleCalendarFeedUrl,
     getCertificateUrl,
     getFamilyShareUrl,
+    getAppRegistrationUrl,
     getGoogleCalendarFeedUrl,
     getLegacyUrl,
     getPrivateTeamCalendarFeedUrl,
@@ -156,6 +158,7 @@ import {
     loadParentFeesForApp,
     loadParentRegistrations,
     loadParentRegistrationDetail,
+    loadPublicRegistrationDetail,
     loadTeamMediaForApp,
     revokeParentFamilyShare,
     submitOfflineRegistration,
@@ -193,6 +196,7 @@ describe('React app parent tools service', () => {
         expect(getLegacyUrl('team.html', {}, { teamId: 'team-1' })).toBe('https://allplays.ai/team.html#teamId=team-1');
         expect(getFamilyShareUrl('token-1')).toBe('https://allplays.ai/family.html?token=token-1');
         expect(getRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
+        expect(getAppRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1');
         expect(getCertificateUrl('team-1', 'cert-1')).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
         expect(getAppleCalendarFeedUrl('https://example.test/feed.ics')).toBe('webcal://example.test/feed.ics');
         expect(getGoogleCalendarFeedUrl('https://example.test/feed.ics')).toContain(encodeURIComponent('https://example.test/feed.ics'));
@@ -598,6 +602,10 @@ describe('React app parent tools service', () => {
             'https://allplays.ai/registration.html?teamId=team-1&formId=team-1-open',
             'https://allplays.ai/registration.html?teamId=team-coach&formId=team-coach-open'
         ]));
+        expect(cards.map((card) => card.appUrl)).toEqual(expect.arrayContaining([
+            'https://allplays.ai/app/#/registration?teamId=team-1&formId=team-1-open',
+            'https://allplays.ai/app/#/registration?teamId=team-coach&formId=team-coach-open'
+        ]));
     });
 
     it('loads a linked registration detail model for in-app review', async () => {
@@ -623,6 +631,47 @@ describe('React app parent tools service', () => {
             options: [{ id: 'opt-1', title: 'Full Day' }],
             paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }]
         });
+    });
+
+    it('loads a public registration detail without requiring public team document access', async () => {
+        dbMocks.getTeam.mockRejectedValue(new Error('permission-denied'));
+        firebaseMocks.getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({
+                id: 'form-public',
+                teamName: 'Public Bears',
+                programName: 'Open Clinic',
+                status: 'published',
+                published: true,
+                finalAmountDueCents: 9900,
+                options: [{ id: 'opt-public', title: 'Clinic' }]
+            })
+        });
+
+        await expect(loadPublicRegistrationDetail('team-public', 'form-public')).resolves.toMatchObject({
+            teamName: 'Public Bears',
+            isPublished: true,
+            legacyUrl: 'https://allplays.ai/registration.html?teamId=team-public&formId=form-public',
+            feeSnapshot: { finalAmountDueCents: 9900 },
+            options: [{ id: 'opt-public', title: 'Clinic' }]
+        });
+        expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
+            path: 'teams/team-public/registrationForms/form-public'
+        }));
+        expect(dbMocks.getTeam).not.toHaveBeenCalled();
+    });
+
+    it('rejects unavailable public registration details with safe errors', async () => {
+        await expect(loadPublicRegistrationDetail('', 'form-1')).rejects.toThrow('Team and form are required.');
+
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: false, status: 'published' }) });
+        await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
+
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: true, status: 'closed' }) });
+        await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
+
+        firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({ id: 'form-1', published: true, status: 'archived' }) });
+        await expect(loadPublicRegistrationDetail('team-1', 'form-1')).rejects.toThrow('This registration form is not available right now.');
     });
 
     it('loads published certificates for linked players', async () => {
