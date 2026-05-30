@@ -719,6 +719,7 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain('canReleasePreCheckoutReservation');
         expect(functionsSource).toContain('normalizeCheckoutAttemptToken');
         expect(functionsSource).toContain('registrationCheckoutAttemptMatches(registration, input)');
+        expect(functionsSource).toContain('registrationCheckoutAttemptStrictlyMatches(registration, input)');
         expect(functionsSource).toContain('Registration checkout attempt does not match.');
         expect(functionsSource).toContain('Registration checkout attempt is required to release this reservation.');
         expect(functionsSource).toContain('checkoutAttemptToken: input.checkoutAttemptToken ||');
@@ -726,6 +727,24 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain("['pending', 'waitlisted'].includes(registration.status)");
         expect(functionsSource).toContain('Registration checkout is not releasable.');
         expect(functionsSource).toContain('shouldProcessRegistrationCheckoutEvent(event)');
+    });
+
+    it('requires the same checkout attempt token before releasing pre-checkout capacity', () => {
+        const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
+        const releaseStart = functionsSource.indexOf('async function releaseRegistrationCheckoutCapacity');
+        const releaseEnd = functionsSource.indexOf('async function getUserForEligibility');
+        const releaseBody = functionsSource.slice(releaseStart, releaseEnd);
+        const preCheckoutGuardIndex = releaseBody.indexOf('if (canReleasePreCheckoutReservation && !registrationCheckoutAttemptStrictlyMatches(registration, input))');
+        const relaxedOpenCheckoutGuardIndex = releaseBody.indexOf('if (!canReleasePreCheckoutReservation && !registrationCheckoutAttemptMatches(registration, input))');
+        const selectedOptionIndex = releaseBody.indexOf('const selectedOption = registration.selectedOption || {};');
+
+        expect(releaseStart).toBeGreaterThanOrEqual(0);
+        expect(releaseEnd).toBeGreaterThan(releaseStart);
+        expect(functionsSource).toContain('function registrationCheckoutAttemptStrictlyMatches(registration = {}, input = {})');
+        expect(functionsSource).toContain('return Boolean(registrationToken && inputToken && registrationToken === inputToken);');
+        expect(preCheckoutGuardIndex).toBeGreaterThanOrEqual(0);
+        expect(relaxedOpenCheckoutGuardIndex).toBeGreaterThan(preCheckoutGuardIndex);
+        expect(selectedOptionIndex).toBeGreaterThan(relaxedOpenCheckoutGuardIndex);
     });
 
     it('does not write cancellation state before returning for paid registrations', () => {
