@@ -119,6 +119,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
 }));
 
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule } from '../../apps/app/src/lib/scheduleService.ts';
+import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
     vi.stubGlobal('window', {
@@ -531,4 +532,74 @@ describe('React app schedule service contract integration', () => {
         }, { uid: 'parent-1', email: 'parent@example.com' })).rejects.toThrow('permission');
     });
 
+});
+
+describe('scheduleLogic.ts', () => {
+    it('getScheduleForecastHref returns an encoded Google search URL for weather with location and date', () => {
+        const location = 'Central Park, New York';
+        const date = new Date('2026-07-20T10:00:00Z');
+        const formattedDate = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const query = `weather in ${location} on ${formattedDate}`;
+        const expectedUrl = new URL('https://www.google.com/search');
+        expectedUrl.searchParams.set('q', query);
+
+        const href = getScheduleForecastHref(location, date);
+        expect(href).toBe(expectedUrl.toString());
+    });
+
+    it('getScheduleForecastHref returns an encoded Google search URL for weather with location only', () => {
+        const location = 'Central Park, New York';
+        const query = `weather in ${location}`;
+        const expectedUrl = new URL('https://www.google.com/search');
+        expectedUrl.searchParams.set('q', query);
+
+        const href = getScheduleForecastHref(location);
+        expect(href).toBe(expectedUrl.toString());
+    });
+
+    it('getScheduleForecastHref returns empty string for null location', () => {
+        const href = getScheduleForecastHref(null);
+        expect(href).toBe('');
+    });
+
+    it('getScheduleForecastHref returns empty string for undefined location', () => {
+        const href = getScheduleForecastHref(undefined);
+        expect(href).toBe('');
+    });
+
+    it('getScheduleForecastHref returns empty string for empty string location', () => {
+        const href = getScheduleForecastHref('');
+        expect(href).toBe('');
+    });
+
+    it('getScheduleForecastHref returns empty string for TBD location', () => {
+        const href = getScheduleForecastHref('TBD');
+        expect(href).toBe('');
+    });
+
+    it('getScheduleForecastHref handles locations with special characters', () => {
+        const location = 'O\'Connell\'s Field, Dublin!';
+        const query = `weather in ${location}`;
+        const expectedUrl = new URL('https://www.google.com/search');
+        expectedUrl.searchParams.set('q', query);
+
+        const href = getScheduleForecastHref(location);
+        expect(href).toBe(expectedUrl.toString());
+    });
+
+    it('getScheduleMapHref returns an encoded Google Maps search URL', () => {
+        const location = 'Main Gym';
+        const expectedUrl = new URL('https://www.google.com/maps/search/');
+        expectedUrl.searchParams.set('api', '1');
+        expectedUrl.searchParams.set('query', location);
+        expect(getScheduleMapHref(location)).toBe(expectedUrl.toString());
+    });
+
+    it('getScheduleMapHref returns empty string for null location', () => {
+        expect(getScheduleMapHref(null)).toBe('');
+    });
+
+    it('getScheduleMapHref returns empty string for TBD location', () => {
+        expect(getScheduleMapHref('TBD')).toBe('');
+    });
 });
