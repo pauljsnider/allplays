@@ -2932,6 +2932,7 @@ exports.notifyGameUpdated = functions.firestore
   });
 
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
+const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
 const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
 
 function writePublicRsvpCors(req, res) {
@@ -3190,14 +3191,24 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
   const team = teamSnap.data() || {};
   const baseUrl = buildPublicRsvpBaseUrl();
   const expiresAt = admin.firestore.Timestamp.fromDate(new Date(Date.now() + PUBLIC_RSVP_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000));
-  const batch = firestore.batch();
+  const batches = [];
+  let batch = firestore.batch();
+  let batchWriteCount = 0;
   let sentCount = 0;
   let linkCount = 0;
+
+  const ensurePublicRsvpEmailBatchCapacity = () => {
+    if (batchWriteCount + 2 <= PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT) return;
+    batches.push(batch);
+    batch = firestore.batch();
+    batchWriteCount = 0;
+  };
 
   playersSnap.forEach((docSnap) => {
     const player = { id: docSnap.id, ...(docSnap.data() || {}) };
     if (player.active === false || respondedPlayerIds.has(player.id)) return;
     getPublicRsvpParentContacts(player).forEach((contact) => {
+      ensurePublicRsvpEmailBatchCapacity();
       const rawToken = createPublicRsvpToken();
       const tokenHash = publicRsvpHashToken(rawToken);
       const context = buildPublicRsvpContext({ team, event: eventRecord.data, player });
@@ -3228,13 +3239,17 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         metadata: { teamId, gameId, playerId: player.id, type: 'public_rsvp' }
       });
+      batchWriteCount += 2;
       sentCount += 1;
       linkCount += 3;
     });
   });
 
-  if (sentCount > 0) {
-    await batch.commit();
+  if (batchWriteCount > 0) {
+    batches.push(batch);
+  }
+  for (const publicRsvpEmailBatch of batches) {
+    await publicRsvpEmailBatch.commit();
   }
   return { sentCount, linkCount };
 }
