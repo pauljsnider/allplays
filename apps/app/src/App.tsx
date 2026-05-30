@@ -17,6 +17,7 @@ import { ResetPassword } from './pages/ResetPassword';
 import { Schedule } from './pages/Schedule';
 import { ScheduleEventDetail } from './pages/ScheduleEventDetail';
 import { TeamDetail } from './pages/TeamDetail';
+import { TeamFees } from './pages/TeamFees';
 import { TeamMedia } from './pages/TeamMedia';
 import { Teams } from './pages/Teams';
 import { VerifyPending } from './pages/VerifyPending';
@@ -41,6 +42,8 @@ export default function App() {
       <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
       <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
       <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
+      <Route path="/teams/:teamId/fees" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
+      <Route path="/teams/:teamId/fees/:batchId" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
       <Route path="/teams/:teamId/media" element={<Protected auth={auth}><TeamMedia auth={auth} /></Protected>} />
       <Route path="/parent-tools" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
       <Route path="/parent-tools/registrations/:teamId/:formId" element={<Protected auth={auth}><RegistrationDetail auth={auth} /></Protected>} />
