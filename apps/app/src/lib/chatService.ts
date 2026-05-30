@@ -29,6 +29,7 @@ import {
 import { getApp } from '../../../../js/vendor/firebase-app.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
 import { resolveImageFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
+import { isTeamActive } from '../../../../js/team-visibility.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
@@ -167,10 +168,6 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryD
 
 function compactString(value: unknown) {
   return String(value || '').trim();
-}
-
-function isActiveTeam(team: Record<string, any> | null | undefined) {
-  return team?.active !== false;
 }
 
 function getProjectId() {
@@ -387,7 +384,7 @@ async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>)
     if (team?.id) map.set(team.id, team);
   });
   return [...map.values()]
-    .filter(isActiveTeam)
+    .filter(isTeamActive)
     .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
 }
 
@@ -431,7 +428,7 @@ export async function loadChatInbox(user: AuthUser | null): Promise<ChatInboxLoa
   }
 
   const userWithProfile = mapUserWithProfile(user, profile);
-  const accessibleTeams = teams.filter((team) => isActiveTeam(team) && canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
+  const accessibleTeams = teams.filter((team) => isTeamActive(team) && canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
   const unreadCounts = await withTimeout(
     Promise.resolve(getUnreadChatCounts(user.uid, accessibleTeams.map((team) => team.id))),
     'Chat unread counts',
@@ -478,7 +475,7 @@ export async function loadChatTeamContext(teamId: string, user: AuthUser | null)
     })
   ]);
 
-  if (!team || !isActiveTeam(team as Record<string, any>)) throw new Error('Team not found.');
+  if (!team || !isTeamActive(team as Record<string, any>)) throw new Error('Team not found.');
   const currentTeam = { ...team, id: teamId };
   const profileData = profile || {};
   const userWithProfile = mapUserWithProfile(user, profileData as Record<string, any>);
