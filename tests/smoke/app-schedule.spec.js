@@ -292,6 +292,19 @@ async function mockScheduleModules(page, options = {}) {
                     return { status: 'cancelled', isCancelled: true };
                 }
 
+                export async function publishGamePlanForApp(event, user) {
+                    const version = Number.parseInt(String(event?.gamePlan?.publishedVersion || ''), 10) || 0;
+                    const gamePlan = {
+                        ...(event?.gamePlan || {}),
+                        isPublished: true,
+                        publishedVersion: version + 1,
+                        publishedLineups: event?.gamePlan?.lineups || {},
+                        publishedReadBy: []
+                    };
+                    window.__scheduleCalls.lineupPublishes = (window.__scheduleCalls.lineupPublishes || []).concat({ eventId: event?.id || null, userId: user?.uid || null });
+                    return { gamePlan, notificationError: '' };
+                }
+
                 export async function loadParentPracticePacket(event, childEvents) {
                     window.__scheduleCalls.packets.push({ action: 'load', eventId: event.id, sessionId: event.practiceSessionId });
                     if (!event.practiceHomePacket) return null;
