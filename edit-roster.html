@@ -313,9 +313,13 @@
                 </section>
 
                 <div class="bg-white rounded-lg shadow-md overflow-hidden">
-                    <div class="p-6 border-b border-gray-200 flex justify-between items-center">
-                        <h2 class="text-xl font-bold">Current Roster</h2>
-                        <span id="team-name-display" class="text-gray-500"></span>
+                    <div class="p-6 border-b border-gray-200 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h2 class="text-xl font-bold">Current Roster</h2>
+                            <span id="team-name-display" class="text-gray-500"></span>
+                            <p id="roster-print-message" class="mt-1 hidden text-sm text-amber-700"></p>
+                        </div>
+                        <button id="print-roster-btn" type="button" class="rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Print Roster</button>
                     </div>
                     <div class="px-6 py-3 bg-amber-50 border-b border-amber-100 text-sm text-amber-900">
                         Delete = deactivate from active roster, history preserved.
@@ -528,6 +532,7 @@
         import { hasFullTeamAccess } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';
         import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions } from './js/registration-review.js?v=4';
+        import { buildRosterPrintHtml } from './js/roster-print.js?v=1';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
@@ -549,6 +554,7 @@
         let trackingItems = [];
         let selectedTrackingItemId = '';
         let latestRosterPlayers = [];
+        let latestRosterPrintContactsByPlayerId = new Map();
         let trackingStatusRenderToken = 0;
         function hasAccess(team, user) {
             if (!team || !user) return false;
@@ -601,6 +607,7 @@
             document.getElementById('registration-status-filter').addEventListener('change', () => loadRegistrationReviews());
             document.getElementById('export-registration-csv-btn').addEventListener('click', exportRegistrationReviewsCsv);
             document.getElementById('registration-export-columns').addEventListener('change', handleRegistrationExportColumnChange);
+            document.getElementById('print-roster-btn').addEventListener('click', handlePrintRoster);
             document.getElementById('tracking-item-select').addEventListener('change', (event) => {
                 selectedTrackingItemId = event.target.value;
                 renderTrackingStatusMatrix();
@@ -1353,6 +1360,7 @@
                     existing.push(request);
                     pendingRequestsByPlayerId.set(request.playerId, existing);
                 });
+            latestRosterPrintContactsByPlayerId = parentsByPlayerId;
 
             if (players.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="3" class="px-6 py-4 text-center text-gray-500">No players yet.</td></tr>';
@@ -1548,6 +1556,38 @@
                     }
                 });
             });
+        }
+
+        function handlePrintRoster() {
+            const message = document.getElementById('roster-print-message');
+            if (message) {
+                message.classList.add('hidden');
+                message.textContent = '';
+            }
+
+            const { html, model } = buildRosterPrintHtml({
+                team: currentTeam,
+                players: latestRosterPlayers,
+                fields: rosterFieldDefinitions,
+                contactsByPlayerId: latestRosterPrintContactsByPlayerId,
+                generatedAt: new Date()
+            });
+
+            if (model.activeCount === 0) {
+                if (message) {
+                    message.textContent = 'No active roster players to print.';
+                    message.classList.remove('hidden');
+                }
+                return;
+            }
+
+            document.getElementById('roster-print-root')?.remove();
+            const printRoot = document.createElement('div');
+            printRoot.id = 'roster-print-root';
+            printRoot.innerHTML = html;
+            document.body.appendChild(printRoot);
+            window.addEventListener('afterprint', () => printRoot.remove(), { once: true });
+            window.print();
         }
 
         let currentInvitePlayer = null;
