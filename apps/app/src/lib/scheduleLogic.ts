@@ -856,3 +856,18 @@ export function getScheduleMapHref(location: string | null | undefined) {
   url.searchParams.set('query', normalized);
   return url.toString();
 }
+
+export function getScheduleForecastHref(location: string | null | undefined, date?: Date | null) {
+  const normalizedLocation = String(location || '').trim();
+  if (!normalizedLocation || normalizedLocation.toLowerCase() === 'tbd') return '';
+
+  let query = `weather in ${normalizedLocation}`;
+  if (date) {
+    const formattedDate = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    query += ` on ${formattedDate}`;
+  }
+
+  const url = new URL('https://www.google.com/search');
+  url.searchParams.set('q', query);
+  return url.toString();
+}
