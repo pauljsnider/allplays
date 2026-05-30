@@ -245,6 +245,11 @@ export async function getTeamEmailDrafts() {
     return [];
 }
 export async function saveTeamEmailDraft() {}
+export async function getTeamEmailTemplates() {
+    return [];
+}
+export async function saveTeamEmailTemplate() {}
+export async function deleteTeamEmailTemplate() {}
 export function canAccessTeamChat() {
     return true;
 }
