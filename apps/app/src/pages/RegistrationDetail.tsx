@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as parentToolsService from '../lib/parentToolsService';
 import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Send, Ticket, type LucideIcon } from 'lucide-react';
 import { openPublicUrl } from '../lib/publicActions';
@@ -18,8 +18,11 @@ import type { AuthState } from '../lib/types';
 type FieldErrors = Record<string, string>;
 type FeeSummaryLine = { label: string; amountCents: number; strong?: boolean };
 
-export function RegistrationDetail({ auth }: { auth: AuthState }) {
-  const { teamId = '', formId = '' } = useParams();
+export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthState; publicAccess?: boolean }) {
+  const params = useParams();
+  const [searchParams] = useSearchParams();
+  const teamId = publicAccess ? (searchParams.get('teamId') || '') : (params.teamId || '');
+  const formId = publicAccess ? (searchParams.get('formId') || '') : (params.formId || '');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<ParentRegistrationCard | null>(null);
@@ -42,7 +45,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
       setError('');
       setMessage('');
       try {
-        const nextForm = await loadRegistrationForm(auth.user, teamId, formId);
+        const nextForm = await loadRegistrationForm(auth.user, teamId, formId, publicAccess);
         if (cancelled) return;
         if (!nextForm) {
           setError('Registration form not found or not active.');
@@ -67,7 +70,7 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth.user?.uid, teamId, formId, reloadKey]);
+  }, [auth.user?.uid, teamId, formId, publicAccess, reloadKey]);
 
   const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
   const paymentPlanChoices: any[] = useMemo(() => form ? ((Array.isArray(form.paymentPlans) && form.paymentPlans.length) ? form.paymentPlans : getPaymentPlanChoices(form)) : [], [form]);
@@ -171,9 +174,11 @@ export function RegistrationDetail({ auth }: { auth: AuthState }) {
     <div className="space-y-3">
       <section className="app-card overflow-hidden">
         <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
-          <Link to="/parent-tools/registrations" className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0" aria-label="Back to registrations" title="Back to registrations">
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-          </Link>
+          {!publicAccess ? (
+            <Link to="/parent-tools/registrations" className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0" aria-label="Back to registrations" title="Back to registrations">
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          ) : null}
           <div className="min-w-0 flex-1">
             <div className="app-label">Registration</div>
             <h1 className="truncate text-xl font-black leading-tight text-gray-950">{form.programName}</h1>
@@ -292,32 +297,17 @@ function validate(form: ParentRegistrationCard, participant: Record<string, stri
   return errors;
 }
 
-async function loadRegistrationForm(user: any, teamId: string, formId: string): Promise<ParentRegistrationCard | null> {
+async function loadRegistrationForm(user: any, teamId: string, formId: string, publicAccess = false): Promise<ParentRegistrationCard | null> {
+  if (publicAccess) {
+    const detail: ParentRegistrationDetailModel = await (parentToolsService as any).loadPublicRegistrationDetail(teamId, formId);
+    return toRegistrationCardFromDetail(detail, teamId, formId);
+  }
+
   try {
     const loadDetail = (parentToolsService as any).loadParentRegistrationDetail;
     if (typeof loadDetail === 'function') {
       const detail: ParentRegistrationDetailModel = await loadDetail(user, teamId, formId);
-      return {
-        ...detail.form,
-        id: formId,
-        teamId,
-        teamName: detail.teamName,
-        programName: detail.form.programName || 'Registration',
-        description: detail.form.description || '',
-        season: detail.form.season || '',
-        currency: detail.form.currency || 'USD',
-        feeAmountCents: detail.form.feeAmountCents ?? detail.feeSnapshot?.originalFeeAmountCents ?? detail.feeSnapshot?.finalAmountDueCents ?? 0,
-        feeLabel: detail.feeSnapshot?.finalAmountDueCents ? formatMoney(detail.feeSnapshot.finalAmountDueCents, detail.form.currency) : '',
-        paymentNotice: detail.paymentNotice || '',
-        onlineCheckout: detail.onlineCheckout,
-        url: detail.legacyUrl,
-        options: detail.options || detail.form.options || [],
-        registrationOptionCounts: detail.form.registrationOptionCounts || {},
-        feeSnapshot: detail.feeSnapshot,
-        paymentPlans: detail.paymentPlans || [],
-        isPublished: detail.isPublished,
-        allowOnlineCheckoutReview: true
-      };
+      return toRegistrationCardFromDetail(detail, teamId, formId);
     }
   } catch (error: any) {
     if (!String(error?.message || '').includes('loadParentRegistrationDetail')) throw error;
@@ -325,6 +315,30 @@ async function loadRegistrationForm(user: any, teamId: string, formId: string): 
 
   const forms = await parentToolsService.loadParentRegistrations(user);
   return forms.find((candidate: ParentRegistrationCard) => candidate.teamId === teamId && candidate.id === formId) || null;
+}
+
+function toRegistrationCardFromDetail(detail: ParentRegistrationDetailModel, teamId: string, formId: string): ParentRegistrationCard {
+  return {
+    ...detail.form,
+    id: formId,
+    teamId,
+    teamName: detail.teamName,
+    programName: detail.form.programName || 'Registration',
+    description: detail.form.description || '',
+    season: detail.form.season || '',
+    currency: detail.form.currency || 'USD',
+    feeAmountCents: detail.form.feeAmountCents ?? detail.feeSnapshot?.originalFeeAmountCents ?? detail.feeSnapshot?.finalAmountDueCents ?? 0,
+    feeLabel: detail.feeSnapshot?.finalAmountDueCents ? formatMoney(detail.feeSnapshot.finalAmountDueCents, detail.form.currency) : '',
+    paymentNotice: detail.paymentNotice || '',
+    onlineCheckout: detail.onlineCheckout,
+    url: detail.legacyUrl,
+    options: detail.options || detail.form.options || [],
+    registrationOptionCounts: detail.form.registrationOptionCounts || {},
+    feeSnapshot: detail.feeSnapshot,
+    paymentPlans: detail.paymentPlans || [],
+    isPublished: detail.isPublished,
+    allowOnlineCheckoutReview: true
+  };
 }
 
 function FieldGroup({ title, fields, values, errors, prefix, onChange, disabled }: { title: string; fields: any[]; values: Record<string, string>; errors: FieldErrors; prefix: string; onChange: (fieldId: string, value: string) => void; disabled: boolean }) {
