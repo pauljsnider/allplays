@@ -367,9 +367,11 @@ export async function inviteTeamAdminForApp(teamId: string, email: string): Prom
 export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseUrl()) {
   const inviteCode = cleanString(code);
   if (!inviteCode) return null;
-  const url = new URL('/accept-invite', baseUrl);
-  url.searchParams.set('code', inviteCode);
-  url.searchParams.set('type', 'admin');
+  const url = new URL('/app', baseUrl);
+  const searchParams = new URLSearchParams();
+  searchParams.set('code', inviteCode);
+  searchParams.set('type', 'admin');
+  url.hash = `/accept-invite?${searchParams.toString()}`;
   return url.toString();
 }
 
