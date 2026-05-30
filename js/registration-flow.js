@@ -342,7 +342,7 @@ function validateRequiredFields(fields, values, groupLabel, errors) {
     });
 }
 
-export function buildPendingRegistrationRecord({ form, participant, guardian, waiverAccepted, now, selectedOption = null, selectedPaymentPlanId = 'pay_full', status = 'pending', feeSnapshot = null }) {
+export function buildPendingRegistrationRecord({ form, participant, guardian, waiverAccepted, now, selectedOption = null, selectedPaymentPlanId = 'pay_full', status = 'pending', feeSnapshot = null, checkoutAttemptToken = '' }) {
     return buildRegistrationRecord({
         form,
         participant,
@@ -352,11 +352,12 @@ export function buildPendingRegistrationRecord({ form, participant, guardian, wa
         selectedOption,
         selectedPaymentPlanId,
         status,
-        feeSnapshot
+        feeSnapshot,
+        checkoutAttemptToken
     });
 }
 
-export function buildRegistrationRecord({ form, participant, guardian, waiverAccepted, now, selectedOption = null, selectedPaymentPlanId = 'pay_full', status = 'pending', feeSnapshot = null }) {
+export function buildRegistrationRecord({ form, participant, guardian, waiverAccepted, now, selectedOption = null, selectedPaymentPlanId = 'pay_full', status = 'pending', feeSnapshot = null, checkoutAttemptToken = '' }) {
     const registrationFeeSnapshot = feeSnapshot || calculateRegistrationFeeSnapshot(form, { now: now instanceof Date ? now : new Date() });
     const paymentPlanForm = {
         ...form,
@@ -379,6 +380,11 @@ export function buildRegistrationRecord({ form, participant, guardian, waiverAcc
         submittedAt: now,
         source: 'public-registration'
     };
+
+    const normalizedCheckoutAttemptToken = String(checkoutAttemptToken || '').trim();
+    if (normalizedCheckoutAttemptToken) {
+        record.checkoutAttemptToken = normalizedCheckoutAttemptToken;
+    }
 
     if (form.backgroundCheck?.enabled === true) {
         record.screeningRequired = true;
