@@ -6,6 +6,33 @@ describe('expandRecurrence interval guardrails', () => {
     vi.useRealTimers();
   });
 
+  it('sets occurrence id to masterId and instanceDate while preserving masterId', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-10T12:00:00Z'));
+
+    const master = {
+      id: 'series-practice-rsvp',
+      isSeriesMaster: true,
+      date: new Date('2026-01-05T18:00:00Z'),
+      recurrence: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['MO'],
+        count: 3
+      }
+    };
+
+    const occurrences = expandRecurrence(master, 30);
+
+    expect(occurrences.map((occ) => occ.id)).toEqual([
+      'series-practice-rsvp__2026-01-05',
+      'series-practice-rsvp__2026-01-12',
+      'series-practice-rsvp__2026-01-19'
+    ]);
+    expect(new Set(occurrences.map((occ) => occ.id)).size).toBe(occurrences.length);
+    expect(occurrences.every((occ) => occ.masterId === master.id)).toBe(true);
+  });
+
   it('honors daily interval in matching and does not double-advance', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-10T12:00:00Z'));
