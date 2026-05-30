@@ -33,4 +33,25 @@ describe('app help knowledge service', () => {
         expect(results.map((result) => result.title).join(' ')).toMatch(/Account|Access|Create|Help/i);
         expect(results[0].snippet.length).toBeGreaterThan(40);
     });
+
+    it('filters help search results by All and a specific help role', async () => {
+        const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+
+        const allResults = searchHelpKnowledge({
+            query: 'streaming access',
+            roles: ['parent'],
+            roleFilter: 'all',
+            limit: 8
+        });
+        const parentResults = searchHelpKnowledge({
+            query: 'streaming access',
+            roles: ['parent'],
+            roleFilter: 'parent',
+            limit: 8
+        });
+
+        expect(allResults.some((result) => !result.roles.includes('parent') && !result.roles.includes('all'))).toBe(true);
+        expect(parentResults.length).toBeGreaterThan(0);
+        expect(parentResults.every((result) => result.roles.includes('parent') || result.roles.includes('all'))).toBe(true);
+    });
 });

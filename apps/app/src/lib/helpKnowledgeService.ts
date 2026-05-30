@@ -11,6 +11,8 @@ export type HelpKnowledgeResult = {
   score: number;
 };
 
+export type HelpKnowledgeRoleFilter = string;
+
 type HelpKnowledgeDoc = HelpKnowledgeIndexDoc & {
   id: string;
   title: string;
@@ -78,18 +80,22 @@ export function getHelpKnowledgeDocs(): HelpKnowledgeDoc[] {
 export function searchHelpKnowledge({
   query,
   roles = [],
+  roleFilter = 'all',
   limit = 5
 }: {
   query: string;
   roles?: string[];
+  roleFilter?: HelpKnowledgeRoleFilter;
   limit?: number;
 }): HelpKnowledgeResult[] {
   const cleanQuery = compactText(query);
   const queryTokens = tokenize(cleanQuery);
   const roleTokens = normalizeRoles(roles);
+  const [normalizedRoleFilter] = normalizeRoles([roleFilter]);
   const maxResults = Math.min(Math.max(Number(limit) || 5, 1), 8);
 
   return getHelpKnowledgeDocs()
+    .filter((doc) => roleFilterMatches(doc.roles, normalizedRoleFilter))
     .map((doc) => {
       const score = scoreHelpDoc(doc, cleanQuery, queryTokens, roleTokens);
       return {
@@ -166,6 +172,12 @@ function roleMatches(docRoles: string[], userRoles: string[]) {
   if (!userRoles.length) return false;
   const roles = docRoles.map((role) => role.toLowerCase());
   return roles.includes('all') || userRoles.some((role) => roles.includes(role));
+}
+
+function roleFilterMatches(docRoles: string[], roleFilter: string | undefined) {
+  if (!roleFilter || roleFilter === 'all') return true;
+  const roles = docRoles.map((role) => role.toLowerCase());
+  return roles.includes('all') || roles.includes(roleFilter);
 }
 
 function tokenize(value: string) {
