@@ -122,6 +122,15 @@ function installFakeIndexedDb() {
     };
 
     const indexedDB = {
+        deleteDatabase: vi.fn(() => {
+            const request = {
+                error: null,
+                onsuccess: null,
+                onerror: null
+            };
+            queueMicrotask(() => request.onsuccess?.());
+            return request;
+        }),
         open: vi.fn(() => {
             const request = {
                 error: null,

@@ -29,6 +29,10 @@ const auth = {
     }
 };
 
+function futureDate(offsetHours = 24) {
+    return new Date(Date.now() + offsetHours * 60 * 60 * 1000);
+}
+
 function event(overrides = {}) {
     return {
         eventKey: overrides.eventKey || 'team-1::game-1::player-1',
@@ -36,7 +40,11 @@ function event(overrides = {}) {
         teamId: overrides.teamId || 'team-1',
         teamName: overrides.teamName || 'Bears',
         type: overrides.type || 'game',
-        date: overrides.date || new Date('2099-05-28T18:00:00Z'),
+<<<<<<< HEAD
+        date: overrides.date || futureDate(7 * 24),
+=======
+        date: overrides.date || futureDate(7 * 24),
+>>>>>>> deaa7c3b (Fix app review regressions)
         location: overrides.location || 'Main Gym',
         opponent: overrides.opponent || 'Falcons',
         title: overrides.title || null,

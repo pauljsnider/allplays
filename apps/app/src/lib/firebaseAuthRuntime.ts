@@ -47,6 +47,9 @@ function initializeFirebaseAuth(appInstance: typeof app) {
   if (!isCapacitorNativeRuntime()) {
     return getAuth(appInstance);
   }
+  if (typeof window !== 'undefined' && typeof window.indexedDB?.deleteDatabase !== 'function') {
+    return getAuth(appInstance);
+  }
 
   try {
     return initializeAuth(appInstance, {
