@@ -874,6 +874,7 @@ function FeeDetailList({ title, rows }: { title: string; rows: Array<Record<stri
 }
 
 function RegistrationCard({ card }: { card: ParentRegistrationCard }) {
+  const shareUrl = card.appUrl || card.url;
   return (
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
@@ -901,7 +902,7 @@ function RegistrationCard({ card }: { card: ParentRegistrationCard }) {
           <ExternalLink className="h-4 w-4" aria-hidden="true" />
           Legacy form
         </button>
-        <button type="button" className="secondary-button justify-center text-xs sm:col-span-2" onClick={() => sharePublicUrl({ title: card.programName, text: `${card.teamName} registration`, url: card.url })}>
+        <button type="button" className="secondary-button justify-center text-xs sm:col-span-2" onClick={() => sharePublicUrl({ title: card.programName, text: `${card.teamName} registration`, url: shareUrl })}>
           <Share2 className="h-4 w-4" aria-hidden="true" />
           Share
         </button>
