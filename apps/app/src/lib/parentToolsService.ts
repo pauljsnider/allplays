@@ -22,7 +22,7 @@ import {
   updateTeamMediaItem
 } from '../../../../js/db.js';
 import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
-import { db, doc, collection, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
+import { db, doc, collection, getDoc, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
 import {
   formatParentFeeAmount,
   formatParentFeeDueDate,
@@ -123,6 +123,7 @@ export type ParentRegistrationCard = Record<string, any> & {
   options: Array<Record<string, any>>;
   discountRules?: RegistrationDiscountRule[];
   url: string;
+  appUrl?: string;
 };
 
 export type ParentRegistrationDetailModel = {
@@ -303,6 +304,15 @@ export async function submitOfflineRegistration(teamId: string, formId: string, 
 
 export function getRegistrationUrl(teamId: string, formId: string) {
   return getLegacyUrl('registration.html', { teamId, formId });
+}
+
+export function getAppRegistrationUrl(teamId: string, formId: string) {
+  const url = new URL('app/', legacyOrigin);
+  const params = new URLSearchParams();
+  if (teamId) params.set('teamId', teamId);
+  if (formId) params.set('formId', formId);
+  url.hash = `/registration${params.toString() ? `?${params.toString()}` : ''}`;
+  return url.toString();
 }
 
 export function getCertificateUrl(teamId: string, certificateId: string) {
@@ -599,6 +609,47 @@ export async function loadParentRegistrationDetail(
   };
 }
 
+export async function loadPublicRegistrationDetail(
+  teamId: string,
+  formId: string
+): Promise<ParentRegistrationDetailModel> {
+  if (!teamId || !formId) {
+    throw new Error('Team and form are required.');
+  }
+
+  const formSnap = await Promise.resolve(getDoc(doc(db, 'teams', teamId, 'registrationForms', formId))).catch(() => null);
+
+  const form = formSnap?.exists?.() ? { id: formId, ...(formSnap.data() || {}) } : null;
+  if (!form) throw new Error('Registration form not found.');
+
+  const normalizedForm = normalizeRegistrationForm(form, { teamId, formId });
+  if (!normalizedForm.published || normalizedForm.status === 'closed' || normalizedForm.status === 'archived') {
+    throw new Error('This registration form is not available right now.');
+  }
+
+  const feeSnapshot = calculateRegistrationFeeSnapshot(normalizedForm, { now: new Date() });
+  const paymentPlans = getPaymentPlanChoices(normalizedForm);
+  const paymentNotice = getRegistrationPaymentNotice(normalizedForm);
+  const onlineCheckout = hasOnlineRegistrationCheckout(normalizedForm);
+  const legacyUrl = getRegistrationUrl(teamId, formId);
+
+  return {
+    teamName: getPublicRegistrationTeamName(form),
+    isPublished: true,
+    onlineCheckout,
+    legacyUrl,
+    form: normalizedForm,
+    options: getActiveRegistrationOptions(normalizedForm, normalizedForm.registrationOptionCounts || {}),
+    feeSnapshot,
+    paymentNotice,
+    paymentPlans
+  };
+}
+
+function getPublicRegistrationTeamName(form: Record<string, any>) {
+  return compactString(form.teamName || form.team?.name || form.organizationName || form.clubName) || 'Team';
+}
+
 export async function loadTeamMediaForApp(user: AuthUser | null, teamId: string): Promise<TeamMediaModel> {
   if (!teamId) throw new Error('Team is required.');
   const team = await Promise.resolve(getTeam(teamId));
@@ -732,7 +783,8 @@ function toRegistrationCard(team: any, form: any): ParentRegistrationCard | null
     paymentNotice: getRegistrationPaymentNotice(normalized),
     onlineCheckout: hasOnlineRegistrationCheckout(normalized),
     options: getActiveRegistrationOptions(normalized, normalized.registrationOptionCounts || {}),
-    url: getRegistrationUrl(normalized.teamId, normalized.id)
+    url: getRegistrationUrl(normalized.teamId, normalized.id),
+    appUrl: getAppRegistrationUrl(normalized.teamId, normalized.id)
   };
 }
 
