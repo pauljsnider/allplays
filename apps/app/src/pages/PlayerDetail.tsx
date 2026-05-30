@@ -540,6 +540,8 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const [headshotFile, setHeadshotFile] = useState<File | null>(null);
   const [headshotError, setHeadshotError] = useState('');
   const [resetHeadshot, setResetHeadshot] = useState(false);
+  const [highlightClipFile, setHighlightClipFile] = useState<File | null>(null);
+  const [highlightClipError, setHighlightClipError] = useState('');
   const existingHeadshotUrl = existing?.profilePhotoUrl || '';
   const linkedHeadshotUrl = data.player.photoUrl || '';
   const headshotPreviewUrl = useMemo(() => {
@@ -559,7 +561,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (headshotError) return;
+    if (headshotError || highlightClipError) return;
     setSaving(true);
     setStatus(null);
     try {
@@ -582,10 +584,12 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
           } : null
         },
         profilePhotoFile: headshotFile,
-        resetProfilePhoto: resetHeadshot
+        resetProfilePhoto: resetHeadshot,
+        highlightClipFile
       });
       setHeadshotFile(null);
       setResetHeadshot(false);
+      setHighlightClipFile(null);
       setShareUrl(result.shareUrl);
       setStatus({ tone: 'success', message: 'Athlete profile saved.' });
       await onChanged();
@@ -604,7 +608,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             <Sparkles className="h-4 w-4 flex-none" aria-hidden="true" />
             <span className="truncate">Athlete Profile Builder</span>
           </div>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Native quick edit for the parent-managed public profile, including the public headshot.</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Native quick edit for the parent-managed public profile, including the public headshot and one highlight clip.</p>
         </div>
         {status?.tone === 'success' ? (
           <span className="flex-none rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-black uppercase tracking-[0.04em] text-emerald-700">Saved</span>
@@ -655,6 +659,59 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             </button>
           </div>
           {headshotError ? <p className="mt-2 text-xs font-bold text-rose-600">{headshotError}</p> : null}
+        </div>
+        <div className="rounded-2xl border border-gray-200 bg-white p-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
+              <FileVideo className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Manual highlight clip</div>
+              <p className="mt-1 text-sm font-semibold text-gray-700">Add one image or video highlight. It publishes when you save.</p>
+              {highlightClipFile ? <p className="mt-1 truncate text-xs font-semibold text-primary-700">{highlightClipFile.name} selected. Save to publish it.</p> : null}
+              {existing?.clips?.length ? <p className="mt-1 text-xs font-semibold text-gray-500">Existing clips stay on the profile.</p> : null}
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label className="secondary-button justify-center">
+              <span>Choose highlight clip</span>
+              <input
+                type="file"
+                accept="video/*,image/*"
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0] || null;
+                  if (file) {
+                    const fileType = String(file.type || '');
+                    if (!fileType.startsWith('image/') && !fileType.startsWith('video/')) {
+                      setHighlightClipFile(null);
+                      setHighlightClipError('Choose an image or video file for the highlight clip.');
+                      return;
+                    }
+                    if (file.size > 100 * 1024 * 1024) {
+                      setHighlightClipFile(null);
+                      setHighlightClipError('Choose a highlight clip under 100 MB.');
+                      return;
+                    }
+                  }
+                  setHighlightClipFile(file);
+                  setHighlightClipError('');
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              className="secondary-button justify-center"
+              disabled={!highlightClipFile && !highlightClipError}
+              onClick={() => {
+                setHighlightClipFile(null);
+                setHighlightClipError('');
+              }}
+            >
+              Clear selected clip
+            </button>
+          </div>
+          {highlightClipError ? <p className="mt-2 text-xs font-bold text-rose-600">{highlightClipError}</p> : null}
         </div>
         <div className="athlete-profile-grid grid gap-3 sm:grid-cols-2">
           <TextField label="Athlete name" value={name} onChange={setName} placeholder="Athlete name" />

@@ -23,4 +23,13 @@ describe('public RSVP function safeguards', () => {
         expect(source).not.toContain('summary.maybe += increment');
         expect(source).not.toContain('summary.notGoing += increment');
     });
+
+    it('chunks public RSVP email writes before hitting the Firestore batch limit', () => {
+        expect(source).toContain('const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;');
+        expect(source).toContain('const ensurePublicRsvpEmailBatchCapacity = () => {');
+        expect(source).toContain('if (batchWriteCount + 2 <= PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT) return;');
+        expect(source).toContain('batchWriteCount += 2;');
+        expect(source).toContain('for (const publicRsvpEmailBatch of batches) {');
+        expect(source).toContain('await publicRsvpEmailBatch.commit();');
+    });
 });

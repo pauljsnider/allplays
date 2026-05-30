@@ -279,6 +279,14 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return { calendarUrls: [url], added: true };
                 }
 
+                export async function createScheduleImportGame() {
+                    return 'imported-game';
+                }
+
+                export async function createScheduleImportPractice() {
+                    return 'imported-practice';
+                }
+
                 export async function loadParentSchedule() {
                     return { children: [], events: [] };
                 }

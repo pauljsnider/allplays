@@ -122,6 +122,10 @@ export type ParentScheduleEvent = {
   isCancelled: boolean;
   status?: string | null;
   liveStatus?: string | null;
+  liveClockMs?: number | null;
+  liveClockRunning?: boolean | null;
+  liveClockPeriod?: string | null;
+  liveClockUpdatedAt?: Date | null;
   homeScore?: number | null;
   awayScore?: number | null;
   canUpdateScore?: boolean;
@@ -226,6 +230,57 @@ export function normalizeScheduleDate(value: unknown): Date | null {
   }
   const date = new Date(value as string | number);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+
+export type LiveClockViewModel = {
+  visible: boolean;
+  label: string;
+  period: string;
+  clock: string;
+};
+
+const LIVE_CLOCK_RECENT_MS = 10 * 60 * 1000;
+
+function normalizeLiveClockMs(value: unknown) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.floor(parsed);
+}
+
+function formatLiveClockMs(clockMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(clockMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+export function getLiveClockViewModel(event: Pick<ParentScheduleEvent, 'type' | 'liveStatus' | 'liveClockMs' | 'liveClockRunning' | 'liveClockPeriod' | 'liveClockUpdatedAt'>, now: Date = new Date()): LiveClockViewModel | null {
+  if (event.type !== 'game') return null;
+  const clockMs = normalizeLiveClockMs(event.liveClockMs);
+  const period = String(event.liveClockPeriod || '').trim();
+  const hasClockData = clockMs !== null;
+  const isLive = String(event.liveStatus || '').toLowerCase() === 'live';
+  if (!hasClockData && !period) return null;
+
+  let displayClockMs = clockMs ?? 0;
+  const updatedAtMs = event.liveClockUpdatedAt instanceof Date ? event.liveClockUpdatedAt.getTime() : NaN;
+  const nowMs = now.getTime();
+  const elapsedMs = nowMs - updatedAtMs;
+  if (event.liveClockRunning === true && Number.isFinite(elapsedMs) && elapsedMs >= 0 && elapsedMs <= LIVE_CLOCK_RECENT_MS) {
+    displayClockMs += elapsedMs;
+  }
+
+  const clock = formatLiveClockMs(displayClockMs);
+  const parts = [period, hasClockData ? clock : ''].filter(Boolean);
+  if (!parts.length) return null;
+  return {
+    visible: true,
+    period,
+    clock: hasClockData ? clock : '',
+    label: `${isLive ? 'LIVE · ' : ''}${parts.join(' · ')}`
+  };
 }
 
 export function formatEventDateLabel(date: Date) {
@@ -799,5 +854,20 @@ export function getScheduleMapHref(location: string | null | undefined) {
   const url = new URL('https://www.google.com/maps/search/');
   url.searchParams.set('api', '1');
   url.searchParams.set('query', normalized);
+  return url.toString();
+}
+
+export function getScheduleForecastHref(location: string | null | undefined, date?: Date | null) {
+  const normalizedLocation = String(location || '').trim();
+  if (!normalizedLocation || normalizedLocation.toLowerCase() === 'tbd') return '';
+
+  let query = `weather in ${normalizedLocation}`;
+  if (date) {
+    const formattedDate = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    query += ` on ${formattedDate}`;
+  }
+
+  const url = new URL('https://www.google.com/search');
+  url.searchParams.set('q', query);
   return url.toString();
 }

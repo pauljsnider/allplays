@@ -8,7 +8,10 @@ const dbMocks = vi.hoisted(() => ({
     getRsvps: vi.fn(),
     getRsvpSummaries: vi.fn(),
     getTeam: vi.fn(),
+    getTeams: vi.fn(),
     updateTeam: vi.fn(),
+    addGame: vi.fn(),
+    addPractice: vi.fn(),
     getTrackedCalendarEventUids: vi.fn(),
     createRideOffer: vi.fn(),
     claimAssignmentSlot: vi.fn(),
@@ -115,7 +118,8 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, loadParentSchedule } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule } from '../../apps/app/src/lib/scheduleService.ts';
+import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
     vi.stubGlobal('window', {
@@ -154,6 +158,7 @@ beforeEach(() => {
         calendarUrls: ['mock://team-calendar'],
         availabilityPreferences: { noteVisibility: 'team' }
     });
+    dbMocks.getTeams.mockResolvedValue([]);
     dbMocks.getGames.mockResolvedValue([
         {
             id: 'game-1',
@@ -194,6 +199,10 @@ beforeEach(() => {
             opponent: 'Owls',
             status: 'final',
             liveStatus: 'completed',
+            liveClockMs: 494000,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q2',
+            liveClockUpdatedAt: new Date('2026-05-28T07:10:00Z'),
             homeScore: 4,
             awayScore: 2
         }
@@ -350,6 +359,10 @@ describe('React app schedule service contract integration', () => {
         expect(final).toMatchObject({
             status: 'final',
             liveStatus: 'completed',
+            liveClockMs: 494000,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q2',
+            liveClockUpdatedAt: new Date('2026-05-28T07:10:00Z'),
             homeScore: 4,
             awayScore: 2
         });
@@ -375,6 +388,45 @@ describe('React app schedule service contract integration', () => {
         ]);
         expect(result.events.some((event) => event.childId === 'player-from-user')).toBe(true);
         expect(result.events.some((event) => event.childId === 'player-1')).toBe(false);
+    });
+
+    it('does not surface parent-linked schedules for archived teams', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', archived: true });
+
+        const result = await loadParentSchedule(user());
+
+        expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
+        expect(result.children).toEqual([
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
+        ]);
+        expect(result.events).toEqual([]);
+    });
+
+    it('applies the active-team policy to native REST team fallback reads', async () => {
+        installWindow('capacitor:');
+        dbMocks.getTeam.mockRejectedValue(new Error('web team read unavailable'));
+        authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+        vi.stubGlobal('fetch', vi.fn(async () => ({
+            ok: true,
+            json: async () => ({
+                name: 'projects/demo-allplays/databases/(default)/documents/teams/team-1',
+                fields: {
+                    name: { stringValue: 'Bears' },
+                    status: { stringValue: 'archived' }
+                }
+            })
+        })));
+
+        const result = await loadParentSchedule(user());
+
+        expect(fetch).toHaveBeenCalledWith(
+            'https://firestore.googleapis.com/v1/projects/demo-allplays/databases/(default)/documents/teams/team-1',
+            expect.objectContaining({
+                headers: expect.objectContaining({ Authorization: 'Bearer native-token' })
+            })
+        );
+        expect(result.events).toEqual([]);
     });
 
     it('adds a new staff calendar URL and avoids duplicates', async () => {
@@ -419,4 +471,135 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.updateTeam).not.toHaveBeenCalled();
     });
 
+    it('creates CSV import games and practices only for staff users', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.addGame.mockResolvedValue('game-new');
+        dbMocks.addPractice.mockResolvedValue('practice-new');
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+
+        await expect(createScheduleImportGame('team-1', {
+            eventType: 'game',
+            startsAt: '2026-04-02T18:30',
+            endsAt: '2026-04-02T20:00',
+            opponent: 'Tigers',
+            location: 'Field 1',
+            arrivalTime: '2026-04-02T17:45',
+            isHome: false,
+            notes: 'Bring white kit'
+        }, coach)).resolves.toBe('game-new');
+
+        expect(dbMocks.addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'game',
+            opponent: 'Tigers',
+            location: 'Field 1',
+            isHome: false,
+            status: 'scheduled',
+            homeScore: 0,
+            awayScore: 0,
+            createdBy: 'coach-1'
+        }));
+        expect(dbMocks.addGame.mock.calls[0][1].date).toBeInstanceOf(Date);
+        expect(dbMocks.addGame.mock.calls[0][1].arrivalTime).toBeInstanceOf(Date);
+
+        await expect(createScheduleImportPractice('team-1', {
+            eventType: 'practice',
+            startsAt: '2026-04-04T07:00',
+            endsAt: '2026-04-04T08:30',
+            title: 'Speed Session',
+            location: 'Field 2',
+            arrivalTime: null,
+            notes: 'Bring water'
+        }, coach)).resolves.toBe('practice-new');
+
+        expect(dbMocks.addPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'practice',
+            title: 'Speed Session',
+            opponent: null,
+            status: 'scheduled',
+            createdBy: 'coach-1'
+        }));
+
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'other-user', adminEmails: [] });
+        await expect(createScheduleImportGame('team-1', {
+            eventType: 'game',
+            startsAt: '2026-04-02T18:30',
+            opponent: 'Tigers'
+        }, { uid: 'parent-1', email: 'parent@example.com' })).rejects.toThrow('permission');
+    });
+
+});
+
+describe('scheduleLogic.ts', () => {
+    it('getScheduleForecastHref returns an encoded Google search URL for weather with location and date', () => {
+        const location = 'Central Park, New York';
+        const date = new Date('2026-07-20T10:00:00Z');
+        const formattedDate = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        const query = `weather in ${location} on ${formattedDate}`;
+        const expectedUrl = new URL('https://www.google.com/search');
+        expectedUrl.searchParams.set('q', query);
+
+        const href = getScheduleForecastHref(location, date);
+        expect(href).toBe(expectedUrl.toString());
+    });
+
+    it('getScheduleForecastHref returns an encoded Google search URL for weather with location only', () => {
+        const location = 'Central Park, New York';
+        const query = `weather in ${location}`;
+        const expectedUrl = new URL('https://www.google.com/search');
+        expectedUrl.searchParams.set('q', query);
+
+        const href = getScheduleForecastHref(location);
+        expect(href).toBe(expectedUrl.toString());
+    });
+
+    it('getScheduleForecastHref returns empty string for null location', () => {
+        const href = getScheduleForecastHref(null);
+        expect(href).toBe('');
+    });
+
+    it('getScheduleForecastHref returns empty string for undefined location', () => {
+        const href = getScheduleForecastHref(undefined);
+        expect(href).toBe('');
+    });
+
+    it('getScheduleForecastHref returns empty string for empty string location', () => {
+        const href = getScheduleForecastHref('');
+        expect(href).toBe('');
+    });
+
+    it('getScheduleForecastHref returns empty string for TBD location', () => {
+        const href = getScheduleForecastHref('TBD');
+        expect(href).toBe('');
+    });
+
+    it('getScheduleForecastHref handles locations with special characters', () => {
+        const location = 'O\'Connell\'s Field, Dublin!';
+        const query = `weather in ${location}`;
+        const expectedUrl = new URL('https://www.google.com/search');
+        expectedUrl.searchParams.set('q', query);
+
+        const href = getScheduleForecastHref(location);
+        expect(href).toBe(expectedUrl.toString());
+    });
+
+    it('getScheduleMapHref returns an encoded Google Maps search URL', () => {
+        const location = 'Main Gym';
+        const expectedUrl = new URL('https://www.google.com/maps/search/');
+        expectedUrl.searchParams.set('api', '1');
+        expectedUrl.searchParams.set('query', location);
+        expect(getScheduleMapHref(location)).toBe(expectedUrl.toString());
+    });
+
+    it('getScheduleMapHref returns empty string for null location', () => {
+        expect(getScheduleMapHref(null)).toBe('');
+    });
+
+    it('getScheduleMapHref returns empty string for TBD location', () => {
+        expect(getScheduleMapHref('TBD')).toBe('');
+    });
 });

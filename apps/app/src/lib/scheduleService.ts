@@ -8,6 +8,8 @@ import {
   getRsvpSummaries,
   getTeam,
   getTeams,
+  addGame,
+  addPractice,
   getTrackedCalendarEventUids,
   createRideOffer,
   claimAssignmentSlot,
@@ -39,6 +41,7 @@ import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
 import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
 import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
 import { buildScheduleNotificationTargets, postScheduleNotificationTargets } from '../../../../js/schedule-notifications.js';
+import { isTeamActive } from '../../../../js/team-visibility.js';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import {
@@ -431,10 +434,6 @@ export function buildCancelScheduledGameChatMessage(event: Pick<ParentScheduleEv
   return `⚠️ Game cancelled: ${opponentLabel} on ${formatCancelledGameDate(event.date)}`;
 }
 
-function isActiveTeam(team: Record<string, any> | null | undefined) {
-  return team?.active !== false;
-}
-
 function normalizeEmail(value: unknown) {
   return compactString(value).toLowerCase();
 }
@@ -465,7 +464,7 @@ async function loadStaffTeams(user: AuthUser) {
       ]);
       const teamsById = new Map<string, any>();
       [...visibleTeams, ...coachTeams].filter(Boolean).forEach((team: any) => {
-        if (team?.id && isActiveTeam(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
+        if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
       return [...teamsById.values()];
     },
@@ -478,7 +477,7 @@ async function loadStaffTeams(user: AuthUser) {
       const coachTeams = await Promise.all(coachTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null)));
       const teamsById = new Map<string, any>();
       [...ownedTeams, ...adminTeams, ...coachTeams].forEach((team) => {
-        if (team?.id && isActiveTeam(team) && team.archived !== true && isTeamStaff(team, user)) teamsById.set(team.id, team);
+        if (team?.id && isTeamActive(team) && isTeamStaff(team, user)) teamsById.set(team.id, team);
       });
       return [...teamsById.values()];
     }
@@ -491,6 +490,122 @@ async function saveTeamCalendarUrls(teamId: string, calendarUrls: string[]) {
     return;
   }
   await updateTeam(teamId, { calendarUrls });
+}
+
+
+export type ScheduleImportNormalizedRow = {
+  rowNumber?: number;
+  eventType: 'game' | 'practice';
+  startsAt: string;
+  endsAt?: string | null;
+  opponent?: string | null;
+  title?: string | null;
+  location?: string | null;
+  arrivalTime?: string | null;
+  isHome?: boolean | null;
+  notes?: string | null;
+};
+
+function requireScheduleImportStaff(teamId: string, user: AuthUser | null) {
+  if (!user?.uid) {
+    throw new Error('You need to sign in before importing schedule rows.');
+  }
+  return loadTeam(teamId).then((team) => {
+    const teamWithId = team ? { ...team, id: team.id || teamId } : null;
+    if (!teamWithId || !isTeamStaff(teamWithId, user)) {
+      throw new Error('You do not have permission to manage this team schedule.');
+    }
+    return teamWithId;
+  });
+}
+
+function parseScheduleImportDate(value: string | null | undefined, label: string) {
+  const date = new Date(String(value || ''));
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return date;
+}
+
+function buildScheduleImportGamePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
+  const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
+  return {
+    type: 'game',
+    date: startDate,
+    end: row.endsAt ? parseScheduleImportDate(row.endsAt, 'End time') : null,
+    opponent: compactString(row.opponent),
+    title: null,
+    location: compactString(row.location),
+    isHome: row.isHome === null || row.isHome === undefined ? null : row.isHome === true,
+    arrivalTime: row.arrivalTime ? parseScheduleImportDate(row.arrivalTime, 'Arrival time') : null,
+    notes: compactString(row.notes),
+    assignments: [],
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    competitionType: 'league',
+    countsTowardSeasonRecord: true,
+    statTrackerConfigId: null,
+    createdBy: user.uid
+  };
+}
+
+function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
+  const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
+  return {
+    type: 'practice',
+    title: compactString(row.title) || 'Practice',
+    date: startDate,
+    end: row.endsAt ? parseScheduleImportDate(row.endsAt, 'End time') : null,
+    opponent: null,
+    location: compactString(row.location),
+    arrivalTime: row.arrivalTime ? parseScheduleImportDate(row.arrivalTime, 'Arrival time') : null,
+    notes: compactString(row.notes),
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    statTrackerConfigId: null,
+    createdBy: user.uid
+  };
+}
+
+export async function createScheduleImportGame(teamId: string, row: ScheduleImportNormalizedRow, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduleImportGamePayload(row, user as AuthUser);
+  if (!payload.opponent) throw new Error('Game rows require an opponent.');
+
+  try {
+    return await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Schedule import game create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST schedule import game create:', error);
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...payload,
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
+}
+
+export async function createScheduleImportPractice(teamId: string, row: ScheduleImportNormalizedRow, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduleImportPracticePayload(row, user as AuthUser);
+
+  try {
+    return await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Schedule import practice create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST schedule import practice create:', error);
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...payload,
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
 }
 
 export async function addTeamCalendarUrl(teamId: string, url: string, user: AuthUser | null) {
@@ -613,7 +728,7 @@ async function loadTeam(teamId: string) {
     () => Promise.resolve(getTeam(teamId)),
     () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)
   );
-  return isActiveTeam(team as Record<string, any> | null) ? team : null;
+  return isTeamActive(team as Record<string, any> | null) ? team : null;
 }
 
 async function loadGames(teamId: string) {
@@ -804,6 +919,10 @@ function createScheduleEvent(input: {
   isCancelled?: boolean;
   status?: string | null;
   liveStatus?: string | null;
+  liveClockMs?: unknown;
+  liveClockRunning?: unknown;
+  liveClockPeriod?: string | null;
+  liveClockUpdatedAt?: unknown;
   homeScore?: unknown;
   awayScore?: unknown;
   isHome?: boolean | null;
@@ -854,6 +973,10 @@ function createScheduleEvent(input: {
     isCancelled: input.isCancelled === true,
     status: input.status || null,
     liveStatus: input.liveStatus || null,
+    liveClockMs: toNullableScore(input.liveClockMs),
+    liveClockRunning: typeof input.liveClockRunning === 'boolean' ? input.liveClockRunning : null,
+    liveClockPeriod: input.liveClockPeriod || null,
+    liveClockUpdatedAt: normalizeScheduleDate(input.liveClockUpdatedAt),
     homeScore: toNullableScore(input.homeScore),
     awayScore: toNullableScore(input.awayScore),
     canUpdateScore: input.canUpdateScore === true,
@@ -944,6 +1067,10 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             isCancelled,
             status: game.status || null,
             liveStatus: game.liveStatus || null,
+            liveClockMs: game.liveClockMs ?? null,
+            liveClockRunning: game.liveClockRunning ?? null,
+            liveClockPeriod: game.liveClockPeriod || null,
+            liveClockUpdatedAt: game.liveClockUpdatedAt || null,
             homeScore: game.homeScore ?? null,
             awayScore: game.awayScore ?? null,
             canUpdateScore: false,
@@ -990,6 +1117,10 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           isCancelled,
           status: game.status || null,
           liveStatus: game.liveStatus || null,
+          liveClockMs: game.liveClockMs ?? null,
+          liveClockRunning: game.liveClockRunning ?? null,
+          liveClockPeriod: game.liveClockPeriod || null,
+          liveClockUpdatedAt: game.liveClockUpdatedAt || null,
           homeScore: game.homeScore ?? null,
           awayScore: game.awayScore ?? null,
           canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),

@@ -105,6 +105,25 @@
                 <div class="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm text-blue-900">
                     Send a backend email to roster contacts with email enabled. Sent messages are immutable and recipient email addresses are not shown here.
                 </div>
+                <div id="email-template-tools" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-3">
+                    <div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <label class="block">
+                            <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Reusable template</span>
+                            <select id="email-template-picker" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                <option value="">No templates saved yet</option>
+                            </select>
+                        </label>
+                        <button id="email-template-apply-btn" type="button" class="rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-50">Use template</button>
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                        <label class="block">
+                            <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Template name</span>
+                            <input id="email-template-name" type="text" maxlength="120" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Welcome email, tournament logistics...">
+                        </label>
+                        <button id="email-template-save-btn" type="button" class="rounded-lg bg-white border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100">Save as template</button>
+                    </div>
+                    <div id="email-template-status" class="text-xs text-gray-500">Templates prefill subject and body only. They do not change recipients or send email.</div>
+                </div>
                 <div class="grid gap-3">
                     <label class="block">
                         <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Subject</span>
@@ -253,9 +272,30 @@
                     <button id="email-draft-new-btn" type="button" class="w-full rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-700">New draft</button>
                     <div class="mt-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Saved Drafts</div>
                     <div id="email-drafts-list" class="mt-2 space-y-2 text-sm text-gray-600">No drafts yet.</div>
+                    <div class="mt-5 text-xs font-semibold uppercase tracking-wide text-gray-500">Reusable Templates</div>
+                    <div id="email-draft-templates-list" class="mt-2 space-y-2 text-sm text-gray-600">No reusable templates yet.</div>
                 </aside>
                 <section class="p-5 space-y-4">
                     <div id="email-draft-error" class="hidden rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"></div>
+                    <div class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-3">
+                        <div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                            <label class="block">
+                                <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Reusable template</span>
+                                <select id="email-draft-template-picker" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500">
+                                    <option value="">No templates saved yet</option>
+                                </select>
+                            </label>
+                            <button id="email-draft-template-apply-btn" type="button" class="rounded-lg border border-primary-200 px-3 py-2 text-sm font-semibold text-primary-700 hover:bg-primary-50 disabled:opacity-50">Use template</button>
+                        </div>
+                        <div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                            <label class="block">
+                                <span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Template name</span>
+                                <input id="email-draft-template-name" type="text" maxlength="120" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Registration reminder">
+                            </label>
+                            <button id="email-draft-template-save-btn" type="button" class="rounded-lg bg-white border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-100">Save as template</button>
+                        </div>
+                        <div id="email-draft-template-status" class="text-xs text-gray-500">Templates are reusable content only and do not save recipients or send email.</div>
+                    </div>
                     <div>
                         <label for="email-draft-subject" class="block text-sm font-semibold text-gray-700">Subject</label>
                         <input id="email-draft-subject" type="text" maxlength="200" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500" placeholder="Practice update for Friday">
@@ -304,7 +344,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=14';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=35';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=36';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=1';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -477,6 +517,7 @@
         let selectedRecipientTarget = 'full_team';
         let selectedRecipientIds = new Set();
         let emailDrafts = [];
+        let emailTemplates = [];
         let selectedEmailDraftId = null;
         let emailRecipientOptions = [];
         let selectedEmailRecipientKeys = new Set();
@@ -543,6 +584,7 @@
                 if (canModerate) {
                     await loadRecipientOptions();
                     await loadEmailDrafts();
+                    await loadEmailTemplates();
                     document.getElementById('email-drafts-btn')?.classList.remove('hidden');
                 }
 
@@ -619,6 +661,50 @@
             }
         }
 
+        async function handleRealtimeMessages(newMessages, oldestDoc) {
+            const container = document.getElementById('messages-container');
+            const wasNearBottom = isNearBottom(container);
+
+            liveOldestDoc = oldestDoc;
+            liveMessages = newMessages.reverse();
+
+            if (olderMessages.length === 0) {
+                hasMoreMessages = newMessages.length === 50;
+            }
+
+            await hydrateSenderPhotos(liveMessages);
+            await hydrateReactionUserNames(liveMessages);
+            messages = [...olderMessages, ...liveMessages];
+            renderMessages();
+            updateLoadMoreButton();
+
+            if (!initialSnapshotLoaded) {
+                initialSnapshotLoaded = true;
+                scrollToBottom();
+            } else if (pendingScrollToBottom || wasNearBottom) {
+                scrollToBottom();
+            }
+
+            maybeUpdateChatLastRead();
+            pendingScrollToBottom = false;
+        }
+
+        async function loadMessagesAfterRealtimeFailure(error) {
+            console.warn('Realtime chat messages unavailable; loading current messages once:', error);
+            try {
+                const fallbackMessages = await getChatMessages(teamId, { limit: 50, conversationId: selectedConversationId });
+                await handleRealtimeMessages(fallbackMessages, fallbackMessages.length ? fallbackMessages[fallbackMessages.length - 1]._doc : null);
+            } catch (fallbackError) {
+                console.error('Error loading chat messages after realtime failure:', fallbackError);
+                initialSnapshotLoaded = true;
+                liveMessages = [];
+                messages = [...olderMessages];
+                renderMessages();
+                updateLoadMoreButton();
+                showError('Unable to load chat messages. Please refresh and try again.');
+            }
+        }
+
         function startRealtimeUpdates() {
             if (unsubscribeChat) {
                 unsubscribeChat();
@@ -627,33 +713,17 @@
             liveMessages = [];
             liveOldestDoc = null;
 
-            unsubscribeChat = subscribeToChatMessages(teamId, { limit: 50, conversationId: selectedConversationId }, async (newMessages, oldestDoc) => {
-                const container = document.getElementById('messages-container');
-                const wasNearBottom = isNearBottom(container);
-
-                liveOldestDoc = oldestDoc;
-                liveMessages = newMessages.reverse();
-
-                if (olderMessages.length === 0) {
-                    hasMoreMessages = newMessages.length === 50;
-                }
-
-                await hydrateSenderPhotos(liveMessages);
-                await hydrateReactionUserNames(liveMessages);
-                messages = [...olderMessages, ...liveMessages];
-                renderMessages();
-                updateLoadMoreButton();
-
-                if (!initialSnapshotLoaded) {
-                    initialSnapshotLoaded = true;
-                    scrollToBottom();
-                } else if (pendingScrollToBottom || wasNearBottom) {
-                    scrollToBottom();
-                }
-
-                maybeUpdateChatLastRead();
-                pendingScrollToBottom = false;
-            });
+            try {
+                unsubscribeChat = subscribeToChatMessages(
+                    teamId,
+                    { limit: 50, conversationId: selectedConversationId },
+                    handleRealtimeMessages,
+                    loadMessagesAfterRealtimeFailure
+                );
+            } catch (error) {
+                unsubscribeChat = null;
+                loadMessagesAfterRealtimeFailure(error);
+            }
         }
 
         function maybeUpdateChatLastRead() {
@@ -1212,6 +1282,117 @@
             renderEmailDraftsList();
         }
 
+        async function loadEmailTemplates() {
+            if (!canModerate) return;
+            try {
+                emailTemplates = await getTeamEmailTemplates(teamId);
+            } catch (error) {
+                console.warn('Failed to load email templates:', error);
+                emailTemplates = [];
+            }
+            renderEmailTemplateControls();
+        }
+
+        function renderEmailTemplateControls() {
+            const templateOptions = emailTemplates.length === 0
+                ? '<option value="">No templates saved yet</option>'
+                : '<option value="">Choose a saved template...</option>' + emailTemplates.map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name || 'Untitled template')}</option>`).join('');
+            ['email-template-picker', 'email-draft-template-picker'].forEach((id) => {
+                const picker = document.getElementById(id);
+                if (!picker) return;
+                const previous = picker.value;
+                picker.innerHTML = templateOptions;
+                if (emailTemplates.some((template) => template.id === previous)) {
+                    picker.value = previous;
+                }
+            });
+            ['email-template-apply-btn', 'email-draft-template-apply-btn'].forEach((id) => {
+                const button = document.getElementById(id);
+                if (button) button.disabled = emailTemplates.length === 0;
+            });
+            const list = document.getElementById('email-draft-templates-list');
+            if (list) {
+                list.innerHTML = emailTemplates.length === 0
+                    ? '<div class="rounded-lg border border-dashed border-gray-300 bg-white px-3 py-4 text-center text-sm text-gray-500">No reusable templates yet. Save a subject and body as a template to reuse it next season.</div>'
+                    : emailTemplates.map((template) => `
+                        <div class="rounded-lg bg-white px-3 py-2 text-left text-gray-700">
+                            <button type="button" data-email-template-id="${escapeHtml(template.id)}" class="block w-full text-left hover:text-primary-700">
+                                <span class="block truncate font-semibold">${escapeHtml(template.name || 'Untitled template')}</span>
+                                <span class="block truncate text-xs text-gray-500">${escapeHtml(template.subject || 'No subject')}</span>
+                            </button>
+                            <button type="button" data-email-template-delete-id="${escapeHtml(template.id)}" class="mt-1 text-xs font-medium text-red-600 hover:text-red-700">Delete template</button>
+                        </div>
+                    `).join('');
+            }
+        }
+
+        function getEmailTemplate(templateId) {
+            return emailTemplates.find((template) => template.id === templateId) || null;
+        }
+
+        function applyEmailTemplate(templateId, target = 'composer') {
+            const template = getEmailTemplate(templateId);
+            if (!template) return;
+            const subjectId = target === 'draft' ? 'email-draft-subject' : 'email-subject';
+            const bodyId = target === 'draft' ? 'email-draft-body' : 'email-body';
+            document.getElementById(subjectId).value = template.subject || '';
+            document.getElementById(bodyId).value = template.body || '';
+            if (target === 'draft') {
+                updateEmailDraftSaveState();
+                setEmailTemplateStatus('Template applied. Recipients were not changed.', 'success', 'draft');
+            } else {
+                setEmailTemplateStatus('Template applied. Recipients were not changed.', 'success', 'composer');
+            }
+        }
+
+        function setEmailTemplateStatus(message, tone = 'muted', target = 'composer') {
+            const status = document.getElementById(target === 'draft' ? 'email-draft-template-status' : 'email-template-status');
+            if (!status) return;
+            status.textContent = message || '';
+            status.className = `text-xs ${tone === 'error' ? 'text-red-600' : tone === 'success' ? 'text-green-700' : 'text-gray-500'}`;
+        }
+
+        async function saveEmailTemplateFromFields(target = 'composer') {
+            const nameInput = document.getElementById(target === 'draft' ? 'email-draft-template-name' : 'email-template-name');
+            const subjectInput = document.getElementById(target === 'draft' ? 'email-draft-subject' : 'email-subject');
+            const bodyInput = document.getElementById(target === 'draft' ? 'email-draft-body' : 'email-body');
+            const name = nameInput.value.trim();
+            const subject = subjectInput.value.trim();
+            const body = bodyInput.value.trim();
+            if (!name || !subject || !body) {
+                setEmailTemplateStatus('Enter a template name, subject, and body before saving.', 'error', target);
+                return;
+            }
+            try {
+                await saveTeamEmailTemplate(teamId, {
+                    name,
+                    subject,
+                    body,
+                    authorId: currentUser.uid,
+                    authorEmail: currentUser.email || null,
+                    authorName: currentUserProfile?.fullName || null
+                });
+                nameInput.value = '';
+                await loadEmailTemplates();
+                setEmailTemplateStatus('Template saved. No email was sent.', 'success', target);
+            } catch (error) {
+                console.error('Error saving email template:', error);
+                setEmailTemplateStatus(error?.message || 'Failed to save template. Please try again.', 'error', target);
+            }
+        }
+
+        async function deleteEmailTemplate(templateId) {
+            if (!templateId) return;
+            try {
+                await deleteTeamEmailTemplate(teamId, templateId);
+                await loadEmailTemplates();
+                setEmailTemplateStatus('Template deleted.', 'success', 'draft');
+            } catch (error) {
+                console.error('Error deleting email template:', error);
+                setEmailTemplateStatus(error?.message || 'Failed to delete template. Please try again.', 'error', 'draft');
+            }
+        }
+
         function openEmailDraftModal(draftId = null) {
             if (!canModerate) return;
             document.getElementById('email-draft-modal').classList.remove('hidden');
@@ -1376,7 +1557,7 @@
 
             const visibleConversations = conversations.length > 0
                 ? conversations
-                : [{ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', name: 'Team-wide' }];
+                : [buildDefaultTeamConversation(currentTeam)];
             list.innerHTML = visibleConversations.map((conversation) => {
                 const active = conversation.id === selectedConversationId;
                 const name = getConversationDisplayName(conversation, currentTeam);
@@ -2457,6 +2638,8 @@
                 }
             });
             document.getElementById('email-send-btn').addEventListener('click', sendEmailMessage);
+            document.getElementById('email-template-apply-btn').addEventListener('click', () => applyEmailTemplate(document.getElementById('email-template-picker').value, 'composer'));
+            document.getElementById('email-template-save-btn').addEventListener('click', () => saveEmailTemplateFromFields('composer'));
             document.getElementById('email-drafts-btn').addEventListener('click', () => openEmailDraftModal());
             document.getElementById('email-draft-close-btn').addEventListener('click', closeEmailDraftModal);
             document.getElementById('email-draft-new-btn').addEventListener('click', () => selectEmailDraft(null));
@@ -2465,6 +2648,19 @@
                 const button = event.target.closest('[data-email-draft-id]');
                 if (!button) return;
                 selectEmailDraft(button.dataset.emailDraftId);
+            });
+            document.getElementById('email-draft-template-apply-btn').addEventListener('click', () => applyEmailTemplate(document.getElementById('email-draft-template-picker').value, 'draft'));
+            document.getElementById('email-draft-template-save-btn').addEventListener('click', () => saveEmailTemplateFromFields('draft'));
+            document.getElementById('email-draft-templates-list').addEventListener('click', (event) => {
+                const deleteButton = event.target.closest('[data-email-template-delete-id]');
+                if (deleteButton) {
+                    deleteEmailTemplate(deleteButton.dataset.emailTemplateDeleteId);
+                    return;
+                }
+                const button = event.target.closest('[data-email-template-id]');
+                if (!button) return;
+                document.getElementById('email-draft-template-picker').value = button.dataset.emailTemplateId;
+                applyEmailTemplate(button.dataset.emailTemplateId, 'draft');
             });
             document.getElementById('email-recipient-list').addEventListener('change', (event) => {
                 const key = event.target?.dataset?.emailRecipientKey;
