@@ -13,6 +13,7 @@ const scheduleMocks = vi.hoisted(() => ({
     loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
     loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
     markParentPracticePacketComplete: vi.fn(),
+    publishGamePlanForApp: vi.fn(),
     releaseParentScheduleAssignmentClaim: vi.fn(),
     requestParentScheduleRideSpot: vi.fn(),
     setParentScheduleRideOfferStatus: vi.fn(),
@@ -148,6 +149,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
     scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleMocks.publishGamePlanForApp.mockResolvedValue({ gamePlan: {}, notificationError: null });
     scheduleMocks.updateGameScore.mockResolvedValue({ homeScore: 5, awayScore: 2, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
         id: 'user-1__player-1',
@@ -429,6 +431,75 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(container.textContent).toContain('4-2');
         expect(container.textContent).not.toContain('Live score');
         expect(container.textContent).not.toContain('Save score');
+        expect(container.textContent).not.toContain('Lineup publish');
+    });
+
+    it('keeps lineup publish controls hidden for non-staff scorekeepers', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({
+                canUpdateScore: true,
+                isTeamStaff: false,
+                gamePlan: { lineups: { 'H1-keeper': 'p1' } }
+            })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+
+        expect(container.textContent).toContain('Live score');
+        expect(container.textContent).not.toContain('Lineup publish');
+        expect(container.textContent).not.toContain('Publish lineup');
+    });
+
+    it('shows lineup publish status and disables publish when staff has no draft', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ canUpdateScore: true, isTeamStaff: true, gamePlan: { lineups: {} } })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Lineup publish');
+
+        expect(container.textContent).toContain('No lineup draft is available yet.');
+        expect(container.textContent).toContain('Save a lineup draft before publishing.');
+        expect(buttonByText(container, 'Publish lineup').disabled).toBe(true);
+    });
+
+    it('publishes a lineup draft once and updates the visible status without reloading', async () => {
+        const draftGamePlan = {
+            lineups: { 'H1-keeper': 'p1' },
+            publishedVersion: 1,
+            publishedLineups: { 'H1-keeper': 'p9' }
+        };
+        const publishedGamePlan = {
+            ...draftGamePlan,
+            isPublished: true,
+            publishedVersion: 2,
+            publishedLineups: { 'H1-keeper': 'p1' },
+            publishedReadBy: []
+        };
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ canUpdateScore: true, isTeamStaff: true, gamePlan: draftGamePlan })]
+        });
+        scheduleMocks.publishGamePlanForApp.mockResolvedValue({
+            gamePlan: publishedGamePlan,
+            notificationError: 'Chat offline'
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Published v1. 1 draft assignment unpublished.');
+
+        await clickButton(container, 'Publish lineup');
+
+        expect(scheduleMocks.publishGamePlanForApp).toHaveBeenCalledTimes(1);
+        expect(scheduleMocks.publishGamePlanForApp).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user);
+        await waitForText(container, 'Published v2. Current draft matches the published lineup.');
+        expect(container.textContent).toContain('Lineup saved as v2, but team chat notification failed: Chat offline');
     });
 
     it('leaves edited scores visible when saving the live score fails', async () => {

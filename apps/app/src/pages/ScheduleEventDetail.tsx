@@ -12,6 +12,7 @@ import {
   loadParentScheduleRideOffers,
   loadStaffRsvpReminderPreview,
   markParentPracticePacketComplete,
+  publishGamePlanForApp,
   releaseParentScheduleAssignmentClaim,
   requestParentScheduleRideSpot,
   sendStaffRsvpReminder,
@@ -26,6 +27,7 @@ import {
   type StaffRsvpReminderSendResult,
   type RideRequestChildInput
 } from '../lib/scheduleService';
+import { getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import {
@@ -202,6 +204,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
+  const handleGamePlanPublished = useCallback((gamePlan: Record<string, any>) => {
+    setEvents((current) => current.map((event) => (
+      event.teamId === decodedTeamId && event.id === decodedEventId
+        ? { ...event, gamePlan }
+        : event
+    )));
+  }, [decodedEventId, decodedTeamId]);
+
   const canSubmitRsvp = Boolean(selectedEvent?.isDbGame && !selectedEvent.isCancelled && !selectedEvent.availabilityLocked);
 
   const submitRsvp = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
@@ -365,7 +375,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onGameCancelled={handleGameCancelled} /> : null}
+        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onGameCancelled={handleGameCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
     </div>
   );
@@ -1388,7 +1398,7 @@ function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease
   );
 }
 
-function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancelled }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onGameCancelled: () => void }) {
+function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onGameCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -1399,6 +1409,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
   const isPractice = event.type === 'practice';
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
+  const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
 
   useEffect(() => {
@@ -1484,6 +1495,10 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
 
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
 
+          {canPublishLineup ? (
+            <GameHubLineupPublishPanel auth={auth} event={event} onGamePlanPublished={onGamePlanPublished} />
+          ) : null}
+
           {canCancelGame ? (
             <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1524,6 +1539,60 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
       {cancelStatus ? <Status tone={cancelStatus.tone} message={cancelStatus.message} /> : null}
       {!isPractice ? <GameReportSections event={event} /> : null}
     </section>
+  );
+}
+
+function GameHubLineupPublishPanel({ auth, event, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
+  const [publishing, setPublishing] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const hasDraft = hasLineupDraft(event.gamePlan);
+  const canPublish = Boolean(auth.user && hasDraft && !event.isCancelled);
+  const statusCopy = getLineupPublishStatus(event.gamePlan);
+  const disabledCopy = !auth.user
+    ? 'Sign in as a coach or admin to publish the lineup.'
+    : event.isCancelled
+      ? 'Cancelled games cannot publish lineup changes.'
+      : !hasDraft
+        ? 'Save a lineup draft before publishing.'
+        : null;
+
+  const publishLineup = async () => {
+    if (!auth.user || !canPublish) return;
+    setPublishing(true);
+    setStatus(null);
+    try {
+      const result = await publishGamePlanForApp(event, auth.user);
+      onGamePlanPublished(result.gamePlan);
+      const version = Number.parseInt(String(result.gamePlan?.publishedVersion || ''), 10) || 0;
+      setStatus(result.notificationError
+        ? { tone: 'error', message: `Lineup saved${version ? ` as v${version}` : ''}, but team chat notification failed: ${result.notificationError}` }
+        : { tone: 'success', message: `Lineup published${version ? ` as v${version}` : ''}. Team chat notified.` });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to publish lineup.' });
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-2xl border border-primary-100 bg-primary-50/60 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">Lineup publish</div>
+          <div className="mt-1 text-sm font-semibold text-gray-950">{statusCopy}</div>
+          {disabledCopy ? <div className="mt-1 text-xs font-semibold text-gray-500">{disabledCopy}</div> : null}
+        </div>
+        <button
+          type="button"
+          className="min-h-11 rounded-full bg-primary-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60"
+          onClick={publishLineup}
+          disabled={!canPublish || publishing}
+        >
+          {publishing ? 'Publishing lineup' : 'Publish lineup'}
+        </button>
+      </div>
+      {status ? <div className={`mt-3 text-sm font-semibold ${status.tone === 'success' ? 'text-emerald-700' : 'text-amber-800'}`}>{status.message}</div> : null}
+    </div>
   );
 }
 
