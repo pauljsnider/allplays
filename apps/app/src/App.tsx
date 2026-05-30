@@ -33,6 +33,7 @@ export default function App() {
       <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />
+      <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
       <Route path="/" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
       <Route path="/home" element={<Protected auth={auth}><Home auth={auth} /></Protected>} />
       <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
