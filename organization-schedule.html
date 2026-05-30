@@ -1297,6 +1297,10 @@
                 setAlert('Organization context missing. Cannot publish schedule.');
                 return;
             }
+            if (!Array.isArray(draftGeneratorState.draftSlots) || draftGeneratorState.draftSlots.length === 0) {
+                setAlert('Generate at least one draft slot before publishing.');
+                return;
+            }
 
             try {
                 setButtonBusy(publishDraftScheduleBtn, 'Publishing…', true);
@@ -1304,13 +1308,14 @@
                 const publishCallable = httpsCallable(functions, 'publishOrganizationScheduleDraft');
                 const result = await publishCallable({
                     organizationId: anchorTeam.id,
-                    scheduleId: anchorTeam.id // Placeholder for now, can be refined later
+                    scheduleId: `draft-${Date.now()}`,
+                    draftSlots: draftGeneratorState.draftSlots
                 });
 
                 console.log('Publish function result:', result.data);
 
                 successAlert.className = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-4 text-sm text-emerald-800';
-                successAlert.textContent = `Organization schedule draft publishing request logged successfully. Message: ${result.data.message}`;
+                successAlert.textContent = `Published ${result.data.publishedCount || draftGeneratorState.draftSlots.length} draft schedule slot${(result.data.publishedCount || draftGeneratorState.draftSlots.length) === 1 ? '' : 's'} to team schedules.`;
 
             } catch (error) {
                 console.error('Error publishing organization schedule draft:', error);
