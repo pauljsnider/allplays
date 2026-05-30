@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import { copyPublicText, openPublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
+import { loadStaffRsvpReminderPreview, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
+import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
 import { loadParentTeamDetail, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
@@ -152,7 +154,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       </section>
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
-      {activeTab === 'schedule' ? <ScheduleTab model={model} /> : null}
+      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
       {activeTab === 'roster' ? <RosterTab model={model} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} /> : null}
       {activeTab === 'more' ? <MoreTab model={model} /> : null}
@@ -233,7 +235,7 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
   );
 }
 
-function ScheduleTab({ model }: { model: TeamDetailModel }) {
+function ScheduleTab({ model, auth }: { model: TeamDetailModel; auth: AuthState }) {
   const events = [...model.upcomingEvents.slice(0, 8), ...model.recentResults.slice(0, 3)];
   return (
     <section className="app-card p-4">
@@ -245,7 +247,7 @@ function ScheduleTab({ model }: { model: TeamDetailModel }) {
         <Link to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} className="secondary-button !min-h-9 text-xs">Open</Link>
       </div>
       <div className="mt-3 space-y-2">
-        {events.length ? events.map((event) => <TeamEventRow key={`${event.id}-${event.date.toISOString()}`} event={event} teamId={model.team.id} />) : (
+        {events.length ? events.map((event) => <TeamEventRow key={`${event.id}-${event.date.toISOString()}`} event={event} model={model} auth={auth} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team events found.</div>
         )}
       </div>
@@ -591,29 +593,129 @@ function SummaryStat({ icon: Icon, label, value }: { icon: LucideIcon; label: st
   );
 }
 
-function TeamEventRow({ event, teamId }: { event: TeamDetailEvent; teamId: string }) {
+function TeamEventRow({ event, model, auth }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState }) {
   const childId = '';
+  const teamId = model.team.id;
   const eventPath = getEventDetailPath({ teamId, id: event.id, childId });
   return (
-    <Link to={eventPath} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/30">
-      <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-xl bg-gray-100 text-gray-700">
-        <span className="text-[10px] font-black uppercase">{event.date.toLocaleDateString(undefined, { month: 'short' })}</span>
-        <span className="text-lg font-black leading-none">{event.date.getDate()}</span>
+    <div className="rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/30">
+      <div className="flex items-center gap-3">
+        <Link to={eventPath} className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-xl bg-gray-100 text-gray-700">
+            <span className="text-[10px] font-black uppercase">{event.date.toLocaleDateString(undefined, { month: 'short' })}</span>
+            <span className="text-lg font-black leading-none">{event.date.getDate()}</span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="truncate text-sm font-black text-gray-950">{event.title}</div>
+              {event.type === 'practice' ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-blue-700">Practice</span> : null}
+            </div>
+            <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-gray-500">
+              <span>{event.date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
+              <span className="truncate">{event.location}</span>
+            </div>
+          </div>
+          {event.homeScore !== null && event.awayScore !== null ? <div className="text-sm font-black text-gray-950">{event.homeScore}-{event.awayScore}</div> : null}
+          <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
+        </Link>
       </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="truncate text-sm font-black text-gray-950">{event.title}</div>
-          {event.type === 'practice' ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black text-blue-700">Practice</span> : null}
-        </div>
-        <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-gray-500">
-          <span>{event.date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
-          <span className="truncate">{event.location}</span>
-        </div>
-      </div>
-      {event.homeScore !== null && event.awayScore !== null ? <div className="text-sm font-black text-gray-950">{event.homeScore}-{event.awayScore}</div> : null}
-      <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
-    </Link>
+      <TeamEventReminderAction event={event} model={model} auth={auth} />
+    </div>
   );
+}
+
+function TeamEventReminderAction({ event, model, auth }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState }) {
+  const [preview, setPreview] = useState<StaffRsvpReminderPreview | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const scheduleEvent = useMemo(() => buildTeamReminderScheduleEvent(event, model), [event, model]);
+  const canLoad = Boolean(auth.user && scheduleEvent && model.canManageTeam && event.date.getTime() >= Date.now() && event.status.toLowerCase() !== 'completed');
+
+  useEffect(() => {
+    let cancelled = false;
+    setPreview(null);
+    setStatus(null);
+    setError(null);
+    if (!canLoad || !scheduleEvent || !auth.user) return;
+    setLoading(true);
+    loadStaffRsvpReminderPreview(scheduleEvent, auth.user)
+      .then((nextPreview) => {
+        if (!cancelled) setPreview(nextPreview);
+      })
+      .catch((loadError: any) => {
+        if (!cancelled) setError(loadError?.message || 'Unable to load RSVP reminder preview.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, canLoad, scheduleEvent]);
+
+  if (!scheduleEvent || !canLoad) return null;
+  if (loading && !preview) return null;
+  if (!preview || preview.missingPlayerCount <= 0) return null;
+
+  const sendReminder = async () => {
+    if (!auth.user || sending) return;
+    const confirmed = window.confirm(`Send an RSVP reminder to ${preview.missingPlayerCount} no-response ${preview.missingPlayerCount === 1 ? 'player' : 'players'}? ${preview.eligibleEmailCount} eligible parent/guardian ${preview.eligibleEmailCount === 1 ? 'email' : 'emails'} will be targeted.`);
+    if (!confirmed) return;
+    setSending(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const result: StaffRsvpReminderSendResult = await sendStaffRsvpReminder(scheduleEvent, auth.user, auth.profile || {});
+      setPreview(result);
+      setStatus(`RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? 'email' : 'emails'}.`);
+    } catch (sendError: any) {
+      setError(sendError?.message || 'Unable to send RSVP reminder.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50 p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs font-semibold leading-5 text-gray-600">
+          <span className="font-black text-gray-950">Staff RSVP reminder</span> · {preview.missingPlayerCount} no-response {preview.missingPlayerCount === 1 ? 'player' : 'players'}.
+        </div>
+        <button type="button" className="primary-button min-h-9 flex-none px-3 text-xs" disabled={sending || loading} onClick={sendReminder}>
+          {sending ? 'Sending…' : `Send reminder (${preview.missingPlayerCount})`}
+        </button>
+      </div>
+      {status ? <div className="mt-2 text-xs font-bold text-emerald-700">{status}</div> : null}
+      {error ? <div className="mt-2 text-xs font-bold text-rose-700">{error}</div> : null}
+    </div>
+  );
+}
+
+function buildTeamReminderScheduleEvent(event: TeamDetailEvent, model: TeamDetailModel): ParentScheduleEvent | null {
+  if (!model.canManageTeam || event.isCancelled || !event.id || !event.date) return null;
+  return {
+    eventKey: `${model.team.id}:${event.id}`,
+    id: event.id,
+    teamId: model.team.id,
+    teamName: model.team.name,
+    type: event.type,
+    date: event.date,
+    location: event.location,
+    opponent: event.opponent,
+    title: event.title,
+    childId: '',
+    childName: '',
+    isDbGame: true,
+    isCancelled: event.isCancelled,
+    status: event.status,
+    homeScore: event.homeScore,
+    awayScore: event.awayScore,
+    assignments: [],
+    isTeamStaff: true,
+    isTeamRsvpReminderManager: true
+  };
 }
 
 function PlayerRow({ teamId, player }: { teamId: string; player: TeamDetailPlayer }) {
