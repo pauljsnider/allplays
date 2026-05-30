@@ -76,6 +76,10 @@ describe('React app team navigation helpers', () => {
             'certificates'
         ]);
         expect(management?.items.find((item) => item.id === 'manage-roster')?.href).toBe('https://allplays.ai/edit-roster.html#teamId=team-1');
+        expect(management?.items.find((item) => item.id === 'fees')).toMatchObject({
+            href: '/teams/team-1/fees',
+            kind: 'native'
+        });
         expect(management?.items.find((item) => item.id === 'game-day')?.href).toBe('https://allplays.ai/game-day.html?teamId=team-1');
     });
 
