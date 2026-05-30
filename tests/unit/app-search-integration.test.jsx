@@ -15,6 +15,8 @@ const homeMocks = vi.hoisted(() => ({
 const firebaseMocks = vi.hoisted(() => ({
     db: {},
     collectionGroup: vi.fn((db, collectionName) => ({ db, collectionName })),
+    doc: vi.fn(),
+    getDoc: vi.fn(),
     getDocs: vi.fn(),
     query: vi.fn((...parts) => ({ parts })),
     where: vi.fn((field, op, value) => ({ type: 'where', field, op, value })),
@@ -161,6 +163,7 @@ beforeEach(() => {
             openActions: 0
         }]
     });
+    firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({}) });
     firebaseMocks.getDocs.mockResolvedValue({
         docs: [
             firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '9' }),
