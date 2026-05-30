@@ -311,6 +311,19 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return { status: 'cancelled', isCancelled: true };
                 }
 
+                export async function publishGamePlanForApp(event) {
+                    return {
+                        gamePlan: {
+                            ...(event?.gamePlan || {}),
+                            isPublished: true,
+                            publishedVersion: 1,
+                            publishedLineups: event?.gamePlan?.lineups || {},
+                            publishedReadBy: []
+                        },
+                        notificationError: ''
+                    };
+                }
+
                 export async function createParentScheduleRideOffer() {}
                 export async function requestParentScheduleRideSpot() {}
                 export async function cancelParentScheduleRideRequest() {}
