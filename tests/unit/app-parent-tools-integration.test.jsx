@@ -536,6 +536,53 @@ describe('React app parent tools integration', () => {
         expect(nextRender.container.textContent).not.toContain('Create album');
     });
 
+    it('uploads multiple app team media photos in one batch and refreshes once', async () => {
+        let resolveUpload;
+        const pendingUpload = new Promise((resolve) => {
+            resolveUpload = resolve;
+        });
+        serviceMocks.uploadParentTeamMediaPhoto.mockImplementation(() => pendingUpload);
+        const { container } = await renderParentTools('/teams/team-1/media');
+        await waitForText(container, 'Bears media');
+
+        const photoButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim().includes('Photo'));
+        const photoInput = container.querySelector('input[accept="image/*"]');
+        const firstPhoto = new File(['photo-one'], 'photo-one.jpg', { type: 'image/jpeg' });
+        const secondPhoto = new File(['photo-two'], 'photo-two.png', { type: 'image/png' });
+        expect(photoInput.hasAttribute('multiple')).toBe(true);
+        Object.defineProperty(photoInput, 'files', { value: [firstPhoto, secondPhoto], configurable: true });
+        await act(() => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        expect(photoButton.disabled).toBe(true);
+        await act(async () => {
+            resolveUpload();
+        });
+        await vi.waitUntil(() => serviceMocks.uploadParentTeamMediaPhoto.mock.calls.length === 2);
+
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', firstPhoto);
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', secondPhoto);
+        await waitForText(container, '2 photos uploaded.');
+        expect(serviceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports partial app team media photo failures without blocking valid images', async () => {
+        const { container } = await renderParentTools('/teams/team-1/media');
+        await waitForText(container, 'Bears media');
+
+        const photoInput = container.querySelector('input[accept="image/*"]');
+        const textFile = new File(['not-image'], 'notes.txt', { type: 'text/plain' });
+        const validPhoto = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+        Object.defineProperty(photoInput, 'files', { value: [textFile, validPhoto], configurable: true });
+        await act(async () => {
+            photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await vi.waitUntil(() => serviceMocks.uploadParentTeamMediaPhoto.mock.calls.length === 1);
+
+        expect(serviceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', validPhoto);
+        await waitForText(container, '1 photo uploaded; 1 failed.');
+    });
+
     it('loads team media, uploads photos/files, adds links, and opens media items', async () => {
         const { container } = await renderParentTools('/teams/team-1/media');
         await waitForText(container, 'Bears media');

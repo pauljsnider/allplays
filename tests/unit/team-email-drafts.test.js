@@ -15,6 +15,18 @@ describe('team email draft composer', () => {
         expect(html).toContain('openEmailDraftModal');
     });
 
+    it('wires reusable email templates into the composer and draft modal', () => {
+        const html = readRepoFile('team-chat.html');
+
+        expect(html).toContain('id="email-template-picker"');
+        expect(html).toContain('id="email-draft-template-picker"');
+        expect(html).toContain('getTeamEmailTemplates');
+        expect(html).toContain('saveTeamEmailTemplate');
+        expect(html).toContain('deleteTeamEmailTemplate');
+        expect(html).toContain('Templates prefill subject and body only. They do not change recipients or send email.');
+        expect(html).toContain('Template applied. Recipients were not changed.');
+    });
+
     it('filters the recipient picker to usable email-enabled roster contacts', () => {
         const html = readRepoFile('team-chat.html');
 
@@ -43,5 +55,17 @@ describe('team email draft composer', () => {
         expect(rules).toContain('match /emailDrafts/{draftId}');
         expect(rules).toContain('allow read: if isTeamOwnerOrAdmin(teamId);');
         expect(rules).toContain('allow create, update: if isTeamOwnerOrAdmin(teamId)');
+    });
+
+    it('stores reusable templates under the team and restricts rules to team managers', () => {
+        const db = readRepoFile('js/db.js');
+        const rules = readRepoFile('firestore.rules');
+
+        expect(db).toContain("collection(db, 'teams', teamId, 'emailTemplates')");
+        expect(db).toContain("if (!name) throw new Error('Enter a template name before saving.');");
+        expect(db).toContain('export async function deleteTeamEmailTemplate');
+        expect(rules).toContain('match /emailTemplates/{templateId}');
+        expect(rules).toContain("request.resource.data.keys().hasAll(['name', 'subject', 'body', 'updatedAt'])");
+        expect(rules).toContain("request.resource.data.keys().hasOnly([");
     });
 });

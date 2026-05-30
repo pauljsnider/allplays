@@ -44,12 +44,14 @@ import {
   formatEventDateLabel,
   formatEventTimeLabel,
   getScheduleMapHref,
+  getScheduleForecastHref,
   getScheduleAssignmentStatus,
   getScheduleRideRequestCounts,
   getScheduleRideSeatInfo,
   isScheduleAssignmentClaimedByUser,
   isScheduleAssignmentOpen,
   getScheduleTitle,
+  getLiveClockViewModel,
   normalizeRsvpResponse,
   type RideOfferDirection,
   type RideRequestStatus,
@@ -652,6 +654,7 @@ function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: 
   if (!open) return null;
   const rows = getEventDetailRows(event);
   const mapHref = getScheduleMapHref(event.location);
+  const forecastHref = getScheduleForecastHref(event.location);
 
   return (
     <div className="mt-3 rounded-xl border border-gray-200 bg-white">
@@ -668,12 +671,20 @@ function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: 
           </div>
         ))}
       </dl>
-      {mapHref ? (
-        <div className="border-t border-gray-100 p-3">
-          <a href={mapHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 w-full px-3 py-2 text-xs">
-            <MapPin className="h-4 w-4" aria-hidden="true" />
-            Open map
-          </a>
+      {(mapHref || forecastHref) ? (
+        <div className="flex flex-wrap gap-2 border-t border-gray-100 p-3">
+          {mapHref ? (
+            <a href={mapHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">
+              <MapPin className="h-4 w-4" aria-hidden="true" />
+              Directions
+            </a>
+          ) : null}
+          {forecastHref ? (
+            <a href={forecastHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              Forecast
+            </a>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -1403,11 +1414,20 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
   const [cancelling, setCancelling] = useState(false);
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
+  const [liveClockNow, setLiveClockNow] = useState(() => new Date());
+  const liveClockView = getLiveClockViewModel(event, liveClockNow);
   const isPractice = event.type === 'practice';
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
+
+  useEffect(() => {
+    setLiveClockNow(new Date());
+    if (!event.liveClockRunning) return undefined;
+    const intervalId = window.setInterval(() => setLiveClockNow(new Date()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [event.eventKey, event.liveClockRunning, event.liveClockMs, event.liveClockUpdatedAt]);
 
   const cancelGame = async () => {
     if (!auth.user) return;
@@ -1473,7 +1493,14 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
                 <span className="min-w-0 truncate">{event.location || 'Location TBD'}</span>
               </div>
             </div>
-            {scoreLabel ? <div className="flex-none text-right text-2xl font-black tabular-nums text-gray-950">{scoreLabel}</div> : null}
+            <div className="flex flex-none flex-col items-end gap-1 text-right">
+              {scoreLabel ? <div className="text-2xl font-black tabular-nums text-gray-950">{scoreLabel}</div> : null}
+              {liveClockView ? (
+                <div className="inline-flex min-h-6 items-center rounded-full border border-rose-200 bg-rose-50 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-rose-700 tabular-nums" aria-label="Live game clock">
+                  {liveClockView.label}
+                </div>
+              ) : null}
+            </div>
           </div>
 
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}

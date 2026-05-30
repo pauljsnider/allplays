@@ -1,5 +1,8 @@
 export function isTeamActive(team) {
-    return team?.active !== false;
+    const status = String(team?.status || '').trim().toLowerCase();
+    return team?.active !== false
+        && team?.archived !== true
+        && !['archived', 'inactive', 'disabled'].includes(status);
 }
 
 export function isTeamPublic(team) {
