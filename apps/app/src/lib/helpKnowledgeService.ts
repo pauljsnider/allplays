@@ -21,6 +21,7 @@ type HelpKnowledgeDoc = HelpKnowledgeIndexDoc & {
   text: string;
 };
 
+const searchableHelpRoles = ['admin', 'coach', 'member', 'parent'];
 const allPlaysOrigin = 'https://allplays.ai/';
 const stopWords = new Set([
   'about',
@@ -53,6 +54,12 @@ const stopWords = new Set([
 ]);
 
 let helpDocsCache: HelpKnowledgeDoc[] | null = null;
+
+export function getSearchHelpRoles(helpRoleFilter?: unknown): string[] {
+  const [role] = normalizeRoles([helpRoleFilter]);
+  if (!role || role === 'all') return [...searchableHelpRoles];
+  return searchableHelpRoles.includes(role) ? [role] : [...searchableHelpRoles];
+}
 
 export function getHelpKnowledgeDocs(): HelpKnowledgeDoc[] {
   if (helpDocsCache) return helpDocsCache;
@@ -148,7 +155,7 @@ function buildSnippet(doc: HelpKnowledgeDoc, tokens: string[]) {
 function normalizeRoles(roles: unknown[]) {
   const normalized = roles
     .map((role) => compactText(role).toLowerCase())
-    .map((role) => role === 'administrator' ? 'admin' : role)
+    .map((role) => role === 'administrator' || role === 'admins' || role === 'administrators' ? 'admin' : role)
     .map((role) => role === 'parents' ? 'parent' : role)
     .map((role) => role === 'coaches' ? 'coach' : role)
     .filter(Boolean);
