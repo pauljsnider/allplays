@@ -254,6 +254,16 @@ async function mockScheduleModules(page, options = {}) {
                     return { calendarUrls: [url], added: true };
                 }
 
+                export async function createScheduleImportGame(teamId, row, user) {
+                    window.__scheduleCalls.csvImports = (window.__scheduleCalls.csvImports || []).concat({ type: 'game', teamId, row, userId: user?.uid || null });
+                    return 'imported-game';
+                }
+
+                export async function createScheduleImportPractice(teamId, row, user) {
+                    window.__scheduleCalls.csvImports = (window.__scheduleCalls.csvImports || []).concat({ type: 'practice', teamId, row, userId: user?.uid || null });
+                    return 'imported-practice';
+                }
+
                 export async function loadParentSchedule() {
                     if (${JSON.stringify(scheduleLoadError)}) {
                         throw new Error(${JSON.stringify(scheduleLoadError)});
