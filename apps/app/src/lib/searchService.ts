@@ -209,6 +209,7 @@ export function computeAppSearchResults({
   auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>;
   teams: AppSearchTeam[];
   players: AppSearchPlayer[];
+  helpRoleFilter?: unknown;
 }) {
   const tokens = splitSearchTokens(queryText);
   const actions = buildAppSearchActions(auth);
