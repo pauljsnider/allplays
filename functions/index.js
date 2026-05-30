@@ -355,6 +355,177 @@ function hasTeamAdminAccess({ team, user = {}, uid, email }) {
   return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
 
+function normalizeOrganizationDraftSlot(slot = {}) {
+  const homeTeamId = String(slot.homeTeamId || '').trim();
+  const awayTeamId = String(slot.awayTeamId || '').trim();
+  const startsAt = new Date(slot.startsAt);
+  if (!homeTeamId || !awayTeamId || homeTeamId === awayTeamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Each draft slot must include different home and away teams.');
+  }
+  if (Number.isNaN(startsAt.getTime())) {
+    throw new functions.https.HttpsError('invalid-argument', 'Each draft slot must include a valid start date.');
+  }
+  return {
+    homeTeamId,
+    awayTeamId,
+    startsAt,
+    venueName: String(slot.venueName || '').trim(),
+    notes: String(slot.notes || '').trim() || null
+  };
+}
+
+function buildOrganizationDraftGamePayload({
+  homeTeamId,
+  awayTeamId,
+  homeTeam,
+  awayTeam,
+  sourceGameId,
+  counterpartGameId,
+  startsAt,
+  venueName,
+  notes,
+  scheduleId,
+  organizationId,
+  uid,
+  now,
+  isMirror = false
+}) {
+  const sharedScheduleId = `shared_${homeTeamId}_${sourceGameId}`;
+  const opponentTeam = isMirror ? homeTeam : awayTeam;
+  return {
+    type: 'game',
+    status: 'scheduled',
+    date: admin.firestore.Timestamp.fromDate(startsAt),
+    opponent: opponentTeam.name || 'Opponent',
+    opponentTeamId: isMirror ? homeTeamId : awayTeamId,
+    opponentTeamName: opponentTeam.name || null,
+    opponentTeamPhoto: opponentTeam.photoUrl || null,
+    location: venueName,
+    arrivalTime: null,
+    notes,
+    isHome: !isMirror,
+    homeScore: 0,
+    awayScore: 0,
+    createdAt: now,
+    createdVia: 'organizationScheduleDraftPublish',
+    organizationScheduleDraft: {
+      organizationId,
+      scheduleId,
+      publishedBy: uid,
+      publishedAt: now
+    },
+    sharedScheduleId,
+    sharedScheduleSourceTeamId: homeTeamId,
+    sharedScheduleOpponentTeamId: isMirror ? homeTeamId : awayTeamId,
+    sharedScheduleOpponentGameId: isMirror ? sourceGameId : counterpartGameId
+  };
+}
+
+exports.publishOrganizationScheduleDraft = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'The function must be called while authenticated.');
+  }
+
+  const organizationId = String(data?.organizationId || '').trim();
+  const scheduleId = String(data?.scheduleId || '').trim();
+  const draftSlots = Array.isArray(data?.draftSlots) ? data.draftSlots.map(normalizeOrganizationDraftSlot) : [];
+  if (!organizationId || !scheduleId) {
+    throw new functions.https.HttpsError('invalid-argument', 'organizationId and scheduleId are required.');
+  }
+  if (draftSlots.length === 0) {
+    throw new functions.https.HttpsError('invalid-argument', 'At least one draft slot is required to publish.');
+  }
+  if (draftSlots.length > 200) {
+    throw new functions.https.HttpsError('invalid-argument', 'Draft publishing is limited to 200 slots at a time.');
+  }
+
+  const uid = context.auth.uid;
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  const [userSnap, organizationSnap] = await Promise.all([
+    firestore.doc(`users/${uid}`).get(),
+    firestore.doc(`teams/${organizationId}`).get()
+  ]);
+  if (!organizationSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Organization team was not found.');
+  }
+
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  const organizationTeam = organizationSnap.data() || {};
+  if (!hasTeamAdminAccess({ team: organizationTeam, user, uid, email: callerEmail })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only organization admins can publish draft schedules.');
+  }
+
+  const teamIds = Array.from(new Set(draftSlots.flatMap((slot) => [slot.homeTeamId, slot.awayTeamId])));
+  const teamSnaps = await Promise.all(teamIds.map((teamId) => firestore.doc(`teams/${teamId}`).get()));
+  const teamsById = new Map(teamSnaps
+    .filter((snap) => snap.exists)
+    .map((snap) => [snap.id, snap.data() || {}]));
+  if (teamsById.size !== teamIds.length) {
+    throw new functions.https.HttpsError('invalid-argument', 'Every draft slot team must exist.');
+  }
+
+  const organizationOwnerId = String(organizationTeam.ownerId || '').trim();
+  if (organizationOwnerId) {
+    const outsideOrganization = teamIds.find((teamId) => String(teamsById.get(teamId)?.ownerId || '').trim() !== organizationOwnerId);
+    if (outsideOrganization) {
+      throw new functions.https.HttpsError('permission-denied', 'Draft slots can only include teams in the current organization.');
+    }
+  }
+
+  const inaccessibleTeamId = teamIds.find((teamId) => !hasTeamAdminAccess({
+    team: teamsById.get(teamId),
+    user,
+    uid,
+    email: callerEmail
+  }));
+  if (inaccessibleTeamId) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team admins can publish draft slots to every selected team.');
+  }
+
+  const now = admin.firestore.Timestamp.now();
+  const batch = firestore.batch();
+  draftSlots.forEach((slot) => {
+    const sourceRef = firestore.collection(`teams/${slot.homeTeamId}/games`).doc();
+    const mirrorRef = firestore.collection(`teams/${slot.awayTeamId}/games`).doc();
+    const homeTeam = teamsById.get(slot.homeTeamId);
+    const awayTeam = teamsById.get(slot.awayTeamId);
+
+    batch.set(sourceRef, buildOrganizationDraftGamePayload({
+      ...slot,
+      homeTeam,
+      awayTeam,
+      sourceGameId: sourceRef.id,
+      counterpartGameId: mirrorRef.id,
+      scheduleId,
+      organizationId,
+      uid,
+      now
+    }));
+    batch.set(mirrorRef, buildOrganizationDraftGamePayload({
+      ...slot,
+      homeTeam,
+      awayTeam,
+      sourceGameId: sourceRef.id,
+      counterpartGameId: mirrorRef.id,
+      scheduleId,
+      organizationId,
+      uid,
+      now,
+      isMirror: true
+    }));
+  });
+
+  await batch.commit();
+  functions.logger.info('Published organization schedule draft', {
+    uid,
+    organizationId,
+    scheduleId,
+    publishedCount: draftSlots.length,
+    teamCount: teamIds.length
+  });
+  return { status: 'success', publishedCount: draftSlots.length, message: 'Draft slots published to team schedules.' };
+});
+
 function normalizeParentInviteEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
