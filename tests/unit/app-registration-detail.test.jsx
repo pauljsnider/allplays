@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-r
 // Mock parentToolsService
 const parentToolsServiceMocks = vi.hoisted(() => ({
   loadParentRegistrations: vi.fn(),
+  loadPublicRegistrationDetail: vi.fn(),
   submitOfflineRegistration: vi.fn(),
   initiateRegistrationCheckout: vi.fn(),
 }));
@@ -103,6 +104,30 @@ async function renderRegistrationDetail(teamId = 'team-1', formId = 'form-1') {
   return { container, root };
 }
 
+async function renderPublicRegistrationDetail(teamId = 'team-public', formId = 'form-public') {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  await act(async () => {
+    root.render(React.createElement(
+      MemoryRouter,
+      { initialEntries: [`/registration?teamId=${teamId}&formId=${formId}`] },
+      React.createElement(
+        Routes,
+        null,
+        React.createElement(Route, {
+          path: '/registration',
+          element: React.createElement(RegistrationDetail, { auth: { ...auth, user: null }, publicAccess: true }),
+        })
+      )
+    ));
+  });
+
+  await flush();
+  return { container, root };
+}
+
 async function flush() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -174,6 +199,27 @@ beforeEach(() => {
       discountRules: [], // Default to no quantity discounts for most tests
     },
   ]);
+  parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue({
+    teamName: 'Public Bears',
+    isPublished: true,
+    onlineCheckout: false,
+    legacyUrl: '/registration.html?teamId=team-public&formId=form-public',
+    form: {
+      id: 'form-public',
+      teamId: 'team-public',
+      programName: 'Open Clinic',
+      description: 'Shared public registration',
+      season: 'Fall',
+      currency: 'USD',
+      participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+      guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+      registrationOptionCounts: { 'opt-1': { enrolled: 0, waitlisted: 0 } },
+    },
+    options: [{ id: 'opt-1', title: 'Option 1' }],
+    feeSnapshot: { finalAmountDueCents: 10000, currency: 'USD' },
+    paymentNotice: '',
+    paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
+  });
   parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValue({
     success: true,
     status: 'pending',
@@ -192,6 +238,25 @@ afterEach(() => {
 });
 
 describe('RegistrationDetail page', () => {
+  it('loads a public registration route from query params without linked family access', async () => {
+    const { container } = await renderPublicRegistrationDetail();
+    await waitForText(container, 'Open Clinic');
+
+    expect(parentToolsServiceMocks.loadPublicRegistrationDetail).toHaveBeenCalledWith('team-public', 'form-public');
+    expect(parentToolsServiceMocks.loadParentRegistrations).not.toHaveBeenCalled();
+    expect(container.textContent).toContain('Public Bears');
+    expect(container.textContent).not.toContain('Back to registrations');
+  });
+
+  it('blocks submit for unavailable public registration links', async () => {
+    parentToolsServiceMocks.loadPublicRegistrationDetail.mockRejectedValueOnce(new Error('This registration form is not available right now.'));
+    const { container } = await renderPublicRegistrationDetail();
+
+    await waitForText(container, 'This registration form is not available right now.');
+    expect(container.textContent).toContain('Registration unavailable');
+    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+  });
+
   it('renders the form and handles submission successfully', async () => {
     const { container } = await renderRegistrationDetail();
     await waitForText(container, 'Summer Camp');
