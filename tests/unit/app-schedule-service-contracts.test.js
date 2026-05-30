@@ -8,6 +8,7 @@ const dbMocks = vi.hoisted(() => ({
     getRsvps: vi.fn(),
     getRsvpSummaries: vi.fn(),
     getTeam: vi.fn(),
+    getTeams: vi.fn(),
     updateTeam: vi.fn(),
     addGame: vi.fn(),
     addPractice: vi.fn(),
@@ -156,6 +157,7 @@ beforeEach(() => {
         calendarUrls: ['mock://team-calendar'],
         availabilityPreferences: { noteVisibility: 'team' }
     });
+    dbMocks.getTeams.mockResolvedValue([]);
     dbMocks.getGames.mockResolvedValue([
         {
             id: 'game-1',
@@ -385,6 +387,45 @@ describe('React app schedule service contract integration', () => {
         ]);
         expect(result.events.some((event) => event.childId === 'player-from-user')).toBe(true);
         expect(result.events.some((event) => event.childId === 'player-1')).toBe(false);
+    });
+
+    it('does not surface parent-linked schedules for archived teams', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', archived: true });
+
+        const result = await loadParentSchedule(user());
+
+        expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
+        expect(result.children).toEqual([
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
+        ]);
+        expect(result.events).toEqual([]);
+    });
+
+    it('applies the active-team policy to native REST team fallback reads', async () => {
+        installWindow('capacitor:');
+        dbMocks.getTeam.mockRejectedValue(new Error('web team read unavailable'));
+        authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+        vi.stubGlobal('fetch', vi.fn(async () => ({
+            ok: true,
+            json: async () => ({
+                name: 'projects/demo-allplays/databases/(default)/documents/teams/team-1',
+                fields: {
+                    name: { stringValue: 'Bears' },
+                    status: { stringValue: 'archived' }
+                }
+            })
+        })));
+
+        const result = await loadParentSchedule(user());
+
+        expect(fetch).toHaveBeenCalledWith(
+            'https://firestore.googleapis.com/v1/projects/demo-allplays/databases/(default)/documents/teams/team-1',
+            expect.objectContaining({
+                headers: expect.objectContaining({ Authorization: 'Bearer native-token' })
+            })
+        );
+        expect(result.events).toEqual([]);
     });
 
     it('adds a new staff calendar URL and avoids duplicates', async () => {
