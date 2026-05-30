@@ -11,11 +11,16 @@ const publicActionMocks = vi.hoisted(() => ({
     copyPublicText: vi.fn(),
     openPublicUrl: vi.fn()
 }));
+const scheduleServiceMocks = vi.hoisted(() => ({
+    loadStaffRsvpReminderPreview: vi.fn(),
+    sendStaffRsvpReminder: vi.fn()
+}));
 
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
     loadParentTeamDetail: teamDetailMocks.loadParentTeamDetail
 }));
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleServiceMocks);
 
 import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl, TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
 
@@ -96,7 +101,7 @@ function model() {
     };
 }
 
-async function renderTeamDetail() {
+async function renderTeamDetail(authOverride = auth) {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -108,7 +113,7 @@ async function renderTeamDetail() {
             React.createElement(
                 Routes,
                 null,
-                React.createElement(Route, { path: '/teams/:teamId', element: React.createElement(TeamDetail, { auth }) })
+                React.createElement(Route, { path: '/teams/:teamId', element: React.createElement(TeamDetail, { auth: authOverride }) })
             )
         ));
     });
@@ -153,6 +158,19 @@ beforeEach(() => {
         return 0;
     };
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
+    scheduleServiceMocks.loadStaffRsvpReminderPreview.mockResolvedValue({
+        missingPlayerCount: 0,
+        eligibleEmailCount: 0,
+        eligibleEmails: [],
+        players: []
+    });
+    scheduleServiceMocks.sendStaffRsvpReminder.mockResolvedValue({
+        missingPlayerCount: 0,
+        eligibleEmailCount: 0,
+        eligibleEmails: [],
+        players: [],
+        emailSentCount: 0
+    });
     teamDetailMocks.loadParentTeamDetail.mockResolvedValue(model());
 });
 
@@ -247,6 +265,68 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('42-35');
         expect(hrefs(container)).toContain('/schedule/team-1/game-1');
         expect(hrefs(container)).toContain('/schedule/team-1/game-final');
+    });
+
+    it('lets team managers send an inline RSVP reminder from schedule rows', async () => {
+        const managerAuth = {
+            ...auth,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+            roles: ['coach'],
+            isParent: false,
+            isCoach: true
+        };
+        const managerModel = model();
+        managerModel.canManageTeam = true;
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        scheduleServiceMocks.loadStaffRsvpReminderPreview.mockResolvedValueOnce({
+            missingPlayerCount: 3,
+            eligibleEmailCount: 4,
+            eligibleEmails: ['one@example.test', 'two@example.test', 'three@example.test', 'four@example.test'],
+            players: []
+        });
+        scheduleServiceMocks.sendStaffRsvpReminder.mockResolvedValueOnce({
+            missingPlayerCount: 3,
+            eligibleEmailCount: 4,
+            eligibleEmails: [],
+            players: [],
+            emailSentCount: 4
+        });
+        window.confirm = vi.fn(() => true);
+
+        const { container } = await renderTeamDetail(managerAuth);
+        await clickButton(container, 'Schedule');
+        await flush();
+
+        expect(container.textContent).toContain('Staff RSVP reminder');
+        expect(container.textContent).toContain('3 no-response players');
+        expect(container.textContent).toContain('Send reminder (3)');
+        expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'game-1',
+            teamId: 'team-1',
+            type: 'game',
+            isDbGame: true,
+            isTeamRsvpReminderManager: true
+        }), managerAuth.user);
+
+        await clickButton(container, 'Send reminder');
+
+        expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('3 no-response players'));
+        expect(scheduleServiceMocks.sendStaffRsvpReminder).toHaveBeenCalledTimes(1);
+        expect(scheduleServiceMocks.sendStaffRsvpReminder).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1', teamId: 'team-1' }), managerAuth.user, managerAuth.profile);
+        expect(container.textContent).toContain('RSVP reminder sent to team chat and 4 parent/guardian emails.');
+    });
+
+    it('hides inline RSVP reminders for parents and events with no missing players', async () => {
+        const parentModel = model();
+        parentModel.canManageTeam = false;
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(parentModel);
+
+        const { container } = await renderTeamDetail();
+        await clickButton(container, 'Schedule');
+        await flush();
+
+        expect(container.textContent).not.toContain('Staff RSVP reminder');
+        expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).not.toHaveBeenCalled();
     });
 
     it('renders empty tab states without trapping users in a spinner', async () => {
