@@ -4,6 +4,8 @@ import {
   db,
   collection,
   collectionGroup,
+  doc,
+  getDoc,
   getDocs,
   query,
   where,
@@ -253,28 +255,7 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
   }
 
   if (homeTeamsResult.status === 'fulfilled' && homeTeamsResult.value) {
-    (homeTeamsResult.value.teams || []).forEach((team: any) => {
-      if (!team?.teamId) return;
-      if (!isTeamActive(team)) return;
-      const existing = teamsById.get(team.teamId);
-      teamsById.set(team.teamId, {
-        ...existing,
-        id: team.teamId,
-        name: team.teamName || existing?.name || 'Team',
-        sport: team.sport || existing?.sport || '',
-        zip: existing?.zip || '',
-        city: existing?.city || '',
-        state: existing?.state || '',
-        isPublic: existing?.isPublic,
-        active: team.active ?? existing?.active,
-        archived: team.archived ?? existing?.archived,
-        status: team.status ?? existing?.status,
-        ownerId: existing?.ownerId,
-        adminEmails: existing?.adminEmails || [],
-        photoUrl: team.photoUrl || existing?.photoUrl || null,
-        fromAppAccess: true
-      });
-    });
+    await mergeParentHomeSearchTeams(teamsById, homeTeamsResult.value.teams || [], user);
   }
 
   if (streamVolunteerTeamsResult.status === 'fulfilled') {
@@ -411,6 +392,69 @@ export function resetAppSearchCacheForTests() {
   cachedTeams = null;
   cachedTeamsLoadedAt = 0;
   cachedTeamsUserKey = '';
+}
+
+async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>, homeTeams: any[], user: AuthUser | null) {
+  const fallbackTeams: any[] = [];
+
+  (Array.isArray(homeTeams) ? homeTeams : []).forEach((team: any) => {
+    const teamId = cleanString(team?.teamId || team?.id);
+    if (!teamId) return;
+    if (!isTeamActive(team)) return;
+
+    const existing = teamsById.get(teamId);
+    if (existing) {
+      teamsById.set(teamId, buildParentHomeSearchTeam(team, existing));
+      return;
+    }
+
+    fallbackTeams.push({ ...team, teamId });
+  });
+
+  if (!fallbackTeams.length) return;
+
+  const snapshots = await Promise.allSettled(
+    fallbackTeams.map((team) => getDoc(doc(db, 'teams', team.teamId)))
+  );
+
+  snapshots.forEach((snapshot: any, index) => {
+    if (snapshot.status !== 'fulfilled') return;
+    const teamDoc = snapshot.value;
+    if (!teamDoc?.exists?.()) return;
+
+    const homeTeam = fallbackTeams[index];
+    const [firestoreTeam] = normalizeTeams([{ id: homeTeam.teamId, ...(typeof teamDoc.data === 'function' ? teamDoc.data() || {} : {}) }]);
+    if (!firestoreTeam || !isTeamActive(firestoreTeam)) return;
+
+    const searchTeam = buildParentHomeSearchTeam(homeTeam, firestoreTeam);
+    if (canUserDiscoverTeamInAppSearch(searchTeam, user)) {
+      teamsById.set(searchTeam.id, searchTeam);
+    }
+  });
+}
+
+function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): AppSearchTeam {
+  const teamId = cleanString(homeTeam?.teamId || homeTeam?.id || baseTeam?.id);
+  return {
+    ...baseTeam,
+    id: teamId,
+    name: cleanString(homeTeam?.teamName || homeTeam?.name) || baseTeam?.name || 'Team',
+    sport: cleanString(homeTeam?.sport) || baseTeam?.sport || '',
+    zip: baseTeam?.zip || '',
+    city: baseTeam?.city || '',
+    state: baseTeam?.state || '',
+    isPublic: baseTeam?.isPublic,
+    active: homeTeam?.active ?? baseTeam?.active,
+    archived: homeTeam?.archived ?? baseTeam?.archived,
+    status: cleanString(homeTeam?.status) || baseTeam?.status,
+    ownerId: baseTeam?.ownerId,
+    adminEmails: baseTeam?.adminEmails || [],
+    photoUrl: getFirstUrl(homeTeam?.photoUrl, baseTeam?.photoUrl),
+    fromAppAccess: true,
+    streamAccessMode: baseTeam?.streamAccessMode,
+    streamVolunteerEmails: baseTeam?.streamVolunteerEmails || [],
+    teamPermissions: baseTeam?.teamPermissions || null
+  };
 }
 
 async function loadStreamVolunteerSearchTeams(user: AuthUser): Promise<AppSearchTeam[]> {
