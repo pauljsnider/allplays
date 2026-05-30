@@ -1639,7 +1639,7 @@ export function expandRecurrence(master, windowDays = 180) {
       // Build the occurrence object
       const occurrence = {
         ...master,
-        id: master.id, // Keep master ID for reference
+        id: `${master.id}__${isoDate}`,
         masterId: master.id,
         instanceDate: isoDate,
         isInstance: true,
