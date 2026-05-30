@@ -9,6 +9,8 @@ const dbMocks = vi.hoisted(() => ({
     getRsvpSummaries: vi.fn(),
     getTeam: vi.fn(),
     updateTeam: vi.fn(),
+    addGame: vi.fn(),
+    addPractice: vi.fn(),
     getTrackedCalendarEventUids: vi.fn(),
     createRideOffer: vi.fn(),
     claimAssignmentSlot: vi.fn(),
@@ -115,7 +117,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, loadParentSchedule } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule } from '../../apps/app/src/lib/scheduleService.ts';
 
 function installWindow(protocol = 'http:') {
     vi.stubGlobal('window', {
@@ -425,6 +427,67 @@ describe('React app schedule service contract integration', () => {
         await expect(addTeamCalendarUrl('team-1', 'https://example.com/team.ics', user()))
             .rejects.toThrow('You do not have permission to manage this team schedule.');
         expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+    });
+
+    it('creates CSV import games and practices only for staff users', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.addGame.mockResolvedValue('game-new');
+        dbMocks.addPractice.mockResolvedValue('practice-new');
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+
+        await expect(createScheduleImportGame('team-1', {
+            eventType: 'game',
+            startsAt: '2026-04-02T18:30',
+            endsAt: '2026-04-02T20:00',
+            opponent: 'Tigers',
+            location: 'Field 1',
+            arrivalTime: '2026-04-02T17:45',
+            isHome: false,
+            notes: 'Bring white kit'
+        }, coach)).resolves.toBe('game-new');
+
+        expect(dbMocks.addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'game',
+            opponent: 'Tigers',
+            location: 'Field 1',
+            isHome: false,
+            status: 'scheduled',
+            homeScore: 0,
+            awayScore: 0,
+            createdBy: 'coach-1'
+        }));
+        expect(dbMocks.addGame.mock.calls[0][1].date).toBeInstanceOf(Date);
+        expect(dbMocks.addGame.mock.calls[0][1].arrivalTime).toBeInstanceOf(Date);
+
+        await expect(createScheduleImportPractice('team-1', {
+            eventType: 'practice',
+            startsAt: '2026-04-04T07:00',
+            endsAt: '2026-04-04T08:30',
+            title: 'Speed Session',
+            location: 'Field 2',
+            arrivalTime: null,
+            notes: 'Bring water'
+        }, coach)).resolves.toBe('practice-new');
+
+        expect(dbMocks.addPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'practice',
+            title: 'Speed Session',
+            opponent: null,
+            status: 'scheduled',
+            createdBy: 'coach-1'
+        }));
+
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'other-user', adminEmails: [] });
+        await expect(createScheduleImportGame('team-1', {
+            eventType: 'game',
+            startsAt: '2026-04-02T18:30',
+            opponent: 'Tigers'
+        }, { uid: 'parent-1', email: 'parent@example.com' })).rejects.toThrow('permission');
     });
 
 });
