@@ -315,7 +315,9 @@ export async function saveParentAthleteProfileDraft({
   draft,
   profileId,
   profilePhotoFile,
-  resetProfilePhoto = false
+  resetProfilePhoto = false,
+  highlightClipFile = null,
+  highlightClipTitle = ''
 }: {
   user: AuthUser | null;
   teamId: string;
@@ -324,27 +326,60 @@ export async function saveParentAthleteProfileDraft({
   profileId?: string | null;
   profilePhotoFile?: File | null;
   resetProfilePhoto?: boolean;
+  highlightClipFile?: File | null;
+  highlightClipTitle?: string;
 }) {
   assertLinkedParent(user, teamId, playerId);
   const seasonKey = buildParentSeasonKey(teamId, playerId);
   const workingProfileId = profileId || createLocalId('profile');
   let uploadedProfilePhoto: Record<string, any> | null = null;
+  let uploadedHighlightClip: Record<string, any> | null = null;
+  if (profilePhotoFile) validateImageFile(profilePhotoFile);
+  if (highlightClipFile) validateHighlightClipFile(highlightClipFile);
   if (profilePhotoFile) {
-    validateImageFile(profilePhotoFile);
     uploadedProfilePhoto = await uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' });
   }
+  if (highlightClipFile) {
+    try {
+      uploadedHighlightClip = await uploadAthleteProfileMedia(user!.uid, workingProfileId, highlightClipFile, { kind: 'clip' });
+    } catch (error) {
+      if (uploadedProfilePhoto?.storagePath) {
+        await deleteAthleteProfileMediaByPath(uploadedProfilePhoto.storagePath).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
   const profilePhoto = uploadedProfilePhoto || (resetProfilePhoto ? null : draft.profilePhoto);
+  const clips = [
+    ...(Array.isArray(draft.clips) ? draft.clips : []),
+    ...(uploadedHighlightClip ? [{
+      id: createLocalId('clip'),
+      source: 'upload',
+      mediaType: uploadedHighlightClip.mediaType,
+      title: String(highlightClipTitle || '').trim() || fileTitle(highlightClipFile?.name || ''),
+      label: '',
+      url: uploadedHighlightClip.url,
+      storagePath: uploadedHighlightClip.storagePath,
+      mimeType: uploadedHighlightClip.mimeType,
+      sizeBytes: uploadedHighlightClip.sizeBytes,
+      uploadedAtMs: uploadedHighlightClip.uploadedAtMs
+    }] : [])
+  ];
 
   let saved;
   try {
     saved = await saveAthleteProfile(user!.uid, {
       ...draft,
       profilePhoto,
+      clips,
       selectedSeasonKeys: [seasonKey]
     }, { profileId: workingProfileId });
   } catch (error) {
     if (uploadedProfilePhoto?.storagePath) {
       await deleteAthleteProfileMediaByPath(uploadedProfilePhoto.storagePath).catch(() => undefined);
+    }
+    if (uploadedHighlightClip?.storagePath) {
+      await deleteAthleteProfileMediaByPath(uploadedHighlightClip.storagePath).catch(() => undefined);
     }
     throw error;
   }
@@ -449,6 +484,23 @@ function validateImageFile(file: File) {
   if (file.size > 10 * 1024 * 1024) {
     throw new Error('Choose an image under 10 MB.');
   }
+}
+
+function validateHighlightClipFile(file: File) {
+  const fileType = String(file.type || '');
+  if (!fileType.startsWith('image/') && !fileType.startsWith('video/')) {
+    throw new Error('Highlight clips must be image or video files.');
+  }
+  if (!Number.isFinite(file.size) || file.size <= 0) {
+    throw new Error('Choose a valid image or video file.');
+  }
+  if (file.size > 100 * 1024 * 1024) {
+    throw new Error('Choose a highlight clip under 100 MB.');
+  }
+}
+
+function fileTitle(fileName: string) {
+  return String(fileName || '').replace(/\.[^.]+$/, '').trim();
 }
 
 function buildParentSeasonKey(teamId: string, playerId: string) {
