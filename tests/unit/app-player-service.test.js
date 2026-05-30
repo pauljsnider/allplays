@@ -159,13 +159,17 @@ beforeEach(() => {
     dbMocks.saveAthleteProfile.mockResolvedValue({ id: 'profile-1', athlete: { name: 'Pat Star' }, privacy: 'public' });
     dbMocks.deleteAthleteProfileMediaByPath.mockResolvedValue(undefined);
     dbMocks.updatePlayerProfile.mockResolvedValue(undefined);
-    dbMocks.uploadAthleteProfileMedia.mockResolvedValue({
-        url: 'https://example.test/headshot.jpg',
-        storagePath: 'athlete-profile-media/user-1/profile-1/headshot.jpg',
-        mimeType: 'image/jpeg',
-        sizeBytes: 8,
-        uploadedAtMs: 1234,
-        mediaType: 'image'
+    dbMocks.uploadAthleteProfileMedia.mockImplementation(async (userId, profileId, file, options = {}) => {
+        const kind = options.kind === 'profile-photo' ? 'profile-photo' : 'clip';
+        const mediaType = String(file.type || '').startsWith('video/') ? 'video' : 'image';
+        return {
+            url: `https://example.test/${file.name}`,
+            storagePath: `athlete-profile-media/${userId}/${profileId}/${file.name}`,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            uploadedAtMs: 1234,
+            mediaType: kind === 'profile-photo' ? 'image' : mediaType
+        };
     });
     dbMocks.uploadPlayerPhoto.mockResolvedValue('https://example.test/new-photo.jpg');
     dbMocks.getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball' }]);
@@ -443,6 +447,84 @@ describe('React app parent player detail service', () => {
 
         expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', 'profile-1', file, { kind: 'profile-photo' });
         expect(dbMocks.deleteAthleteProfileMediaByPath).toHaveBeenCalledWith('athlete-profile-media/user-1/profile-1/headshot.jpg');
+    });
+
+    it('uploads a manual athlete profile highlight clip and preserves existing clips', async () => {
+        const clip = new File(['clip-bytes'], 'game-winner.mp4', { type: 'video/mp4' });
+        const existingClip = { id: 'clip-old', source: 'upload', title: 'Old clip', url: 'https://example.test/old.mp4' };
+
+        await saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profileId: 'profile-1',
+            highlightClipFile: clip,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: [existingClip]
+            }
+        });
+
+        expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', 'profile-1', clip, { kind: 'clip' });
+        expect(dbMocks.saveAthleteProfile).toHaveBeenLastCalledWith('user-1', expect.objectContaining({
+            clips: [
+                existingClip,
+                expect.objectContaining({
+                    source: 'upload',
+                    mediaType: 'video',
+                    title: 'game-winner',
+                    url: 'https://example.test/game-winner.mp4',
+                    storagePath: 'athlete-profile-media/user-1/profile-1/game-winner.mp4',
+                    mimeType: 'video/mp4'
+                })
+            ],
+            selectedSeasonKeys: ['team-1::player-1']
+        }), { profileId: 'profile-1' });
+    });
+
+    it('rejects invalid athlete profile highlight clips before saving', async () => {
+        const clip = new File(['not-media'], 'notes.txt', { type: 'text/plain' });
+
+        await expect(saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profileId: 'profile-1',
+            highlightClipFile: clip,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: []
+            }
+        })).rejects.toThrow('Highlight clips must be image or video files.');
+
+        expect(dbMocks.uploadAthleteProfileMedia).not.toHaveBeenCalled();
+        expect(dbMocks.saveAthleteProfile).not.toHaveBeenCalled();
+    });
+
+    it('cleans up uploaded athlete profile highlight clips when saving the profile fails', async () => {
+        const clip = new File(['clip-bytes'], 'layup.png', { type: 'image/png' });
+        dbMocks.saveAthleteProfile.mockRejectedValueOnce(new Error('profile save failed'));
+
+        await expect(saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profileId: 'profile-1',
+            highlightClipFile: clip,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: []
+            }
+        })).rejects.toThrow('profile save failed');
+
+        expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', 'profile-1', clip, { kind: 'clip' });
+        expect(dbMocks.deleteAthleteProfileMediaByPath).toHaveBeenCalledWith('athlete-profile-media/user-1/profile-1/layup.png');
     });
 
     it('saves incentive rules under the parent account', async () => {
