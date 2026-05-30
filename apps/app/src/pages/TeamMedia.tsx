@@ -166,13 +166,13 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         } else {
           setMessage(resultMessage);
         }
-        if (photoInputRef.current) photoInputRef.current.value = '';
       } else {
         setMessage('');
         setError(failed > 0 ? 'No photos uploaded. Choose image files that are 10 MB or smaller.' : 'Photo upload failed.');
       }
     } finally {
       setUploading('');
+      if (photoInputRef.current) photoInputRef.current.value = '';
     }
   };
 
