@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { addTeamCalendarUrl, loadParentSchedule, type ParentScheduleChild } from '../lib/scheduleService';
+import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, type ParentScheduleChild } from '../lib/scheduleService';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
@@ -25,6 +25,14 @@ import {
   type ScheduleTimeRange,
   type ScheduleViewMode
 } from '../lib/scheduleLogic';
+import {
+  SCHEDULE_CSV_IMPORT_FIELDS,
+  buildScheduleImportPreview,
+  inferScheduleCsvMapping,
+  parseCsvText,
+  type ScheduleCsvImportMapping,
+  type ScheduleCsvImportPreviewRow
+} from '../lib/scheduleCsvImport';
 import type { AuthState } from '../lib/types';
 
 const filterOptions: Array<{ value: ParentScheduleFilter; label: string }> = [
@@ -82,6 +90,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [calendarUrl, setCalendarUrl] = useState('');
   const [calendarUrlError, setCalendarUrlError] = useState<string | null>(null);
   const [savingCalendarUrl, setSavingCalendarUrl] = useState(false);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [csvRows, setCsvRows] = useState<Array<Record<string, string>>>([]);
+  const [csvMapping, setCsvMapping] = useState<ScheduleCsvImportMapping>({});
+  const [csvPreviewRows, setCsvPreviewRows] = useState<ScheduleCsvImportPreviewRow[]>([]);
+  const [csvImportErrors, setCsvImportErrors] = useState<string[]>([]);
+  const [csvFileName, setCsvFileName] = useState('');
+  const [importingCsv, setImportingCsv] = useState(false);
 
   const refreshSchedule = async () => {
     if (!auth.user) return;
@@ -154,6 +169,82 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
     return manageableTeamOptions.length === 1 ? manageableTeamOptions[0] : null;
   }, [manageableTeamOptions, selectedTeamId]);
+
+  const handleCsvFileChange = async (file: File | null) => {
+    setCsvImportErrors([]);
+    setCsvPreviewRows([]);
+    if (!file) return;
+    try {
+      const parsed = parseCsvText(await file.text());
+      setCsvHeaders(parsed.headers);
+      setCsvRows(parsed.rows);
+      setCsvMapping(inferScheduleCsvMapping(parsed.headers));
+      setCsvFileName(file.name);
+    } catch (csvError: any) {
+      setCsvImportErrors([csvError?.message || 'Could not read the CSV file.']);
+    }
+  };
+
+  const handleCsvPreview = () => {
+    const preview = buildScheduleImportPreview({
+      rows: csvRows,
+      mapping: csvMapping,
+      teamName: selectedCalendarTeam?.teamName || ''
+    });
+    setCsvImportErrors(preview.errors);
+    setCsvPreviewRows(preview.rows);
+  };
+
+  const handleCsvClear = () => {
+    setCsvHeaders([]);
+    setCsvRows([]);
+    setCsvMapping({});
+    setCsvPreviewRows([]);
+    setCsvImportErrors([]);
+    setCsvFileName('');
+  };
+
+  const handleCsvImport = async () => {
+    if (!selectedCalendarTeam || !auth.user || importingCsv) return;
+    const invalidRows = csvPreviewRows.filter((row) => row.errors.length > 0);
+    if (!csvPreviewRows.length) {
+      setCsvImportErrors(['Preview the CSV before importing.']);
+      return;
+    }
+    if (invalidRows.length > 0) {
+      setCsvImportErrors(['Fix invalid rows before importing.']);
+      return;
+    }
+
+    setImportingCsv(true);
+    setCsvImportErrors([]);
+    setStatusMessage(null);
+    setError(null);
+    const failedRows: ScheduleCsvImportPreviewRow[] = [];
+    let importedCount = 0;
+    for (const row of csvPreviewRows) {
+      try {
+        if (row.normalized.eventType === 'game') {
+          await createScheduleImportGame(selectedCalendarTeam.teamId, row.normalized, auth.user);
+        } else {
+          await createScheduleImportPractice(selectedCalendarTeam.teamId, row.normalized, auth.user);
+        }
+        importedCount += 1;
+      } catch (importError: any) {
+        failedRows.push({
+          ...row,
+          errors: [importError?.message || 'Import failed for this row.']
+        });
+      }
+    }
+
+    setCsvPreviewRows(failedRows);
+    await refreshSchedule();
+    setStatusMessage(failedRows.length
+      ? `Imported ${importedCount} row(s); ${failedRows.length} row(s) failed and remain below for retry.`
+      : `Imported ${importedCount} schedule row(s) and refreshed the schedule.`);
+    setImportingCsv(false);
+  };
 
   const handleAddCalendarUrl = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -444,6 +535,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
 
           {selectedCalendarTeam ? (
+            <>
             <CalendarSourcePanel
               teamName={selectedCalendarTeam.teamName}
               calendarUrl={calendarUrl}
@@ -455,6 +547,21 @@ export function Schedule({ auth }: { auth: AuthState }) {
               }}
               onSubmit={handleAddCalendarUrl}
             />
+            <ScheduleCsvImportPanel
+              teamName={selectedCalendarTeam.teamName}
+              headers={csvHeaders}
+              mapping={csvMapping}
+              previewRows={csvPreviewRows}
+              errors={csvImportErrors}
+              fileName={csvFileName}
+              importing={importingCsv}
+              onFileChange={handleCsvFileChange}
+              onMappingChange={(field, value) => setCsvMapping((current) => ({ ...current, [field]: value || undefined }))}
+              onPreview={handleCsvPreview}
+              onImport={handleCsvImport}
+              onClear={handleCsvClear}
+            />
+            </>
           ) : null}
 
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
@@ -487,6 +594,95 @@ export function Schedule({ auth }: { auth: AuthState }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, errors, fileName, importing, onFileChange, onMappingChange, onPreview, onImport, onClear }: {
+  teamName: string;
+  headers: string[];
+  mapping: ScheduleCsvImportMapping;
+  previewRows: ScheduleCsvImportPreviewRow[];
+  errors: string[];
+  fileName: string;
+  importing: boolean;
+  onFileChange: (file: File | null) => void;
+  onMappingChange: (field: keyof ScheduleCsvImportMapping, value: string) => void;
+  onPreview: () => void;
+  onImport: () => void;
+  onClear: () => void;
+}) {
+  const invalidCount = previewRows.filter((row) => row.errors.length > 0).length;
+  return (
+    <section className="app-card p-4" aria-label="CSV schedule import">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+          <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="app-label">Staff schedule tools</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Import schedule CSV</h2>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Upload a UTF-8 CSV for {teamName}, confirm column mapping, preview rows, then import games and practices.</p>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        <label className="block">
+          <span className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">CSV file</span>
+          <input
+            className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm font-semibold"
+            type="file"
+            accept=".csv,text/csv"
+            aria-label="Schedule CSV file"
+            onChange={(event) => onFileChange(event.target.files?.[0] || null)}
+          />
+        </label>
+        {fileName ? <div className="text-xs font-bold text-gray-500">Loaded {fileName}</div> : null}
+
+        {headers.length ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {SCHEDULE_CSV_IMPORT_FIELDS.map((field: { key: string; label: string }) => (
+              <label key={field.key} className="block">
+                <span className="text-xs font-bold text-gray-600">{field.label}</span>
+                <select
+                  className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm font-semibold"
+                  aria-label={`CSV mapping ${field.label}`}
+                  value={mapping[field.key as keyof ScheduleCsvImportMapping] || ''}
+                  onChange={(event) => onMappingChange(field.key as keyof ScheduleCsvImportMapping, event.target.value)}
+                >
+                  <option value="">Not mapped</option>
+                  {headers.map((header) => <option key={header} value={header}>{header}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+        ) : null}
+
+        {errors.length ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700" role="alert">
+            {errors.map((item) => <div key={item}>{item}</div>)}
+          </div>
+        ) : null}
+
+        {previewRows.length ? (
+          <div className="space-y-2">
+            <div className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">Preview {previewRows.length} row(s){invalidCount ? `, ${invalidCount} invalid` : ''}</div>
+            {previewRows.map((row) => (
+              <div key={row.rowNumber} className={`rounded-xl border p-3 text-sm ${row.errors.length ? 'border-rose-200 bg-rose-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                <div className="font-black text-gray-900">Row {row.rowNumber}: {row.normalized.eventType === 'game' ? `Game vs ${row.normalized.opponent || 'opponent TBD'}` : row.normalized.title || 'Practice'}</div>
+                <div className="mt-1 text-xs font-semibold text-gray-600">{row.normalized.startsAt || 'Start TBD'} · {row.normalized.location || 'Location TBD'}</div>
+                {row.errors.length ? <ul className="mt-2 list-disc pl-4 text-xs font-bold text-rose-700">{row.errors.map((item) => <li key={item}>{item}</li>)}</ul> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="secondary-button" onClick={onPreview} disabled={!headers.length || importing}>Preview rows</button>
+          <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || importing}>{importing ? 'Importing…' : 'Import rows'}</button>
+          <button type="button" className="secondary-button" onClick={onClear} disabled={importing}>Clear</button>
+        </div>
+      </div>
+    </section>
   );
 }
 
