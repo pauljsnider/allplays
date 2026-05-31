@@ -37,6 +37,7 @@ import {
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
+import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
 import {
   buildGameHubDestinations,
   buildPracticeHubDestinations,
@@ -2244,26 +2245,55 @@ function PlayerPerformanceRow({ player, statKeys, statLabels, hasPlayingTime, te
 }
 
 function PlayByPlaySection({ plays }: { plays: GameReportPlay[] }) {
-  if (!plays.length) {
-    return <EmptyReportState title="No events logged" detail="Play-by-play will appear here during or after the game." />;
-  }
+  const { supported, enabled, paused, toggleEnabled } = useLiveGameAnnouncer(plays);
 
   return (
-    <div className="max-h-[430px] space-y-2 overflow-y-auto pr-1">
-      {plays.map((play) => (
-        <div key={play.id || `${play.period}-${play.clock}-${play.text}`} className="rounded-r-xl border-l-4 border-primary-500 bg-gray-50 px-3 py-2.5">
-          <div className="flex items-start gap-2">
-            <span className="mt-0.5 inline-flex min-h-6 flex-none items-center rounded-md bg-primary-600 px-2 text-[11px] font-black text-white">{play.period}</span>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold leading-5 text-gray-900">{play.text}</div>
-              <div className="mt-1 flex gap-2 text-xs font-semibold text-gray-500">
-                {play.clock ? <span className="font-mono">{play.clock}</span> : null}
-                {play.timestamp ? <span>{formatReportTime(play.timestamp)}</span> : null}
-              </div>
+    <div className="space-y-3">
+      <div className="rounded-xl border border-gray-200 bg-white p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-black text-gray-950">Audio announcements</div>
+            <div className="text-xs font-semibold text-gray-500">
+              {supported
+                ? paused
+                  ? 'Announcements pause automatically when the game is backgrounded.'
+                  : 'Hear each new play once while you keep this game open.'
+                : 'Audio announcements are not supported in this browser.'}
             </div>
           </div>
+          <button
+            type="button"
+            className={`min-h-10 rounded-full px-4 text-sm font-black transition ${enabled ? 'bg-primary-600 text-white shadow-sm' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} ${supported ? '' : 'cursor-not-allowed opacity-60'}`}
+            onClick={toggleEnabled}
+            disabled={!supported}
+            aria-pressed={enabled}
+            aria-label={enabled ? 'Turn off audio announcements' : 'Turn on audio announcements'}
+          >
+            {enabled ? 'On' : 'Off'}
+          </button>
         </div>
-      ))}
+      </div>
+
+      {!plays.length ? (
+        <EmptyReportState title="No events logged" detail="Play-by-play will appear here during or after the game." />
+      ) : (
+        <div className="max-h-[430px] space-y-2 overflow-y-auto pr-1">
+          {plays.map((play) => (
+            <div key={play.id || `${play.period}-${play.clock}-${play.text}`} className="rounded-r-xl border-l-4 border-primary-500 bg-gray-50 px-3 py-2.5">
+              <div className="flex items-start gap-2">
+                <span className="mt-0.5 inline-flex min-h-6 flex-none items-center rounded-md bg-primary-600 px-2 text-[11px] font-black text-white">{play.period}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold leading-5 text-gray-900">{play.text}</div>
+                  <div className="mt-1 flex gap-2 text-xs font-semibold text-gray-500">
+                    {play.clock ? <span className="font-mono">{play.clock}</span> : null}
+                    {play.timestamp ? <span>{formatReportTime(play.timestamp)}</span> : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
