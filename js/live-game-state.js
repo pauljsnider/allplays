@@ -350,7 +350,7 @@ export function applyViewerEventToState(currentState = {}, event = {}) {
   if (event.period) nextState.period = event.period;
   if (event.gameClockMs !== undefined) nextState.gameClockMs = event.gameClockMs;
 
-  if (event.type === 'stat' && event.playerId && event.statKey) {
+  if ((event.type === 'stat' || event.type === 'goal') && event.playerId && event.statKey) {
     if (event.isOpponent) {
       const existing = currentState?.opponentStats?.[event.playerId] || {};
       nextState.opponentStats = { ...currentState?.opponentStats };

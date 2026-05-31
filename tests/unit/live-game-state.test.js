@@ -318,10 +318,11 @@ describe('live game state helpers', () => {
     ]);
   });
 
-  it('applies goal events to live viewer state without requiring basketball stat labels', () => {
+  it('applies goal events to live viewer scoreboard and scorer stats', () => {
     const goalEvent = {
       id: 'goal-1',
       type: 'goal',
+      playerId: 'p1',
       statKey: 'goals',
       value: 1,
       teamSide: 'home',
@@ -346,7 +347,13 @@ describe('live game state helpers', () => {
     expect(result.state.awayScore).toBe(0);
     expect(result.state.period).toBe('H1');
     expect(result.state.events).toEqual([goalEvent]);
-    expect(result.state.stats).toEqual({});
+    expect(result.state.stats).toEqual({ p1: { goals: 1 } });
+    expect(result.state.lastStatChange).toEqual({
+      playerId: 'p1',
+      statKey: 'goals',
+      isOpponent: false
+    });
+    expect(result.shouldRenderLineup).toBe(true);
     expect(result.shouldRenderPlayByPlay).toBe(true);
     expect(result.shouldCelebrateScore).toBe(true);
   });
