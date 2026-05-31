@@ -57,14 +57,25 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, teamId, batchId]);
 
+  const recipients = model?.recipients || [];
+
   const totals = useMemo(() => {
-    const recipients = model?.recipients || [];
     return {
       due: recipients.reduce((sum, recipient) => sum + recipient.amountDueCents, 0),
       paid: recipients.reduce((sum, recipient) => sum + recipient.amountPaidCents, 0),
       balance: recipients.reduce((sum, recipient) => sum + recipient.remainingBalanceCents, 0)
     };
-  }, [model?.recipients]);
+  }, [recipients]);
+
+  const actionableRecipients = useMemo(
+    () => recipients.filter((recipient) => recipient.remainingBalanceCents > 0),
+    [recipients]
+  );
+
+  const paidRecipients = useMemo(
+    () => recipients.filter((recipient) => recipient.remainingBalanceCents <= 0),
+    [recipients]
+  );
 
   if (!teamId) return <Navigate to="/teams" replace />;
 
@@ -154,50 +165,92 @@ export function TeamFees({ auth }: { auth: AuthState }) {
 
       {success ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-bold text-emerald-800"><CheckCircle2 className="mr-2 inline h-4 w-4" aria-hidden="true" />{success}</div> : null}
 
-      <div className="grid gap-3 lg:grid-cols-2">
-        {model.recipients.length ? model.recipients.map((recipient) => {
-          const form = formByRecipient[recipient.id] || { amount: centsToAmount(recipient.remainingBalanceCents), date: todayIsoDate(), note: '', error: '' };
-          return (
-            <section key={recipient.id} className="app-card p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-black text-gray-950">{recipient.playerName}</h2>
-                  <p className="mt-1 text-xs font-semibold text-gray-500">{[recipient.parentName, recipient.parentEmail].filter(Boolean).join(' · ') || 'Fee recipient'}</p>
+      <section className="space-y-3" aria-labelledby="actionable-recipients-heading">
+        <div>
+          <h2 id="actionable-recipients-heading" className="text-sm font-black uppercase tracking-[0.06em] text-gray-500">Actionable recipients</h2>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Only recipients with an outstanding balance appear in the payment queue.</p>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          {actionableRecipients.length ? actionableRecipients.map((recipient) => {
+            const form = formByRecipient[recipient.id] || { amount: centsToAmount(recipient.remainingBalanceCents), date: todayIsoDate(), note: '', error: '' };
+            return (
+              <section key={recipient.id} className="app-card p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-gray-950">{recipient.playerName}</h3>
+                    <p className="mt-1 text-xs font-semibold text-gray-500">{[recipient.parentName, recipient.parentEmail].filter(Boolean).join(' · ') || 'Fee recipient'}</p>
+                  </div>
+                  <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black uppercase text-gray-700">{recipient.status}</span>
                 </div>
-                <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black uppercase text-gray-700">{recipient.status}</span>
-              </div>
 
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                <Metric label="Paid" value={formatMoney(recipient.amountPaidCents)} />
-                <Metric label="Balance" value={formatMoney(recipient.remainingBalanceCents)} urgent={recipient.remainingBalanceCents > 0} />
-                <Metric label="Ledger" value={String(recipient.paymentLedger.length)} />
-              </div>
-
-              <form className="mt-4 space-y-3" onSubmit={(event) => submitPayment(event, recipient)}>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment amount
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={form.amount} onChange={(event) => updateForm(recipient.id, { amount: event.target.value })} />
-                  </label>
-                  <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment date
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" type="date" value={form.date} onChange={(event) => updateForm(recipient.id, { date: event.target.value })} />
-                  </label>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <Metric label="Paid" value={formatMoney(recipient.amountPaidCents)} />
+                  <Metric label="Balance" value={formatMoney(recipient.remainingBalanceCents)} urgent={recipient.remainingBalanceCents > 0} />
+                  <Metric label="Ledger" value={String(recipient.paymentLedger.length)} />
                 </div>
-                <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Note
-                  <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" placeholder="Cash, check #, Venmo note..." value={form.note} onChange={(event) => updateForm(recipient.id, { note: event.target.value })} />
-                </label>
-                {form.error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.error}</div> : null}
-                <button type="submit" className="primary-button w-full" disabled={submittingId === recipient.id}>{submittingId === recipient.id ? 'Recording...' : 'Mark paid'}</button>
-              </form>
+
+                <form className="mt-4 space-y-3" onSubmit={(event) => submitPayment(event, recipient)}>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment amount
+                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={form.amount} onChange={(event) => updateForm(recipient.id, { amount: event.target.value })} />
+                    </label>
+                    <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment date
+                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" type="date" value={form.date} onChange={(event) => updateForm(recipient.id, { date: event.target.value })} />
+                    </label>
+                  </div>
+                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Note
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" placeholder="Cash, check #, Venmo note..." value={form.note} onChange={(event) => updateForm(recipient.id, { note: event.target.value })} />
+                  </label>
+                  {form.error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.error}</div> : null}
+                  <button type="submit" className="primary-button w-full" disabled={submittingId === recipient.id}>{submittingId === recipient.id ? 'Recording...' : 'Record payment'}</button>
+                </form>
+              </section>
+            );
+          }) : recipients.length ? (
+            <section className="app-card p-5 text-center lg:col-span-2">
+              <DollarSign className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
+              <div className="mt-3 text-sm font-black text-gray-950">No outstanding balances</div>
+              <p className="mt-1 text-xs font-semibold text-gray-500">Everyone in this fee batch is fully paid. Review paid recipients below.</p>
             </section>
-          );
-        }) : (
-          <section className="app-card p-5 text-center lg:col-span-2">
-            <DollarSign className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
-            <div className="mt-3 text-sm font-black text-gray-950">No fee recipients</div>
-            <p className="mt-1 text-xs font-semibold text-gray-500">Create fee batches in the full website manager, then record offline payments here.</p>
-          </section>
-        )}
-      </div>
+          ) : null}
+        </div>
+      </section>
+
+      {paidRecipients.length ? (
+        <details className="app-card p-4">
+          <summary className="cursor-pointer list-none text-sm font-black text-gray-950">
+            Paid recipients ({paidRecipients.length})
+          </summary>
+          <p className="mt-2 text-xs font-semibold text-gray-500">Fully paid recipients stay available for review without editable payment controls.</p>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            {paidRecipients.map((recipient) => (
+              <section key={recipient.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-gray-950">{recipient.playerName}</h3>
+                    <p className="mt-1 text-xs font-semibold text-gray-500">{[recipient.parentName, recipient.parentEmail].filter(Boolean).join(' · ') || 'Fee recipient'}</p>
+                  </div>
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black uppercase text-emerald-700">{recipient.status}</span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                  <Metric label="Paid" value={formatMoney(recipient.amountPaidCents)} />
+                  <Metric label="Balance" value={formatMoney(recipient.remainingBalanceCents)} />
+                  <Metric label="Ledger" value={String(recipient.paymentLedger.length)} />
+                </div>
+              </section>
+            ))}
+          </div>
+        </details>
+      ) : null}
+
+      {!recipients.length ? (
+        <section className="app-card p-5 text-center">
+          <DollarSign className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
+          <div className="mt-3 text-sm font-black text-gray-950">No fee recipients</div>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Create fee batches in the full website manager, then record offline payments here.</p>
+        </section>
+      ) : null}
     </div>
   );
 }
