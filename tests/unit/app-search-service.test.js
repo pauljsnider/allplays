@@ -326,6 +326,47 @@ describe('React app search service', () => {
         expect(results.help.map((item) => item.title)).toEqual(['Admin guide']);
     });
 
+    it('passes selected help roles and excludes nonmatching help results', () => {
+        helpMocks.searchHelpKnowledge.mockReturnValue([
+            {
+                id: 'live-tracker-coach-guide',
+                title: 'Track Live Games with the Live Tracker',
+                file: 'help-live-tracker.html',
+                url: 'https://allplays.ai/help-live-tracker.html',
+                roles: ['coach', 'admin'],
+                summary: 'Use the live tracker from tip-off to final buzzer.',
+                snippet: 'Coaches and admins can run live tracker game flows.',
+                score: 42
+            },
+            {
+                id: 'watch-live-games',
+                title: 'Watch Live Games and Replays',
+                file: 'help-watch-chat.html',
+                url: 'https://allplays.ai/help-watch-chat.html',
+                roles: ['parent', 'member'],
+                summary: 'Open a game and follow it live.',
+                snippet: 'Parents and members can watch live games and replay links.',
+                score: 21
+            }
+        ]);
+
+        const results = computeAppSearchResults({
+            queryText: 'live tracker',
+            auth,
+            teams: [],
+            players: [],
+            helpRoleFilter: 'member'
+        });
+
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
+            query: 'live tracker',
+            roles: ['parent'],
+            roleFilter: 'member',
+            limit: 5
+        });
+        expect(results.help.map((item) => item.title)).toEqual(['Watch Live Games and Replays']);
+    });
+
     it('loads public/current-site teams and merges private teams from app access', async () => {
         dbMocks.getTeams.mockResolvedValue([
             { id: 'team-public', name: 'Public Bears', sport: 'Soccer', isPublic: true },
