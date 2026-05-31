@@ -28,10 +28,12 @@ import {
     getOfficialUserSummary,
     matchesOfficialUserSearch
 } from './admin-user-official-links.js?v=1';
+import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 
 let allTeams = [];
 let allUsers = [];
 let officialUserLookup = new Map();
+let officialsByTeamId = new Map();
 let currentUser = null; // Declare currentUser
 let showInactiveTeams = false;
 let activeRegistrationTeam = null;
@@ -116,12 +118,14 @@ async function loadOfficialUserLinks() {
     const officialEntries = (await Promise.all(allTeams.map(async (team) => {
         try {
             const officials = await getOfficials(team.id);
+            officialsByTeamId.set(team.id, officials);
             return officials.map((official) => ({
                 teamId: team.id,
                 teamName: team.name || 'Team',
                 official
             }));
         } catch (error) {
+            officialsByTeamId.set(team.id, []);
             console.warn('Failed to load officials for admin users view:', team.id, error);
             return [];
         }
@@ -625,9 +629,18 @@ function updateTelemetryDashboard() {
     renderTelemetryEventsTable();
 }
 
+function getOfficialsCellClasses(tone) {
+    if (tone === 'missing') return 'bg-rose-100 text-rose-700';
+    if (tone === 'warning') return 'bg-amber-100 text-amber-700';
+    return 'bg-emerald-100 text-emerald-700';
+}
+
 function renderTeams(teams) {
     const tbody = document.getElementById('teams-table-body');
-    tbody.innerHTML = teams.map(team => `
+    tbody.innerHTML = teams.map(team => {
+        const officialsSummary = buildAdminTeamOfficialsSummary(team, officialsByTeamId.get(team.id) || [], allGames);
+        const manageOfficialsHref = `edit-schedule.html?teamId=${encodeURIComponent(team.id)}#officials`;
+        return `
         <tr>
             <td class="px-6 py-4 whitespace-nowrap">
                 <div class="flex items-center">
@@ -660,13 +673,21 @@ function renderTeams(teams) {
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 ${team.createdAt?.toDate ? team.createdAt.toDate().toLocaleDateString() : '-'}
             </td>
+            <td class="px-6 py-4 text-sm text-gray-600">
+                <div class="flex flex-col gap-1 min-w-[13rem]">
+                    <span class="inline-flex w-fit items-center rounded-full px-2 py-1 text-xs font-semibold ${getOfficialsCellClasses(officialsSummary.badgeTone)}">${escapeHtml(officialsSummary.badgeLabel)}</span>
+                    <span class="text-xs ${officialsSummary.detailTone === 'warning' ? 'text-amber-700 font-medium' : 'text-gray-500'}">${escapeHtml(officialsSummary.detailLabel)}</span>
+                </div>
+            </td>
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                <a href="${manageOfficialsHref}" class="text-indigo-600 hover:text-indigo-900 mr-4">Manage Officials</a>
                 <button onclick="window.openRegistrationFormsAdmin(${inlineJsString(team.id)})" class="text-indigo-600 hover:text-indigo-900 mr-4">Registration forms</button>
-                <a href="edit-team.html?teamId=${team.id}" class="text-indigo-600 hover:text-indigo-900 mr-4">Edit</a>
+                <a href="edit-team.html?teamId=${encodeURIComponent(team.id)}" class="text-indigo-600 hover:text-indigo-900 mr-4">Edit</a>
                 <button onclick="window.deleteTeamAdmin(${inlineJsString(team.id)}, ${inlineJsString(team.name)})" class="text-red-600 hover:text-red-900">Deactivate</button>
             </td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function renderUsers(users) {
