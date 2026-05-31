@@ -7,6 +7,7 @@ import {
   computeAppSearchResults,
   loadAppSearchTeams,
   searchAppPlayers,
+  type AppSearchHelpRoleFilter,
   type AppSearchItem,
   type AppSearchPlayer,
   type AppSearchTeam
@@ -19,16 +20,6 @@ type AppSearchDialogProps = {
   onClose: () => void;
 };
 
-type HelpRoleFilter = 'all' | 'parent' | 'coach' | 'admin' | 'member';
-
-const helpRoleFilters: { value: HelpRoleFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'parent', label: 'Parent' },
-  { value: 'coach', label: 'Coach' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'member', label: 'Member' }
-];
-
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
   const [teams, setTeams] = useState<AppSearchTeam[]>([]);
@@ -38,21 +29,17 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
-  const [selectedHelpRole, setSelectedHelpRole] = useState<HelpRoleFilter>('all');
+  const [helpRoleFilter, setHelpRoleFilter] = useState<AppSearchHelpRoleFilter>('all');
   const searchRequestId = useRef(0);
   const navigate = useNavigate();
 
   const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
-  const results = useMemo(() => computeAppSearchResults({ queryText: query, auth, teams, players }), [auth, players, query, teams]);
-  const helpResults = useMemo(() => {
-    const matchingHelp = results.help ?? [];
-    if (selectedHelpRole === 'all') return matchingHelp;
-    return matchingHelp.filter((item) => item.roles?.includes(selectedHelpRole));
-  }, [results.help, selectedHelpRole]);
-  const flatResults = useMemo(
-    () => [...results.actions, ...results.teams, ...helpResults, ...results.players],
-    [helpResults, results.actions, results.players, results.teams]
+  const results = useMemo(
+    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
+    [auth, helpRoleFilter, players, query, teams]
   );
+  const helpResults = results.help ?? [];
+  const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
 
   useEffect(() => {
     if (!open) return;
@@ -61,7 +48,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersError('');
     setPlayersLoading(false);
     setActiveIndex(0);
-    setSelectedHelpRole('all');
+    setHelpRoleFilter('all');
     setTeamsLoading(true);
     setTeamsError('');
 
@@ -120,7 +107,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     setActiveIndex(0);
-  }, [query, selectedHelpRole]);
+  }, [helpRoleFilter, query]);
 
   useEffect(() => {
     if (activeIndex >= flatResults.length) {
@@ -173,7 +160,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         ? 'No matching teams'
         : '';
   const helpStatus = query.trim().length >= 2 && helpResults.length === 0
-    ? 'No matching help articles'
+    ? helpRoleFilter === 'all'
+      ? 'No matching help articles'
+      : `No ${getHelpRoleLabel(helpRoleFilter)} help articles match this search`
     : '';
   const playersStatus = playersLoading
     ? 'Searching players...'
@@ -214,6 +203,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               <div className="mt-2 hidden text-xs font-semibold text-gray-500 sm:block">
                 Use arrow keys to move, Enter to open, Esc to close.
               </div>
+              <HelpRoleFilter value={helpRoleFilter} onChange={setHelpRoleFilter} />
             </div>
             <button
               type="button"
@@ -254,12 +244,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               activeIndex={activeIndex}
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
-              headerAccessory={
-                <HelpRoleFilterChips
-                  selectedRole={selectedHelpRole}
-                  onChange={setSelectedHelpRole}
-                />
-              }
               onOpen={openResult}
               onHover={setActiveIndex}
             />
@@ -287,33 +271,44 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   );
 }
 
+const helpRoleOptions: Array<{ value: AppSearchHelpRoleFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'parent', label: 'Parent' },
+  { value: 'coach', label: 'Coach' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'member', label: 'Member' }
+];
 
-function HelpRoleFilterChips({ selectedRole, onChange }: {
-  selectedRole: HelpRoleFilter;
-  onChange: (role: HelpRoleFilter) => void;
+function HelpRoleFilter({ value, onChange }: {
+  value: AppSearchHelpRoleFilter;
+  onChange: (value: AppSearchHelpRoleFilter) => void;
 }) {
   return (
-    <div className="flex flex-wrap justify-end gap-1" role="group" aria-label="Filter help by role">
-      {helpRoleFilters.map((option) => {
-        const selected = selectedRole === option.value;
-        return (
+    <div className="mt-3" aria-label="Filter help by role">
+      <div className="mb-1 text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Help role</div>
+      <div className="flex flex-wrap gap-1.5">
+        {helpRoleOptions.map((option) => (
           <button
             key={option.value}
             type="button"
-            className={`min-h-9 rounded-full border px-3 py-1 text-[11px] font-extrabold transition ${
-              selected
-                ? 'border-primary-600 bg-primary-600 text-white shadow-sm'
-                : 'border-gray-200 bg-white text-gray-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
+            className={`rounded-full border px-3 py-1 text-xs font-extrabold transition ${
+              value === option.value
+                ? 'border-primary-300 bg-primary-50 text-primary-700'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
             }`}
-            aria-pressed={selected}
+            aria-pressed={value === option.value}
             onClick={() => onChange(option.value)}
           >
             {option.label}
           </button>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
+}
+
+function getHelpRoleLabel(value: AppSearchHelpRoleFilter) {
+  return helpRoleOptions.find((option) => option.value === value)?.label || 'selected role';
 }
 
 function SearchSection({
