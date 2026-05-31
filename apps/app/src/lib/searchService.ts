@@ -73,6 +73,8 @@ export type AppSearchHelp = AppSearchItem & {
   snippet: string;
 };
 
+export type AppSearchHelpRoleFilter = UserRole | 'member' | 'all';
+
 export function normalizeSearchQuery(queryText: string) {
   return String(queryText || '').trim().toLowerCase();
 }
@@ -203,12 +205,14 @@ export function computeAppSearchResults({
   queryText,
   auth,
   teams,
-  players
+  players,
+  helpRoleFilter
 }: {
   queryText: string;
   auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>;
   teams: AppSearchTeam[];
   players: AppSearchPlayer[];
+  helpRoleFilter?: AppSearchHelpRoleFilter;
 }) {
   const tokens = splitSearchTokens(queryText);
   const actions = buildAppSearchActions(auth);
@@ -221,7 +225,7 @@ export function computeAppSearchResults({
   const matchedTeams = tokens.length === 0
     ? teamItems.slice(0, 20)
     : rankSearchItems(teamItems, tokens).slice(0, 20);
-  const matchedHelp = buildAppSearchHelpResults(queryText, auth);
+  const matchedHelp = buildAppSearchHelpResults(queryText, auth, helpRoleFilter);
   const matchedPlayers = players.slice(0, 20);
 
   return {
@@ -357,14 +361,16 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
 
 function buildAppSearchHelpResults(
   queryText: string,
-  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>
+  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>,
+  helpRoleFilter: AppSearchHelpRoleFilter = 'all'
 ): AppSearchHelp[] {
   const normalized = normalizeSearchQuery(queryText);
   if (normalized.length < 2) return [];
 
   return searchHelpKnowledge({
     query: queryText,
-    roles: getSearchHelpRoles(auth),
+    roles: getSearchHelpAuthRoles(auth),
+    roleFilter: normalizeAppSearchHelpRoleFilter(helpRoleFilter),
     limit: 5
   }).map((result) => ({
     id: `help:${result.id}`,
@@ -378,14 +384,17 @@ function buildAppSearchHelpResults(
   }));
 }
 
-function getSearchHelpRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
+function getSearchHelpAuthRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
   const roles = new Set<UserRole>();
-  (auth.roles || auth.user?.roles || []).forEach((role) => roles.add(role));
-  if (auth.isAdmin || auth.user?.isAdmin) roles.add('admin');
-  if (auth.isPlatformAdmin) roles.add('platformAdmin');
+  (auth.roles || auth.user?.roles || []).forEach((role) => roles.add(normalizeAppSearchHelpRoleFilter(role) as UserRole));
+  if (auth.isAdmin || auth.user?.isAdmin || auth.isPlatformAdmin) roles.add('admin');
   if (auth.isParent) roles.add('parent');
   if (auth.isCoach) roles.add('coach');
   return [...roles];
+}
+
+function normalizeAppSearchHelpRoleFilter(role: AppSearchHelpRoleFilter): Exclude<AppSearchHelpRoleFilter, 'platformAdmin'> {
+  return role === 'platformAdmin' ? 'admin' : role;
 }
 
 export function resetAppSearchCacheForTests() {

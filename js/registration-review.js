@@ -22,10 +22,39 @@ function cleanEmail(value) {
 }
 
 const SCREENING_STATUSES = new Set(['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected']);
+const SCREENING_STATUS_LIST = ['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected'];
 
 function normalizeScreeningStatus(status) {
     const normalized = cleanString(status).toLowerCase().replace(/[ _]+/g, '-');
     return SCREENING_STATUSES.has(normalized) ? normalized : 'pending';
+}
+
+export function matchesRegistrationReviewScreeningStatus(registration = {}, status = 'all') {
+    const wantedStatus = cleanString(status).toLowerCase().replace(/[ _]+/g, '-') || 'all';
+    if (wantedStatus === 'all') return true;
+    if (registration.screeningRequired !== true) return false;
+    return normalizeScreeningStatus(registration.screeningStatus) === wantedStatus;
+}
+
+export function summarizeRegistrationReviewScreening(registrations = []) {
+    const counts = SCREENING_STATUS_LIST.reduce((acc, status) => {
+        acc[status] = 0;
+        return acc;
+    }, {});
+
+    (Array.isArray(registrations) ? registrations : []).forEach((registration) => {
+        if (registration?.screeningRequired !== true) return;
+        counts[normalizeScreeningStatus(registration.screeningStatus)] += 1;
+    });
+
+    const totalRequired = SCREENING_STATUS_LIST.reduce((total, status) => total + counts[status], 0);
+    const notCleared = totalRequired - counts.cleared;
+    return {
+        counts,
+        totalRequired,
+        notCleared,
+        statuses: [...SCREENING_STATUS_LIST]
+    };
 }
 
 function firstNonEmpty(...values) {

@@ -23,6 +23,7 @@ const firebaseMocks = vi.hoisted(() => ({
 }));
 
 const helpMocks = vi.hoisted(() => ({
+    getSearchHelpRoles: vi.fn((role) => role && role !== 'all' ? [role] : ['admin', 'coach', 'member', 'parent']),
     searchHelpKnowledge: vi.fn()
 }));
 
@@ -211,6 +212,7 @@ describe('React app search service', () => {
         expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
             query: 'password reset',
             roles: ['parent'],
+            roleFilter: 'all',
             limit: 5
         });
         expect(results.help).toEqual([{
@@ -224,6 +226,104 @@ describe('React app search service', () => {
             snippet: 'Use password reset when a parent or coach cannot sign in.'
         }]);
         expect(results.flat.map((item) => item.kind)).toEqual(['team', 'help', 'player']);
+    });
+
+    it('passes the optional help role filter only to help search results', () => {
+        const helpDocs = [{
+            id: 'parent-guide',
+            title: 'Parent guide',
+            file: 'help-parent.html',
+            url: 'https://allplays.ai/help-parent.html',
+            roles: ['parent'],
+            summary: 'Help for parents.',
+            snippet: 'Help for parents.',
+            score: 10
+        }, {
+            id: 'coach-guide',
+            title: 'Coach guide',
+            file: 'help-coach.html',
+            url: 'https://allplays.ai/help-coach.html',
+            roles: ['coach'],
+            summary: 'Help for coaches.',
+            snippet: 'Help for coaches.',
+            score: 9
+        }];
+        helpMocks.searchHelpKnowledge.mockImplementation(({ roleFilter }) => (
+            roleFilter === 'coach' ? helpDocs.filter((doc) => doc.roles.includes('coach')) : helpDocs
+        ));
+
+        const baseSearchInput = {
+            queryText: 'guide',
+            auth,
+            teams: [{ id: 'team-1', name: 'Guide Bears', sport: 'Basketball', isPublic: true }],
+            players: [{
+                id: 'player:team-1:player-1',
+                kind: 'player',
+                title: 'Guide Runner',
+                subtitle: 'Guide Bears',
+                route: '/players/team-1/player-1',
+                teamId: 'team-1',
+                playerId: 'player-1'
+            }]
+        };
+
+        const allResults = computeAppSearchResults({ ...baseSearchInput, helpRoleFilter: 'all' });
+        const coachResults = computeAppSearchResults({ ...baseSearchInput, helpRoleFilter: 'coach' });
+        const nonHelpByKind = (results) => ({
+            action: results.flat.filter((item) => item.kind === 'action'),
+            team: results.flat.filter((item) => item.kind === 'team'),
+            player: results.flat.filter((item) => item.kind === 'player'),
+            social: results.flat.filter((item) => item.kind === 'social')
+        });
+
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'guide',
+            roles: ['parent'],
+            roleFilter: 'coach',
+            limit: 5
+        });
+        expect(allResults.help.map((item) => item.title)).toEqual(['Parent guide', 'Coach guide']);
+        expect(coachResults.help.map((item) => item.title)).toEqual(['Coach guide']);
+        expect(nonHelpByKind(coachResults)).toEqual(nonHelpByKind(allResults));
+        expect(coachResults.teams.map((item) => item.title)).toEqual(['Guide Bears']);
+        expect(coachResults.players.map((item) => item.title)).toEqual(['Guide Runner']);
+
+    });
+
+    it('maps platform admin help searches to admin help docs', () => {
+        const adminDoc = {
+            id: 'admin-guide',
+            title: 'Admin guide',
+            file: 'help-admin.html',
+            url: 'https://allplays.ai/help-admin.html',
+            roles: ['admin'],
+            summary: 'Help for admins.',
+            snippet: 'Help for admins.',
+            score: 10
+        };
+        helpMocks.searchHelpKnowledge.mockImplementation(({ roleFilter }) => (
+            roleFilter === 'admin' ? [adminDoc] : []
+        ));
+
+        const results = computeAppSearchResults({
+            queryText: 'guide',
+            auth: {
+                ...auth,
+                user: { ...auth.user, roles: ['platformAdmin'] },
+                isPlatformAdmin: true
+            },
+            teams: [],
+            players: [],
+            helpRoleFilter: 'platformAdmin'
+        });
+
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
+            query: 'guide',
+            roles: ['admin'],
+            roleFilter: 'admin',
+            limit: 5
+        });
+        expect(results.help.map((item) => item.title)).toEqual(['Admin guide']);
     });
 
     it('loads public/current-site teams and merges private teams from app access', async () => {
