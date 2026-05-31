@@ -19,14 +19,17 @@ import {
   setParentScheduleRideOfferStatus,
   submitParentScheduleRsvp,
   summarizeParentScheduleRideOffers,
+  loadHomeScoringPlayers,
   publishLiveScoreUpdateEvent,
+  recordPlayerScoringStat,
   updateGameScore,
   updateParentScheduleRideRequestStatus,
   type RideOfferInput,
   type ParentPracticePacket,
   type ParentPracticePacketChild,
   type StaffRsvpReminderSendResult,
-  type RideRequestChildInput
+  type RideRequestChildInput,
+  type ScheduleHomeScoringPlayer
 } from '../lib/scheduleService';
 import { getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
@@ -1618,6 +1621,9 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
   const [homeScore, setHomeScore] = useState(savedHomeScore);
   const [awayScore, setAwayScore] = useState(savedAwayScore);
   const [previousScoreSnapshots, setPreviousScoreSnapshots] = useState<ScoreSnapshot[]>([]);
+  const [homePlayers, setHomePlayers] = useState<ScheduleHomeScoringPlayer[]>([]);
+  const [loadingHomePlayers, setLoadingHomePlayers] = useState(false);
+  const [playerScoringId, setPlayerScoringId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const lastSavedScoreRef = useRef({ eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore });
@@ -1641,6 +1647,26 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     pendingLocalSaveRef.current = null;
     lastSavedScoreRef.current = { eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore };
   }, [event.eventKey, savedHomeScore, savedAwayScore]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPlayers() {
+      setLoadingHomePlayers(true);
+      try {
+        const players = await loadHomeScoringPlayers(event.teamId, event.id);
+        if (!cancelled) setHomePlayers(players);
+      } catch (error) {
+        console.warn('[schedule-event-detail] Unable to load home scoring players:', error);
+        if (!cancelled) setHomePlayers([]);
+      } finally {
+        if (!cancelled) setLoadingHomePlayers(false);
+      }
+    }
+    loadPlayers();
+    return () => {
+      cancelled = true;
+    };
+  }, [event.teamId, event.id, event.eventKey]);
 
   const dirty = homeScore !== savedHomeScore || awayScore !== savedAwayScore;
   const adjust = (side: 'home' | 'away', delta: number) => {
@@ -1693,6 +1719,33 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     }
   };
 
+  const recordPlayerTwo = async (player: ScheduleHomeScoringPlayer) => {
+    if (!auth.user || saving || playerScoringId || dirty) return;
+    setPlayerScoringId(player.id);
+    setStatus(null);
+    try {
+      const result = await recordPlayerScoringStat(event.teamId, event.id, player.id, {
+        statKey: 'pts',
+        value: 2,
+        playerName: player.name,
+        playerNumber: player.number
+      }, auth.user);
+      setHomeScore(result.homeScore);
+      setAwayScore(result.awayScore);
+      pendingLocalSaveRef.current = { homeScore: result.homeScore, awayScore: result.awayScore };
+      onScoreUpdated(result.homeScore, result.awayScore);
+      setHomePlayers((players) => players.map((candidate) => (
+        candidate.id === player.id ? { ...candidate, points: result.playerPoints } : candidate
+      )));
+      setPreviousScoreSnapshots([]);
+      setStatus({ tone: 'success', message: `${player.name} +2 recorded and posted to live play-by-play.` });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to record player scoring.' });
+    } finally {
+      setPlayerScoringId(null);
+    }
+  };
+
   return (
     <div className={`mt-3 rounded-2xl border p-3 ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
       <div className="flex items-center justify-between gap-3">
@@ -1703,8 +1756,39 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
         <div className="rounded-full bg-white px-3 py-1 text-xl font-black tabular-nums text-gray-950 shadow-sm">{homeScore}-{awayScore}</div>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <ScoreStepper label="Home" value={homeScore} onDecrease={() => adjust('home', -1)} onIncrease={() => adjust('home', 1)} disabled={saving} />
-        <ScoreStepper label="Away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving} />
+        <ScoreStepper label="Home" value={homeScore} onDecrease={() => adjust('home', -1)} onIncrease={() => adjust('home', 1)} disabled={saving || Boolean(playerScoringId)} />
+        <ScoreStepper label="Away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving || Boolean(playerScoringId)} />
+      </div>
+      <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Home player +2</div>
+            <div className="mt-0.5 text-xs font-semibold text-gray-500">Record a player-attributed made two.</div>
+          </div>
+          {loadingHomePlayers ? <span className="text-xs font-bold text-gray-500">Loading roster</span> : null}
+        </div>
+        {homePlayers.length ? (
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {homePlayers.map((player) => {
+              const label = `${player.number ? `#${player.number} ` : ''}${player.name}`;
+              const busy = playerScoringId === player.id;
+              return (
+                <button
+                  key={player.id}
+                  type="button"
+                  className="flex min-h-11 items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 text-left text-sm font-black text-gray-900 disabled:opacity-50"
+                  onClick={() => recordPlayerTwo(player)}
+                  disabled={saving || Boolean(playerScoringId) || dirty}
+                  aria-label={`${label} plus 2 points`}
+                >
+                  <span className="min-w-0 truncate">{label}</span>
+                  <span className="flex-none rounded-full bg-primary-50 px-2 py-1 text-xs text-primary-700">{busy ? 'Saving' : `+2 · ${player.points} pts`}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : !loadingHomePlayers ? <div className="mt-2 text-xs font-semibold text-gray-500">No active home roster players found.</div> : null}
+        {dirty ? <div className="mt-2 text-xs font-semibold text-amber-700">Save or undo manual score changes before recording player stats.</div> : null}
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -1712,7 +1796,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
             type="button"
             className="primary-button min-h-11 px-4 text-sm"
             onClick={saveScore}
-            disabled={saving || !dirty}
+            disabled={saving || Boolean(playerScoringId) || !dirty}
           >
             {saving ? 'Saving score' : 'Save score'}
           </button>
@@ -1721,7 +1805,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
               type="button"
               className="ghost-button min-h-11 px-4 text-sm"
               onClick={undoLastScoreChange}
-              disabled={saving || !previousScoreSnapshots.length}
+              disabled={saving || Boolean(playerScoringId) || !previousScoreSnapshots.length}
               aria-label="Undo last score change"
             >
               Undo last score change
