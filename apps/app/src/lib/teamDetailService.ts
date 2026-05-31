@@ -8,8 +8,10 @@ import {
   getPlayerTrackingStatuses,
   getPublicTrackingItems,
   getTeam,
+  grantScorekeeperAccess,
   inviteAdmin,
-  addTeamAdminEmail
+  addTeamAdminEmail,
+  revokeScorekeeperAccess
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
@@ -32,6 +34,14 @@ export type TeamDetailPlayer = {
   photoUrl: string | null;
   position: string;
   isLinked: boolean;
+};
+
+export type TeamScorekeeperGrantTarget = {
+  userId: string;
+  name: string;
+  email: string;
+  playerNames: string[];
+  isGranted: boolean;
 };
 
 export type TeamDetailEvent = {
@@ -89,6 +99,8 @@ export type TeamStaffPermissionsSummary = {
     grants: string[];
     emptyText: string;
   }>;
+  scorekeepingMode: string;
+  scorekeeperGrantTargets: TeamScorekeeperGrantTarget[];
   hasAnyStaff: boolean;
 };
 
@@ -364,6 +376,22 @@ export async function inviteTeamAdminForApp(teamId: string, email: string): Prom
   };
 }
 
+export async function grantScorekeeperAccessForApp(teamId: string, memberUserId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedUserId = cleanString(memberUserId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedUserId) throw new Error('Team member user ID is required.');
+  await grantScorekeeperAccess(normalizedTeamId, normalizedUserId);
+}
+
+export async function revokeScorekeeperAccessForApp(teamId: string, memberUserId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedUserId = cleanString(memberUserId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedUserId) throw new Error('Team member user ID is required.');
+  await revokeScorekeeperAccess(normalizedTeamId, normalizedUserId);
+}
+
 export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseUrl()) {
   const inviteCode = cleanString(code);
   if (!inviteCode) return null;
@@ -464,7 +492,11 @@ export function buildTeamDetailModel({
   const trackingSummaries = buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses);
   const canManageTeam = hasFullTeamAccess(user, team);
   const staffPermissions = canManageTeam
-    ? buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites)
+    ? {
+      ...buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites),
+      scorekeepingMode: cleanString(team?.teamPermissions?.scorekeeping?.mode),
+      scorekeeperGrantTargets: buildScorekeeperGrantTargets(team, players)
+    }
     : null;
 
   return {
@@ -524,6 +556,65 @@ function normalizePlayers(players: any[], linkedPlayerIds: string[]): TeamDetail
     }))
     .filter((player) => player.id)
     .sort((a, b) => sortByNumberThenName(a, b));
+}
+
+function buildScorekeeperGrantTargets(team: Record<string, any>, players: any[]): TeamScorekeeperGrantTarget[] {
+  const selectedScorekeeperIds = getSelectedPermissionIds(team, 'scorekeeping');
+  const targetsByUserId = new Map<string, Omit<TeamScorekeeperGrantTarget, 'isGranted'>>();
+
+  const addTarget = (userId: any, player: any, source: Record<string, any> = {}) => {
+    const normalizedUserId = cleanString(userId);
+    if (!normalizedUserId) return;
+    const playerName = cleanString(player?.name || player?.playerName);
+    const sourceName = cleanString(source.name || source.displayName || source.fullName || source.email);
+    const sourceEmail = cleanString(source.email).toLowerCase();
+    const existing = targetsByUserId.get(normalizedUserId) || {
+      userId: normalizedUserId,
+      name: sourceName || playerName || 'Team member',
+      email: sourceEmail,
+      playerNames: []
+    };
+    if (playerName && !existing.playerNames.includes(playerName)) existing.playerNames.push(playerName);
+    if (sourceName && (!existing.name || existing.name === playerName || existing.name === 'Team member')) existing.name = sourceName;
+    if (!existing.email && sourceEmail) existing.email = sourceEmail;
+    targetsByUserId.set(normalizedUserId, existing);
+  };
+
+  (Array.isArray(players) ? players : [])
+    .filter((player) => player?.active !== false)
+    .forEach((player) => {
+      getPlayerLinkedUserIds(player).forEach((userId) => addTarget(userId, player));
+      (Array.isArray(player?.parents) ? player.parents : []).forEach((parent: any) => {
+        addTarget(parent?.userId || parent?.uid || parent?.authUid || parent?.accountUserId || parent?.memberUserId, player, parent);
+      });
+    });
+
+  return Array.from(targetsByUserId.values())
+    .map((target) => ({ ...target, isGranted: selectedScorekeeperIds.has(target.userId) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function getPlayerLinkedUserIds(player: any) {
+  const ids = new Set<string>();
+  [player?.userId, player?.authUid, player?.accountUserId, player?.memberUserId]
+    .map(cleanString)
+    .filter(Boolean)
+    .forEach((id) => ids.add(id));
+  (Array.isArray(player?.parents) ? player.parents : []).forEach((parent: any) => {
+    [parent?.userId, parent?.uid, parent?.authUid, parent?.accountUserId, parent?.memberUserId]
+      .map(cleanString)
+      .filter(Boolean)
+      .forEach((id) => ids.add(id));
+  });
+  return Array.from(ids);
+}
+
+function getSelectedPermissionIds(team: Record<string, any>, kind: string) {
+  const permission = team?.teamPermissions?.[kind] || {};
+  if (permission.mode !== 'selected') return new Set<string>();
+  return new Set((Array.isArray(permission.memberIds) ? permission.memberIds : [])
+    .map(cleanString)
+    .filter(Boolean));
 }
 
 function normalizeEvents(games: any[]) {

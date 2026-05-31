@@ -26,7 +26,7 @@ import { copyPublicText, openPublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { loadStaffRsvpReminderPreview, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { inviteTeamAdminForApp, loadParentTeamDetail, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
+import { grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -486,12 +486,16 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<InviteTeamAdminForAppResult | null>(null);
+  const [grantingUserId, setGrantingUserId] = useState<string | null>(null);
+  const [grantStatus, setGrantStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [copyStatus, setCopyStatus] = useState<{ kind: 'code' | 'link'; success: boolean } | null>(null);
   if (!summary) return null;
   const staffItems = [
     ...summary.staff.map((member) => `${member.label} · ${member.role}`),
     ...summary.pendingInvites.map((inviteEmail) => `${inviteEmail} · Pending admin invite`)
   ];
+  const scorekeeperGrantTargets = summary.scorekeeperGrantTargets || [];
+  const isAllConfirmedScorekeeping = summary.scorekeepingMode === 'all_confirmed';
   const existingEmails = getStaffPermissionEmails(summary);
 
   async function submitInvite(event: FormEvent<HTMLFormElement>) {
@@ -530,6 +534,27 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
     if (!value) return;
     const copyResult = await copyPublicText(value);
     setCopyStatus({ kind, success: copyResult === 'copied' });
+  }
+
+  async function toggleScorekeeperGrant(memberUserId: string, isGranted: boolean) {
+    if (!memberUserId || grantingUserId) return;
+    setGrantingUserId(memberUserId);
+    setGrantStatus(null);
+    setResult(null);
+    setCopyStatus(null);
+    try {
+      if (isGranted) {
+        await revokeScorekeeperAccessForApp(model.team.id, memberUserId);
+      } else {
+        await grantScorekeeperAccessForApp(model.team.id, memberUserId);
+      }
+      setGrantStatus({ success: true, message: isGranted ? 'Scorekeeper access revoked.' : 'Scorekeeper access granted.' });
+      await onInviteSuccess();
+    } catch (grantError: any) {
+      setGrantStatus({ success: false, message: grantError?.message || 'Unable to update scorekeeper access.' });
+    } finally {
+      setGrantingUserId(null);
+    }
   }
 
   return (
@@ -583,6 +608,37 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
           </div>
         ) : null}
       </form>
+
+      {isAllConfirmedScorekeeping ? (
+        <div className="mt-4 rounded-xl border border-primary-100 bg-white p-3">
+          <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Scorekeeper helper access</div>
+          <p className="mt-2 text-xs font-semibold leading-5 text-gray-600">All confirmed team members can score games, so individual scorekeeper grants are disabled to preserve that team-wide access.</p>
+        </div>
+      ) : scorekeeperGrantTargets.length ? (
+        <div className="mt-4 rounded-xl border border-primary-100 bg-white p-3">
+          <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Scorekeeper helper access</div>
+          <p className="mt-2 text-xs font-semibold leading-5 text-gray-600">Grant an existing linked team member scorekeeping duty without making them a full admin or giving roster, schedule, settings, or broader team access.</p>
+          <div className="mt-3 divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-100">
+            {scorekeeperGrantTargets.map((target) => {
+              const busy = grantingUserId === target.userId;
+              const detail = target.playerNames.length ? `Linked to ${target.playerNames.join(', ')}.` : 'Linked team member account.';
+              return (
+                <div key={target.userId} className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black text-gray-950">{target.name || target.email || 'Team member'}</div>
+                    <div className="text-xs font-semibold leading-5 text-gray-500">{target.isGranted ? `Can score games. ${detail}` : `No scorekeeper helper grant. ${detail}`}</div>
+                  </div>
+                  <button type="button" className={`secondary-button !min-h-9 flex-none text-xs ${target.isGranted ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`} disabled={Boolean(grantingUserId)} onClick={() => toggleScorekeeperGrant(target.userId, target.isGranted)}>
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+                    {target.isGranted ? 'Revoke scorekeeper' : 'Grant scorekeeper'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          {grantStatus ? <div className={`mt-2 text-xs font-black ${grantStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{grantStatus.message}</div> : null}
+        </div>
+      ) : null}
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
