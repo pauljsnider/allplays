@@ -208,6 +208,8 @@ describe('React app auth/profile capability parity', () => {
             'Choose photo',
             'Remove',
             'Notification preferences',
+            'Enable push on this device',
+            'Register this device for push notifications without changing team alert preferences.',
             'Turn on game-day alerts',
             'Customize alerts',
             'Live Chat',
@@ -231,6 +233,24 @@ describe('React app auth/profile capability parity', () => {
             'loadProfileAccessCodes',
             'nativeUploadProfilePhoto'
         ]);
+    });
+
+    it('registers push for the current Profile device without saving alert preferences', () => {
+        const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
+        const handlerStart = profilePage.indexOf('const enablePushOnDevice = async () => {');
+        const handlerEnd = profilePage.indexOf('  const turnOnGameDayAlerts = async () => {');
+        const enablePushOnDevice = profilePage.slice(handlerStart, handlerEnd);
+
+        expect(handlerStart).toBeGreaterThanOrEqual(0);
+        expectContains(enablePushOnDevice, [
+            "setBusy('push-device')",
+            'await enablePushNotificationsForUser(user.uid);',
+            'Push is enabled on this device.',
+            'Failed to enable push on this device.'
+        ]);
+        expect(enablePushOnDevice).not.toContain('saveNotificationPreferences');
+        expect(enablePushOnDevice).not.toContain('setNotificationPreferences');
+        expect(profilePage).toContain("disabled={busy === 'push-device' || !user}");
     });
 
     it('reloads current team preferences before turning on game-day alerts', () => {

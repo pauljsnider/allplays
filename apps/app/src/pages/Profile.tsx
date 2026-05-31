@@ -311,6 +311,25 @@ export function Profile({ auth }: { auth: AuthState }) {
     }
   };
 
+  const enablePushOnDevice = async () => {
+    if (!user) {
+      setNotificationStatus({ message: 'Sign in before enabling push notifications.', tone: 'error' });
+      return;
+    }
+
+    setBusy('push-device');
+    setNotificationStatus(null);
+
+    try {
+      await enablePushNotificationsForUser(user.uid);
+      setNotificationStatus({ message: 'Push is enabled on this device.', tone: 'success' });
+    } catch (error: any) {
+      setNotificationStatus({ message: error?.message || 'Failed to enable push on this device.', tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
   const turnOnGameDayAlerts = async () => {
     if (!user || !selectedTeamId) {
       setNotificationStatus({ message: 'Select a team first.', tone: 'error' });
@@ -546,6 +565,14 @@ export function Profile({ auth }: { auth: AuthState }) {
               ))}
             </select>
           </label>
+          <div className="rounded-2xl border border-gray-200 bg-white p-3">
+            <div className="text-sm font-black text-gray-900">Device push</div>
+            <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Register this device for push notifications without changing team alert preferences.</p>
+            <button type="button" className="secondary-button mt-3" onClick={enablePushOnDevice} disabled={busy === 'push-device' || !user}>
+              {busy === 'push-device' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+              Enable push on this device
+            </button>
+          </div>
           <div className="rounded-2xl border border-primary-100 bg-primary-50 p-3">
             <div className="text-sm font-black text-primary-900">Game-day alerts</div>
             <p className="mt-1 text-sm font-semibold leading-6 text-primary-800">One tap enables push on this device and turns on schedule changes and live score updates for the selected team.</p>
