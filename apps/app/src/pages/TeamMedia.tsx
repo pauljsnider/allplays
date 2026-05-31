@@ -227,7 +227,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     let uploaded = 0;
     let failed = 0;
     try {
-      await Promise.all(queueItems.map(async (queueItem, index) => {
+      for (const [index, queueItem] of queueItems.entries()) {
         const file = files[index];
         try {
           await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
@@ -237,7 +237,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           failed += 1;
           updateUploadQueueItem(queueItem.id, 'error', uploadError?.message || 'Upload failed.');
         }
-      }));
+      }
 
       if (uploaded > 0) {
         await refresh({ showLoading: false, preferredFolderId: activeFolder.id });

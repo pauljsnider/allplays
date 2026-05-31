@@ -200,7 +200,7 @@ describe('React app TeamMedia upload flow', () => {
     await act(async () => root.unmount());
   });
 
-  it('uploads every selected file concurrently and keeps the file picker multi-select enabled', async () => {
+  it('uploads every selected file sequentially and keeps the file picker multi-select enabled', async () => {
     const pendingResolvers = [];
     parentToolsServiceMocks.uploadParentTeamMediaFile.mockImplementation(() => new Promise((resolve) => {
       pendingResolvers.push(resolve);
@@ -218,13 +218,22 @@ describe('React app TeamMedia upload flow', () => {
     changeFiles(fileInput, files);
     await act(async () => {});
 
-    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(2);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(1);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0]);
     expect(container.textContent).toContain('report.pdf');
     expect(container.textContent).toContain('waiver.docx');
     expect(container.textContent).toContain('Uploading');
 
     await act(async () => {
-      pendingResolvers.forEach((resolve) => resolve(undefined));
+      pendingResolvers[0](undefined);
+    });
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(2);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1]);
+
+    await act(async () => {
+      pendingResolvers[1](undefined);
     });
     await act(async () => {});
 
