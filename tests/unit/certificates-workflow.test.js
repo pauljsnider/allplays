@@ -113,6 +113,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(generateBody).toContain('const descriptionRun = (async () =>');
         expect(generateBody).toContain('state.activeRegenerationPromise = descriptionRun;');
         expect(generateBody).toContain('const results = await descriptionRun;');
+        expect(generateBody).toContain("state.descriptionGeneration = null;\n        renderReviewGrid();\n        showAlert(error?.message || 'Unable to generate certificates.', 'error');");
         expect(generateBody).toContain('state.activeRegenerationPromise = null;');
         expect(waitBody).toContain('await state.activeRegenerationPromise;');
         expect(reviewGridBody).toContain('const descriptionGenerationActive = Boolean(state.descriptionGeneration?.active);');

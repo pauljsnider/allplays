@@ -1140,6 +1140,7 @@ async function generateTeamCertificates() {
     } catch (error) {
         console.error('[certificates] generate failed:', error);
         state.descriptionGeneration = null;
+        renderReviewGrid();
         showAlert(error?.message || 'Unable to generate certificates.', 'error');
     } finally {
         state.activeRegenerationPromise = null;
