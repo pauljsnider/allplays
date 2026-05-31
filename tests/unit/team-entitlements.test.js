@@ -59,6 +59,9 @@ describe('team entitlement helpers', () => {
         expect(liveGame).toContain('getTeamEntitlementStatus');
         expect(liveGame).toContain("TEAM_PASS_FEATURES.RECORDED_REPLAY");
         expect(html).toContain('id="video-paywall"');
+        expect(html).toContain('id="recorded-replay-video"');
+        expect(html).toMatch(/id="recorded-replay-video"[\s\S]*?class="hidden /);
+        expect(html).toMatch(/id="video-paywall" class="hidden /);
         expect(html).toContain('Team Pass required');
     });
 
