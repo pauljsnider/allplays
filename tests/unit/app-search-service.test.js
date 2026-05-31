@@ -22,6 +22,7 @@ const firebaseMocks = vi.hoisted(() => ({
 }));
 
 const helpMocks = vi.hoisted(() => ({
+    getSearchHelpRoles: vi.fn((role) => role && role !== 'all' ? [role] : ['admin', 'coach', 'member', 'parent']),
     searchHelpKnowledge: vi.fn()
 }));
 
@@ -222,6 +223,54 @@ describe('React app search service', () => {
             snippet: 'Use password reset when a parent or coach cannot sign in.'
         }]);
         expect(results.flat.map((item) => item.kind)).toEqual(['team', 'help', 'player']);
+    });
+
+    it('does not let a help role filter change non-help search result categories', () => {
+        helpMocks.searchHelpKnowledge.mockReturnValue([{
+            id: 'team-help',
+            title: 'Team help',
+            file: 'help-coaches.html',
+            url: 'https://allplays.ai/help-coaches.html',
+            roles: ['coach'],
+            summary: 'Coach team help.',
+            snippet: 'Coach team help.',
+            score: 10
+        }]);
+        const baseSearchInput = {
+            queryText: 'team',
+            auth,
+            teams: [
+                { id: 'team-1', name: 'Team Alpha', sport: 'Basketball', zip: '66210', isPublic: true },
+                { id: 'team-2', name: 'Team Beta', sport: 'Soccer', zip: '64114', isPublic: true }
+            ],
+            players: [{
+                id: 'player:team-1:player-1',
+                kind: 'player',
+                title: 'Team Player',
+                subtitle: 'Team Alpha',
+                route: '/players/team-1/player-1',
+                teamId: 'team-1',
+                playerId: 'player-1'
+            }]
+        };
+
+        const withoutRoleFilter = computeAppSearchResults(baseSearchInput);
+        const withRoleFilter = computeAppSearchResults({ ...baseSearchInput, helpRoleFilter: 'coach' });
+        const nonHelpByKind = (results) => ({
+            action: results.flat.filter((item) => item.kind === 'action'),
+            team: results.flat.filter((item) => item.kind === 'team'),
+            player: results.flat.filter((item) => item.kind === 'player'),
+            social: results.flat.filter((item) => item.kind === 'social')
+        });
+
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'team',
+            roles: ['coach'],
+            limit: 5
+        });
+        expect(nonHelpByKind(withRoleFilter)).toEqual(nonHelpByKind(withoutRoleFilter));
+        expect(withRoleFilter.teams).toEqual(withoutRoleFilter.teams);
+        expect(withRoleFilter.players).toEqual(withoutRoleFilter.players);
     });
 
     it('loads public/current-site teams and merges private teams from app access', async () => {
