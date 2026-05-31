@@ -496,6 +496,29 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await expect(page.getByText('PTS: +$1.00 per pts')).toBeVisible();
 });
 
+test('social quick share defers changing the selected post type', async ({ page, baseURL }) => {
+    await mockHomePlayerModules(page);
+    await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=game_recap'), { waitUntil: 'domcontentloaded' });
+
+    const dialog = page.getByRole('dialog', { name: 'Create social post' });
+    await expect(dialog.getByRole('heading', { name: 'What happened?' })).toBeVisible();
+    await expect(dialog.getByText('Game recap').first()).toBeVisible();
+    await expect(dialog.getByPlaceholder('How did the game go?')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Change share type' })).toBeVisible();
+    await expect(dialog.getByText('Pick one')).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Moment' })).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Change share type' }).click();
+    await expect(dialog.getByText('Pick one')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Moment' })).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'Media', exact: true }).click();
+    await expect(dialog.getByPlaceholder('Add a caption for the photo or video.')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Photos from today.' })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Post', exact: true }).click();
+    await expect(dialog.getByText('Add a photo or video for this share.')).toBeVisible();
+});
+
 test('social photo quick share requires media and posts uploaded media payload', async ({ page, baseURL }) => {
     await mockHomePlayerModules(page);
     await page.goto(appUrl(baseURL, '/home?section=feed&social=create&type=team_media'), { waitUntil: 'domcontentloaded' });

@@ -492,7 +492,8 @@ describe('React app Home and player drill-in integration', () => {
         ]));
         await clickButton(container, 'Player moment');
         await waitForText(container, 'What happened?');
-        expect(container.textContent).toContain('Pick one');
+        expect(container.textContent).not.toContain('Pick one');
+        expect(container.textContent).toContain('Change share type');
         expect(container.textContent).toContain('Write one short note');
         expect(container.textContent).toContain('Proud of the effort today.');
         expect(container.textContent).not.toContain('Post type');
