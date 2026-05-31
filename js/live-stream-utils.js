@@ -21,7 +21,7 @@ export function normalizeYouTubeEmbedUrl(url) {
     }
 }
 
-export function computePanelVisibility({ isMobile, activeTab, hasVideoStream }) {
+export function computePanelVisibility({ isMobile, activeTab, hasVideoStream, shouldDefaultToVideo = false }) {
     if (!isMobile) {
         return {
             activeTab,
@@ -32,7 +32,9 @@ export function computePanelVisibility({ isMobile, activeTab, hasVideoStream }) 
         };
     }
 
-    const safeActiveTab = activeTab === 'video' && !hasVideoStream ? 'plays' : activeTab;
+    const safeActiveTab = activeTab === 'video' && !hasVideoStream
+        ? 'plays'
+        : shouldDefaultToVideo && hasVideoStream ? 'video' : activeTab;
     return {
         activeTab: safeActiveTab,
         videoHidden: safeActiveTab !== 'video' || !hasVideoStream,
