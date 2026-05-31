@@ -13,7 +13,7 @@ import {
   limit
 } from '../../../../js/firebase.js';
 import { loadParentHome } from './homeService';
-import { searchHelpKnowledge } from './helpKnowledgeService';
+import { getSearchHelpRoles as getHelpKnowledgeRoles, searchHelpKnowledge } from './helpKnowledgeService';
 import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
@@ -203,7 +203,8 @@ export function computeAppSearchResults({
   queryText,
   auth,
   teams,
-  players
+  players,
+  helpRoleFilter
 }: {
   queryText: string;
   auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>;
@@ -222,7 +223,7 @@ export function computeAppSearchResults({
   const matchedTeams = tokens.length === 0
     ? teamItems.slice(0, 20)
     : rankSearchItems(teamItems, tokens).slice(0, 20);
-  const matchedHelp = buildAppSearchHelpResults(queryText, auth);
+  const matchedHelp = buildAppSearchHelpResults(queryText, auth, helpRoleFilter);
   const matchedPlayers = players.slice(0, 20);
 
   return {
@@ -358,14 +359,15 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
 
 function buildAppSearchHelpResults(
   queryText: string,
-  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>
+  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>,
+  helpRoleFilter?: unknown
 ): AppSearchHelp[] {
   const normalized = normalizeSearchQuery(queryText);
   if (normalized.length < 2) return [];
 
   return searchHelpKnowledge({
     query: queryText,
-    roles: getSearchHelpRoles(auth),
+    roles: getSearchHelpQueryRoles(auth, helpRoleFilter),
     limit: 5
   }).map((result) => ({
     id: `help:${result.id}`,
@@ -379,7 +381,15 @@ function buildAppSearchHelpResults(
   }));
 }
 
-function getSearchHelpRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
+function getSearchHelpQueryRoles(
+  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>,
+  helpRoleFilter?: unknown
+): string[] {
+  if (helpRoleFilter !== undefined) return getHelpKnowledgeRoles(helpRoleFilter);
+  return getSearchHelpAuthRoles(auth);
+}
+
+function getSearchHelpAuthRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
   const roles = new Set<UserRole>();
   (auth.roles || auth.user?.roles || []).forEach((role) => roles.add(role));
   if (auth.isAdmin || auth.user?.isAdmin) roles.add('admin');

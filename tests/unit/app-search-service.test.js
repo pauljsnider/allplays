@@ -22,6 +22,7 @@ const firebaseMocks = vi.hoisted(() => ({
 }));
 
 const helpMocks = vi.hoisted(() => ({
+    getSearchHelpRoles: vi.fn((role) => role && role !== 'all' ? [role] : ['admin', 'coach', 'member', 'parent']),
     searchHelpKnowledge: vi.fn()
 }));
 
@@ -262,6 +263,11 @@ describe('React app search service', () => {
             social: results.flat.filter((item) => item.kind === 'social')
         });
 
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'team',
+            roles: ['coach'],
+            limit: 5
+        });
         expect(nonHelpByKind(withRoleFilter)).toEqual(nonHelpByKind(withoutRoleFilter));
         expect(withRoleFilter.teams).toEqual(withoutRoleFilter.teams);
         expect(withRoleFilter.players).toEqual(withoutRoleFilter.players);
