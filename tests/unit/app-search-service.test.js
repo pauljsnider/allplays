@@ -288,6 +288,42 @@ describe('React app search service', () => {
 
     });
 
+    it('maps platform admin help searches to admin help docs', () => {
+        const adminDoc = {
+            id: 'admin-guide',
+            title: 'Admin guide',
+            file: 'help-admin.html',
+            url: 'https://allplays.ai/help-admin.html',
+            roles: ['admin'],
+            summary: 'Help for admins.',
+            snippet: 'Help for admins.',
+            score: 10
+        };
+        helpMocks.searchHelpKnowledge.mockImplementation(({ roleFilter }) => (
+            roleFilter === 'admin' ? [adminDoc] : []
+        ));
+
+        const results = computeAppSearchResults({
+            queryText: 'guide',
+            auth: {
+                ...auth,
+                user: { ...auth.user, roles: ['platformAdmin'] },
+                isPlatformAdmin: true
+            },
+            teams: [],
+            players: [],
+            helpRoleFilter: 'platformAdmin'
+        });
+
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
+            query: 'guide',
+            roles: ['admin'],
+            roleFilter: 'admin',
+            limit: 5
+        });
+        expect(results.help.map((item) => item.title)).toEqual(['Admin guide']);
+    });
+
     it('loads public/current-site teams and merges private teams from app access', async () => {
         dbMocks.getTeams.mockResolvedValue([
             { id: 'team-public', name: 'Public Bears', sport: 'Soccer', isPublic: true },

@@ -370,7 +370,7 @@ function buildAppSearchHelpResults(
   return searchHelpKnowledge({
     query: queryText,
     roles: getSearchHelpAuthRoles(auth),
-    roleFilter: helpRoleFilter,
+    roleFilter: normalizeAppSearchHelpRoleFilter(helpRoleFilter),
     limit: 5
   }).map((result) => ({
     id: `help:${result.id}`,
@@ -386,12 +386,15 @@ function buildAppSearchHelpResults(
 
 function getSearchHelpAuthRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
   const roles = new Set<UserRole>();
-  (auth.roles || auth.user?.roles || []).forEach((role) => roles.add(role));
-  if (auth.isAdmin || auth.user?.isAdmin) roles.add('admin');
-  if (auth.isPlatformAdmin) roles.add('platformAdmin');
+  (auth.roles || auth.user?.roles || []).forEach((role) => roles.add(normalizeAppSearchHelpRoleFilter(role) as UserRole));
+  if (auth.isAdmin || auth.user?.isAdmin || auth.isPlatformAdmin) roles.add('admin');
   if (auth.isParent) roles.add('parent');
   if (auth.isCoach) roles.add('coach');
   return [...roles];
+}
+
+function normalizeAppSearchHelpRoleFilter(role: AppSearchHelpRoleFilter): Exclude<AppSearchHelpRoleFilter, 'platformAdmin'> {
+  return role === 'platformAdmin' ? 'admin' : role;
 }
 
 export function resetAppSearchCacheForTests() {
