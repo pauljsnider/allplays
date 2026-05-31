@@ -25,6 +25,7 @@ import {
   WalletCards
 } from 'lucide-react';
 import { RoleBadge } from '../components/Badges';
+import { PublicTeamSearch } from '../components/PublicTeamSearch';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
 import { loadParentHomeSummary } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
@@ -141,6 +142,8 @@ export function Teams({ auth }: { auth: AuthState }) {
       )}
 
       {!loading && hasManagementTeam && !isDesktopWeb ? <WebsiteToolsNotice /> : null}
+
+      <PublicTeamSearch />
     </div>
   );
 }
@@ -290,7 +293,7 @@ function TeamHubQuickLink({ team }: { team: ParentHomeTeam }) {
   );
 }
 
-function TeamLauncherChip({ label, tone = 'gray' }: { label: string; tone?: 'gray' | 'primary' | 'amber' }) {
+export function TeamLauncherChip({ label, tone = 'gray' }: { label: string; tone?: 'gray' | 'primary' | 'amber' }) {
   const toneClass = tone === 'primary'
     ? 'bg-primary-50 text-primary-700'
     : tone === 'amber'
@@ -558,7 +561,7 @@ function EmptyTeams() {
   );
 }
 
-function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
+export function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const isError = tone === 'error';
   return (
     <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
@@ -572,7 +575,7 @@ function getInitials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'T';
 }
 
-function TeamAvatar({ name, photoUrl, large = false }: { name: string; photoUrl?: string | null; large?: boolean }) {
+export function TeamAvatar({ name, photoUrl, large = false }: { name: string; photoUrl?: string | null; large?: boolean }) {
   if (photoUrl) {
     return (
       <span className={`flex flex-none overflow-hidden rounded-2xl bg-gray-100 shadow-sm ${large ? 'h-12 w-12' : 'h-11 w-11'}`}>
