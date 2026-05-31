@@ -81,7 +81,8 @@ vi.mock('./uxTiming', () => ({ startUxTimer: vi.fn(() => ({ end: vi.fn() })) }))
 vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 
-import { buildPlayerScoringLiveEvent, recordPlayerScoringStat } from './scheduleService';
+import { updateGame, getPlayers, getRsvps } from '../../../../js/db.js';
+import { buildPlayerScoringLiveEvent, recordPlayerScoringStat, saveScheduledGameLineupDraftForApp } from './scheduleService';
 
 describe('player-attributed live scoring', () => {
   beforeEach(() => {
@@ -184,5 +185,85 @@ describe('player-attributed live scoring', () => {
     await expect(recordPlayerScoringStat('', 'game-1', 'player-1', { statKey: 'pts', value: 2 }, user)).rejects.toThrow('scheduled game');
     await expect(recordPlayerScoringStat('team-1', 'game-1', '', { statKey: 'pts', value: 2 }, user)).rejects.toThrow('Select a player');
     await expect(recordPlayerScoringStat('team-1', 'game-1', 'player-1', { statKey: 'pts', value: 2 }, null as any)).rejects.toThrow('Sign in');
+  });
+});
+
+describe('mobile lineup draft creation', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] };
+  const event = {
+    eventKey: 'team-1::game-1::player-1',
+    id: 'game-1',
+    teamId: 'team-1',
+    teamName: 'Bears',
+    type: 'game',
+    date: new Date('2026-05-31T18:00:00Z'),
+    location: 'Main Gym',
+    childId: 'player-1',
+    childName: 'Avery',
+    isDbGame: true,
+    isCancelled: false,
+    isTeamStaff: true,
+    assignments: [],
+    gamePlan: {
+      lineups: { 'Q1-pg': 'old-player' },
+      isPublished: true,
+      publishedVersion: 2,
+      publishedLineups: { 'Q1-pg': 'published-player' },
+      publishedBy: 'coach-0'
+    }
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getPlayers).mockResolvedValue([
+      { id: 'p1', name: 'Avery', number: '1' },
+      { id: 'p2', name: 'Blake', number: '2' },
+      { id: 'p3', name: 'Casey', number: '3' },
+      { id: 'p4', name: 'Devon', number: '4' },
+      { id: 'p5', name: 'Emery', number: '5' },
+      { id: 'p6', name: 'Finley', number: '6' }
+    ] as any);
+    vi.mocked(getRsvps).mockResolvedValue([
+      { playerId: 'p1', response: 'going' },
+      { playerId: 'p2', response: 'going' },
+      { playerId: 'p3', response: 'maybe' },
+      { playerId: 'p4', response: 'not_going' },
+      { playerId: 'p5', response: 'going' }
+    ] as any);
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+  });
+
+  it('saves an auto-filled draft from Going players only and preserves published fields', async () => {
+    const result = await saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5');
+
+    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', {
+      gamePlan: expect.objectContaining({
+        formationId: 'basketball-5v5',
+        numPeriods: 4,
+        isPublished: false,
+        publishedVersion: 2,
+        publishedLineups: { 'Q1-pg': 'published-player' },
+        publishedBy: 'coach-0',
+        lineups: {
+          'Q1-pg': 'p1',
+          'Q1-sg': 'p2',
+          'Q1-sf': 'p5'
+        }
+      })
+    });
+    expect(result.gamePlan?.lineups).toEqual({
+      'Q1-pg': 'p1',
+      'Q1-sg': 'p2',
+      'Q1-sf': 'p5'
+    });
+  });
+
+  it('rejects unsupported events and empty Going player pools', async () => {
+    await expect(saveScheduledGameLineupDraftForApp({ ...event, isDbGame: false }, user, 'basketball-5v5')).rejects.toThrow('scheduled game');
+    await expect(saveScheduledGameLineupDraftForApp(event, null as any, 'basketball-5v5')).rejects.toThrow('Sign in');
+    await expect(saveScheduledGameLineupDraftForApp(event, user, 'baseball-9')).rejects.toThrow('supported formation');
+
+    vi.mocked(getRsvps).mockResolvedValue([{ playerId: 'p1', response: 'maybe' }] as any);
+    await expect(saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5')).rejects.toThrow('No Going players');
   });
 });
