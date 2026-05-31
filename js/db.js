@@ -4203,6 +4203,26 @@ export async function getParentDashboardData(userId) {
     }
 
     const children = userProfile.parentOf;
+    const parentTeamIds = [...new Set(children.map(child => child?.teamId).filter(Boolean))];
+    const expectedParentPlayerKeys = [...new Set(children
+        .map(child => (child?.teamId && child?.playerId ? `${child.teamId}::${child.playerId}` : null))
+        .filter(Boolean))];
+    const existingParentTeamIds = Array.isArray(userProfile.parentTeamIds) ? userProfile.parentTeamIds : [];
+    const existingParentPlayerKeys = Array.isArray(userProfile.parentPlayerKeys) ? userProfile.parentPlayerKeys : [];
+    const mergedParentTeamIds = [...new Set([...existingParentTeamIds, ...parentTeamIds])];
+    const needsParentAccessBackfill = mergedParentTeamIds.length !== existingParentTeamIds.length ||
+        JSON.stringify(expectedParentPlayerKeys.slice().sort()) !== JSON.stringify(existingParentPlayerKeys.slice().sort());
+    if (needsParentAccessBackfill) {
+        try {
+            await updateUserProfile(userId, {
+                parentTeamIds: mergedParentTeamIds,
+                parentPlayerKeys: expectedParentPlayerKeys
+            });
+        } catch (error) {
+            console.warn('[parent-dashboard] Failed to backfill parent access keys before loading roster:', error);
+        }
+    }
+
     const activeChildren = [];
     const upcomingGames = [];
 
@@ -4220,7 +4240,16 @@ export async function getParentDashboardData(userId) {
         if (!team) continue;
 
         const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);
-        const playerSnap = await getDoc(playerRef);
+        let playerSnap;
+        try {
+            playerSnap = await getDoc(playerRef);
+        } catch (error) {
+            if (error?.code === 'permission-denied') {
+                console.warn('[parent-dashboard] Skipping player blocked by roster permissions:', error);
+                continue;
+            }
+            throw error;
+        }
         if (!playerSnap.exists()) continue;
         const player = { id: playerSnap.id, ...playerSnap.data() };
         if (player.active === false) continue;

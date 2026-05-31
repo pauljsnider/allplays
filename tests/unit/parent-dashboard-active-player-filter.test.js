@@ -22,8 +22,14 @@ describe('parent dashboard active player filtering', () => {
         const dashboardSource = readParentDashboardSource();
         const functionSource = getFunctionSource(source, 'getParentDashboardData');
 
+        expect(functionSource).toContain('const expectedParentPlayerKeys = [...new Set(children');
+        expect(functionSource).toContain('await updateUserProfile(userId, {');
+        expect(functionSource).toContain('parentPlayerKeys: expectedParentPlayerKeys');
+        expect(functionSource.indexOf('await updateUserProfile(userId, {')).toBeLessThan(functionSource.indexOf('const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);'));
         expect(functionSource).toContain('const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);');
-        expect(functionSource).toContain('const playerSnap = await getDoc(playerRef);');
+        expect(functionSource).toContain('playerSnap = await getDoc(playerRef);');
+        expect(functionSource).toContain("if (error?.code === 'permission-denied') {");
+        expect(functionSource).toContain('continue;');
         expect(functionSource).toContain('if (!playerSnap.exists()) continue;');
         expect(functionSource).toContain('if (player.active === false) continue;');
         expect(functionSource).toContain('activeChildren.push(activeChild);');
