@@ -107,10 +107,11 @@ service firebase.storage {
       allow get: if isSignedIn();
       allow list: if false;
       allow create: if isSignedIn() &&
+        request.auth.uid == userId &&
         request.resource.size > 0 &&
         request.resource.size <= 100 * 1024 * 1024 &&
         isAllowedAthleteProfileMediaUploadType(request.resource.contentType);
-      allow delete: if isSignedIn();
+      allow delete: if isSignedIn() && request.auth.uid == userId;
       allow update: if false;
     }
   }
