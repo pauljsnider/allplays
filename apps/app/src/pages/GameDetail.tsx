@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { BarChart3, Brain, Car, ClipboardCheck, FileText, ListTree, MessageCircleReply, Radio, Share2, Shield, Trophy, Users } from 'lucide-react';
+import { LiveGameAnnouncerToggle } from '../components/LiveGameAnnouncerToggle';
 import { mockGames, mockPlayers, mockTeams } from '../data/mockData';
 import { applyWalk, createBaseballLiveState, type BaseballBases, type BaseballLiveState } from '../lib/sportScoring/baseballScorekeepingService';
+import { createPlayAnnouncer } from '../lib/liveGameAnnouncerService';
 import type { AuthState } from '../lib/types';
 
 export function GameDetail({ auth }: { auth: AuthState }) {
@@ -12,6 +14,24 @@ export function GameDetail({ auth }: { auth: AuthState }) {
   const [lastScoringAction, setLastScoringAction] = useState('Ready for pitch');
   const team = game ? mockTeams.find((item) => item.id === game.teamId) : null;
   const canScoreBaseball = (auth.isCoach || auth.isAdmin) && (team?.sport === 'Baseball' || team?.sport === 'Softball');
+  const liveEvents = game?.liveEvents || [];
+  const announcer = useMemo(() => createPlayAnnouncer(), []);
+  const [announcementsEnabled, setAnnouncementsEnabled] = useState(() => announcer.isEnabled());
+
+  useEffect(() => {
+    if (!game) return;
+
+    announcer.setEnabled(announcementsEnabled);
+    if (!announcementsEnabled) return;
+
+    liveEvents.forEach((event) => {
+      announcer.announceEvent(event, { playbackSessionId: game.id });
+    });
+
+    return () => {
+      announcer.setPaused(true);
+    };
+  }, [announcer, announcementsEnabled, game, liveEvents]);
 
   if (!game) {
     return <Navigate to="/schedule" replace />;
@@ -49,7 +69,28 @@ export function GameDetail({ auth }: { auth: AuthState }) {
             Reply
           </Link>
         </div>
+        <div className="mt-4">
+          <LiveGameAnnouncerToggle
+            enabled={announcementsEnabled}
+            supported={announcer.isSupported()}
+            onToggle={setAnnouncementsEnabled}
+          />
+        </div>
       </section>
+
+      {liveEvents.length > 0 ? (
+        <section className="app-card p-4" aria-labelledby="live-play-by-play-heading">
+          <h2 id="live-play-by-play-heading" className="app-section-title">Live play by play</h2>
+          <div className="mt-3 space-y-2">
+            {liveEvents.map((event) => (
+              <div key={event.id} className="rounded-xl border border-gray-200 bg-white p-3">
+                <div className="text-xs font-black uppercase tracking-wide text-primary-700">{event.period || 'Live'}</div>
+                <div className="mt-1 text-sm font-semibold text-gray-700">{event.description}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {auth.isCoach || auth.isAdmin ? (
         <section className="app-card p-4">
