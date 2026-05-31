@@ -11,6 +11,7 @@ import {
   loadParentScheduleAssignments,
   loadParentScheduleRideOffers,
   loadStaffRsvpReminderPreview,
+  loadAutoFilledLineupDraftPreviewForApp,
   markParentPracticePacketComplete,
   publishGamePlanForApp,
   releaseParentScheduleAssignmentClaim,
@@ -22,6 +23,7 @@ import {
   loadHomeScoringPlayers,
   publishLiveScoreUpdateEvent,
   recordPlayerScoringStat,
+  saveScheduledGameLineupDraftForApp,
   updateGameScore,
   updateParentScheduleRideRequestStatus,
   type RideOfferInput,
@@ -29,9 +31,10 @@ import {
   type ParentPracticePacketChild,
   type StaffRsvpReminderSendResult,
   type RideRequestChildInput,
-  type ScheduleHomeScoringPlayer
+  type ScheduleHomeScoringPlayer,
+  type LineupDraftPreviewResult
 } from '../lib/scheduleService';
-import { getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
+import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import {
@@ -1510,7 +1513,10 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
 
           {canPublishLineup ? (
-            <GameHubLineupPublishPanel auth={auth} event={event} onGamePlanPublished={onGamePlanPublished} />
+            <>
+              <GameHubLineupDraftPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
+              <GameHubLineupPublishPanel auth={auth} event={event} onGamePlanPublished={onGamePlanPublished} />
+            </>
           ) : null}
 
           {canCancelGame ? (
@@ -1553,6 +1559,111 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
       {cancelStatus ? <Status tone={cancelStatus.tone} message={cancelStatus.message} /> : null}
       {!isPractice ? <GameReportSections event={event} /> : null}
     </section>
+  );
+}
+
+function GameHubLineupDraftPanel({ auth, event, onGamePlanSaved }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanSaved: (gamePlan: Record<string, any>) => void }) {
+  const [formationId, setFormationId] = useState(event.gamePlan?.formationId || '');
+  const [preview, setPreview] = useState<LineupDraftPreviewResult | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const hasPreviewAssignments = Boolean(preview?.positions.some((position) => position.playerId));
+  const canSave = Boolean(auth.user && formationId && hasPreviewAssignments && !event.isCancelled && !saving && !loadingPreview);
+
+  useEffect(() => {
+    setFormationId(event.gamePlan?.formationId || '');
+    setPreview(null);
+    setStatus(null);
+  }, [event.eventKey, event.gamePlan?.formationId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!auth.user || !formationId || event.isCancelled) {
+      setPreview(null);
+      return undefined;
+    }
+
+    setLoadingPreview(true);
+    setStatus(null);
+    loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId)
+      .then((result) => {
+        if (!cancelled) setPreview(result);
+      })
+      .catch((error: any) => {
+        if (!cancelled) {
+          setPreview(null);
+          setStatus({ tone: 'error', message: error?.message || 'Unable to preview the lineup draft.' });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPreview(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [auth.user, event, formationId]);
+
+  const saveDraft = async () => {
+    if (!auth.user || !canSave) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const result = await saveScheduledGameLineupDraftForApp(event, auth.user, formationId);
+      setPreview(result);
+      if (result.gamePlan) onGamePlanSaved(result.gamePlan);
+      setStatus({ tone: 'success', message: 'Lineup draft saved. Publish is now available when you are ready.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save lineup draft.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">Lineup draft</div>
+          <div className="mt-1 text-sm font-semibold text-gray-950">Create a first-period draft from players marked Going.</div>
+          <label className="mt-3 block text-xs font-black uppercase tracking-[0.04em] text-gray-500" htmlFor="game-hub-lineup-formation">Formation</label>
+          <select
+            id="game-hub-lineup-formation"
+            className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+            value={formationId}
+            onChange={(event) => setFormationId(event.target.value)}
+            disabled={!auth.user || event.isCancelled || saving}
+          >
+            <option value="">Select formation</option>
+            {Object.values(LINEUP_FORMATIONS).map((formation) => (
+              <option key={formation.id} value={formation.id}>{formation.name}</option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="button"
+          className="min-h-11 rounded-full bg-emerald-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-60"
+          onClick={saveDraft}
+          disabled={!canSave}
+        >
+          {saving ? 'Saving draft' : 'Save draft'}
+        </button>
+      </div>
+      {loadingPreview ? <div className="mt-3 text-sm font-semibold text-gray-500">Loading Going players…</div> : null}
+      {preview && !hasPreviewAssignments ? <div className="mt-3 text-sm font-semibold text-amber-800">No Going players are available to auto-fill this lineup. Mark players Going before saving a draft.</div> : null}
+      {preview && hasPreviewAssignments ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {preview.positions.map((position) => (
+            <div key={position.id} className="rounded-xl border border-white/80 bg-white px-3 py-2">
+              <div className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">{position.name}</div>
+              <div className="mt-1 text-sm font-black text-gray-950">
+                {position.playerName ? `${position.playerNumber ? `#${position.playerNumber} ` : ''}${position.playerName}` : 'Open'}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {status ? <div className={`mt-3 text-sm font-semibold ${status.tone === 'success' ? 'text-emerald-700' : 'text-amber-800'}`}>{status.message}</div> : null}
+    </div>
   );
 }
 

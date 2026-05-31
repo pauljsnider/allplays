@@ -12,6 +12,7 @@ const scheduleMocks = vi.hoisted(() => ({
     loadParentSchedule: vi.fn(),
     loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
     loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
+    loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
     markParentPracticePacketComplete: vi.fn(),
     publishGamePlanForApp: vi.fn(),
     releaseParentScheduleAssignmentClaim: vi.fn(),
@@ -27,6 +28,7 @@ const scheduleMocks = vi.hoisted(() => ({
         isFull: false
     })),
     publishLiveScoreUpdateEvent: vi.fn(),
+    saveScheduledGameLineupDraftForApp: vi.fn(),
     updateGameScore: vi.fn(),
     updateParentScheduleRideRequestStatus: vi.fn()
 }));
@@ -151,6 +153,42 @@ beforeEach(() => {
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
     scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
     scheduleMocks.publishGamePlanForApp.mockResolvedValue({ gamePlan: {}, notificationError: null });
+    scheduleMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+        formationId: 'basketball-5v5',
+        formationName: 'Basketball 5v5',
+        numPeriods: 4,
+        positions: [
+            { id: 'pg', name: 'Point Guard', playerId: 'p1', playerName: 'Avery', playerNumber: '1' },
+            { id: 'sg', name: 'Shooting Guard', playerId: 'p2', playerName: 'Blake', playerNumber: '2' }
+        ],
+        goingPlayers: [
+            { id: 'p1', name: 'Avery', number: '1' },
+            { id: 'p2', name: 'Blake', number: '2' }
+        ],
+        gamePlan: {
+            formationId: 'basketball-5v5',
+            numPeriods: 4,
+            lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' }
+        }
+    });
+    scheduleMocks.saveScheduledGameLineupDraftForApp.mockResolvedValue({
+        formationId: 'basketball-5v5',
+        formationName: 'Basketball 5v5',
+        numPeriods: 4,
+        positions: [
+            { id: 'pg', name: 'Point Guard', playerId: 'p1', playerName: 'Avery', playerNumber: '1' },
+            { id: 'sg', name: 'Shooting Guard', playerId: 'p2', playerName: 'Blake', playerNumber: '2' }
+        ],
+        goingPlayers: [
+            { id: 'p1', name: 'Avery', number: '1' },
+            { id: 'p2', name: 'Blake', number: '2' }
+        ],
+        gamePlan: {
+            formationId: 'basketball-5v5',
+            numPeriods: 4,
+            lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' }
+        }
+    });
     scheduleMocks.updateGameScore.mockResolvedValue({ homeScore: 5, awayScore: 2, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
     scheduleMocks.publishLiveScoreUpdateEvent.mockResolvedValue({ type: 'score_update', homeScore: 5, awayScore: 2 });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
@@ -523,6 +561,31 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(container.textContent).toContain('No lineup draft is available yet.');
         expect(container.textContent).toContain('Save a lineup draft before publishing.');
         expect(buttonByText(container, 'Publish lineup').disabled).toBe(true);
+    });
+
+    it('creates a lineup draft from Going players and enables publish without reloading', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ canUpdateScore: true, isTeamStaff: true, gamePlan: { lineups: {} } })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Lineup draft');
+
+        const select = container.querySelector('#game-hub-lineup-formation');
+        await act(async () => {
+            select.value = 'basketball-5v5';
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await waitForText(container, '#1 Avery');
+
+        expect(buttonByText(container, 'Save draft').disabled).toBe(false);
+        await clickButton(container, 'Save draft');
+
+        expect(scheduleMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, 'basketball-5v5');
+        await waitForText(container, 'Draft lineup has not been published.');
+        expect(buttonByText(container, 'Publish lineup').disabled).toBe(false);
     });
 
     it('publishes a lineup draft once and updates the visible status without reloading', async () => {
