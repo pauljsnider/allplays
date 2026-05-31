@@ -25,11 +25,13 @@ import {
 import { describeAuthError, reloadCurrentUser, resendVerificationEmail, sendResetEmail, setCurrentUserPassword } from '../lib/authService';
 import {
   createProfileAccessCode,
+  loadParentTeams,
   loadNotificationPreferences,
   loadNotificationTeams,
   loadProfileAccessCodes,
   loadProfileDocument,
   normalizeNotificationPreferences,
+  requestAccountMerge,
   saveNotificationPreferences,
   saveProfileDocument,
   uploadProfilePhoto
@@ -79,6 +81,9 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitePhone, setInvitePhone] = useState('');
   const [generatedCode, setGeneratedCode] = useState('');
+  const [parentLinkedTeams, setParentLinkedTeams] = useState<NotificationTeam[]>([]);
+  const [accountMergeExpanded, setAccountMergeExpanded] = useState(false);
+  const [accountMergeEmail, setAccountMergeEmail] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(true);
@@ -88,6 +93,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [notificationStatus, setNotificationStatus] = useState<Status | null>(null);
   const [passwordStatus, setPasswordStatus] = useState<Status | null>(null);
   const [inviteStatus, setInviteStatus] = useState<Status | null>(null);
+  const [accountMergeStatus, setAccountMergeStatus] = useState<Status | null>(null);
   const [copyStatus, setCopyStatus] = useState('');
   const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
   const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>('account');
@@ -98,6 +104,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const signupLink = generatedCode ? buildSignupLink(generatedCode) : '';
   const visibleAccessCodes = inviteHistoryExpanded ? accessCodes : accessCodes.slice(0, collapsedInviteCount);
   const hiddenAccessCodeCount = Math.max(0, accessCodes.length - visibleAccessCodes.length);
+  const canRequestAccountMerge = parentLinkedTeams.length > 0;
 
   const selectProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
@@ -118,9 +125,10 @@ export function Profile({ auth }: { auth: AuthState }) {
       setProfileStatus(null);
       setNotificationStatus(null);
       setInviteStatus(null);
+      setAccountMergeStatus(null);
 
       try {
-        const [loadedProfile, teams, codes] = await Promise.all([
+        const [loadedProfile, teams, codes, parentTeams] = await Promise.all([
           loadProfileDocument(user.uid).catch((error) => {
             console.warn('[profile] Unable to load profile:', error);
             setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
@@ -134,6 +142,11 @@ export function Profile({ auth }: { auth: AuthState }) {
           loadProfileAccessCodes(user.uid).catch((error) => {
             console.warn('[profile] Unable to load access codes:', error);
             setInviteStatus({ message: 'Unable to load invite history.', tone: 'error' });
+            return [];
+          }),
+          loadParentTeams(user.uid).catch((error) => {
+            console.warn('[profile] Unable to load parent-linked teams:', error);
+            setAccountMergeStatus({ message: 'Unable to load account merge options right now.', tone: 'error' });
             return [];
           })
         ]);
@@ -150,6 +163,9 @@ export function Profile({ auth }: { auth: AuthState }) {
         setPhotoFile(null);
         setPhotoChanged(false);
         setNotificationTeams(teams);
+        setParentLinkedTeams(parentTeams);
+        setAccountMergeExpanded(false);
+        setAccountMergeEmail('');
         setSelectedTeamId((current) => {
           if (current && teams.some((team) => team.id === current)) {
             return current;
@@ -432,6 +448,43 @@ export function Profile({ auth }: { auth: AuthState }) {
     }
   };
 
+  const submitAccountMerge = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!user?.uid) {
+      return;
+    }
+
+    const secondaryEmail = normalizeEmail(accountMergeEmail);
+    const primaryEmail = normalizeEmail(user.email);
+
+    if (!secondaryEmail) {
+      setAccountMergeStatus({ message: 'Enter the email address for the other account.', tone: 'error' });
+      return;
+    }
+    if (!isValidEmail(secondaryEmail)) {
+      setAccountMergeStatus({ message: 'Enter a valid email address.', tone: 'error' });
+      return;
+    }
+    if (secondaryEmail === primaryEmail) {
+      setAccountMergeStatus({ message: 'Enter a different email than the account you are signed in with.', tone: 'error' });
+      return;
+    }
+
+    setBusy('account-merge');
+    setAccountMergeStatus({ message: 'Preparing merge request...', tone: 'neutral' });
+
+    try {
+      await requestAccountMerge(user.uid, primaryEmail, secondaryEmail);
+      setAccountMergeEmail('');
+      setAccountMergeStatus({ message: 'Merge request pending verification. We will verify the other email before moving any account data.', tone: 'success' });
+    } catch (error) {
+      console.error('[profile] Unable to request account merge:', error);
+      setAccountMergeStatus({ message: 'Unable to request merge right now. Please try again.', tone: 'error' });
+    } finally {
+      setBusy('');
+    }
+  };
+
   const copyText = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -544,6 +597,53 @@ export function Profile({ auth }: { auth: AuthState }) {
             <StatusMessage status={profileStatus} />
           </div>
         </form>
+
+        {canRequestAccountMerge ? (
+          <div className="mt-6 border-t border-gray-200 pt-6">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-base font-black text-gray-900">Merge another account</h3>
+                <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Request a merge for another ALL PLAYS account you own. We will verify that email before any account data moves.</p>
+              </div>
+              {!accountMergeExpanded ? (
+                <button
+                  type="button"
+                  className="secondary-button shrink-0"
+                  onClick={() => {
+                    setAccountMergeExpanded(true);
+                    setAccountMergeStatus(null);
+                  }}
+                >
+                  Merge another account
+                </button>
+              ) : null}
+            </div>
+
+            {accountMergeExpanded ? (
+              <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" onSubmit={submitAccountMerge} noValidate>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Secondary account email</span>
+                  <input
+                    className="auth-input"
+                    type="email"
+                    aria-label="Secondary account email"
+                    value={accountMergeEmail}
+                    onChange={(event) => setAccountMergeEmail(event.target.value)}
+                    placeholder="other-email@example.com"
+                    autoComplete="email"
+                  />
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="submit" className="primary-button" disabled={busy === 'account-merge'}>
+                    {busy === 'account-merge' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
+                    Request merge
+                  </button>
+                  <StatusMessage status={accountMergeStatus} />
+                </div>
+              </form>
+            ) : null}
+          </div>
+        ) : null}
       </section>
       ) : null}
 
@@ -830,6 +930,14 @@ function toDate(value: any): Date | null {
 function buildSignupLink(code: string) {
   const origin = window.location.protocol === 'capacitor:' ? 'https://allplays.ai' : window.location.origin;
   return `${origin}/login.html?code=${encodeURIComponent(code)}`;
+}
+
+function normalizeEmail(value: string | null | undefined) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function formatProfileSaveError(error: any) {

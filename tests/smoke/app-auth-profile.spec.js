@@ -254,6 +254,16 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                         { id: 'code-4', code: 'MNOP3456', email: '', phone: '', used: false, createdAt: { seconds: 1716940800 } }
                     ];
                 }
+
+                export async function loadParentTeams() {
+                    return [
+                        { id: 'team-1', name: 'Blue Team' }
+                    ];
+                }
+
+                export async function requestAccountMerge() {
+                    return;
+                }
             `
         });
     });
