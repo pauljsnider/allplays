@@ -2969,6 +2969,91 @@ exports.notifyTeamChatMessageCreated = functions.firestore
     });
   });
 
+exports.postSharedGameCancellationNotification = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to notify the linked team chat.');
+  }
+
+  const teamId = normalizeText(data?.teamId, 160);
+  const gameId = normalizeText(data?.gameId, 160);
+  const counterpartTeamId = normalizeText(data?.counterpartTeamId, 160);
+  const text = normalizeText(data?.text, 4000);
+  const senderName = normalizeText(data?.senderName, 160) || 'Team Staff';
+  const senderEmail = normalizeText(data?.senderEmail, 320) || null;
+
+  if (!teamId || !gameId || !counterpartTeamId || !text) {
+    throw new functions.https.HttpsError('invalid-argument', 'teamId, gameId, counterpartTeamId, and text are required.');
+  }
+
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  const [sourceTeamSnap, counterpartTeamSnap, sourceGameSnap, userSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}`).get(),
+    firestore.doc(`teams/${counterpartTeamId}`).get(),
+    firestore.doc(`teams/${teamId}/games/${gameId}`).get(),
+    firestore.doc(`users/${context.auth.uid}`).get()
+  ]);
+
+  if (!sourceTeamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Source team not found.');
+  }
+  if (!counterpartTeamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Counterpart team not found.');
+  }
+  if (!sourceGameSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Source game not found.');
+  }
+
+  const sourceTeam = sourceTeamSnap.data() || {};
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  if (!hasTeamAdminAccess({ team: sourceTeam, user, uid: context.auth.uid, email: callerEmail })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can notify the linked team chat.');
+  }
+
+  const sourceGame = sourceGameSnap.data() || {};
+  const linkedCounterpartTeamId = String(sourceGame.sharedScheduleOpponentTeamId || sourceGame.opponentTeamId || '').trim();
+  if (!linkedCounterpartTeamId || linkedCounterpartTeamId !== counterpartTeamId) {
+    throw new functions.https.HttpsError('failed-precondition', 'Game is not linked to the requested counterpart team.');
+  }
+  if (String(sourceGame.status || '').trim().toLowerCase() !== 'cancelled') {
+    throw new functions.https.HttpsError('failed-precondition', 'Cancel the game before notifying the linked team chat.');
+  }
+
+  const messageRef = firestore.collection(`teams/${counterpartTeamId}/chatMessages`).doc();
+  await messageRef.set({
+    text,
+    senderId: context.auth.uid,
+    senderName,
+    senderEmail,
+    senderPhotoUrl: null,
+    attachments: [],
+    imageUrl: null,
+    imagePath: null,
+    imageName: null,
+    imageType: null,
+    imageSize: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    editedAt: null,
+    deleted: false,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
+    aiMeta: {
+      type: 'shared-game-cancelled',
+      sourceTeamId: teamId,
+      sourceGameId: gameId
+    },
+    targetType: 'full_team',
+    recipientIds: [],
+    targetRole: null,
+    conversationId: null
+  });
+
+  return {
+    posted: true,
+    messageId: messageRef.id
+  };
+});
+
 async function requireTeamEmailSender(teamId, context) {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to send team email.');

@@ -23,7 +23,8 @@ import {
   broadcastLiveEvent,
   updateGame,
   updateTeam,
-  upsertPracticePacketCompletion
+  upsertPracticePacketCompletion,
+  postSharedGameCancellationNotification
 } from '../../../../js/db.js';
 import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
 import { db, doc, collection, getDocs, runTransaction, increment, serverTimestamp } from '../../../../js/firebase.js';
@@ -42,7 +43,6 @@ import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailability
 import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
 import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
 import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
-import { buildScheduleNotificationTargets, postScheduleNotificationTargets } from '../../../../js/schedule-notifications.js';
 import { isTeamActive } from '../../../../js/team-visibility.js';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
@@ -2077,28 +2077,39 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
     await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
   }
 
-  let notificationError: string | null = null;
+  const notificationFailures: string[] = [];
+  const { postChatMessage } = await import('../../../../js/db.js');
+  const senderName = user.displayName || user.email;
+  const senderEmail = user.email;
+  const counterpartTeamId = compactString(event.opponentTeamId || event.sharedScheduleOpponentTeamId) || null;
+
   try {
-    const { postChatMessage } = await import('../../../../js/db.js');
-    const counterpartTeamId = compactString(event.opponentTeamId || event.sharedScheduleOpponentTeamId) || null;
-    const targets = buildScheduleNotificationTargets({
-      teamId: event.teamId,
-      title: `vs. ${event.opponent || 'Opponent'}`,
-      counterpartTeamId,
-      counterpartTitle: event.counterpartTitle || null
-    });
-    const result = await postScheduleNotificationTargets({
-      targets,
-      postChatMessage,
+    await postChatMessage(event.teamId, {
+      text: buildCancelScheduledGameChatMessage(event),
       senderId: user.uid,
-      senderName: user.displayName || user.email,
-      senderEmail: user.email,
-      buildText: (target: { title?: string | null }) => buildCancelScheduledGameChatMessage(event, target.title)
+      senderName,
+      senderEmail
     });
-    notificationError = result.failedCount > 0 ? result.errorMessage || 'Team chat notification failed.' : null;
   } catch (error: any) {
-    notificationError = error?.message || 'Team chat notification failed.';
+    notificationFailures.push(error?.message || 'Team chat notification failed.');
   }
+
+  if (counterpartTeamId && counterpartTeamId !== event.teamId) {
+    try {
+      await postSharedGameCancellationNotification({
+        teamId: event.teamId,
+        gameId: event.id,
+        counterpartTeamId,
+        text: buildCancelScheduledGameChatMessage(event, event.counterpartTitle),
+        senderName,
+        senderEmail
+      });
+    } catch (error: any) {
+      notificationFailures.push(error?.message || 'Counterpart team chat notification failed.');
+    }
+  }
+
+  const notificationError = notificationFailures.length > 0 ? notificationFailures.join('; ') : null;
 
   return {
     cancelled: true,

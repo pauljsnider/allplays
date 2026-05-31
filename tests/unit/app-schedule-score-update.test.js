@@ -21,7 +21,8 @@ const dbMocks = vi.hoisted(() => ({
     upsertPracticePacketCompletion: vi.fn(),
     updateGame: vi.fn(),
     broadcastLiveEvent: vi.fn(),
-    postChatMessage: vi.fn()
+    postChatMessage: vi.fn(),
+    postSharedGameCancellationNotification: vi.fn()
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
@@ -62,6 +63,12 @@ vi.mock('../../js/rideshare-helpers.js', () => ({
 }));
 vi.mock('../../js/snack-helpers.js', () => ({
     mergeAssignmentsWithClaims: vi.fn((assignments = []) => assignments)
+}));
+vi.mock('../../apps/app/src/lib/chatService.ts', () => ({
+    sendTeamChatMessage: vi.fn()
+}));
+vi.mock('../../apps/app/src/lib/chatLogic.ts', () => ({
+    DEFAULT_TEAM_CONVERSATION_ID: 'team'
 }));
 
 import { buildCancelScheduledGameChatMessage, cancelScheduledGameForApp, normalizeGameScoreValue, publishLiveScoreUpdateEvent, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
@@ -136,6 +143,7 @@ describe('React app schedule score updates', () => {
     it('writes cancellation metadata and posts the legacy-style team chat notice', async () => {
         dbMocks.updateGame.mockResolvedValue(undefined);
         dbMocks.postChatMessage.mockResolvedValue(undefined);
+        dbMocks.postSharedGameCancellationNotification.mockResolvedValue({ posted: true, messageId: 'msg-2' });
 
         const result = await cancelScheduledGameForApp({
             eventKey: 'team-1__game-1__player-1',
@@ -171,6 +179,7 @@ describe('React app schedule score updates', () => {
     it('posts shared-game cancellation notices to both unique team chats', async () => {
         dbMocks.updateGame.mockResolvedValue(undefined);
         dbMocks.postChatMessage.mockResolvedValue(undefined);
+        dbMocks.postSharedGameCancellationNotification.mockResolvedValue({ posted: true, messageId: 'msg-2' });
 
         const result = await cancelScheduledGameForApp({
             eventKey: 'team-1__game-1__player-1',
@@ -192,23 +201,25 @@ describe('React app schedule score updates', () => {
             assignments: []
         }, user);
 
-        expect(dbMocks.postChatMessage).toHaveBeenCalledTimes(2);
-        expect(dbMocks.postChatMessage).toHaveBeenNthCalledWith(1, 'team-1', expect.objectContaining({
+        expect(dbMocks.postChatMessage).toHaveBeenCalledTimes(1);
+        expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
             text: '⚠️ Game cancelled: vs. Falcons on Thu, May 21'
         }));
-        expect(dbMocks.postChatMessage).toHaveBeenNthCalledWith(2, 'team-2', expect.objectContaining({
-            text: '⚠️ Game cancelled: vs. Bears on Thu, May 21'
-        }));
+        expect(dbMocks.postSharedGameCancellationNotification).toHaveBeenCalledWith({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            counterpartTeamId: 'team-2',
+            text: '⚠️ Game cancelled: vs. Bears on Thu, May 21',
+            senderName: 'Coach Pat',
+            senderEmail: 'coach@example.com'
+        });
         expect(result).toEqual({ cancelled: true, notificationError: null });
     });
 
     it('reports counterpart notification failure without failing the cancellation', async () => {
         dbMocks.updateGame.mockResolvedValue(undefined);
-        dbMocks.postChatMessage.mockImplementation(async (teamId) => {
-            if (teamId === 'team-2') {
-                throw new Error('counterpart chat write failed');
-            }
-        });
+        dbMocks.postChatMessage.mockResolvedValue(undefined);
+        dbMocks.postSharedGameCancellationNotification.mockRejectedValue(new Error('counterpart chat write failed'));
 
         const result = await cancelScheduledGameForApp({
             eventKey: 'team-1__game-1__player-1',
@@ -230,6 +241,9 @@ describe('React app schedule score updates', () => {
         }, user);
 
         expect(dbMocks.updateGame).toHaveBeenCalledTimes(1);
+        expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            text: '⚠️ Game cancelled: vs. Falcons on Thu, May 21'
+        }));
         expect(result).toEqual({ cancelled: true, notificationError: 'counterpart chat write failed' });
     });
 
