@@ -214,8 +214,8 @@ describe('React app Home service', () => {
         const summary = await loadParentHomeSummary(user, { force: true });
         const detailed = await loadParentHomeWithSecondaryData(user, { force: true });
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: true });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, user, { hydrateDetails: true });
         expect(summary.actionItems.map((item) => item.kind)).toEqual(expect.arrayContaining(['rsvp', 'assignment']));
         expect(detailed.actionItems.map((item) => item.kind)).not.toEqual(expect.arrayContaining(['rsvp', 'assignment']));
         expect(detailed.metrics.rsvpNeeded).toBe(0);
