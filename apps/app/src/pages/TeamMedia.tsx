@@ -260,7 +260,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       }
     } finally {
       setUploading('');
-      if (uploaded > 0 && fileInputRef.current) fileInputRef.current.value = '';
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
