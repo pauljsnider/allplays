@@ -152,6 +152,7 @@ export type ScheduleHomeScoringPlayer = {
 export type PlayerScoringStatInput = {
   statKey: 'pts';
   value: 2;
+  teamSide?: 'home' | 'away';
   playerName?: string | null;
   playerNumber?: string | number | null;
 };
@@ -1701,6 +1702,7 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
 
   const playerName = compactString(stat.playerName) || 'Player';
   const playerNumber = compactString(stat.playerNumber);
+  const teamSide = stat.teamSide === 'away' ? 'away' : 'home';
   const gamePath = `teams/${teamId}/games/${gameId}`;
   const statsPath = `${gamePath}/aggregatedStats/${playerId}`;
   const liveEventsPath = `${gamePath}/liveEvents`;
@@ -1716,8 +1718,8 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
       ]);
       const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
       const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
-      const awayScore = normalizeGameScoreValue(gameData.awayScore);
-      const homeScore = normalizeGameScoreValue(gameData.homeScore) + 2;
+      const awayScore = normalizeGameScoreValue(gameData.awayScore) + (teamSide === 'away' ? 2 : 0);
+      const homeScore = normalizeGameScoreValue(gameData.homeScore) + (teamSide === 'home' ? 2 : 0);
       const playerPoints = normalizeGameScoreValue(statsData?.stats?.pts) + 2;
       const scoreUpdatedAt = new Date();
       const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user });
@@ -1754,8 +1756,8 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
       nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
       nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`)
     ]);
-    const awayScore = normalizeGameScoreValue(gameDoc?.awayScore);
-    const homeScore = normalizeGameScoreValue(gameDoc?.homeScore) + 2;
+    const awayScore = normalizeGameScoreValue(gameDoc?.awayScore) + (teamSide === 'away' ? 2 : 0);
+    const homeScore = normalizeGameScoreValue(gameDoc?.homeScore) + (teamSide === 'home' ? 2 : 0);
     const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
     const playerPoints = normalizeGameScoreValue(existingStats.pts) + 2;
     existingStats.pts = playerPoints;

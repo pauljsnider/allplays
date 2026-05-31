@@ -150,6 +150,35 @@ describe('player-attributed live scoring', () => {
     }));
   });
 
+  it('increments away score when the team is the away side', async () => {
+    const result = await recordPlayerScoringStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts',
+      value: 2,
+      teamSide: 'away',
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] });
+
+    expect(result).toMatchObject({
+      homeScore: 10,
+      awayScore: 10,
+      playerId: 'player-1',
+      statKey: 'pts',
+      value: 2,
+      playerPoints: 6
+    });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({ homeScore: 10, awayScore: 10 }), { merge: true });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents') }), expect.objectContaining({
+      type: 'stat',
+      playerId: 'player-1',
+      homeScore: 10,
+      awayScore: 10,
+      statKey: 'pts',
+      value: 2,
+      isOpponent: false
+    }));
+  });
+
   it('rejects missing required identity inputs', async () => {
     const user = { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] };
     await expect(recordPlayerScoringStat('', 'game-1', 'player-1', { statKey: 'pts', value: 2 }, user)).rejects.toThrow('scheduled game');

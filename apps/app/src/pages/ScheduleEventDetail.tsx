@@ -1728,7 +1728,8 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
         statKey: 'pts',
         value: 2,
         playerName: player.name,
-        playerNumber: player.number
+        playerNumber: player.number,
+        teamSide: event.isHome === false ? 'away' : 'home'
       }, auth.user);
       setHomeScore(result.homeScore);
       setAwayScore(result.awayScore);
@@ -1762,7 +1763,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
       <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
         <div className="flex items-center justify-between gap-2">
           <div>
-            <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Home player +2</div>
+            <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Team player +2</div>
             <div className="mt-0.5 text-xs font-semibold text-gray-500">Record a player-attributed made two.</div>
           </div>
           {loadingHomePlayers ? <span className="text-xs font-bold text-gray-500">Loading roster</span> : null}
@@ -1787,7 +1788,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
               );
             })}
           </div>
-        ) : !loadingHomePlayers ? <div className="mt-2 text-xs font-semibold text-gray-500">No active home roster players found.</div> : null}
+        ) : !loadingHomePlayers ? <div className="mt-2 text-xs font-semibold text-gray-500">No active team roster players found.</div> : null}
         {dirty ? <div className="mt-2 text-xs font-semibold text-amber-700">Save or undo manual score changes before recording player stats.</div> : null}
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
