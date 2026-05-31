@@ -548,6 +548,7 @@ describe('live game replay initialization', () => {
         expect(noReloadBranch).toContain('const shouldShowVideoPanel = Boolean(');
         expect(noReloadBranch).toContain('hasMediaHubContent(state.videoPlayback?.mediaHub)');
         expect(noReloadBranch).toContain('state.videoPlayback?.gameClips?.length');
+        expect(noReloadBranch).toContain('if (videoTab) videoTab.classList.toggle(\'hidden\', !state.hasVideoStream);');
         expect(noReloadBranch).toContain('renderReplayAvailabilityState({ shouldShowVideoPanel });');
         expect(noReloadBranch).not.toContain('renderReplayAvailabilityState();');
     });
