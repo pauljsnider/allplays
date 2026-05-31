@@ -78,6 +78,8 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     [recipients]
   );
 
+  const isRecipientSubmitting = (recipientId: string) => submittingId === `payment:${recipientId}` || submittingId === `adjustment:${recipientId}`;
+
   if (!teamId) return <Navigate to="/teams" replace />;
 
   const updateForm = (recipientId: string, patch: Partial<{ paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>) => {
@@ -233,6 +235,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
               adjustmentReason: '',
               adjustmentError: ''
             };
+            const recipientSubmitting = isRecipientSubmitting(recipient.id);
             return (
               <section key={recipient.id} className="app-card p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -254,17 +257,17 @@ export function TeamFees({ auth }: { auth: AuthState }) {
                   <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Record offline payment</div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment amount
-                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={form.paymentAmount} onChange={(event) => updateForm(recipient.id, { paymentAmount: event.target.value })} />
+                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={form.paymentAmount} onChange={(event) => updateForm(recipient.id, { paymentAmount: event.target.value })} disabled={recipientSubmitting} />
                     </label>
                     <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment date
-                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" type="date" value={form.paymentDate} onChange={(event) => updateForm(recipient.id, { paymentDate: event.target.value })} />
+                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" type="date" value={form.paymentDate} onChange={(event) => updateForm(recipient.id, { paymentDate: event.target.value })} disabled={recipientSubmitting} />
                     </label>
                   </div>
                   <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment note
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" placeholder="Cash, check #, Venmo note..." value={form.paymentNote} onChange={(event) => updateForm(recipient.id, { paymentNote: event.target.value })} />
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" placeholder="Cash, check #, Venmo note..." value={form.paymentNote} onChange={(event) => updateForm(recipient.id, { paymentNote: event.target.value })} disabled={recipientSubmitting} />
                   </label>
                   {form.paymentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.paymentError}</div> : null}
-                  <button type="submit" className="primary-button w-full" disabled={submittingId === `payment:${recipient.id}`}>{submittingId === `payment:${recipient.id}` ? 'Recording...' : 'Record payment'}</button>
+                  <button type="submit" className="primary-button w-full" disabled={recipientSubmitting}>{submittingId === `payment:${recipient.id}` ? 'Recording...' : 'Record payment'}</button>
                 </form>
 
                 <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" onSubmit={(event) => submitAdjustment(event, recipient)}>
@@ -273,13 +276,13 @@ export function TeamFees({ auth }: { auth: AuthState }) {
                     <p className="mt-1 text-xs font-semibold text-gray-500">Positive credits reduce what is owed. Negative charges increase it.</p>
                   </div>
                   <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Signed amount
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} />
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} disabled={recipientSubmitting} />
                   </label>
                   <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Reason
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} />
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} disabled={recipientSubmitting} />
                   </label>
                   {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
-                  <button type="submit" className="secondary-button w-full justify-center" disabled={submittingId === `adjustment:${recipient.id}`}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
+                  <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
                 </form>
               </section>
             );
@@ -310,6 +313,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
                 adjustmentReason: '',
                 adjustmentError: ''
               };
+              const recipientSubmitting = isRecipientSubmitting(recipient.id);
               return (
               <section key={recipient.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -333,13 +337,13 @@ export function TeamFees({ auth }: { auth: AuthState }) {
                     <p className="mt-1 text-xs font-semibold text-gray-500">Positive credits reduce what is owed. Negative charges increase it.</p>
                   </div>
                   <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Signed amount
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} />
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} disabled={recipientSubmitting} />
                   </label>
                   <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Reason
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} />
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} disabled={recipientSubmitting} />
                   </label>
                   {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
-                  <button type="submit" className="secondary-button w-full justify-center" disabled={submittingId === `adjustment:${recipient.id}`}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
+                  <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
                 </form>
               </section>
               );

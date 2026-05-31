@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamFees } from './TeamFees';
@@ -179,6 +179,32 @@ describe('TeamFees recipient queue', () => {
       note: 'Scholarship credit'
     }));
     expect((await screen.findAllByText('$75.00')).length).toBeGreaterThan(0);
+  });
+
+  it('disables both payment and adjustment controls while a recipient payment is submitting', async () => {
+    let resolvePayment: (() => void) | null = null;
+    teamFeesServiceMocks.recordOfflineTeamFeePayment.mockImplementation(
+      () => new Promise<void>((resolve) => {
+        resolvePayment = resolve;
+      })
+    );
+
+    renderTeamFees();
+
+    const recipientCard = (await screen.findByText('Unpaid Player')).closest('section');
+    if (!recipientCard) throw new Error('Recipient card not found');
+
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Record payment' }));
+
+    expect(await within(recipientCard).findByRole('button', { name: 'Recording...' })).toBeDisabled();
+    expect(within(recipientCard).getByRole('button', { name: 'Save adjustment' })).toBeDisabled();
+    expect(within(recipientCard).getByDisplayValue('100.00')).toBeDisabled();
+    expect(within(recipientCard).getByPlaceholderText('25.00 or -10.00')).toBeDisabled();
+
+    await act(async () => {
+      resolvePayment?.();
+      await Promise.resolve();
+    });
   });
 
   it('shows the access guard instead of rendering adjustment controls for unauthorized users', async () => {
