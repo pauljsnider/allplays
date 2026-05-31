@@ -18,6 +18,17 @@ import type { AuthState } from '../lib/types';
 type FieldErrors = Record<string, string>;
 type FeeSummaryLine = { label: string; amountCents: number; strong?: boolean };
 
+export function selectInitialRegistrationOption(form: ParentRegistrationCard | null, options: any[]) {
+  if (!form || !Array.isArray(options) || !options.length) return '';
+  const counts = form.registrationOptionCounts || {};
+  const preferredOption = options.find((option) => {
+    if (!option?.id) return false;
+    const placement = decideRegistrationPlacement({ form, selectedOptionId: option.id, counts });
+    return placement?.status === 'pending';
+  });
+  return preferredOption?.id || options[0]?.id || '';
+}
+
 export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthState; publicAccess?: boolean }) {
   const params = useParams();
   const [searchParams] = useSearchParams();
@@ -59,7 +70,8 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
         }
         setForm(nextForm);
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
-        setSelectedOptionId((current) => current || initialOptions[0]?.id || '');
+        const initialOptionId = selectInitialRegistrationOption(nextForm, initialOptions);
+        setSelectedOptionId((current) => current || initialOptionId);
       } catch (loadError: any) {
         if (!cancelled) setError(loadError?.message || 'Unable to load registration form.');
       } finally {

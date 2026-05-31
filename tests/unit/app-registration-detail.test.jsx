@@ -54,7 +54,7 @@ vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsService
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
 vi.mock('../../js/registration-flow.js', () => registrationFlowMocks);
 
-import { RegistrationDetail } from '../../apps/app/src/pages/RegistrationDetail.tsx';
+import { RegistrationDetail, selectInitialRegistrationOption } from '../../apps/app/src/pages/RegistrationDetail.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -179,6 +179,16 @@ async function clickButton(container, text) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  registrationFlowMocks.decideRegistrationPlacement.mockImplementation((params) => ({
+    status: 'pending',
+    message: 'Placement pending',
+    selectedOption: params.selectedOptionId ? { id: params.selectedOptionId, countKey: params.selectedOptionId } : null,
+    nextCounts: { enrolled: 1, waitlisted: 0 },
+  }));
+  registrationFlowMocks.getPaymentPlanChoices.mockReturnValue([{ id: 'pay_full', title: 'Pay in full' }]);
+  registrationFlowMocks.getActiveRegistrationOptions.mockReturnValue([{ id: 'opt-1', title: 'Option 1', capacityLimit: 10 }]);
+  registrationFlowMocks.requiresRegistrationOption.mockReturnValue(true);
+  registrationFlowMocks.hasQuantityDiscountRule.mockReturnValue(false);
   parentToolsServiceMocks.loadParentRegistrations.mockResolvedValue([
     {
       id: 'form-1',
@@ -237,7 +247,81 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('selectInitialRegistrationOption', () => {
+  it('returns the first option with pending placement before a waitlist option', () => {
+    const form = { registrationOptionCounts: { waitlist: { enrolled: 10 }, open: { enrolled: 4 } } };
+    const options = [
+      { id: 'waitlist', countKey: 'waitlist', title: 'Waitlist', capacityLimit: 10, waitlistEnabled: true },
+      { id: 'open', countKey: 'open', title: 'Open', capacityLimit: 10, waitlistEnabled: true },
+    ];
+    registrationFlowMocks.decideRegistrationPlacement.mockImplementation(({ selectedOptionId }) => (
+      selectedOptionId === 'waitlist'
+        ? { status: 'waitlisted' }
+        : { status: 'pending' }
+    ));
+
+    expect(selectInitialRegistrationOption(form, options)).toBe('open');
+  });
+
+  it('falls back to the first option when every option is waitlist-only', () => {
+    const form = { registrationOptionCounts: { first: { enrolled: 10 }, second: { enrolled: 10 } } };
+    const options = [
+      { id: 'first', countKey: 'first', title: 'First', capacityLimit: 10, waitlistEnabled: true },
+      { id: 'second', countKey: 'second', title: 'Second', capacityLimit: 10, waitlistEnabled: true },
+    ];
+    registrationFlowMocks.decideRegistrationPlacement.mockReturnValue({ status: 'waitlisted' });
+
+    expect(selectInitialRegistrationOption(form, options)).toBe('first');
+  });
+
+  it('returns an empty string when there are no options', () => {
+    expect(selectInitialRegistrationOption({ registrationOptionCounts: {} }, [])).toBe('');
+    expect(selectInitialRegistrationOption(null, [])).toBe('');
+  });
+});
+
 describe('RegistrationDetail page', () => {
+  it('defaults the selected option to the first option with available capacity', async () => {
+    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+      {
+        id: 'form-1',
+        teamId: 'team-1',
+        teamName: 'Bears',
+        programName: 'Summer Camp',
+        description: 'Skills week',
+        season: 'Summer',
+        feeLabel: '$75.00',
+        paymentNotice: 'Offline payment accepted.',
+        onlineCheckout: false,
+        options: [
+          { id: 'waitlist_only', title: 'Waitlist first', countKey: 'waitlist_only', capacityLimit: 10, waitlistEnabled: true },
+          { id: 'open_option', title: 'Open second', countKey: 'open_option', capacityLimit: 10, waitlistEnabled: true },
+        ],
+        registrationOptionCounts: {
+          waitlist_only: { enrolled: 10, waitlisted: 0 },
+          open_option: { enrolled: 5, waitlisted: 0 },
+        },
+        participantFields: [{ id: 'name', label: 'Participant Name', type: 'text', required: true }],
+        guardianFields: [{ id: 'name', label: 'Guardian Name', type: 'text', required: true }],
+        waiverText: 'I agree to the terms and conditions.',
+        url: '/registration.html?teamId=team-1&formId=form-1',
+        discountRules: [],
+      },
+    ]);
+    registrationFlowMocks.decideRegistrationPlacement.mockImplementation(({ selectedOptionId }) => ({
+      status: selectedOptionId === 'waitlist_only' ? 'waitlisted' : 'pending',
+      message: selectedOptionId === 'waitlist_only' ? 'Placement waitlisted' : 'Placement pending',
+      selectedOption: selectedOptionId ? { id: selectedOptionId, countKey: selectedOptionId } : null,
+      nextCounts: { enrolled: selectedOptionId === 'waitlist_only' ? 10 : 6, waitlisted: 0 },
+    }));
+
+    const { container } = await renderRegistrationDetail();
+    await waitForText(container, 'Summer Camp');
+
+    expect(container.querySelector('[data-selected-option]')?.value).toBe('open_option');
+    expect(container.textContent).toContain('5 spots left');
+  });
+
   it('loads a public registration route from query params without linked family access', async () => {
     const { container } = await renderPublicRegistrationDetail();
     await waitForText(container, 'Open Clinic');
@@ -392,7 +476,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('shows a blocked message if placement status is blocked', async () => {
-    registrationFlowMocks.decideRegistrationPlacement.mockReturnValueOnce({
+    registrationFlowMocks.decideRegistrationPlacement.mockReturnValue({
       status: 'blocked',
       message: 'Option is full and not accepting waitlist registrations.',
       selectedOption: { id: 'opt-1', countKey: 'opt-1' },
