@@ -1,5 +1,6 @@
 import {
   createAccessCode,
+  createAccountMergeRequest,
   generateAccessCode,
   getNotificationPreferencesForTeam,
   getParentTeams,
@@ -275,6 +276,19 @@ async function nativeLoadNotificationTeams(userId: string, email?: string | null
   return [...map.values()].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
 }
 
+async function nativeLoadParentTeams(userId: string): Promise<NotificationTeam[]> {
+  const profile = await nativeLoadProfileDocument(userId).catch(() => ({}));
+  const parentTeamIds = [...new Set((Array.isArray((profile as any).parentOf) ? (profile as any).parentOf : [])
+    .map((link: any) => link?.teamId)
+    .filter(Boolean))] as string[];
+  const parentTeams = await Promise.all(parentTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null)));
+
+  return filterActiveTeams(parentTeams)
+    .filter((team: any) => team?.id)
+    .map((team: any) => ({ id: team.id, name: team.name || team.id }))
+    .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+}
+
 async function nativeLoadNotificationPreferences(userId: string, teamId: string) {
   return normalizeNotificationPreferences(await nativeGetDocument(`users/${encodeURIComponent(userId)}/notificationPreferences/${encodeURIComponent(teamId)}`) as Partial<NotificationPreferences> | null);
 }
@@ -329,6 +343,29 @@ async function nativeCreateAccessCode(userId: string, email: string, phone: stri
       }
     })
   });
+}
+
+async function nativeCreateAccountMergeRequest(userId: string, primaryEmail: string, secondaryEmail: string) {
+  const payload = {
+    requestedBy: userId,
+    primaryEmail,
+    secondaryEmail,
+    status: 'pending_verification',
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+
+  const response = await nativeFirestoreRequest(`/users/${encodeURIComponent(userId)}/accountMergeRequests`, {
+    method: 'POST',
+    body: JSON.stringify({
+      fields: Object.keys(payload).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+        acc[key] = encodeFirestoreValue((payload as Record<string, unknown>)[key]);
+        return acc;
+      }, {})
+    })
+  });
+
+  return String(response?.name || '').split('/').pop() || '';
 }
 
 async function nativeLoadAccessCodes(userId: string): Promise<AccessCodeRecord[]> {
@@ -524,6 +561,16 @@ export async function loadNotificationTeams(userId: string, email?: string | nul
   return [...map.values()].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
 }
 
+export async function loadParentTeams(userId: string): Promise<NotificationTeam[]> {
+  try {
+    const teams = await withTimeout(Promise.resolve(getParentTeams(userId)), 'Parent team load', primaryDataTimeoutMs);
+    return (teams || []).filter((team: NotificationTeam | null | undefined) => Boolean(team?.id));
+  } catch (error) {
+    console.warn('[profile-service] Falling back to REST parent team load:', error);
+    return nativeLoadParentTeams(userId);
+  }
+}
+
 export async function loadNotificationPreferences(userId: string, teamId: string) {
   try {
     return normalizeNotificationPreferences(await withTimeout(
@@ -572,6 +619,29 @@ export async function createProfileAccessCode(userId: string, email: string, pho
     await nativeCreateAccessCode(userId, email, phone, code);
   }
   return code;
+}
+
+export async function requestAccountMerge(userId: string, primaryEmail: string, secondaryEmail: string) {
+  const normalizedPrimaryEmail = String(primaryEmail || '').trim().toLowerCase();
+  const normalizedSecondaryEmail = String(secondaryEmail || '').trim().toLowerCase();
+
+  if (!normalizedPrimaryEmail || !normalizedSecondaryEmail) {
+    throw new Error('Both account emails are required');
+  }
+
+  try {
+    return await withTimeout(
+      Promise.resolve(createAccountMergeRequest(userId, {
+        primaryEmail: normalizedPrimaryEmail,
+        secondaryEmail: normalizedSecondaryEmail
+      })),
+      'Account merge request',
+      primaryDataTimeoutMs
+    );
+  } catch (error) {
+    console.warn('[profile-service] Falling back to REST account merge request:', error);
+    return nativeCreateAccountMergeRequest(userId, normalizedPrimaryEmail, normalizedSecondaryEmail);
+  }
 }
 
 export async function loadProfileAccessCodes(userId: string): Promise<AccessCodeRecord[]> {
