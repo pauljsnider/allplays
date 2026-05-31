@@ -3922,6 +3922,12 @@
             });
         }
 
+        function switchTabFromHash() {
+            if (window.location.hash === '#officials') {
+                switchTab('tab-officials');
+            }
+        }
+
         document.getElementById('tab-add-game').addEventListener('click', () => {
             switchTab('tab-add-game');
             if (!editingGameId) prefillAssignments();
@@ -3930,6 +3936,8 @@
         document.getElementById('tab-csv-import').addEventListener('click', () => switchTab('tab-csv-import'));
         document.getElementById('tab-bulk-ai').addEventListener('click', () => switchTab('tab-bulk-ai'));
         document.getElementById('tab-officials').addEventListener('click', () => switchTab('tab-officials'));
+        window.addEventListener('hashchange', switchTabFromHash);
+        switchTabFromHash();
 
         // Recurrence builder toggle
         document.getElementById('practiceRecurring').addEventListener('change', (e) => {
