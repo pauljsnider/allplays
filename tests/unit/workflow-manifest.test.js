@@ -44,6 +44,20 @@ describe('workflow manifest', () => {
         expect(helpHtml).toContain('Manage Team Fees and Payments');
     });
 
+    it('removes stale Game Day practice plan links from generated help indexes', () => {
+        const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
+        const workflow = manifest.find((item) => item.id === 'game-day');
+        const helpHtml = readRepoFile('help.html');
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+
+        expect(workflow.searchText).not.toContain('Plan the next practice from game outcomes');
+        expect(workflow.searchText).not.toContain('In the Game Day pre-game rail, use **Plan →**');
+        expect(helpHtml).not.toContain('Plan the next practice from game outcomes');
+        expect(helpHtml).not.toContain('In the Game Day pre-game rail, use **Plan →**');
+        expect(appHelpIndex).not.toContain('Plan the next practice from game outcomes');
+        expect(appHelpIndex).not.toContain('In the Game Day pre-game rail, use Plan →');
+    });
+
     it('documents offline/manual fee creation as the default fees workflow', () => {
         const html = readRepoFile('workflow-fees-payments.html');
         const chooseYourPath = html.slice(html.indexOf('<h2 id="choose-your-path">'), html.indexOf('<h2 id="step-by-step">'));
