@@ -318,10 +318,11 @@ describe('live game state helpers', () => {
     ]);
   });
 
-  it('applies goal events to live viewer state without requiring basketball stat labels', () => {
+  it('applies goal events to live viewer scoreboard and scorer stats', () => {
     const goalEvent = {
       id: 'goal-1',
       type: 'goal',
+      playerId: 'p1',
       statKey: 'goals',
       value: 1,
       teamSide: 'home',
@@ -346,9 +347,63 @@ describe('live game state helpers', () => {
     expect(result.state.awayScore).toBe(0);
     expect(result.state.period).toBe('H1');
     expect(result.state.events).toEqual([goalEvent]);
-    expect(result.state.stats).toEqual({});
+    expect(result.state.stats).toEqual({ p1: { goals: 1 } });
+    expect(result.state.lastStatChange).toEqual({
+      playerId: 'p1',
+      statKey: 'goals',
+      isOpponent: false
+    });
+    expect(result.shouldRenderLineup).toBe(true);
     expect(result.shouldRenderPlayByPlay).toBe(true);
     expect(result.shouldCelebrateScore).toBe(true);
+  });
+
+  it('preserves seeded opponent goal totals during initial live event replay', () => {
+    const goalEvent = {
+      id: 'away-goal-1',
+      type: 'goal',
+      playerId: 'opp1',
+      statKey: 'goals',
+      value: 1,
+      teamSide: 'away',
+      isOpponent: true,
+      opponentPlayerName: 'Away Striker',
+      opponentPlayerNumber: '9',
+      period: 'H1',
+      homeScore: 0,
+      awayScore: 1
+    };
+
+    const result = applyViewerEventToState({
+      events: [],
+      stats: {},
+      opponentStats: {
+        opp1: {
+          name: 'Away Striker',
+          number: '9',
+          goals: 1
+        }
+      },
+      homeScore: 0,
+      awayScore: 1
+    }, goalEvent, { preserveSeededOpponentGoalStats: true });
+
+    expect(result.state.opponentStats.opp1.goals).toBe(1);
+    expect(result.state.events).toEqual([goalEvent]);
+    expect(result.state.lastStatChange).toEqual({
+      playerId: 'opp1',
+      statKey: 'goals',
+      isOpponent: true
+    });
+    expect(result.shouldRenderLineup).toBe(true);
+    expect(result.shouldCelebrateScore).toBe(true);
+
+    const unseeded = applyViewerEventToState({
+      events: [],
+      stats: {},
+      opponentStats: {}
+    }, goalEvent, { preserveSeededOpponentGoalStats: true });
+    expect(unseeded.state.opponentStats.opp1.goals).toBe(1);
   });
 
   it('treats football scoring events as scoreboard-changing play-by-play', () => {
