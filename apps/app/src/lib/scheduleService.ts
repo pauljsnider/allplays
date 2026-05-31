@@ -20,6 +20,7 @@ import {
   cancelRideRequest,
   releaseAssignmentClaim,
   submitRsvpForPlayer,
+  broadcastLiveEvent,
   updateGame,
   updateTeam,
   upsertPracticePacketCompletion
@@ -130,6 +131,11 @@ export type GameScoreInput = {
   homeScore: number;
   awayScore: number;
   scoreStreamSessionId?: string | null;
+};
+
+export type GameScoreSnapshot = {
+  homeScore: number;
+  awayScore: number;
 };
 
 export type CancelScheduledGameResult = {
@@ -1480,6 +1486,41 @@ export async function updateGameScore(teamId: string, gameId: string, score: Gam
     if (!isNativeRuntime()) throw error;
     console.warn('[schedule-service] Falling back to REST score update:', error);
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
+  }
+
+  return payload;
+}
+
+function buildLiveScoreUpdateDescription(score: GameScoreSnapshot) {
+  return `Score update: Home ${normalizeGameScoreValue(score.homeScore)}, Away ${normalizeGameScoreValue(score.awayScore)}.`;
+}
+
+export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string, score: GameScoreSnapshot, user: AuthUser, previousScore?: Partial<GameScoreSnapshot> | null) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before posting live play-by-play.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before posting live play-by-play.');
+  }
+
+  const payload = {
+    type: 'score_update',
+    description: buildLiveScoreUpdateDescription(score),
+    homeScore: normalizeGameScoreValue(score.homeScore),
+    awayScore: normalizeGameScoreValue(score.awayScore),
+    previousHomeScore: previousScore?.homeScore !== undefined ? normalizeGameScoreValue(previousScore.homeScore) : null,
+    previousAwayScore: previousScore?.awayScore !== undefined ? normalizeGameScoreValue(previousScore.awayScore) : null,
+    createdBy: user.uid,
+    createdByName: user.displayName || user.email || 'Staff',
+    createdAt: new Date()
+  };
+
+  try {
+    await withTimeout(Promise.resolve(broadcastLiveEvent(teamId, gameId, payload)), 'Live score event');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST live score event publish:', error);
+    await nativeCreateDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`, payload);
   }
 
   return payload;

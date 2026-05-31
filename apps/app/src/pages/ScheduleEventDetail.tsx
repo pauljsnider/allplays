@@ -19,6 +19,7 @@ import {
   setParentScheduleRideOfferStatus,
   submitParentScheduleRsvp,
   summarizeParentScheduleRideOffers,
+  publishLiveScoreUpdateEvent,
   updateGameScore,
   updateParentScheduleRideRequestStatus,
   type RideOfferInput,
@@ -1665,6 +1666,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
 
   const saveScore = async () => {
     if (!auth.user) return;
+    const previousScore = { homeScore: savedHomeScore, awayScore: savedAwayScore };
     setSaving(true);
     setStatus(null);
     try {
@@ -1673,7 +1675,17 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
       const nextAwayScore = Number(payload.awayScore ?? awayScore);
       pendingLocalSaveRef.current = { homeScore: nextHomeScore, awayScore: nextAwayScore };
       onScoreUpdated(nextHomeScore, nextAwayScore);
-      setStatus({ tone: 'success', message: 'Score saved.' });
+      if (nextHomeScore === previousScore.homeScore && nextAwayScore === previousScore.awayScore) {
+        setStatus({ tone: 'success', message: 'Score saved.' });
+        return;
+      }
+      try {
+        await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
+        setStatus({ tone: 'success', message: 'Score saved and posted to live play-by-play.' });
+      } catch (publishError) {
+        console.warn('[schedule-event-detail] Score saved but live play-by-play posting failed:', publishError);
+        setStatus({ tone: 'success', message: 'Score saved. Live play-by-play post failed.' });
+      }
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to save score.' });
     } finally {
