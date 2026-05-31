@@ -84,4 +84,28 @@ describe('video panel visibility', () => {
         expect(visibility.videoHidden).toBe(true);
         expect(visibility.playsHidden).toBe(false);
     });
+
+    it('defaults mobile to video when stream exists before a manual tab selection', () => {
+        const visibility = computePanelVisibility({
+            isMobile: true,
+            activeTab: 'plays',
+            hasVideoStream: true,
+            shouldDefaultToVideo: true
+        });
+        expect(visibility.activeTab).toBe('video');
+        expect(visibility.videoHidden).toBe(false);
+        expect(visibility.playsHidden).toBe(true);
+    });
+
+    it('keeps a manually selected mobile tab when stream state updates', () => {
+        const visibility = computePanelVisibility({
+            isMobile: true,
+            activeTab: 'chat',
+            hasVideoStream: true,
+            shouldDefaultToVideo: false
+        });
+        expect(visibility.activeTab).toBe('chat');
+        expect(visibility.videoHidden).toBe(true);
+        expect(visibility.chatHidden).toBe(false);
+    });
 });
