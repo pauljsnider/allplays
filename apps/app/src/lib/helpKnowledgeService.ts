@@ -58,9 +58,9 @@ const stopWords = new Set([
 let helpDocsCache: HelpKnowledgeDoc[] | null = null;
 
 export function getSearchHelpRoles(helpRoleFilter?: unknown): string[] {
-  const [role] = normalizeRoles([helpRoleFilter]);
-  if (!role || role === 'all') return [...searchableHelpRoles];
-  return searchableHelpRoles.includes(role) ? [role] : [...searchableHelpRoles];
+  const role = normalizeRoles([helpRoleFilter]).find((normalizedRole) => searchableHelpRoles.includes(normalizedRole));
+  if (!role) return [...searchableHelpRoles];
+  return [role];
 }
 
 export function getHelpKnowledgeDocs(): HelpKnowledgeDoc[] {
@@ -80,7 +80,7 @@ export function getHelpKnowledgeDocs(): HelpKnowledgeDoc[] {
 export function searchHelpKnowledge({
   query,
   roles = [],
-  roleFilter = 'all',
+  roleFilter,
   limit = 5
 }: {
   query: string;
@@ -95,7 +95,9 @@ export function searchHelpKnowledge({
   const maxResults = Math.min(Math.max(Number(limit) || 5, 1), 8);
 
   return getHelpKnowledgeDocs()
-    .filter((doc) => roleFilterMatches(doc.roles, normalizedRoleFilter))
+    .filter((doc) => normalizedRoleFilter
+      ? roleFilterMatches(doc.roles, normalizedRoleFilter)
+      : (!roleTokens.length || roleMatches(doc.roles, roleTokens)))
     .map((doc) => {
       const score = scoreHelpDoc(doc, cleanQuery, queryTokens, roleTokens);
       return {
@@ -161,6 +163,7 @@ function buildSnippet(doc: HelpKnowledgeDoc, tokens: string[]) {
 function normalizeRoles(roles: unknown[]) {
   const normalized = roles
     .map((role) => compactText(role).toLowerCase())
+    .flatMap((role) => role === 'platformadmin' || role === 'platform admin' ? ['platformadmin', 'admin'] : [role])
     .map((role) => role === 'administrator' || role === 'admins' || role === 'administrators' ? 'admin' : role)
     .map((role) => role === 'parents' ? 'parent' : role)
     .map((role) => role === 'coaches' ? 'coach' : role)
