@@ -359,6 +359,29 @@ async function mockScheduleModules(page, options = {}) {
                     return { status: 'cancelled', isCancelled: true };
                 }
 
+                export async function loadAutoFilledLineupDraftPreviewForApp(event, user, formationId) {
+                    return {
+                        formationId,
+                        formationName: '5v5 Basketball',
+                        numPeriods: 4,
+                        positions: [
+                            { id: 'pg', name: 'Point guard', playerId: 'player-1', playerName: 'Pat', playerNumber: '7' },
+                            { id: 'sg', name: 'Shooting guard', playerId: 'player-2', playerName: 'Sam', playerNumber: '8' }
+                        ],
+                        goingPlayers: [
+                            { id: 'player-1', name: 'Pat', number: '7' },
+                            { id: 'player-2', name: 'Sam', number: '8' }
+                        ],
+                        gamePlan: { ...(event?.gamePlan || {}), formationId, lineups: { pg: 'player-1', sg: 'player-2' } }
+                    };
+                }
+
+                export async function saveScheduledGameLineupDraftForApp(event, user, formationId) {
+                    const preview = await loadAutoFilledLineupDraftPreviewForApp(event, user, formationId);
+                    window.__scheduleCalls.lineupDrafts = (window.__scheduleCalls.lineupDrafts || []).concat({ eventId: event?.id || null, userId: user?.uid || null, formationId });
+                    return preview;
+                }
+
                 export async function publishGamePlanForApp(event, user) {
                     const version = Number.parseInt(String(event?.gamePlan?.publishedVersion || ''), 10) || 0;
                     const gamePlan = {
