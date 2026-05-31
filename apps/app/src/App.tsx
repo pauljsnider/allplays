@@ -1,62 +1,65 @@
-import { ReactNode } from 'react';
+import { lazy, ReactNode, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
-import { AuthPage } from './pages/AuthPage';
-import { AcceptInvite } from './pages/AcceptInvite';
-import { CapabilityPage } from './pages/CapabilityPage';
-import { GameDetail } from './pages/GameDetail';
-import { HelpArticle } from './pages/HelpArticle';
-import { Home } from './pages/Home';
-import { Messages } from './pages/Messages';
-import { ParentTools } from './pages/ParentTools';
-import { RegistrationDetail } from './pages/RegistrationDetail';
-import { PlayerDetail } from './pages/PlayerDetail';
-import { PrivateAiChat } from './pages/PrivateAiChat';
-import { Profile } from './pages/Profile';
-import { ResetPassword } from './pages/ResetPassword';
-import { Schedule } from './pages/Schedule';
-import { ScheduleEventDetail } from './pages/ScheduleEventDetail';
-import { TeamDetail } from './pages/TeamDetail';
-import { TeamFees } from './pages/TeamFees';
-import { TeamMedia } from './pages/TeamMedia';
-import { Teams } from './pages/Teams';
-import { VerifyPending } from './pages/VerifyPending';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
+
+const AuthPage = lazy(() => import('./pages/AuthPage').then((module) => ({ default: module.AuthPage })));
+const AcceptInvite = lazy(() => import('./pages/AcceptInvite').then((module) => ({ default: module.AcceptInvite })));
+const CapabilityPage = lazy(() => import('./pages/CapabilityPage').then((module) => ({ default: module.CapabilityPage })));
+const GameDetail = lazy(() => import('./pages/GameDetail').then((module) => ({ default: module.GameDetail })));
+const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({ default: module.HelpArticle })));
+const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })));
+const Messages = lazy(() => import('./pages/Messages').then((module) => ({ default: module.Messages })));
+const ParentTools = lazy(() => import('./pages/ParentTools').then((module) => ({ default: module.ParentTools })));
+const RegistrationDetail = lazy(() => import('./pages/RegistrationDetail').then((module) => ({ default: module.RegistrationDetail })));
+const PlayerDetail = lazy(() => import('./pages/PlayerDetail').then((module) => ({ default: module.PlayerDetail })));
+const PrivateAiChat = lazy(() => import('./pages/PrivateAiChat').then((module) => ({ default: module.PrivateAiChat })));
+const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
+const ResetPassword = lazy(() => import('./pages/ResetPassword').then((module) => ({ default: module.ResetPassword })));
+const Schedule = lazy(() => import('./pages/Schedule').then((module) => ({ default: module.Schedule })));
+const ScheduleEventDetail = lazy(() => import('./pages/ScheduleEventDetail').then((module) => ({ default: module.ScheduleEventDetail })));
+const TeamDetail = lazy(() => import('./pages/TeamDetail').then((module) => ({ default: module.TeamDetail })));
+const TeamFees = lazy(() => import('./pages/TeamFees').then((module) => ({ default: module.TeamFees })));
+const TeamMedia = lazy(() => import('./pages/TeamMedia').then((module) => ({ default: module.TeamMedia })));
+const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
+const VerifyPending = lazy(() => import('./pages/VerifyPending').then((module) => ({ default: module.VerifyPending })));
 
 export default function App() {
   const auth = useAuth();
 
   return (
-    <Routes>
-      <Route path="/auth" element={<AuthPage auth={auth} />} />
-      <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />
-      <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
-      <Route path="/" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
-      <Route path="/home" element={<Protected auth={auth}><Home auth={auth} /></Protected>} />
-      <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
-      <Route path="/schedule/:teamId/:eventId" element={<Protected auth={auth}><ScheduleEventDetail auth={auth} /></Protected>} />
-      <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
-      <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
-      <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
-      <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
-      <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
-      <Route path="/teams/:teamId/fees" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
-      <Route path="/teams/:teamId/fees/:batchId" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
-      <Route path="/teams/:teamId/media" element={<Protected auth={auth}><TeamMedia auth={auth} /></Protected>} />
-      <Route path="/parent-tools" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
-      <Route path="/parent-tools/registrations/:teamId/:formId" element={<Protected auth={auth}><RegistrationDetail auth={auth} /></Protected>} />
-      <Route path="/parent-tools/:toolId" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
-      <Route path="/players/:teamId/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
-      <Route path="/players/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
-      <Route path="/games/:gameId" element={<Protected auth={auth}><GameDetail auth={auth} /></Protected>} />
-      <Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />
-      <Route path="/profile" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
-      <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />
-      <Route path="*" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
-    </Routes>
+    <Suspense fallback={<LoadingScreen />}>
+      <Routes>
+        <Route path="/auth" element={<AuthPage auth={auth} />} />
+        <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />
+        <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
+        <Route path="/" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
+        <Route path="/home" element={<Protected auth={auth}><Home auth={auth} /></Protected>} />
+        <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
+        <Route path="/schedule/:teamId/:eventId" element={<Protected auth={auth}><ScheduleEventDetail auth={auth} /></Protected>} />
+        <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
+        <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
+        <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
+        <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
+        <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
+        <Route path="/teams/:teamId/fees" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
+        <Route path="/teams/:teamId/fees/:batchId" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
+        <Route path="/teams/:teamId/media" element={<Protected auth={auth}><TeamMedia auth={auth} /></Protected>} />
+        <Route path="/parent-tools" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
+        <Route path="/parent-tools/registrations/:teamId/:formId" element={<Protected auth={auth}><RegistrationDetail auth={auth} /></Protected>} />
+        <Route path="/parent-tools/:toolId" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
+        <Route path="/players/:teamId/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
+        <Route path="/players/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
+        <Route path="/games/:gameId" element={<Protected auth={auth}><GameDetail auth={auth} /></Protected>} />
+        <Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />
+        <Route path="/profile" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
+        <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />
+        <Route path="*" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
+      </Routes>
+    </Suspense>
   );
 }
 

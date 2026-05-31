@@ -12,7 +12,7 @@ import {
   orderBy,
   limit
 } from '../../../../js/firebase.js';
-import { loadParentHome } from './homeService';
+import { loadParentHomeSummary } from './homeService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
 import type { AuthState, AuthUser, UserRole } from './types';
 
@@ -249,7 +249,7 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
 
   const [siteTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
     Promise.resolve(getTeams()),
-    user ? loadParentHome(user) : Promise.resolve(null),
+    user ? loadParentHomeSummary(user) : Promise.resolve(null),
     user ? loadStreamVolunteerSearchTeams(user) : Promise.resolve([])
   ]);
 

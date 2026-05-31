@@ -5,7 +5,8 @@ import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
 import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
 
 const homeMocks = vi.hoisted(() => ({
-    loadParentHome: vi.fn()
+    loadParentHome: vi.fn(),
+    loadParentHomeSummary: vi.fn()
 }));
 const publicActionMocks = vi.hoisted(() => ({
     openPublicUrl: vi.fn()
@@ -111,6 +112,7 @@ beforeEach(() => {
         return 0;
     };
     window.scrollTo = vi.fn();
+    homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
     homeMocks.loadParentHome.mockResolvedValue({
         players: [],
         upcomingEvents: [],
@@ -160,7 +162,7 @@ describe('React app Teams page', () => {
     it('renders the same parent and staff/admin teams used by the app inbox', async () => {
         const { container } = await renderTeams('/teams?selectedTeamId=team-staff&from=home');
 
-        expect(homeMocks.loadParentHome).toHaveBeenCalledWith(auth.user);
+        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledWith(auth.user, { force: false });
         expect(container.textContent).toContain('2 teams ready');
         expect(container.textContent).toContain('Choose a team');
         expect(container.textContent).toContain('Staff Wolves');
@@ -283,7 +285,7 @@ describe('React app Teams page', () => {
         await flush();
         await waitForText(container, '2 teams ready');
 
-        expect(homeMocks.loadParentHome).toHaveBeenCalledTimes(2);
+        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledTimes(2);
         expect(container.textContent).toContain('Lions');
         expect(container.textContent).not.toContain('Loading teams');
     });

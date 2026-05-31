@@ -26,10 +26,26 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   const [state, setState] = useState<'idle' | 'processing' | 'email-link' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const processedKeyRef = useRef('');
+  const redirectTimerRef = useRef<number | null>(null);
 
   const authUrl = useMemo(() => {
     return buildInviteAuthUrl(code, inviteType);
   }, [code, inviteType]);
+
+  const scheduleRedirect = (path: string) => {
+    if (redirectTimerRef.current !== null) {
+      window.clearTimeout(redirectTimerRef.current);
+    }
+    redirectTimerRef.current = window.setTimeout(() => navigate(path, { replace: true }), 700);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current !== null) {
+        window.clearTimeout(redirectTimerRef.current);
+      }
+    };
+  }, []);
 
   async function redeem(codeToRedeem: string) {
     if (!auth.user) {
@@ -55,7 +71,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       clearPendingInvite();
       setState('success');
       setMessage(result?.message || 'Invite accepted.');
-      window.setTimeout(() => navigate(mapLegacyRedirectToAppRoute(result?.redirectUrl), { replace: true }), 700);
+      scheduleRedirect(mapLegacyRedirectToAppRoute(result?.redirectUrl));
     } catch (error: any) {
       processedKeyRef.current = '';
       setState('error');
@@ -99,11 +115,11 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
         clearPendingInvite();
         setState('success');
         setMessage(inviteResult?.message || 'Invite accepted.');
-        window.setTimeout(() => navigate(mapLegacyRedirectToAppRoute(inviteResult?.redirectUrl), { replace: true }), 700);
+        scheduleRedirect(mapLegacyRedirectToAppRoute(inviteResult?.redirectUrl));
       } else {
         setState('success');
         setMessage('Signed in successfully.');
-        window.setTimeout(() => navigate('/home', { replace: true }), 700);
+        scheduleRedirect('/home');
       }
     } catch (error: any) {
       setState('error');
