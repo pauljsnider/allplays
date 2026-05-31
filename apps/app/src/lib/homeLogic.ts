@@ -57,6 +57,10 @@ export type ParentHomeTeam = {
   role: string;
   sport: string | null;
   photoUrl?: string | null;
+  location?: string | null; // Added for public team search
+  appAccess?: boolean; // Added for public team search
+  webAccess?: boolean; // Added for public team search
+  isPublic?: boolean; // Added for public team search
   players: ParentScheduleChild[];
   nextEvent: ParentScheduleEvent | null;
   eventCount: number;
