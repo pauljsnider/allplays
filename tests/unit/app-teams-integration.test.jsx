@@ -20,6 +20,8 @@ import { Teams } from '../../apps/app/src/pages/Teams.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+const mountedRoots = new Set();
+
 const auth = {
     user: {
         uid: 'user-1',
@@ -43,6 +45,7 @@ async function renderTeams(initialEntry = '/teams') {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
+    mountedRoots.add(root);
 
     await act(async () => {
         root.render(React.createElement(
@@ -156,7 +159,11 @@ beforeEach(() => {
     });
 });
 
-afterEach(() => {
+afterEach(async () => {
+    await act(async () => {
+        mountedRoots.forEach((root) => root.unmount());
+    });
+    mountedRoots.clear();
     document.body.innerHTML = '';
 });
 
