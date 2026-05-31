@@ -1220,13 +1220,17 @@
                             detail: `${number} family`
                         });
                     }
-                    (Array.isArray(player.parents) ? player.parents : []).forEach((parent) => {
-                        const parentKey = parent?.userId || parent?.email || '';
-                        if (!parentKey) return;
-                        const parentName = parent.name || parent.fullName || parent.email || 'Guardian';
+                    [
+                        ...(Array.isArray(player.parents) ? player.parents : []),
+                        ...(Array.isArray(player.contacts) ? player.contacts : []),
+                        ...(Array.isArray(player.guardians) ? player.guardians : [])
+                    ].forEach((contact) => {
+                        const contactKey = contact?.userId || contact?.email || '';
+                        if (!contactKey) return;
+                        const contactName = contact.name || contact.fullName || contact.email || 'Guardian';
                         options.push({
-                            id: getRecipientOptionId(parent.userId ? 'user' : 'email', parentKey),
-                            name: parentName,
+                            id: getRecipientOptionId(contact.userId ? 'user' : 'email', contactKey),
+                            name: contactName,
                             detail: player.name ? `Guardian for ${player.name}` : 'Guardian'
                         });
                     });
