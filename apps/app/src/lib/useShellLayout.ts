@@ -3,12 +3,31 @@ import { Capacitor } from '@capacitor/core';
 
 const desktopQuery = '(min-width: 1024px)';
 
+type MediaQueryWithLegacyListeners = MediaQueryList & {
+  addListener?: (listener: (event: MediaQueryListEvent) => void) => void;
+  removeListener?: (listener: (event: MediaQueryListEvent) => void) => void;
+};
+
 function readDesktopMatch() {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(desktopQuery).matches;
 }
 
 function readNativeRuntime() {
   return typeof window !== 'undefined' && (Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:');
+}
+
+function subscribeToMediaQuery(media: MediaQueryWithLegacyListeners, listener: (event: MediaQueryListEvent) => void) {
+  if (typeof media.addEventListener === 'function' && typeof media.removeEventListener === 'function') {
+    media.addEventListener('change', listener);
+    return () => media.removeEventListener('change', listener);
+  }
+
+  if (typeof media.addListener === 'function' && typeof media.removeListener === 'function') {
+    media.addListener(listener);
+    return () => media.removeListener(listener);
+  }
+
+  return () => undefined;
 }
 
 export function useShellLayout() {
@@ -21,14 +40,13 @@ export function useShellLayout() {
       setIsNative(readNativeRuntime());
       return undefined;
     }
-    const media = window.matchMedia(desktopQuery);
+    const media = window.matchMedia(desktopQuery) as MediaQueryWithLegacyListeners;
     const updateDesktop = () => setIsDesktop(media.matches);
 
     updateDesktop();
     setIsNative(readNativeRuntime());
 
-    media.addEventListener('change', updateDesktop);
-    return () => media.removeEventListener('change', updateDesktop);
+    return subscribeToMediaQuery(media, updateDesktop);
   }, []);
 
   return {
