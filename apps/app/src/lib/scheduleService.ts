@@ -190,17 +190,30 @@ export type LineupDraftPreviewResult = {
   gamePlan: Record<string, any> | null;
 };
 
-function getGoingPlayerIdsFromRsvps(rsvps: any[]) {
+function getGoingPlayerIdsFromRsvps(players: any[], rsvps: any[]) {
   const ids = new Set<string>();
+  const playerIdsByParentUserId = new Map<string, string[]>();
+  (Array.isArray(players) ? players : [])
+    .filter(isActiveRosterPlayer)
+    .forEach((player) => {
+      const playerId = compactString(player?.id);
+      if (!playerId) return;
+      getPlayerParentUserIds(player).forEach((userId) => {
+        playerIdsByParentUserId.set(userId, [...(playerIdsByParentUserId.get(userId) || []), playerId]);
+      });
+    });
+
   (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
     if (normalizeRsvpResponse(rsvp?.response) !== 'going') return;
-    getRsvpPlayerIds(rsvp).forEach((playerId) => ids.add(playerId));
+    const explicitPlayerIds = getRsvpPlayerIds(rsvp);
+    const fallbackPlayerIds = explicitPlayerIds.length ? [] : (playerIdsByParentUserId.get(compactString(rsvp?.userId)) || []);
+    [...explicitPlayerIds, ...fallbackPlayerIds].forEach((playerId) => ids.add(playerId));
   });
   return ids;
 }
 
 function getGoingLineupPlayers(players: any[], rsvps: any[]): AutoFilledLineupPlayer[] {
-  const goingPlayerIds = getGoingPlayerIdsFromRsvps(rsvps);
+  const goingPlayerIds = getGoingPlayerIdsFromRsvps(players, rsvps);
   if (!goingPlayerIds.size) return [];
   return (Array.isArray(players) ? players : [])
     .filter(isActiveRosterPlayer)

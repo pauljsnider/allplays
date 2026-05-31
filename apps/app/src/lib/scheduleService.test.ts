@@ -258,6 +258,28 @@ describe('mobile lineup draft creation', () => {
     });
   });
 
+  it('falls back from parent-only Going RSVP docs to linked roster players', async () => {
+    vi.mocked(getPlayers).mockResolvedValue([
+      { id: 'p1', name: 'Avery', number: '1', parentUserId: 'parent-1' },
+      { id: 'p2', name: 'Blake', number: '2', parents: [{ userId: 'parent-2' }] },
+      { id: 'p3', name: 'Casey', number: '3', guardianUserId: 'parent-3' },
+      { id: 'p4', name: 'Devon', number: '4', parentUserId: 'parent-4' }
+    ] as any);
+    vi.mocked(getRsvps).mockResolvedValue([
+      { userId: 'parent-1', response: 'going' },
+      { userId: 'parent-2', response: 'going' },
+      { userId: 'parent-3', response: 'maybe' },
+      { userId: 'parent-4', response: 'not_going' }
+    ] as any);
+
+    const result = await saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5');
+
+    expect(result.gamePlan?.lineups).toEqual({
+      'Q1-pg': 'p1',
+      'Q1-sg': 'p2'
+    });
+  });
+
   it('rejects unsupported events and empty Going player pools', async () => {
     await expect(saveScheduledGameLineupDraftForApp({ ...event, isDbGame: false }, user, 'basketball-5v5')).rejects.toThrow('scheduled game');
     await expect(saveScheduledGameLineupDraftForApp(event, null as any, 'basketball-5v5')).rejects.toThrow('Sign in');
