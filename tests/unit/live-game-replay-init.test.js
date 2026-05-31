@@ -256,8 +256,8 @@ function buildModuleSource() {
             'const { createPlayAnnouncer } = deps.liveGameAnnouncer;'
         )
         .replace(
-            "import {\n  buildReplaySessionState,\n  collectReplayEventWindow,\n  collectReplayStreamWindow,\n  getReplayElapsedMs,\n  getReplayStartTimeAfterSpeedChange,\n  getReplayTimestampMs\n} from './live-game-replay.js?v=3';",
-            'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs } = deps.liveGameReplay;'
+            "import {\n  buildReplaySessionState,\n  collectReplayEventWindow,\n  collectReplayStreamWindow,\n  getReplayElapsedMs,\n  getReplayStartTimeAfterSpeedChange,\n  getReplayTimestampMs,\n  rebaseReplayStartTimeMs\n} from './live-game-replay.js?v=3';",
+            'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs, rebaseReplayStartTimeMs } = deps.liveGameReplay;'
         )
         .replace(
             /import\s+\{\s*BROADCAST_SETUP_STATUSES,\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildBroadcastSetupSession,\s*buildHighlightShareUrl,\s*buildStreamScoreContext,\s*canAccessNativeCameraCapture,\s*canSaveBroadcastSetupSession,\s*createHighlightClipDraft,\s*resolveBroadcastProviderMetadata,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
@@ -289,7 +289,7 @@ function buildModuleSource() {
         )
         .replace(
             "init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});",
-            "const __initPromise = init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});\nreturn { state, els, initPromise: __initPromise };"
+            "const __initPromise = init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});\nreturn { state, els, initPromise: __initPromise, seekReplay };"
         );
 }
 
@@ -349,6 +349,7 @@ async function bootReplayPage({ replayEvents }) {
         streamUrl: '',
         sport: 'basketball'
     };
+    const replayStartRebaseCalls = [];
     const deps = {
         db: {
             getTeam: async () => ({ id: 'T1', name: 'Raptors', sport: 'basketball' }),
@@ -460,7 +461,11 @@ async function bootReplayPage({ replayEvents }) {
             },
             getReplayElapsedMs: () => 0,
             getReplayStartTimeAfterSpeedChange: () => 0,
-            getReplayTimestampMs: (value) => value?.toMillis?.() ?? value ?? null
+            getReplayTimestampMs: (value) => value?.toMillis?.() ?? value ?? null,
+            rebaseReplayStartTimeMs: (nowMs, currentElapsedMs, replaySpeed) => {
+                replayStartRebaseCalls.push({ nowMs, currentElapsedMs, replaySpeed });
+                return 12345;
+            }
         },
         liveGameVideo: {
             BROADCAST_SETUP_STATUSES: {
@@ -503,6 +508,15 @@ async function bootReplayPage({ replayEvents }) {
             }),
             renderOpponentStatsCards: () => '',
             applyResetEventState() {},
+            applyViewerEventToState: () => ({
+                state: {},
+                shouldRenderLineup: false,
+                shouldRenderScoreboard: false,
+                shouldRenderPlayByPlay: false,
+                shouldRenderStats: false,
+                shouldCelebrateScore: false,
+                shouldCelebrateEvent: false
+            }),
             shouldResetViewerFromGameDoc: () => false,
             collectVisibleLiveEventsSequentially: (events) => events
         },
@@ -534,7 +548,10 @@ async function bootReplayPage({ replayEvents }) {
         awayScore: ensureElement('away-score'),
         chatInput: ensureElement('chat-input'),
         chatLockedNotice: ensureElement('chat-locked-notice'),
-        replayControls: ensureElement('replay-controls')
+        replayControls: ensureElement('replay-controls'),
+        replayStartRebaseCalls,
+        seekReplay: moduleInstance.seekReplay,
+        state: moduleInstance.state
     };
 }
 
@@ -560,6 +577,37 @@ describe('live game replay initialization', () => {
         expect(page.chatInput.disabled).toBe(true);
         expect(page.chatLockedNotice.classList.contains('hidden')).toBe(false);
         expect(page.replayControls.classList.contains('hidden')).toBe(false);
+    });
+
+    it('rebases active replay playback when the scrubber seeks', async () => {
+        const page = await bootReplayPage({
+            replayEvents: [
+                {
+                    id: 'event-1',
+                    type: 'stat',
+                    statKey: 'pts',
+                    value: 2,
+                    period: 'Q1',
+                    gameClockMs: 1000,
+                    description: 'Basket',
+                    createdAt: { toMillis: () => 1000 }
+                }
+            ]
+        });
+
+        page.state.replayPlaying = true;
+        page.state.replaySpeed = 4;
+        page.state.replayStartTime = 1000;
+
+        page.seekReplay(30_000);
+
+        expect(page.replayStartRebaseCalls).toHaveLength(1);
+        expect(page.replayStartRebaseCalls[0]).toMatchObject({
+            currentElapsedMs: 30_000,
+            replaySpeed: 4
+        });
+        expect(page.state.replayStartTime).toBe(12345);
+        expect(page.state.gameClockMs).toBe(30_000);
     });
 
     it('applies the same replay chat lockout whether replay events exist or not', async () => {
