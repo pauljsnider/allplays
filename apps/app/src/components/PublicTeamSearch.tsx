@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
 import { TeamAvatar, TeamLauncherChip, Status } from '../pages/Teams';
@@ -15,10 +15,12 @@ export function PublicTeamSearch(props: PublicTeamSearchProps) {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [activeSearchLocation, setActiveSearchLocation] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState<boolean>(false);
 
   const fetchPublicTeams = useCallback(async (location?: string) => {
     setLoading(true);
     setError('');
+    setHasSearched(true);
     try {
       const teams = await getPublicTeamsByLocation(location);
       setPublicTeams(teams);
@@ -31,18 +33,20 @@ export function PublicTeamSearch(props: PublicTeamSearchProps) {
     }
   }, []);
 
-  useEffect(() => {
-    // Load all public teams on initial mount
-    void fetchPublicTeams();
-  }, [fetchPublicTeams]);
-
   const handleSearch = () => {
-    void fetchPublicTeams(locationQuery);
+    void fetchPublicTeams(locationQuery.trim() || undefined);
+  };
+
+  const handleBrowseAll = () => {
+    void fetchPublicTeams();
   };
 
   const handleClear = () => {
     setLocationQuery('');
-    void fetchPublicTeams(); // Fetch all public teams
+    setPublicTeams([]);
+    setError('');
+    setActiveSearchLocation(null);
+    setHasSearched(false);
   };
 
   const groupedTeams = useMemo(() => {
@@ -105,11 +109,25 @@ export function PublicTeamSearch(props: PublicTeamSearchProps) {
         ) : null}
       </div>
 
-      {loading && !publicTeams.length ? (
+      {!hasSearched && !loading ? (
+        <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-6 text-center">
+          <Users className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
+          <div className="mt-3 text-sm font-black text-gray-900">Search for public teams near you</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">Enter a city, state, or zip code to find nearby teams.</div>
+          <button
+            type="button"
+            className="ghost-button mt-4 !min-h-10 !px-3 text-sm"
+            onClick={handleBrowseAll}
+            disabled={loading}
+          >
+            Browse all public teams
+          </button>
+        </div>
+      ) : loading && !publicTeams.length ? (
         <div className="app-card p-6 text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-900">Loading public teams</div>
-          <div className="mt-1 text-xs font-semibold text-gray-500">Fetching teams across all regions.</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">{activeSearchLocation ? `Searching for teams near "${activeSearchLocation}".` : 'Browsing teams across all regions.'}</div>
         </div>
       ) : error ? (
         <Status tone="error" message={error} />
@@ -128,7 +146,7 @@ export function PublicTeamSearch(props: PublicTeamSearchProps) {
         </div>
       ) : (
         <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500 text-center">
-          No public teams found {activeSearchLocation ? `for "${activeSearchLocation}"` : ''}. Try a different location or clear your search.
+          No public teams found {activeSearchLocation ? `for "${activeSearchLocation}"` : ''}. Try a different location or browse all public teams.
         </div>
       )}
     </section>
