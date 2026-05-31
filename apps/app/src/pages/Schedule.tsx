@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, type ParentScheduleChild } from '../lib/scheduleService';
+import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
@@ -98,6 +98,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [csvImportErrors, setCsvImportErrors] = useState<string[]>([]);
   const [csvFileName, setCsvFileName] = useState('');
   const [importingCsv, setImportingCsv] = useState(false);
+  const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
 
   const refreshSchedule = async () => {
     if (!auth.user) return;
@@ -279,6 +280,27 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setCalendarUrlError(saveError?.message || 'Unable to save calendar link.');
     } finally {
       setSavingCalendarUrl(false);
+    }
+  };
+
+  const handleRemoveCalendarUrl = async (url: string) => {
+    if (!selectedCalendarTeam || !auth.user) return;
+    const confirmed = window.confirm('Remove this external calendar link? Imported events from this feed will disappear after the schedule refreshes.');
+    if (!confirmed) return;
+
+    setRemovingCalendarUrl(url);
+    setCalendarUrlError(null);
+    setStatusMessage(null);
+    setError(null);
+    try {
+      const result = await removeTeamCalendarUrl(selectedCalendarTeam.teamId, url, auth.user);
+      setStatusMessage(result.removed ? 'Calendar link removed. Refreshing schedule…' : 'Calendar link was already removed. Refreshing schedule…');
+      await refreshSchedule();
+      setStatusMessage(result.removed ? 'Calendar link removed and schedule refreshed.' : 'Calendar link was already removed. Schedule refreshed.');
+    } catch (removeError: any) {
+      setCalendarUrlError(removeError?.message || 'Unable to remove calendar link.');
+    } finally {
+      setRemovingCalendarUrl(null);
     }
   };
 
@@ -549,13 +571,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <CalendarSourcePanel
               teamName={selectedCalendarTeam.teamName}
               calendarUrl={calendarUrl}
+              calendarUrls={selectedCalendarTeam.calendarUrls || []}
               error={calendarUrlError}
               saving={savingCalendarUrl}
+              removingUrl={removingCalendarUrl}
               onCalendarUrlChange={(value) => {
                 setCalendarUrl(value);
                 if (calendarUrlError) setCalendarUrlError(null);
               }}
               onSubmit={handleAddCalendarUrl}
+              onRemove={handleRemoveCalendarUrl}
             />
             <ScheduleCsvImportPanel
               teamName={selectedCalendarTeam.teamName}
@@ -696,14 +721,19 @@ function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, error
   );
 }
 
-function CalendarSourcePanel({ teamName, calendarUrl, error, saving, onCalendarUrlChange, onSubmit }: {
+function CalendarSourcePanel({ teamName, calendarUrl, calendarUrls, error, saving, removingUrl, onCalendarUrlChange, onSubmit, onRemove }: {
   teamName: string;
   calendarUrl: string;
+  calendarUrls: string[];
   error: string | null;
   saving: boolean;
+  removingUrl: string | null;
   onCalendarUrlChange: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onRemove: (url: string) => void;
 }) {
+  const savedCalendarUrls = calendarUrls.map((url) => String(url || '').trim()).filter(Boolean);
+
   return (
     <section className="app-card p-4" aria-label="Calendar source">
       <div className="flex items-start gap-3">
@@ -734,6 +764,24 @@ function CalendarSourcePanel({ teamName, calendarUrl, error, saving, onCalendarU
           {saving ? 'Saving…' : 'Save calendar'}
         </button>
       </form>
+      {savedCalendarUrls.length > 0 ? (
+        <div className="mt-4 space-y-2">
+          <div className="text-xs font-black uppercase tracking-wide text-gray-500">Saved calendar links</div>
+          {savedCalendarUrls.map((url) => (
+            <div key={url} className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 break-all text-xs font-semibold text-gray-700">{url}</div>
+              <button
+                type="button"
+                className="secondary-button min-h-9 w-full border-rose-200 text-rose-700 hover:bg-rose-50 sm:w-auto"
+                disabled={saving || removingUrl === url}
+                onClick={() => onRemove(url)}
+              >
+                {removingUrl === url ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {error ? <div className="mt-2 text-xs font-bold text-rose-600" role="alert">{error}</div> : null}
     </section>
   );
@@ -1548,7 +1596,7 @@ function CalendarEventPickerRow({ entry }: { entry: CalendarScheduleEntry }) {
           <div className="mt-2 flex flex-wrap gap-1.5">
             {needsRsvp ? <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase text-primary-700">RSVP needed</span> : null}
             {entry.practiceHomePacketSummary ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Packet</span> : null}
-            {entry.childNames.length > 1 ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase text-gray-600">{entry.childNames.length} players</span> : null}
+            {entry.childNames.length > 1 ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black uppercase text-gray-600">Average {entry.childNames.length} players</span> : null}
           </div>
         </div>
         <span className="mt-1 flex-none rounded-full bg-gray-950 px-3 py-1.5 text-[11px] font-black text-white">{actionLabel}</span>

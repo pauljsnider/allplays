@@ -118,7 +118,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
@@ -457,6 +457,70 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.updateTeam).not.toHaveBeenCalled();
     });
 
+    it('removes one staff calendar URL and is idempotent when absent', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'user-1',
+            calendarUrls: ['https://example.com/remove.ics', 'https://example.com/keep.ics']
+        });
+
+        const removed = await removeTeamCalendarUrl('team-1', ' https://example.com/remove.ics ', user());
+
+        expect(removed).toEqual({
+            removed: true,
+            calendarUrls: ['https://example.com/keep.ics']
+        });
+        expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', {
+            calendarUrls: ['https://example.com/keep.ics']
+        });
+
+        dbMocks.updateTeam.mockClear();
+        const absent = await removeTeamCalendarUrl('team-1', 'https://example.com/missing.ics', user());
+
+        expect(absent).toEqual({
+            removed: false,
+            calendarUrls: ['https://example.com/remove.ics', 'https://example.com/keep.ics']
+        });
+        expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+    });
+
+    it('persists removed staff calendar URLs through the native Firestore patch path', async () => {
+        installWindow('capacitor:');
+        authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'user-1',
+            calendarUrls: ['https://example.com/remove.ics', 'https://example.com/keep.ics']
+        });
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({})
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(removeTeamCalendarUrl('team-1', 'https://example.com/remove.ics', user()))
+            .resolves.toMatchObject({ removed: true, calendarUrls: ['https://example.com/keep.ics'] });
+
+        expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://firestore.googleapis.com/v1/projects/demo-allplays/databases/(default)/documents/teams/team-1?updateMask.fieldPaths=calendarUrls',
+            expect.objectContaining({
+                method: 'PATCH',
+                body: JSON.stringify({
+                    fields: {
+                        calendarUrls: {
+                            arrayValue: {
+                                values: [{ stringValue: 'https://example.com/keep.ics' }]
+                            }
+                        }
+                    }
+                })
+            })
+        );
+    });
+
     it('fails closed when adding a calendar URL without team staff access', async () => {
         dbMocks.getTeam.mockResolvedValue({
             id: 'team-1',
@@ -532,6 +596,19 @@ describe('React app schedule service contract integration', () => {
         }, { uid: 'parent-1', email: 'parent@example.com' })).rejects.toThrow('permission');
     });
 
+    it('fails closed when removing a calendar URL without team staff access', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'owner-2',
+            adminEmails: [],
+            calendarUrls: ['https://example.com/team.ics']
+        });
+
+        await expect(removeTeamCalendarUrl('team-1', 'https://example.com/team.ics', user()))
+            .rejects.toThrow('You do not have permission to manage this team schedule.');
+        expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+    });
 });
 
 describe('scheduleLogic.ts', () => {

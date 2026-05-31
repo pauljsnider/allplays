@@ -158,6 +158,7 @@ export type ParentScheduleEvent = {
   practicePacketCompletions?: PracticePacketCompletion[];
   isTeamStaff?: boolean;
   isTeamRsvpReminderManager?: boolean;
+  calendarUrls?: string[];
   gamePlan?: {
     lineups?: Record<string, string>;
     formationId?: string | null;
@@ -187,6 +188,7 @@ export type ParentScheduleTeamOption = {
   teamName: string;
   playerCount: number;
   eventCount: number;
+  calendarUrls: string[];
 };
 
 export type PracticePacketScheduleRow = {
@@ -689,7 +691,8 @@ export function getParentScheduleTeamOptions(
         teamId: normalizedTeamId,
         teamName: String(teamName || normalizedTeamId).trim() || normalizedTeamId,
         playerCount: 0,
-        eventCount: 0
+        eventCount: 0,
+        calendarUrls: []
       });
       playerIdsByTeam.set(normalizedTeamId, new Set());
     }
@@ -708,6 +711,9 @@ export function getParentScheduleTeamOptions(
     const option = ensureTeam(event.teamId, event.teamName);
     if (!option) return;
     option.eventCount += 1;
+    if (Array.isArray(event.calendarUrls) && event.calendarUrls.length > 0 && option.calendarUrls.length === 0) {
+      option.calendarUrls = event.calendarUrls.map((url) => String(url || '').trim()).filter(Boolean);
+    }
     if (event.childId) {
       playerIdsByTeam.get(option.teamId)?.add(event.childId);
     }
