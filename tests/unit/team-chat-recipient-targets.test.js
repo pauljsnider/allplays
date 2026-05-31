@@ -22,11 +22,15 @@ describe('team chat recipient targets', () => {
 
         expect(html).toContain('await loadRecipientOptions();');
         expect(html).toContain('const players = await getPlayers(teamId);');
+        expect(html).toContain('function getPlayerGuardianRecipientIds(player = {})');
+        expect(html).toContain('const guardianRecipientIds = getPlayerGuardianRecipientIds(player);');
+        expect(html).toContain('recipientIds: guardianRecipientIds');
+        expect(html).toContain('return Array.isArray(option?.recipientIds) && option.recipientIds.length > 0');
         expect(html).toContain('Array.isArray(player.parents)');
         expect(html).toContain('...buildRecipientTargetMetadata()');
         expect(html).toContain("targetType: 'staff'");
         expect(html).toContain("targetType: 'full_team'");
-        expect(html).toContain('recipientIds: Array.from(selectedRecipientIds).sort()');
+        expect(html).toContain('const recipientIds = Array.from(new Set(Array.from(selectedRecipientIds).flatMap((id) => {');
         expect(html).toContain('function buildEmailTargetMetadata()');
         expect(html).toContain("participantRoles.includes('staff')");
         expect(html).toContain('const targetMetadata = buildEmailTargetMetadata();');
