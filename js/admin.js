@@ -2,6 +2,9 @@ import {
     getTeams,
     getAllUsers,
     getOfficials,
+    addOfficial,
+    updateOfficial,
+    deleteOfficial,
     deleteTeam,
     getTelemetryEvents,
     getTelemetryDaily,
@@ -36,6 +39,8 @@ let officialUserLookup = new Map();
 let officialsByTeamId = new Map();
 let currentUser = null; // Declare currentUser
 let showInactiveTeams = false;
+let activeOfficialsTeam = null;
+let activeOfficials = [];
 let activeRegistrationTeam = null;
 let activeRegistrationForms = [];
 let activeRegistrationOptions = [];
@@ -43,6 +48,14 @@ let activeRegistrationOptions = [];
 function inlineJsString(value) {
     return escapeHtml(JSON.stringify(String(value || '')));
 }
+
+function splitDirectoryInput(value) {
+    return String(value || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
 let telemetryState = {
     loaded: false,
     loading: false,
@@ -682,12 +695,174 @@ function renderTeams(teams) {
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <a href="${manageOfficialsHref}" class="text-indigo-600 hover:text-indigo-900 mr-4">Manage Officials</a>
                 <button onclick="window.openRegistrationFormsAdmin(${inlineJsString(team.id)})" class="text-indigo-600 hover:text-indigo-900 mr-4">Registration forms</button>
+                <button onclick="window.openOfficialsAdmin(${inlineJsString(team.id)})" class="text-indigo-600 hover:text-indigo-900 mr-4">Officials</button>
                 <a href="edit-team.html?teamId=${encodeURIComponent(team.id)}" class="text-indigo-600 hover:text-indigo-900 mr-4">Edit</a>
                 <button onclick="window.deleteTeamAdmin(${inlineJsString(team.id)}, ${inlineJsString(team.name)})" class="text-red-600 hover:text-red-900">Deactivate</button>
             </td>
         </tr>
     `;
     }).join('');
+}
+
+function resetOfficialsAdminFormState() {
+    document.getElementById('officials-admin-id').value = '';
+    document.getElementById('officials-admin-form').reset();
+    document.getElementById('officials-admin-save-btn').textContent = 'Save official';
+    document.getElementById('officials-admin-cancel-btn').classList.add('hidden');
+    document.getElementById('officials-admin-message').textContent = '';
+}
+
+function renderOfficialsAdminList() {
+    const list = document.getElementById('officials-admin-list');
+    if (!activeOfficials.length) {
+        list.innerHTML = '<p class="text-sm text-gray-500">No officials saved for this team yet.</p>';
+        return;
+    }
+
+    list.innerHTML = activeOfficials.map((official) => {
+        const roles = Array.isArray(official.roles) ? official.roles : [];
+        const tags = Array.isArray(official.tags) ? official.tags : [];
+        const contact = [official.email, official.phone].filter(Boolean).join(' • ');
+        return `
+            <div class="rounded border border-gray-200 p-3">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <p class="font-semibold text-gray-900">${escapeHtml(official.name || 'Official')}</p>
+                        <p class="text-sm text-gray-600">${escapeHtml(contact || 'No contact saved')}</p>
+                    </div>
+                    <div class="flex gap-2 text-sm">
+                        <button type="button" class="font-medium text-indigo-600 hover:text-indigo-800" data-edit-official-id="${escapeHtml(official.id)}">Edit</button>
+                        <button type="button" class="font-medium text-red-600 hover:text-red-800" data-delete-official-id="${escapeHtml(official.id)}">Remove</button>
+                    </div>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-1">
+                    ${roles.length
+                        ? roles.map((role) => `<span class="inline-block rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">${escapeHtml(role)}</span>`).join('')
+                        : '<span class="text-xs text-gray-400">No roles saved</span>'}
+                </div>
+                ${tags.length ? `<div class="mt-2 flex flex-wrap gap-1">${tags.map((tag) => `<span class="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+            </div>
+        `;
+    }).join('');
+}
+
+async function loadOfficialsForActiveTeam() {
+    const teamId = activeOfficialsTeam?.id;
+    const list = document.getElementById('officials-admin-list');
+    if (!teamId || !list) return;
+
+    list.innerHTML = '<p class="text-sm text-gray-500">Loading officials...</p>';
+    try {
+        const officials = await getOfficials(teamId);
+        if (activeOfficialsTeam?.id !== teamId) return;
+
+        activeOfficials = officials;
+        renderOfficialsAdminList();
+    } catch (error) {
+        console.error('Error loading officials for admin modal:', error);
+        if (activeOfficialsTeam?.id !== teamId) return;
+
+        activeOfficials = [];
+        list.innerHTML = '<p class="text-sm text-red-600">Failed to load officials. Please try again.</p>';
+    }
+}
+
+function getOfficialsAdminDraft() {
+    return {
+        name: document.getElementById('officials-admin-name').value.trim(),
+        email: document.getElementById('officials-admin-email').value.trim(),
+        phone: document.getElementById('officials-admin-phone').value.trim(),
+        roles: splitDirectoryInput(document.getElementById('officials-admin-roles').value),
+        tags: splitDirectoryInput(document.getElementById('officials-admin-tags').value)
+    };
+}
+
+window.openOfficialsAdmin = async function (teamId) {
+    activeOfficialsTeam = allTeams.find((team) => team.id === teamId) || null;
+    if (!activeOfficialsTeam) return;
+
+    document.getElementById('officials-admin-team-name').textContent = activeOfficialsTeam.name || 'Team';
+    document.getElementById('officials-admin-modal').classList.remove('hidden');
+    window.startOfficialsAdminEdit();
+    await loadOfficialsForActiveTeam();
+};
+
+window.closeOfficialsAdmin = function () {
+    document.getElementById('officials-admin-modal').classList.add('hidden');
+};
+
+window.resetOfficialsAdminForm = function () {
+    resetOfficialsAdminFormState();
+};
+
+window.startOfficialsAdminEdit = function (officialId = '') {
+    const official = activeOfficials.find((item) => item.id === officialId) || {};
+    const form = document.getElementById('officials-admin-form');
+    document.getElementById('officials-admin-id').value = official.id || '';
+    document.getElementById('officials-admin-name').value = official.name || '';
+    document.getElementById('officials-admin-email').value = official.email || '';
+    document.getElementById('officials-admin-phone').value = official.phone || '';
+    document.getElementById('officials-admin-roles').value = Array.isArray(official.roles) ? official.roles.join(', ') : '';
+    document.getElementById('officials-admin-tags').value = Array.isArray(official.tags) ? official.tags.join(', ') : '';
+    document.getElementById('officials-admin-save-btn').textContent = official.id ? 'Update official' : 'Save official';
+    document.getElementById('officials-admin-cancel-btn').classList.toggle('hidden', !official.id);
+    document.getElementById('officials-admin-message').textContent = '';
+    form.classList.remove('hidden');
+};
+
+async function saveOfficialsAdmin(event) {
+    event.preventDefault();
+    if (!activeOfficialsTeam) return;
+
+    const teamId = activeOfficialsTeam.id;
+    const officialId = document.getElementById('officials-admin-id').value;
+    const message = document.getElementById('officials-admin-message');
+    const draft = getOfficialsAdminDraft();
+
+    try {
+        if (officialId) {
+            await updateOfficial(teamId, officialId, draft);
+        } else {
+            await addOfficial(teamId, draft);
+        }
+    } catch (error) {
+        console.error('Error saving team official:', error);
+        message.textContent = error.message || 'Failed to save official.';
+        return;
+    }
+
+    message.textContent = officialId ? 'Official updated.' : 'Official saved.';
+    resetOfficialsAdminFormState();
+    document.getElementById('officials-admin-form').classList.remove('hidden');
+    await loadOfficialsForActiveTeam();
+}
+
+async function handleOfficialsAdminListClick(event) {
+    const editId = event.target.dataset.editOfficialId;
+    const deleteId = event.target.dataset.deleteOfficialId;
+
+    if (editId) {
+        window.startOfficialsAdminEdit(editId);
+        return;
+    }
+    if (!deleteId || !activeOfficialsTeam) return;
+
+    const official = activeOfficials.find((item) => item.id === deleteId);
+    if (!confirm(`Remove ${official?.name || 'this official'} from ${activeOfficialsTeam.name || 'this team'}?`)) return;
+
+    const message = document.getElementById('officials-admin-message');
+    try {
+        await deleteOfficial(activeOfficialsTeam.id, deleteId);
+        if (document.getElementById('officials-admin-id').value === deleteId) {
+            resetOfficialsAdminFormState();
+            document.getElementById('officials-admin-form').classList.remove('hidden');
+        }
+        message.textContent = 'Official removed.';
+        await loadOfficialsForActiveTeam();
+    } catch (error) {
+        console.error('Error removing team official:', error);
+        message.textContent = error.message || 'Failed to remove official.';
+    }
 }
 
 function renderUsers(users) {
@@ -1031,6 +1206,8 @@ function setupTabs() {
 }
 
 function setupSearch() {
+    document.getElementById('officials-admin-form').addEventListener('submit', saveOfficialsAdmin);
+    document.getElementById('officials-admin-list').addEventListener('click', handleOfficialsAdminListClick);
     document.getElementById('registration-form-editor').addEventListener('submit', saveRegistrationForm);
 
     const inactiveToggle = document.getElementById('filter-inactive-teams');
