@@ -79,9 +79,13 @@ import {
   type ScheduleRideSummary
 } from './scheduleLogic';
 import {
+  LINEUP_FORMATIONS,
+  buildAutoFilledLineupDraft,
   buildLineupPublishPayload,
   buildLineupPublishMessage,
   countLineupChanges,
+  getLineupFormation,
+  type AutoFilledLineupPlayer,
   type GamePlanPublishPayloadInput
 } from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
@@ -176,6 +180,121 @@ export type PublishGamePlanResult = {
   gamePlan: Record<string, any>;
   notificationError: string | null;
 };
+
+export type LineupDraftPreviewResult = {
+  formationId: string;
+  formationName: string;
+  numPeriods: number;
+  positions: Array<{ id: string; name: string; playerId: string | null; playerName: string | null; playerNumber: string | null }>;
+  goingPlayers: AutoFilledLineupPlayer[];
+  gamePlan: Record<string, any> | null;
+};
+
+function getGoingPlayerIdsFromRsvps(players: any[], rsvps: any[]) {
+  const ids = new Set<string>();
+  const playerIdsByParentUserId = new Map<string, string[]>();
+  (Array.isArray(players) ? players : [])
+    .filter(isActiveRosterPlayer)
+    .forEach((player) => {
+      const playerId = compactString(player?.id);
+      if (!playerId) return;
+      getPlayerParentUserIds(player).forEach((userId) => {
+        playerIdsByParentUserId.set(userId, [...(playerIdsByParentUserId.get(userId) || []), playerId]);
+      });
+    });
+
+  (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
+    if (normalizeRsvpResponse(rsvp?.response) !== 'going') return;
+    const explicitPlayerIds = getRsvpPlayerIds(rsvp);
+    const fallbackPlayerIds = explicitPlayerIds.length ? [] : (playerIdsByParentUserId.get(compactString(rsvp?.userId)) || []);
+    [...explicitPlayerIds, ...fallbackPlayerIds].forEach((playerId) => ids.add(playerId));
+  });
+  return ids;
+}
+
+function getGoingLineupPlayers(players: any[], rsvps: any[]): AutoFilledLineupPlayer[] {
+  const goingPlayerIds = getGoingPlayerIdsFromRsvps(players, rsvps);
+  if (!goingPlayerIds.size) return [];
+  return (Array.isArray(players) ? players : [])
+    .filter(isActiveRosterPlayer)
+    .map((player: any) => ({
+      id: compactString(player?.id),
+      name: normalizePlayerName(player),
+      number: normalizePlayerNumber(player) || null
+    }))
+    .filter((player) => player.id && goingPlayerIds.has(player.id));
+}
+
+function buildLineupDraftPreview(formationId: string, goingPlayers: AutoFilledLineupPlayer[], gamePlan: Record<string, any> | null | undefined): LineupDraftPreviewResult {
+  const formation = getLineupFormation(formationId);
+  if (!formation) {
+    throw new Error('Select a supported formation before saving a lineup draft.');
+  }
+  let draft: Record<string, any> | null = null;
+  try {
+    draft = buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: gamePlan || {} });
+  } catch (error: any) {
+    if (!String(error?.message || '').includes('No Going players')) throw error;
+  }
+  return {
+    formationId: formation.id,
+    formationName: formation.name,
+    numPeriods: formation.numPeriods,
+    positions: formation.positions.map((position, index) => {
+      const player = goingPlayers[index] || null;
+      return {
+        id: position.id,
+        name: position.name,
+        playerId: player?.id || null,
+        playerName: player?.name || null,
+        playerNumber: player?.number || null
+      };
+    }),
+    goingPlayers,
+    gamePlan: draft
+  };
+}
+
+function assertLineupDraftEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  if (!user?.uid) throw new Error('Sign in before saving a lineup draft.');
+  if (!event.isDbGame) throw new Error('A scheduled game is required before saving a lineup draft.');
+  if (event.type === 'practice') throw new Error('Lineup drafts are available only for games.');
+  if (event.isCancelled) throw new Error('Cancelled games cannot save lineup drafts.');
+  if (!event.isTeamStaff) throw new Error('Only team coaches and admins can save lineup drafts.');
+}
+
+export async function loadAutoFilledLineupDraftPreviewForApp(event: ParentScheduleEvent, user: AuthUser | null, formationId: string): Promise<LineupDraftPreviewResult> {
+  assertLineupDraftEvent(event, user);
+  if (!LINEUP_FORMATIONS[compactString(formationId)]) {
+    throw new Error('Select a supported formation before saving a lineup draft.');
+  }
+  const [players, rsvps] = await Promise.all([
+    loadPlayers(event.teamId),
+    loadRsvps(event.teamId, event.id)
+  ]);
+  return buildLineupDraftPreview(formationId, getGoingLineupPlayers(players, rsvps), event.gamePlan || {});
+}
+
+export async function saveScheduledGameLineupDraftForApp(event: ParentScheduleEvent, user: AuthUser | null, formationId: string): Promise<LineupDraftPreviewResult> {
+  assertLineupDraftEvent(event, user);
+  const [players, rsvps] = await Promise.all([
+    loadPlayers(event.teamId),
+    loadRsvps(event.teamId, event.id)
+  ]);
+  const goingPlayers = getGoingLineupPlayers(players, rsvps);
+  const nextGamePlan = buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: event.gamePlan || {} });
+  const payload: Record<string, unknown> = { gamePlan: nextGamePlan };
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Lineup draft save');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST lineup draft updateGame:', error);
+    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
+  }
+
+  return buildLineupDraftPreview(formationId, goingPlayers, nextGamePlan);
+}
 
 export async function publishGamePlanForApp(event: ParentScheduleEvent, user: AuthUser): Promise<PublishGamePlanResult> {
   if (!event.isDbGame) {
@@ -273,7 +392,7 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryD
 }
 
 function isNativeRuntime() {
-  return window.location.protocol === 'capacitor:';
+  return typeof window !== 'undefined' && window.location.protocol === 'capacitor:';
 }
 
 function getProjectId() {
