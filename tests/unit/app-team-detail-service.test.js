@@ -10,7 +10,9 @@ vi.mock('../../js/db.js', () => ({
     getPlayers: vi.fn(),
     getPlayerTrackingStatuses: vi.fn(),
     getPublicTrackingItems: vi.fn(),
-    getTeam: vi.fn()
+    getTeam: vi.fn(),
+    inviteAdmin: vi.fn(),
+    addTeamAdminEmail: vi.fn()
 }));
 
 vi.mock('../../js/firebase.js', () => ({
@@ -21,16 +23,61 @@ vi.mock('../../js/firebase.js', () => ({
     where: vi.fn((field, op, value) => ({ field, op, value }))
 }));
 
+vi.mock('../../js/auth.js', () => ({
+    sendInviteEmail: vi.fn()
+}));
+
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildTeamDetailModel, loadParentTeamDetail } from '../../apps/app/src/lib/teamDetailService.ts';
+import { buildAdminAcceptInviteUrl, buildTeamDetailModel, inviteTeamAdminForApp, loadParentTeamDetail } from '../../apps/app/src/lib/teamDetailService.ts';
 import { getDocs } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam, inviteAdmin, addTeamAdminEmail } from '../../js/db.js';
+import { sendInviteEmail } from '../../js/auth.js';
 
 describe('React app team detail model', () => {
+
+    it('creates one normalized admin invite for the app and builds fallback links', async () => {
+        inviteAdmin.mockResolvedValue({ code: ' CODE 1 ', teamName: 'Bears', existingUser: false });
+        addTeamAdminEmail.mockResolvedValue(undefined);
+        sendInviteEmail.mockResolvedValue({ success: true });
+
+        const result = await inviteTeamAdminForApp(' team-1 ', ' Coach@Example.com ');
+
+        expect(inviteAdmin).toHaveBeenCalledWith('team-1', 'coach@example.com');
+        expect(addTeamAdminEmail).toHaveBeenCalledWith('team-1', 'coach@example.com');
+        expect(sendInviteEmail).toHaveBeenCalledWith('coach@example.com', 'CODE 1', 'admin', { teamName: 'Bears' });
+        expect(result).toMatchObject({
+            email: 'coach@example.com',
+            status: 'sent',
+            code: 'CODE 1',
+            teamName: 'Bears',
+            acceptInviteUrl: 'http://localhost:3000/app#/accept-invite?code=CODE+1&type=admin'
+        });
+        expect(buildAdminAcceptInviteUrl('A&B', 'https://allplays.ai')).toBe('https://allplays.ai/app#/accept-invite?code=A%26B&type=admin');
+    });
+
+    it('returns fallback invite code details when app email delivery fails', async () => {
+        inviteAdmin.mockResolvedValue({ code: 'FALLBACK1', teamName: 'Bears', existingUser: false });
+        addTeamAdminEmail.mockResolvedValue(undefined);
+        sendInviteEmail.mockRejectedValue(new Error('SMTP offline'));
+
+        const result = await inviteTeamAdminForApp('team-1', 'coach@example.com');
+
+        expect(result.status).toBe('fallback_code');
+        expect(result.code).toBe('FALLBACK1');
+        expect(result.acceptInviteUrl).toBe('http://localhost:3000/app#/accept-invite?code=FALLBACK1&type=admin');
+    });
+
+    it('rejects missing team id or email before creating app admin invites', async () => {
+        inviteAdmin.mockClear();
+        await expect(inviteTeamAdminForApp('', 'coach@example.com')).rejects.toThrow('Team ID is required.');
+        await expect(inviteTeamAdminForApp('team-1', '   ')).rejects.toThrow('Admin email is required.');
+        expect(inviteAdmin).not.toHaveBeenCalled();
+    });
+
     it('projects team.html parent features into the native team model', () => {
         const model = buildTeamDetailModel({
             teamId: 'team-1',
