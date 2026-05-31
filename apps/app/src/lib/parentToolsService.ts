@@ -19,7 +19,8 @@ import {
   uploadTeamMediaFile,
   uploadTeamMediaPhoto,
   deleteTeamMediaItem,
-  updateTeamMediaItem
+  updateTeamMediaItem,
+  moveTeamMediaItems
 } from '../../../../js/db.js';
 import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
 import { db, doc, collection, getDoc, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
@@ -221,6 +222,11 @@ export async function updateTeamMediaItemForApp(teamId: string, itemId: string, 
   if (!teamId || !itemId) throw new Error('Missing team or media item ID.');
   if (!cleanTitle) throw new Error('Media item title cannot be empty.');
   return updateTeamMediaItem(teamId, itemId, { title: cleanTitle });
+}
+
+export async function moveTeamMediaItemForApp(teamId: string, itemId: string, targetFolderId: string) {
+  if (!teamId || !itemId || !targetFolderId) throw new Error('Missing team, media item, or destination album ID.');
+  return moveTeamMediaItems(teamId, [itemId], targetFolderId);
 }
 
 export function getLegacyUrl(path: string, params: Record<string, string> = {}, hashParams: Record<string, string> = {}) {
