@@ -26,6 +26,7 @@ import {
   upsertPracticePacketCompletion
 } from '../../../../js/db.js';
 import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
+import { db, doc, collection, getDocs, runTransaction, increment, serverTimestamp } from '../../../../js/firebase.js';
 import {
   expandRecurrence,
   extractOpponent,
@@ -139,6 +140,31 @@ export type GameScoreInput = {
 export type GameScoreSnapshot = {
   homeScore: number;
   awayScore: number;
+};
+
+export type ScheduleHomeScoringPlayer = {
+  id: string;
+  name: string;
+  number: string;
+  points: number;
+};
+
+export type PlayerScoringStatInput = {
+  statKey: 'pts';
+  value: 2;
+  teamSide?: 'home' | 'away';
+  playerName?: string | null;
+  playerNumber?: string | number | null;
+};
+
+export type PlayerScoringStatResult = GameScoreSnapshot & {
+  playerId: string;
+  playerName: string;
+  playerNumber: string;
+  statKey: 'pts';
+  value: 2;
+  playerPoints: number;
+  liveEvent: Record<string, unknown>;
 };
 
 export type CancelScheduledGameResult = {
@@ -711,6 +737,52 @@ async function loadPlayers(teamId: string) {
     () => Promise.resolve(getPlayers(teamId, { includeInactive: true })),
     () => nativeListCollection(`teams/${encodeURIComponent(teamId)}/players`)
   );
+}
+
+function normalizePlayerName(player: any) {
+  return compactString(player?.name || player?.displayName || player?.playerName) || 'Player';
+}
+
+function normalizePlayerNumber(player: any) {
+  return compactString(player?.number ?? player?.num ?? player?.jerseyNumber ?? player?.playerNumber ?? '');
+}
+
+function isActiveRosterPlayer(player: any) {
+  return player?.active !== false && player?.archived !== true && (!player?.status || player.status === 'active');
+}
+
+async function loadAggregatedStats(teamId: string, gameId: string) {
+  return readWithNativeFallback(
+    `aggregated stats ${teamId}/${gameId}`,
+    async () => {
+      const snapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    () => nativeListCollection(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats`)
+  );
+}
+
+export async function loadHomeScoringPlayers(teamId: string, gameId: string): Promise<ScheduleHomeScoringPlayer[]> {
+  if (!teamId || !gameId) return [];
+  const [players, statRows] = await Promise.all([
+    loadPlayers(teamId),
+    loadAggregatedStats(teamId, gameId).catch(() => [])
+  ]);
+  const statsByPlayerId = new Map((statRows || []).map((row: any) => [String(row.id || ''), row?.stats || {}]));
+  return (Array.isArray(players) ? players : [])
+    .filter(isActiveRosterPlayer)
+    .map((player: any) => {
+      const id = compactString(player?.id);
+      if (!id) return null;
+      const stats = (statsByPlayerId.get(id) || {}) as Record<string, unknown>;
+      return {
+        id,
+        name: normalizePlayerName(player),
+        number: normalizePlayerNumber(player),
+        points: normalizeGameScoreValue(stats.pts)
+      };
+    })
+    .filter(Boolean) as ScheduleHomeScoringPlayer[];
 }
 
 function normalizeChildLinks(user: AuthUser, profile: Record<string, unknown>): ParentScheduleChild[] {
@@ -1575,6 +1647,151 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
   }
 
   return payload;
+}
+
+export function buildPlayerScoringLiveEvent({
+  playerId,
+  playerName,
+  playerNumber,
+  statKey,
+  value,
+  homeScore,
+  awayScore,
+  user
+}: {
+  playerId: string;
+  playerName: string;
+  playerNumber: string;
+  statKey: 'pts';
+  value: 2;
+  homeScore: number;
+  awayScore: number;
+  user: AuthUser;
+}) {
+  const identity = playerNumber ? `#${playerNumber} ${playerName}` : playerName;
+  return {
+    type: 'stat',
+    playerId,
+    playerName,
+    playerNumber,
+    statKey,
+    value,
+    isOpponent: false,
+    description: `${identity} scored ${value} points.`,
+    homeScore: normalizeGameScoreValue(homeScore),
+    awayScore: normalizeGameScoreValue(awayScore),
+    createdBy: user.uid,
+    createdByName: user.displayName || user.email || 'Staff',
+    createdAt: serverTimestamp()
+  };
+}
+
+export async function recordPlayerScoringStat(teamId: string, gameId: string, playerId: string, stat: PlayerScoringStatInput, user: AuthUser): Promise<PlayerScoringStatResult> {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before recording player scoring.');
+  }
+  if (!playerId) {
+    throw new Error('Select a player before recording player scoring.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before recording player scoring.');
+  }
+  if (stat?.statKey !== 'pts' || stat?.value !== 2) {
+    throw new Error('Only the +2 player scoring action is supported here.');
+  }
+
+  const playerName = compactString(stat.playerName) || 'Player';
+  const playerNumber = compactString(stat.playerNumber);
+  const teamSide = stat.teamSide === 'away' ? 'away' : 'home';
+  const gamePath = `teams/${teamId}/games/${gameId}`;
+  const statsPath = `${gamePath}/aggregatedStats/${playerId}`;
+  const liveEventsPath = `${gamePath}/liveEvents`;
+
+  try {
+    return await withTimeout(runTransaction(db, async (transaction: any) => {
+      const gameRef = doc(db, gamePath);
+      const statsRef = doc(db, statsPath);
+      const eventRef = doc(collection(db, liveEventsPath));
+      const [gameSnap, statsSnap] = await Promise.all([
+        transaction.get(gameRef),
+        transaction.get(statsRef)
+      ]);
+      const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+      const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
+      const awayScore = normalizeGameScoreValue(gameData.awayScore) + (teamSide === 'away' ? 2 : 0);
+      const homeScore = normalizeGameScoreValue(gameData.homeScore) + (teamSide === 'home' ? 2 : 0);
+      const playerPoints = normalizeGameScoreValue(statsData?.stats?.pts) + 2;
+      const scoreUpdatedAt = new Date();
+      const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user });
+
+      transaction.set(gameRef, {
+        homeScore,
+        awayScore,
+        scoreUpdatedAt,
+        scoreUpdatedBy: user.uid
+      }, { merge: true });
+      transaction.set(statsRef, {
+        playerName,
+        playerNumber,
+        stats: { pts: increment(2) }
+      }, { merge: true });
+      transaction.set(eventRef, liveEvent);
+
+      return {
+        homeScore,
+        awayScore,
+        playerId,
+        playerName,
+        playerNumber,
+        statKey: 'pts',
+        value: 2,
+        playerPoints,
+        liveEvent
+      };
+    }), 'Player scoring stat');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST player scoring stat:', error);
+    const [gameDoc, statsDoc] = await Promise.all([
+      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
+      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`)
+    ]);
+    const awayScore = normalizeGameScoreValue(gameDoc?.awayScore) + (teamSide === 'away' ? 2 : 0);
+    const homeScore = normalizeGameScoreValue(gameDoc?.homeScore) + (teamSide === 'home' ? 2 : 0);
+    const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
+    const playerPoints = normalizeGameScoreValue(existingStats.pts) + 2;
+    existingStats.pts = playerPoints;
+    const scoreUpdatedAt = new Date();
+    const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user });
+
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
+      homeScore,
+      awayScore,
+      scoreUpdatedAt,
+      scoreUpdatedBy: user.uid
+    });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`, {
+      playerName,
+      playerNumber,
+      stats: existingStats
+    });
+    await nativeCreateDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`, {
+      ...liveEvent,
+      createdAt: scoreUpdatedAt
+    });
+
+    return {
+      homeScore,
+      awayScore,
+      playerId,
+      playerName,
+      playerNumber,
+      statKey: 'pts',
+      value: 2,
+      playerPoints,
+      liveEvent
+    };
+  }
 }
 
 function assertStaffRsvpReminderEvent(event: ParentScheduleEvent, user: AuthUser | null) {

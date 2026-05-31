@@ -238,14 +238,16 @@ describe('React app desktop Schedule controls', () => {
     });
 
     it('groups duplicate family event rows into one visible schedule card', async () => {
+        const gameDate = futureDate(7 * 24);
+
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             children: [
                 { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
                 { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
             ],
             events: [
-                event({ childId: 'player-1', childName: 'Pat', eventKey: 'team-1::game-1::player-1' }),
-                event({ childId: 'player-2', childName: 'Sam', eventKey: 'team-1::game-1::player-2' })
+                event({ childId: 'player-1', childName: 'Pat', eventKey: 'team-1::game-1::player-1', date: gameDate }),
+                event({ childId: 'player-2', childName: 'Sam', eventKey: 'team-1::game-1::player-2', date: gameDate })
             ]
         });
 
