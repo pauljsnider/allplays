@@ -112,7 +112,7 @@ describe('React app Home service', () => {
 
         const home = await loadParentHome(user);
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: true });
         expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user);
         expect(dbMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith(user.uid, [
             expect.objectContaining({ teamId: 'team-1', playerId: 'player-1' })
@@ -189,6 +189,36 @@ describe('React app Home service', () => {
             unreadMessages: 0
         }));
         expect(home.fees).toEqual([]);
+    });
+
+    it('loads detailed schedule data for the secondary Home refresh', async () => {
+        scheduleMocks.loadParentSchedule.mockImplementation((_, options = {}) => Promise.resolve({
+            children: [
+                {
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star'
+                }
+            ],
+            events: [event(options.hydrateDetails === false ? {
+                assignments: [{ role: 'Snacks', claimable: true }],
+                myRsvp: 'not_responded'
+            } : {
+                assignments: [{ role: 'Snacks', claimable: true, claim: { claimedByUserId: 'other-parent' } }],
+                myRsvp: 'going'
+            })]
+        }));
+        const { loadParentHomeSummary, loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const summary = await loadParentHomeSummary(user, { force: true });
+        const detailed = await loadParentHomeWithSecondaryData(user, { force: true });
+
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, { hydrateDetails: true });
+        expect(summary.actionItems.map((item) => item.kind)).toEqual(expect.arrayContaining(['rsvp', 'assignment']));
+        expect(detailed.actionItems.map((item) => item.kind)).not.toEqual(expect.arrayContaining(['rsvp', 'assignment']));
+        expect(detailed.metrics.rsvpNeeded).toBe(0);
     });
 
     it('returns an empty model without touching Firebase when signed out', async () => {

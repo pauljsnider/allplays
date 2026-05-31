@@ -18,7 +18,7 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
     return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
   }
 
-  const schedule = await loadParentScheduleSummary(user);
+  const schedule = await loadParentSchedule(user, { hydrateDetails: true });
   const [chatInbox, rawFees] = await Promise.all([
     loadChatInbox(user).catch((error) => {
       console.warn('[home-service] Unable to load chat inbox:', error);
