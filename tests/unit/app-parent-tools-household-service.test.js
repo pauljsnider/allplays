@@ -5,6 +5,10 @@ const familyPlanMocks = vi.hoisted(() => ({
     readFamilyMembers: vi.fn()
 }));
 
+const dbMocks = vi.hoisted(() => ({
+    moveTeamMediaItems: vi.fn()
+}));
+
 vi.mock('../../js/family-plan.js', () => familyPlanMocks);
 vi.mock('../../js/db.js', () => ({
     createFamilyShareToken: vi.fn(),
@@ -24,7 +28,10 @@ vi.mock('../../js/db.js', () => ({
     revokeFamilyShareToken: vi.fn(),
     updateFamilyShareTokenCalendars: vi.fn(),
     uploadTeamMediaFile: vi.fn(),
-    uploadTeamMediaPhoto: vi.fn()
+    uploadTeamMediaPhoto: vi.fn(),
+    deleteTeamMediaItem: vi.fn(),
+    updateTeamMediaItem: vi.fn(),
+    moveTeamMediaItems: dbMocks.moveTeamMediaItems
 }));
 vi.mock('../../js/firebase.js', () => ({
     db: {},
@@ -68,7 +75,8 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({ loadParentSchedule
 
 import {
     createParentHouseholdMemberInvite,
-    loadParentHouseholdInviteModel
+    loadParentHouseholdInviteModel,
+    moveTeamMediaItemForApp
 } from '../../apps/app/src/lib/parentToolsService.ts';
 
 const user = {
@@ -80,6 +88,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     familyPlanMocks.readFamilyMembers.mockResolvedValue([]);
     familyPlanMocks.addPendingFamilyMember.mockResolvedValue({ code: 'HOME1234', inviteUrl: 'accept-invite.html?code=HOME1234' });
+    dbMocks.moveTeamMediaItems.mockResolvedValue(undefined);
 });
 
 describe('Parent Tools household invite service', () => {
@@ -122,5 +131,21 @@ describe('Parent Tools household invite service', () => {
             playerNumber: '9'
         }), { existingMembers: [{ id: 'member-1', email: 'old@example.com', status: 'pending' }] });
         expect(result).toEqual({ code: 'HOME1234', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME1234' });
+    });
+});
+
+
+describe('React app team media move service', () => {
+    it('moves one media item through the legacy move helper', async () => {
+        await moveTeamMediaItemForApp('team-1', 'item-1', 'folder-2');
+
+        expect(dbMocks.moveTeamMediaItems).toHaveBeenCalledWith('team-1', ['item-1'], 'folder-2');
+    });
+
+    it('rejects missing move identifiers before calling the legacy helper', async () => {
+        await expect(moveTeamMediaItemForApp('', 'item-1', 'folder-2')).rejects.toThrow('Missing team, media item, or destination album ID.');
+        await expect(moveTeamMediaItemForApp('team-1', '', 'folder-2')).rejects.toThrow('Missing team, media item, or destination album ID.');
+        await expect(moveTeamMediaItemForApp('team-1', 'item-1', '')).rejects.toThrow('Missing team, media item, or destination album ID.');
+        expect(dbMocks.moveTeamMediaItems).not.toHaveBeenCalled();
     });
 });

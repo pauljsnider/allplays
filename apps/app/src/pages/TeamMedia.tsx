@@ -28,6 +28,7 @@ import {
   uploadParentTeamMediaPhoto,
   deleteTeamMediaItemForApp,
   updateTeamMediaItemForApp,
+  moveTeamMediaItemForApp,
   type TeamMediaFolder,
   type TeamMediaItem,
   type TeamMediaModel
@@ -50,6 +51,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [creatingAlbum, setCreatingAlbum] = useState(false);
   const [deletingItemId, setDeletingItemId] = useState('');
   const [renamingItemId, setRenamingItemId] = useState('');
+  const [movingItemId, setMovingItemId] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -120,6 +122,29 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       setError(deleteError?.message || 'Unable to delete media item.');
     } finally {
       setDeletingItemId('');
+    }
+  };
+
+  const handleMoveItem = async (item: TeamMediaItem, targetFolderId: string) => {
+    if (!teamId || !item?.id) return;
+    if (!targetFolderId || targetFolderId === activeFolder?.id) {
+      setError('Choose a different album to move this item.');
+      setMessage('');
+      return;
+    }
+
+    setMovingItemId(item.id);
+    setError('');
+    setMessage('');
+    try {
+      await moveTeamMediaItemForApp(teamId, item.id, targetFolderId);
+      await refresh({ showLoading: false, preferredFolderId: targetFolderId });
+      const destinationName = model?.folders.find((folder) => folder.id === targetFolderId)?.name || 'the selected album';
+      setMessage(`Media item moved to ${destinationName}.`);
+    } catch (moveError: any) {
+      setError(moveError?.message || 'Unable to move media item.');
+    } finally {
+      setMovingItemId('');
     }
   };
 
@@ -395,7 +420,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.length ? filteredItems.map((item) => (
-            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} currentUserId={auth.user?.uid || ''} deleting={deletingItemId === item.id} renaming={renamingItemId === item.id} onRenameItem={handleRenameItem} onDeleteItem={handleDeleteItem} />
+            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} currentUserId={auth.user?.uid || ''} folders={model.folders} currentFolderId={activeFolder?.id || ''} deleting={deletingItemId === item.id} renaming={renamingItemId === item.id} moving={movingItemId === item.id} onRenameItem={handleRenameItem} onDeleteItem={handleDeleteItem} onMoveItem={handleMoveItem} />
           )) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
@@ -459,25 +484,37 @@ function TeamMediaItemCard({
   onStatus,
   canManage,
   currentUserId,
+  folders,
+  currentFolderId,
   deleting,
   renaming,
+  moving,
   onRenameItem,
-  onDeleteItem
+  onDeleteItem,
+  onMoveItem
 }: {
   item: TeamMediaItem;
   onStatus: (tone: 'error' | 'success', message: string) => void;
   canManage: boolean;
   currentUserId: string;
+  folders: TeamMediaFolder[];
+  currentFolderId: string;
   deleting: boolean;
   renaming: boolean;
+  moving: boolean;
   onRenameItem: (item: TeamMediaItem, title: string) => Promise<void>;
   onDeleteItem: (item: TeamMediaItem) => void;
+  onMoveItem: (item: TeamMediaItem, targetFolderId: string) => Promise<void>;
 }) {
   const Icon = getItemIcon(item);
   const isPhoto = item.type === 'photo';
   const title = item.title || 'Team media';
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
+  const [moveFolderId, setMoveFolderId] = useState('');
+  const alternateFolders = folders.filter((folder) => folder.id && folder.id !== currentFolderId);
+  const canMove = canManage && alternateFolders.length > 0;
+  const selectedMoveFolderId = moveFolderId && moveFolderId !== currentFolderId ? moveFolderId : '';
   const canRename = canManage || item.uploadedBy === currentUserId;
   const canDelete = canManage || (['photo', 'file'].includes(String(item.type || '').toLowerCase()) && item.uploadedBy === currentUserId);
 
@@ -494,6 +531,12 @@ function TeamMediaItemCard({
     }
     await onRenameItem(item, cleanTitle);
     setIsRenaming(false);
+  };
+
+  const moveItem = async () => {
+    if (!selectedMoveFolderId || moving) return;
+    await onMoveItem(item, selectedMoveFolderId);
+    setMoveFolderId('');
   };
 
   const copyLink = async () => {
@@ -585,6 +628,28 @@ function TeamMediaItemCard({
               <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
               Rename
             </button>
+          )}
+          {canMove && (
+            <div className="flex w-full flex-wrap items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 p-2">
+              <label className="sr-only" htmlFor={`move-media-${item.id}`}>Move media item to album</label>
+              <select
+                id={`move-media-${item.id}`}
+                className="auth-input min-h-8 flex-1 py-1 text-xs"
+                value={selectedMoveFolderId}
+                onChange={(event) => setMoveFolderId(event.target.value)}
+                disabled={moving}
+                aria-label={`Move ${title} to album`}
+              >
+                <option value="">Move to album...</option>
+                {alternateFolders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>{folder.name || 'Album'}</option>
+                ))}
+              </select>
+              <button type="button" className="primary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={moveItem} disabled={moving || !selectedMoveFolderId} aria-label={`Move ${title}`}>
+                {moving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                {moving ? 'Moving' : 'Move'}
+              </button>
+            </div>
           )}
           {canDelete && (
             <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-60" onClick={() => onDeleteItem(item)} disabled={deleting} aria-label={`Delete ${title}`}>

@@ -12,6 +12,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
   uploadParentTeamMediaPhoto: vi.fn(),
   deleteTeamMediaItemForApp: vi.fn(),
   updateTeamMediaItemForApp: vi.fn(),
+  moveTeamMediaItemForApp: vi.fn(),
 }));
 
 const publicActionsMocks = vi.hoisted(() => ({
@@ -96,9 +97,18 @@ function inputValue(input, value) {
   });
 }
 
+function selectValue(select, value) {
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+    setter.call(select, value);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   parentToolsServiceMocks.updateTeamMediaItemForApp.mockResolvedValue(undefined);
+  parentToolsServiceMocks.moveTeamMediaItemForApp.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -143,6 +153,87 @@ describe('React app TeamMedia rename flow', () => {
     expect(parentToolsServiceMocks.updateTeamMediaItemForApp).not.toHaveBeenCalled();
     expect(container.textContent).toContain('Tipoff');
     expect(container.textContent).toContain('Media item title cannot be empty.');
+
+    await act(async () => root.unmount());
+  });
+});
+
+
+describe('React app TeamMedia move flow', () => {
+  const twoAlbumModel = () => mediaModel({
+    canManage: true,
+    canContribute: true,
+    folders: [
+      {
+        id: 'folder-1',
+        name: 'Album A',
+        visibility: 'team',
+        itemCount: 1,
+        items: [{ id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' }],
+      },
+      {
+        id: 'folder-2',
+        name: 'Album B',
+        visibility: 'team',
+        itemCount: 0,
+        items: [],
+      },
+    ],
+  });
+
+  it('shows Move only to managers when another album exists', async () => {
+    const { container, root } = await renderTeamMedia(twoAlbumModel());
+
+    expect(container.querySelector('[aria-label="Move Tipoff to album"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Move Tipoff"]')).not.toBeNull();
+
+    await act(async () => root.unmount());
+
+    const nonManager = twoAlbumModel();
+    nonManager.canManage = false;
+    const rendered = await renderTeamMedia(nonManager);
+    expect(rendered.container.querySelector('[aria-label="Move Tipoff to album"]')).toBeNull();
+
+    await act(async () => rendered.root.unmount());
+  });
+
+  it('does not show Move when there is no alternate album', async () => {
+    const model = twoAlbumModel();
+    model.folders = model.folders.slice(0, 1);
+    const { container, root } = await renderTeamMedia(model);
+
+    expect(container.querySelector('[aria-label="Move Tipoff to album"]')).toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  it('disables submit until a different album is selected and refreshes to the destination after move', async () => {
+    const initialModel = twoAlbumModel();
+    const movedModel = twoAlbumModel();
+    movedModel.folders = [
+      { ...initialModel.folders[0], itemCount: 0, items: [] },
+      { ...initialModel.folders[1], itemCount: 1, items: initialModel.folders[0].items },
+    ];
+    parentToolsServiceMocks.loadTeamMediaForApp
+      .mockResolvedValueOnce(initialModel)
+      .mockResolvedValueOnce(movedModel);
+
+    const { container, root } = await renderTeamMedia(initialModel);
+
+    const moveButton = container.querySelector('[aria-label="Move Tipoff"]');
+    expect(moveButton.disabled).toBe(true);
+
+    selectValue(container.querySelector('[aria-label="Move Tipoff to album"]'), 'folder-2');
+    expect(moveButton.disabled).toBe(false);
+
+    await act(async () => {
+      moveButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(parentToolsServiceMocks.moveTeamMediaItemForApp).toHaveBeenCalledWith('team-1', 'owned-photo', 'folder-2');
+    expect(container.textContent).toContain('Media item moved to Album B.');
+    expect(container.textContent).toContain('Album B');
+    expect(container.textContent).toContain('Tipoff');
 
     await act(async () => root.unmount());
   });
