@@ -250,8 +250,13 @@ async function mockScheduleModules(page, options = {}) {
                 }
 
                 export async function addTeamCalendarUrl(teamId, url) {
-                    window.__scheduleCalls.calendarUrls = (window.__scheduleCalls.calendarUrls || []).concat({ teamId, url });
+                    window.__scheduleCalls.calendarUrls = (window.__scheduleCalls.calendarUrls || []).concat({ action: 'add', teamId, url });
                     return { calendarUrls: [url], added: true };
+                }
+
+                export async function removeTeamCalendarUrl(teamId, url) {
+                    window.__scheduleCalls.calendarUrls = (window.__scheduleCalls.calendarUrls || []).concat({ action: 'remove', teamId, url });
+                    return { calendarUrls: [], removed: true };
                 }
 
                 export async function createScheduleImportGame(teamId, row, user) {
