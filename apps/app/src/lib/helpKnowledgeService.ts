@@ -58,9 +58,9 @@ const stopWords = new Set([
 let helpDocsCache: HelpKnowledgeDoc[] | null = null;
 
 export function getSearchHelpRoles(helpRoleFilter?: unknown): string[] {
-  const [role] = normalizeRoles([helpRoleFilter]);
-  if (!role || role === 'all') return [...searchableHelpRoles];
-  return searchableHelpRoles.includes(role) ? [role] : [...searchableHelpRoles];
+  const role = normalizeRoles([helpRoleFilter]).find((normalizedRole) => searchableHelpRoles.includes(normalizedRole));
+  if (!role) return [...searchableHelpRoles];
+  return [role];
 }
 
 export function getHelpKnowledgeDocs(): HelpKnowledgeDoc[] {

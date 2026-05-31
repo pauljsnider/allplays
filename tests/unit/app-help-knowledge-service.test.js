@@ -41,6 +41,13 @@ describe('app help knowledge service', () => {
         expect(results.map((result) => result.id)).toContain('admin-ops');
     });
 
+    it('maps platform admin aliases to the admin help role', async () => {
+        const { getSearchHelpRoles } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+
+        expect(getSearchHelpRoles('platformAdmin')).toEqual(['admin']);
+        expect(getSearchHelpRoles('platform admin')).toEqual(['admin']);
+    });
+
     it('finds functional workflow help with source pages and snippets', async () => {
         const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
         const results = searchHelpKnowledge({
