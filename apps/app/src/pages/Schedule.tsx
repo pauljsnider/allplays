@@ -316,7 +316,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     try {
       const result = await removeTeamCalendarUrl(selectedCalendarTeam.teamId, url, auth.user);
       setStatusMessage(result.removed ? 'Calendar link removed. Refreshing schedule…' : 'Calendar link was already removed. Refreshing schedule…');
-      await refreshSchedule();
+      await refreshSchedule(true);
       setStatusMessage(result.removed ? 'Calendar link removed and schedule refreshed.' : 'Calendar link was already removed. Schedule refreshed.');
     } catch (removeError: any) {
       setCalendarUrlError(removeError?.message || 'Unable to remove calendar link.');

@@ -231,11 +231,9 @@ describe('React app desktop Schedule controls', () => {
 
         expect(window.confirm).toHaveBeenCalledWith('Remove this external calendar link? Imported events from this feed will disappear after the schedule refreshes.');
         expect(scheduleMocks.removeTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/stale.ics', auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(4);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(3, auth.user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(4, auth.user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
         await waitForText(container, 'Calendar link removed and schedule refreshed.');
     });
 
