@@ -134,6 +134,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   type="button"
                   className="ghost-button !h-10 !min-h-10"
                   onClick={() => setSearchOpen(true)}
+                  aria-label="Search"
                   title="Search (Ctrl+K / Cmd+K)"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
