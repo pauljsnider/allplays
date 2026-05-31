@@ -391,6 +391,48 @@ describe('React app desktop Schedule controls', () => {
         await waitForText(container, 'Imported 1 schedule row(s) and refreshed the schedule.');
     });
 
+    it('clears stale AI preview rows when the source text changes', async () => {
+        const aiRow = {
+            rowNumber: 1,
+            draft: {},
+            normalized: {
+                rowNumber: 1,
+                eventType: 'game',
+                startsAt: '2026-04-02T18:30',
+                endsAt: null,
+                opponent: 'Tigers',
+                title: null,
+                location: 'Field 1',
+                arrivalTime: null,
+                isHome: true,
+                notes: 'AI extracted from pasted text'
+            },
+            errors: []
+        };
+        scheduleMocks.generateScheduleAiImportRows.mockResolvedValue({ rows: [aiRow], errors: [] });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Draft schedule with AI');
+        const textarea = container.querySelector('textarea[aria-label="Schedule text or AI instructions"]');
+
+        await changeTextarea(textarea, '4/2 6:30 PM vs Tigers at Field 1');
+        await clickButton(container, 'Generate draft rows');
+        await waitForText(container, 'AI draft preview 1 row(s)');
+        expect(buttonByText(container, 'Import reviewed rows').disabled).toBe(false);
+
+        await changeTextarea(textarea, '4/3 7:00 PM vs Hawks at Field 2');
+
+        expect(container.textContent).not.toContain('AI draft preview 1 row(s)');
+        expect(container.textContent).not.toContain('Game vs Tigers');
+        expect(buttonByText(container, 'Import reviewed rows').disabled).toBe(true);
+    });
+
     it('blocks CSV import when preview contains invalid rows', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             children: [

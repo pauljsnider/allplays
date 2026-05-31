@@ -109,6 +109,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
 
+  const clearAiPreview = () => {
+    if (scheduleImportPreviewSource === 'ai') {
+      setCsvPreviewRows([]);
+      setScheduleImportPreviewSource(null);
+    }
+  };
+
   const refreshSchedule = async (force = false) => {
     if (!auth.user) return;
     setLoading(true);
@@ -248,6 +255,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const handleAiImageChange = (file: File | null) => {
     setAiImportErrors([]);
+    clearAiPreview();
     setAiScheduleImage(file);
     setAiScheduleImageName(file?.name || '');
   };
@@ -257,10 +265,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setAiScheduleImage(null);
     setAiScheduleImageName('');
     setAiImportErrors([]);
-    if (scheduleImportPreviewSource === 'ai') {
-      setCsvPreviewRows([]);
-      setScheduleImportPreviewSource(null);
-    }
+    clearAiPreview();
   };
 
   const handleAiGeneratePreview = async () => {
@@ -677,6 +682,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               importing={importingCsv}
               onTextChange={(value) => {
                 setAiScheduleText(value);
+                clearAiPreview();
                 if (aiImportErrors.length) setAiImportErrors([]);
               }}
               onImageChange={handleAiImageChange}
