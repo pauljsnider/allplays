@@ -250,7 +250,7 @@ describe('React app shell search', () => {
 
         expect(roleButton('All').getAttribute('aria-pressed')).toBe('false');
         expect(roleButton('Parent').getAttribute('aria-pressed')).toBe('true');
-        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledTimes(helpSearchCallCount);
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledTimes(helpSearchCallCount + 1);
         expect(container.textContent).not.toContain('Manage a roster');
         expect(container.textContent).toContain('Reset a password');
 
@@ -275,7 +275,7 @@ describe('React app shell search', () => {
         expect(reopenedRoleButton('Member').getAttribute('aria-pressed')).toBe('true');
         expect(container.textContent).not.toContain('Manage a roster');
         expect(container.textContent).not.toContain('Reset a password');
-        expect(container.textContent).toContain('No matching help articles');
+        expect(container.textContent).toContain('No Member help articles match this search');
         expect(container.querySelector('input[aria-label="Search teams, players, actions, help"]')).toBeTruthy();
     });
 
@@ -303,6 +303,62 @@ describe('React app shell search', () => {
         await pressDialogKey(container, 'Enter');
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/help/account-password-reset');
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+    });
+
+    it('updates help results immediately when the role filter changes', async () => {
+        helpMocks.searchHelpKnowledge.mockImplementation(({ roleFilter }) => {
+            if (roleFilter === 'coach') {
+                return [{
+                    id: 'live-tracker-coach-guide',
+                    title: 'Track Live Games with the Live Tracker',
+                    file: 'help-live-tracker.html',
+                    url: 'https://allplays.ai/help-live-tracker.html',
+                    roles: ['coach', 'admin'],
+                    summary: 'Use the live tracker from tip-off to final buzzer.',
+                    snippet: 'Coaches and admins can run live tracker game flows.',
+                    score: 42
+                }];
+            }
+            if (roleFilter === 'member') {
+                return [];
+            }
+            return [{
+                id: 'watch-live-games',
+                title: 'Watch Live Games and Replays',
+                file: 'help-watch-chat.html',
+                url: 'https://allplays.ai/help-watch-chat.html',
+                roles: ['parent', 'member'],
+                summary: 'Open a game and follow it live.',
+                snippet: 'Parents and members can watch live games and replay links.',
+                score: 21
+            }];
+        });
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'live tracker');
+        expect(container.textContent).toContain('Watch Live Games and Replays');
+
+        await clickButton(container, 'Coach');
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'live tracker',
+            roles: ['parent'],
+            roleFilter: 'coach',
+            limit: 5
+        });
+        expect(container.textContent).toContain('Track Live Games with the Live Tracker');
+        expect(container.textContent).toContain('coach');
+        expect(container.textContent).toContain('admin');
+
+        await clickButton(container, 'Member');
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'live tracker',
+            roles: ['parent'],
+            roleFilter: 'member',
+            limit: 5
+        });
+        expect(container.textContent).not.toContain('Track Live Games with the Live Tracker');
+        expect(container.textContent).toContain('No Member help articles match this search');
     });
 
     it('opens website-only search actions through the public URL adapter', async () => {
