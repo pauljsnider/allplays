@@ -9,10 +9,14 @@ const scheduleMocks = vi.hoisted(() => ({
     createScheduleImportGame: vi.fn(),
     createScheduleImportPractice: vi.fn(),
     loadParentSchedule: vi.fn(),
-    removeTeamCalendarUrl: vi.fn()
+    removeTeamCalendarUrl: vi.fn(),
+    generateScheduleAiImportRows: vi.fn()
 }));
 
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/scheduleAiImport.ts', () => ({
+    generateScheduleAiImportRows: scheduleMocks.generateScheduleAiImportRows
+}));
 vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({
     useShellLayout: () => ({ isDesktopWeb: true, isNative: false, isMobileWeb: false })
 }));
@@ -110,6 +114,14 @@ async function changeInput(input, value) {
     });
 }
 
+async function changeTextarea(textarea, value) {
+    await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(textarea, value);
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+}
+
 async function changeSelect(select, value) {
     await act(async () => {
         select.value = value;
@@ -125,6 +137,7 @@ beforeEach(() => {
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-new');
     scheduleMocks.removeTeamCalendarUrl.mockResolvedValue({ removed: true, calendarUrls: [] });
+    scheduleMocks.generateScheduleAiImportRows.mockResolvedValue({ rows: [], errors: [] });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     scheduleMocks.loadParentSchedule.mockResolvedValue({
         children: [
@@ -321,6 +334,61 @@ describe('React app desktop Schedule controls', () => {
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenLastCalledWith(auth.user, { hydrateDetails: false, expandStaffPlayers: false });
         await waitForText(container, 'Imported 2 schedule row(s) and refreshed the schedule.');
+    });
+
+    it('previews and imports staff AI schedule rows without showing the tool to parents', async () => {
+        const parentOnly = await renderSchedule();
+        await waitForText(parentOnly.container, 'Main Gym');
+        expect(parentOnly.container.textContent).not.toContain('Draft schedule with AI');
+
+        const aiRow = {
+            rowNumber: 1,
+            draft: {},
+            normalized: {
+                rowNumber: 1,
+                eventType: 'game',
+                startsAt: '2026-04-02T18:30',
+                endsAt: null,
+                opponent: 'Tigers',
+                title: null,
+                location: 'Field 1',
+                arrivalTime: null,
+                isHome: true,
+                notes: 'AI extracted from pasted text'
+            },
+            errors: []
+        };
+        scheduleMocks.generateScheduleAiImportRows.mockResolvedValue({ rows: [aiRow], errors: [] });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+        clearAppDataCache('app-schedule-summary');
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Draft schedule with AI');
+        const textarea = container.querySelector('textarea[aria-label="Schedule text or AI instructions"]');
+        expect(textarea).toBeTruthy();
+
+        await changeTextarea(textarea, '4/2 6:30 PM vs Tigers at Field 1');
+        await clickButton(container, 'Generate draft rows');
+        await waitForText(container, 'AI draft preview 1 row(s)');
+        expect(scheduleMocks.generateScheduleAiImportRows).toHaveBeenCalledWith(expect.objectContaining({
+            teamName: 'Bears',
+            text: '4/2 6:30 PM vs Tigers at Field 1',
+            imageFile: null,
+            currentGames: [expect.objectContaining({ opponent: 'Falcons', location: 'Main Gym' })]
+        }));
+        expect(container.textContent).toContain('Game vs Tigers');
+
+        await clickButton(container, 'Import reviewed rows');
+        expect(scheduleMocks.createScheduleImportGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            eventType: 'game',
+            opponent: 'Tigers'
+        }), auth.user);
+        await waitForText(container, 'Imported 1 schedule row(s) and refreshed the schedule.');
     });
 
     it('blocks CSV import when preview contains invalid rows', async () => {

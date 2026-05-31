@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
+import { generateScheduleAiImportRows } from '../lib/scheduleAiImport';
 import { getCachedAppData, loadCachedAppData } from '../lib/appDataCache';
 import { startUxTimer } from '../lib/uxTiming';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -97,8 +98,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [csvRows, setCsvRows] = useState<Array<Record<string, string>>>([]);
   const [csvMapping, setCsvMapping] = useState<ScheduleCsvImportMapping>({});
   const [csvPreviewRows, setCsvPreviewRows] = useState<ScheduleCsvImportPreviewRow[]>([]);
+  const [scheduleImportPreviewSource, setScheduleImportPreviewSource] = useState<'csv' | 'ai' | null>(null);
   const [csvImportErrors, setCsvImportErrors] = useState<string[]>([]);
   const [csvFileName, setCsvFileName] = useState('');
+  const [aiScheduleText, setAiScheduleText] = useState('');
+  const [aiScheduleImage, setAiScheduleImage] = useState<File | null>(null);
+  const [aiScheduleImageName, setAiScheduleImageName] = useState('');
+  const [aiImportErrors, setAiImportErrors] = useState<string[]>([]);
+  const [processingAiImport, setProcessingAiImport] = useState(false);
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
 
@@ -205,6 +212,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const handleCsvFileChange = async (file: File | null) => {
     setCsvImportErrors([]);
     setCsvPreviewRows([]);
+    setScheduleImportPreviewSource(null);
     if (!file) return;
     try {
       const parsed = parseCsvText(await file.text());
@@ -225,6 +233,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     });
     setCsvImportErrors(preview.errors);
     setCsvPreviewRows(preview.rows);
+    setScheduleImportPreviewSource(preview.rows.length ? 'csv' : null);
   };
 
   const handleCsvClear = () => {
@@ -234,13 +243,68 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setCsvPreviewRows([]);
     setCsvImportErrors([]);
     setCsvFileName('');
+    setScheduleImportPreviewSource(null);
+  };
+
+  const handleAiImageChange = (file: File | null) => {
+    setAiImportErrors([]);
+    setAiScheduleImage(file);
+    setAiScheduleImageName(file?.name || '');
+  };
+
+  const handleAiClear = () => {
+    setAiScheduleText('');
+    setAiScheduleImage(null);
+    setAiScheduleImageName('');
+    setAiImportErrors([]);
+    if (scheduleImportPreviewSource === 'ai') {
+      setCsvPreviewRows([]);
+      setScheduleImportPreviewSource(null);
+    }
+  };
+
+  const handleAiGeneratePreview = async () => {
+    if (!selectedCalendarTeam || processingAiImport) return;
+    setAiImportErrors([]);
+    setCsvImportErrors([]);
+    setCsvPreviewRows([]);
+    setScheduleImportPreviewSource(null);
+    setStatusMessage(null);
+    setError(null);
+    const currentGames = events
+      .filter((event) => event.teamId === selectedCalendarTeam.teamId && event.type === 'game' && event.isDbGame)
+      .map((event) => ({
+        id: event.id,
+        date: event.date,
+        opponent: event.opponent,
+        location: event.location,
+        status: event.isCancelled ? 'cancelled' : 'scheduled'
+      }));
+
+    setProcessingAiImport(true);
+    try {
+      const result = await generateScheduleAiImportRows({
+        teamName: selectedCalendarTeam.teamName,
+        text: aiScheduleText,
+        imageFile: aiScheduleImage,
+        currentGames
+      });
+      setAiImportErrors(result.errors);
+      setCsvPreviewRows(result.rows);
+      setScheduleImportPreviewSource(result.rows.length ? 'ai' : null);
+      if (result.rows.length) {
+        setStatusMessage(`AI generated ${result.rows.length} draft game row(s). Review them below before importing.`);
+      }
+    } finally {
+      setProcessingAiImport(false);
+    }
   };
 
   const handleCsvImport = async () => {
     if (!selectedCalendarTeam || !auth.user || importingCsv) return;
     const invalidRows = csvPreviewRows.filter((row) => row.errors.length > 0);
     if (!csvPreviewRows.length) {
-      setCsvImportErrors(['Preview the CSV before importing.']);
+      setCsvImportErrors(['Preview rows before importing.']);
       return;
     }
     if (invalidRows.length > 0) {
@@ -603,11 +667,28 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onSubmit={handleAddCalendarUrl}
               onRemove={handleRemoveCalendarUrl}
             />
+            <ScheduleAiImportPanel
+              teamName={selectedCalendarTeam.teamName}
+              text={aiScheduleText}
+              imageName={aiScheduleImageName}
+              previewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
+              errors={aiImportErrors}
+              processing={processingAiImport}
+              importing={importingCsv}
+              onTextChange={(value) => {
+                setAiScheduleText(value);
+                if (aiImportErrors.length) setAiImportErrors([]);
+              }}
+              onImageChange={handleAiImageChange}
+              onGeneratePreview={handleAiGeneratePreview}
+              onImport={handleCsvImport}
+              onClear={handleAiClear}
+            />
             <ScheduleCsvImportPanel
               teamName={selectedCalendarTeam.teamName}
               headers={csvHeaders}
               mapping={csvMapping}
-              previewRows={csvPreviewRows}
+              previewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
               errors={csvImportErrors}
               fileName={csvFileName}
               importing={importingCsv}
@@ -650,6 +731,88 @@ export function Schedule({ auth }: { auth: AuthState }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function ScheduleAiImportPanel({ teamName, text, imageName, previewRows, errors, processing, importing, onTextChange, onImageChange, onGeneratePreview, onImport, onClear }: {
+  teamName: string;
+  text: string;
+  imageName: string;
+  previewRows: ScheduleCsvImportPreviewRow[];
+  errors: string[];
+  processing: boolean;
+  importing: boolean;
+  onTextChange: (value: string) => void;
+  onImageChange: (file: File | null) => void;
+  onGeneratePreview: () => void;
+  onImport: () => void;
+  onClear: () => void;
+}) {
+  const invalidCount = previewRows.filter((row) => row.errors.length > 0).length;
+  return (
+    <section className="app-card p-4" aria-label="AI schedule import">
+      <div className="flex items-start gap-3">
+        <div className="flex h-9 w-9 flex-none items-center justify-center rounded-xl bg-violet-50 text-violet-700">
+          <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="app-label">Staff schedule tools</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Draft schedule with AI</h2>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Paste schedule text or upload one image for {teamName}. AI drafts game rows only; nothing is saved until you review and import.</p>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        <label className="block">
+          <span className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">Schedule text or instructions</span>
+          <textarea
+            className="auth-input mt-1 min-h-28 !px-3 !py-2 text-sm font-semibold"
+            placeholder="Paste schedule lines, or add instructions like 'only home games' when uploading an image."
+            value={text}
+            onChange={(event) => onTextChange(event.target.value)}
+            aria-label="Schedule text or AI instructions"
+          />
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">Schedule image</span>
+          <input
+            className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm font-semibold"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+            aria-label="Schedule image"
+            onChange={(event) => onImageChange(event.target.files?.[0] || null)}
+          />
+        </label>
+        {imageName ? <div className="text-xs font-bold text-gray-500">Loaded {imageName}</div> : null}
+
+        {errors.length ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700" role="alert">
+            {errors.map((item) => <div key={item}>{item}</div>)}
+          </div>
+        ) : null}
+
+        {previewRows.length ? (
+          <div className="space-y-2">
+            <div className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">AI draft preview {previewRows.length} row(s){invalidCount ? `, ${invalidCount} needs review` : ''}</div>
+            {previewRows.map((row) => (
+              <div key={row.rowNumber} className={`rounded-xl border p-3 text-sm ${row.errors.length ? 'border-rose-200 bg-rose-50' : 'border-violet-200 bg-violet-50'}`}>
+                <div className="font-black text-gray-900">Draft {row.rowNumber}: Game vs {row.normalized.opponent || 'opponent TBD'}</div>
+                <div className="mt-1 text-xs font-semibold text-gray-600">{row.normalized.startsAt || 'Start TBD'} · {row.normalized.location || 'Location TBD'}</div>
+                {row.normalized.notes ? <div className="mt-1 text-xs font-semibold text-gray-600 whitespace-pre-line">{row.normalized.notes}</div> : null}
+                {row.errors.length ? <ul className="mt-2 list-disc pl-4 text-xs font-bold text-rose-700">{row.errors.map((item) => <li key={item}>{item}</li>)}</ul> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="secondary-button" onClick={onGeneratePreview} disabled={processing || importing}>{processing ? 'Processing…' : 'Generate draft rows'}</button>
+          <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || processing || importing}>{importing ? 'Importing…' : 'Import reviewed rows'}</button>
+          <button type="button" className="secondary-button" onClick={onClear} disabled={processing || importing}>Clear AI input</button>
+        </div>
+      </div>
+    </section>
   );
 }
 
