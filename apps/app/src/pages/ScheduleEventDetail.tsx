@@ -2075,36 +2075,40 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
   );
 }
 
+const liveReportPollIntervalMs = 15000;
+
 function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const [activeReportSection, setActiveReportSection] = useState<GameReportSectionId>('summary');
   const [report, setReport] = useState<GameReportData | null>(null);
   const [loadingReport, setLoadingReport] = useState(true);
   const [reportError, setReportError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoadingReport(true);
+  const refreshReport = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoadingReport(true);
     setReportError(null);
+    try {
+      const loaded = await loadGameReportSections(event.teamId, event.id);
+      setReport(loaded);
+    } catch (error: any) {
+      setReportError(error?.message || 'Unable to load game report.');
+    } finally {
+      if (showLoading) setLoadingReport(false);
+    }
+  }, [event.id, event.teamId]);
+
+  useEffect(() => {
     setReport(null);
     setActiveReportSection('summary');
+    void refreshReport();
+  }, [refreshReport]);
 
-    loadGameReportSections(event.teamId, event.id)
-      .then((loaded) => {
-        if (cancelled) return;
-        setReport(loaded);
-      })
-      .catch((error: any) => {
-        if (cancelled) return;
-        setReportError(error?.message || 'Unable to load game report.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingReport(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [event.id, event.teamId]);
+  useEffect(() => {
+    if (activeReportSection !== 'plays') return undefined;
+    const intervalId = window.setInterval(() => {
+      void refreshReport(false);
+    }, liveReportPollIntervalMs);
+    return () => window.clearInterval(intervalId);
+  }, [activeReportSection, refreshReport]);
 
   return (
     <div className="app-card overflow-hidden p-0">

@@ -17,4 +17,14 @@ describe('React app schedule event detail audio announcer wiring', () => {
         expect(source).toContain('Hear each new play once while you keep this game open.');
         expect(source).toContain('Announcements pause automatically when the game is backgrounded.');
     });
+
+    it('refreshes the game report while the plays tab stays open', () => {
+        const source = readDetailSource();
+
+        expect(source).toContain('const liveReportPollIntervalMs = 15000;');
+        expect(source).toContain("if (activeReportSection !== 'plays') return undefined;");
+        expect(source).toContain('const intervalId = window.setInterval(() => {');
+        expect(source).toContain('void refreshReport(false);');
+        expect(source).toContain('}, liveReportPollIntervalMs);');
+    });
 });
