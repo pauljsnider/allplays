@@ -11,8 +11,10 @@ vi.mock('../../js/db.js', () => ({
     getPlayerTrackingStatuses: vi.fn(),
     getPublicTrackingItems: vi.fn(),
     getTeam: vi.fn(),
+    grantScorekeeperAccess: vi.fn(),
     inviteAdmin: vi.fn(),
-    addTeamAdminEmail: vi.fn()
+    addTeamAdminEmail: vi.fn(),
+    revokeScorekeeperAccess: vi.fn()
 }));
 
 vi.mock('../../js/firebase.js', () => ({
@@ -32,9 +34,9 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildAdminAcceptInviteUrl, buildTeamDetailModel, inviteTeamAdminForApp, loadParentTeamDetail } from '../../apps/app/src/lib/teamDetailService.ts';
+import { buildAdminAcceptInviteUrl, buildTeamDetailModel, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { getDocs } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam, inviteAdmin, addTeamAdminEmail } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 describe('React app team detail model', () => {
@@ -76,6 +78,22 @@ describe('React app team detail model', () => {
         await expect(inviteTeamAdminForApp('', 'coach@example.com')).rejects.toThrow('Team ID is required.');
         await expect(inviteTeamAdminForApp('team-1', '   ')).rejects.toThrow('Admin email is required.');
         expect(inviteAdmin).not.toHaveBeenCalled();
+    });
+
+    it('wraps scorekeeper grant mutations with app validation', async () => {
+        grantScorekeeperAccess.mockResolvedValue(undefined);
+        revokeScorekeeperAccess.mockResolvedValue(undefined);
+
+        await grantScorekeeperAccessForApp(' team-1 ', ' member-1 ');
+        await revokeScorekeeperAccessForApp('team-1', 'member-1');
+
+        expect(grantScorekeeperAccess).toHaveBeenCalledWith('team-1', 'member-1');
+        expect(revokeScorekeeperAccess).toHaveBeenCalledWith('team-1', 'member-1');
+
+        grantScorekeeperAccess.mockClear();
+        await expect(grantScorekeeperAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
+        await expect(grantScorekeeperAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
+        expect(grantScorekeeperAccess).not.toHaveBeenCalled();
     });
 
     it('projects team.html parent features into the native team model', () => {
@@ -219,11 +237,27 @@ describe('React app team detail model', () => {
             { label: 'coach@example.com', role: 'Admin' }
         ]);
         expect(adminModel.staffPermissions.pendingInvites).toEqual(['pending@example.com']);
+        expect(adminModel.staffPermissions.scorekeepingMode).toBe('selected');
         expect(adminModel.staffPermissions.helperPermissions).toEqual([
             expect.objectContaining({ key: 'scorekeeper', grants: ['scorekeeper-1'] }),
             expect.objectContaining({ key: 'stream-score', grants: ['scorekeeper-1'] }),
             expect.objectContaining({ key: 'videographer', grants: ['scorekeeper-1', 'video-1', 'video@example.com'] }),
             expect.objectContaining({ key: 'volunteer', grants: ['snacks-1'] })
+        ]);
+
+        const targetedModel = buildTeamDetailModel({
+            teamId: 'team-1',
+            team,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+            players: [
+                { id: 'player-1', name: 'Pat Star', userId: 'scorekeeper-1' },
+                { id: 'player-2', name: 'Sam Wing', parents: [{ userId: 'parent-1', name: 'Parent One', email: 'parent@example.com' }] },
+                { id: 'inactive', name: 'Inactive', userId: 'inactive-1', active: false }
+            ]
+        });
+        expect(targetedModel.staffPermissions.scorekeeperGrantTargets).toEqual([
+            { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false },
+            { userId: 'scorekeeper-1', name: 'Pat Star', email: '', playerNames: ['Pat Star'], isGranted: true }
         ]);
 
         const parentModel = buildTeamDetailModel({

@@ -346,6 +346,14 @@ async function mockHomePlayerModules(page) {
                     return { status: 'sent', email: 'coach@example.com' };
                 }
 
+                export async function grantScorekeeperAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function revokeScorekeeperAccessForApp() {
+                    return { success: true };
+                }
+
                 export async function loadParentTeamDetail() {
                     const nextDate = new Date('2100-06-01T18:00:00Z');
                     return {
