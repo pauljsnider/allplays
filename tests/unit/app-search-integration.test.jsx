@@ -9,7 +9,8 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 const homeMocks = vi.hoisted(() => ({
-    loadParentHome: vi.fn()
+    loadParentHome: vi.fn(),
+    loadParentHomeSummary: vi.fn()
 }));
 
 const firebaseMocks = vi.hoisted(() => ({
@@ -138,6 +139,14 @@ async function fillSearch(container, value) {
     await flush(350);
 }
 
+async function waitForText(container, text) {
+    for (let index = 0; index < 50; index += 1) {
+        if (container.textContent.includes(text)) return;
+        await flush(10);
+    }
+    throw new Error(`Timed out waiting for text: ${text}`);
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
     resetAppSearchCacheForTests();
@@ -151,6 +160,7 @@ beforeEach(() => {
         { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true },
         { id: 'team-private', name: 'Private', sport: 'Soccer', isPublic: false }
     ]);
+    homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
     homeMocks.loadParentHome.mockResolvedValue({
         teams: [{
             teamId: 'team-home',
@@ -182,8 +192,7 @@ describe('React app shell search', () => {
         const { container } = await renderShell();
 
         await clickButton(container, 'Search');
-        expect(container.textContent).toContain('Browse Teams');
-        await flush();
+        await waitForText(container, 'Browse Teams');
         expect(container.textContent).toContain('Bears');
         expect(container.textContent).toContain('Home Rockets');
         expect(container.textContent).not.toContain('Private');
@@ -293,6 +302,7 @@ describe('React app shell search', () => {
         const { container } = await renderShell();
 
         await clickButton(container, 'Search');
+        await waitForText(container, 'Browse Teams');
         await fillSearch(container, 'password reset');
 
         expect(container.textContent).toContain('Help');
@@ -438,7 +448,7 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('Sign In');
         expect(container.textContent).toContain('Get Started');
         expect(container.textContent).toContain('Bears');
-        expect(homeMocks.loadParentHome).not.toHaveBeenCalled();
+        expect(homeMocks.loadParentHomeSummary).not.toHaveBeenCalled();
 
         await clickButton(container, 'Get Started');
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/auth?mode=signup');

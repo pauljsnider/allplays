@@ -47,6 +47,14 @@ async function mockPrivateAiModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export async function loadParentHomeSummary(...args) {
+                    return loadParentHome(...args);
+                }
+
+                export async function loadParentHomeWithSecondaryData(...args) {
+                    return loadParentHome(...args);
+                }
+
                 export async function loadParentHome() {
                     return {
                         players: [],
