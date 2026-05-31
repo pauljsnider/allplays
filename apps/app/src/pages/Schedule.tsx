@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
-<<<<<<< HEAD
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
->>>>>>> 1471cd10 (Allow staff to remove calendar links)
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
@@ -93,7 +91,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [calendarUrl, setCalendarUrl] = useState('');
   const [calendarUrlError, setCalendarUrlError] = useState<string | null>(null);
   const [savingCalendarUrl, setSavingCalendarUrl] = useState(false);
-<<<<<<< HEAD
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<Array<Record<string, string>>>([]);
   const [csvMapping, setCsvMapping] = useState<ScheduleCsvImportMapping>({});
@@ -102,7 +99,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [csvFileName, setCsvFileName] = useState('');
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
->>>>>>> 1471cd10 (Allow staff to remove calendar links)
 
   const refreshSchedule = async () => {
     if (!auth.user) return;
@@ -627,7 +623,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
   );
 }
 
-<<<<<<< HEAD
 function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, errors, fileName, importing, onFileChange, onMappingChange, onPreview, onImport, onClear }: {
   teamName: string;
   headers: string[];
@@ -718,7 +713,6 @@ function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, error
 }
 
 function CalendarSourcePanel({ teamName, calendarUrl, calendarUrls, error, saving, removingUrl, onCalendarUrlChange, onSubmit, onRemove }: {
->>>>>>> 1471cd10 (Allow staff to remove calendar links)
   teamName: string;
   calendarUrl: string;
   calendarUrls: string[];

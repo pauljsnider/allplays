@@ -535,7 +535,6 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.updateTeam).not.toHaveBeenCalled();
     });
 
-<<<<<<< HEAD
     it('creates CSV import games and practices only for staff users', async () => {
         dbMocks.getTeam.mockResolvedValue({
             id: 'team-1',
@@ -609,7 +608,7 @@ describe('React app schedule service contract integration', () => {
         await expect(removeTeamCalendarUrl('team-1', 'https://example.com/team.ics', user()))
             .rejects.toThrow('You do not have permission to manage this team schedule.');
         expect(dbMocks.updateTeam).not.toHaveBeenCalled();
-
+    });
 });
 
 describe('scheduleLogic.ts', () => {
