@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -26,7 +26,7 @@ import { copyPublicText, openPublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { loadStaffRsvpReminderPreview, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { loadParentTeamDetail, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
+import { inviteTeamAdminForApp, loadParentTeamDetail, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -84,6 +84,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       scroll();
     }
   }, [teamId]);
+
+  async function refreshTeamDetail() {
+    if (!teamId) return;
+    const nextModel = await loadParentTeamDetail(teamId, auth.user);
+    setModel(nextModel);
+  }
 
   const tabBadges = useMemo(() => ({
     overview: 0,
@@ -157,7 +163,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
       {activeTab === 'roster' ? <RosterTab model={model} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} /> : null}
-      {activeTab === 'more' ? <MoreTab model={model} /> : null}
+      {activeTab === 'more' ? <MoreTab model={model} onStaffInviteSuccess={refreshTeamDetail} /> : null}
     </div>
   );
 }
@@ -339,10 +345,10 @@ function InsightsTab({ model }: { model: TeamDetailModel }) {
   );
 }
 
-function MoreTab({ model }: { model: TeamDetailModel }) {
+function MoreTab({ model, onStaffInviteSuccess }: { model: TeamDetailModel; onStaffInviteSuccess: () => Promise<void> }) {
   return (
     <div className="space-y-4">
-      {model.staffPermissions ? <StaffPermissionsCard model={model} /> : null}
+      {model.staffPermissions ? <StaffPermissionsCard model={model} onInviteSuccess={onStaffInviteSuccess} /> : null}
       {model.canManageTeam ? <ScoreboardWidgetCard model={model} /> : null}
 
       <section className="app-card p-4">
@@ -474,13 +480,57 @@ function escapeHtmlAttribute(value: string) {
   return String(value || '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char));
 }
 
-function StaffPermissionsCard({ model }: { model: TeamDetailModel }) {
+function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailModel; onInviteSuccess: () => Promise<void> }) {
   const summary = model.staffPermissions;
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<InviteTeamAdminForAppResult | null>(null);
+  const [copyStatus, setCopyStatus] = useState<{ kind: 'code' | 'link'; success: boolean } | null>(null);
   if (!summary) return null;
   const staffItems = [
     ...summary.staff.map((member) => `${member.label} · ${member.role}`),
-    ...summary.pendingInvites.map((email) => `${email} · Pending admin invite`)
+    ...summary.pendingInvites.map((inviteEmail) => `${inviteEmail} · Pending admin invite`)
   ];
+  const existingEmails = getStaffPermissionEmails(summary);
+
+  async function submitInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedEmail = email.trim().toLowerCase();
+    setResult(null);
+    setCopyStatus(null);
+    if (!normalizedEmail) {
+      setError('Enter an admin email.');
+      return;
+    }
+    if (!isValidEmail(normalizedEmail)) {
+      setError('Enter a valid email address.');
+      return;
+    }
+    if (existingEmails.has(normalizedEmail)) {
+      setError('That email is already listed as staff or pending.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    try {
+      const inviteResult = await inviteTeamAdminForApp(model.team.id, normalizedEmail);
+      setResult(inviteResult);
+      setEmail('');
+      await onInviteSuccess();
+    } catch (submitError: any) {
+      setError(submitError?.message || 'Unable to send admin invite.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function copyInviteValue(kind: 'code' | 'link', value: string | null) {
+    if (!value) return;
+    const copyResult = await copyPublicText(value);
+    setCopyStatus({ kind, success: copyResult === 'copied' });
+  }
 
   return (
     <section className="app-card p-4">
@@ -494,6 +544,45 @@ function StaffPermissionsCard({ model }: { model: TeamDetailModel }) {
           <ExternalLink className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
+
+      <form className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3" onSubmit={submitInvite} noValidate>
+        <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Invite admin</div>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+          <label className="sr-only" htmlFor="team-admin-invite-email">Admin email</label>
+          <input
+            id="team-admin-invite-email"
+            type="email"
+            value={email}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              setError('');
+            }}
+            className="min-h-10 flex-1 rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+            placeholder="coach@example.com"
+            disabled={submitting}
+            aria-invalid={Boolean(error)}
+          />
+          <button type="submit" className="primary-button !min-h-10 text-xs" disabled={submitting}>
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+            Send invite
+          </button>
+        </div>
+        {error ? <div className="mt-2 text-xs font-black text-rose-700" role="alert">{error}</div> : null}
+        {result ? (
+          <div className="mt-3 rounded-lg border border-white/80 bg-white p-3 text-xs font-semibold leading-5 text-gray-700" role="status">
+            <div className="font-black text-gray-950">
+              {result.status === 'sent' ? `Invite sent to ${result.email}.` : result.status === 'existing_user' ? `${result.email} already has an account and was added as an admin.` : `Email delivery needs a fallback for ${result.email}.`}
+            </div>
+            {result.code || result.acceptInviteUrl ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {result.code ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInviteValue('code', result.code)}>Copy code</button> : null}
+                {result.acceptInviteUrl ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInviteValue('link', result.acceptInviteUrl)}>Copy link</button> : null}
+              </div>
+            ) : null}
+            {copyStatus ? <div className={`mt-2 font-black ${copyStatus.success ? 'text-emerald-700' : 'text-rose-700'}`}>{copyStatus.success ? `${copyStatus.kind === 'code' ? 'Invite code' : 'Invite link'} copied.` : `Unable to copy ${copyStatus.kind === 'code' ? 'invite code' : 'invite link'}.`}</div> : null}
+          </div>
+        ) : null}
+      </form>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
@@ -516,6 +605,24 @@ function StaffPermissionsCard({ model }: { model: TeamDetailModel }) {
       </div>
     </section>
   );
+}
+
+
+function getStaffPermissionEmails(summary: NonNullable<TeamDetailModel['staffPermissions']>) {
+  const emails = new Set<string>();
+  summary.staff.forEach((member) => {
+    const value = member.label.trim().toLowerCase();
+    if (value.includes('@')) emails.add(value);
+  });
+  summary.pendingInvites.forEach((inviteEmail) => {
+    const value = inviteEmail.trim().toLowerCase();
+    if (value) emails.add(value);
+  });
+  return emails;
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 function PillList({ items, emptyText, tone = 'border-gray-200 bg-white text-gray-700' }: { items: string[]; emptyText: string; tone?: string }) {
