@@ -4,6 +4,7 @@ import { CheckCircle2, DollarSign, Loader2, RefreshCw, Shield } from 'lucide-rea
 import {
   loadTeamFeeManagementModel,
   recordOfflineTeamFeePayment,
+  recordTeamFeeBalanceAdjustment,
   type TeamFeeManagementModel,
   type TeamFeeRecipientSummary
 } from '../lib/teamFeesService';
@@ -29,7 +30,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   const [submittingId, setSubmittingId] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [formByRecipient, setFormByRecipient] = useState<Record<string, { amount: string; date: string; note: string; error: string }>>({});
+  const [formByRecipient, setFormByRecipient] = useState<Record<string, { paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>>({});
 
   const selectedBatchId = model?.selectedBatch?.id || '';
 
@@ -77,35 +78,88 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     [recipients]
   );
 
+  const isRecipientSubmitting = (recipientId: string) => submittingId === `payment:${recipientId}` || submittingId === `adjustment:${recipientId}`;
+
   if (!teamId) return <Navigate to="/teams" replace />;
 
-  const updateForm = (recipientId: string, patch: Partial<{ amount: string; date: string; note: string; error: string }>) => {
+  const updateForm = (recipientId: string, patch: Partial<{ paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>) => {
     setFormByRecipient((current) => ({
       ...current,
-      [recipientId]: { ...(current[recipientId] || { amount: '', date: todayIsoDate(), note: '', error: '' }), ...patch }
+      [recipientId]: {
+        ...(current[recipientId] || {
+          paymentAmount: '',
+          paymentDate: todayIsoDate(),
+          paymentNote: '',
+          paymentError: '',
+          adjustmentAmount: '',
+          adjustmentReason: '',
+          adjustmentError: ''
+        }),
+        ...patch
+      }
     }));
   };
 
   const submitPayment = async (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => {
     event.preventDefault();
-    const form = formByRecipient[recipient.id] || { amount: centsToAmount(recipient.remainingBalanceCents), date: todayIsoDate(), note: '', error: '' };
-    updateForm(recipient.id, { error: '' });
+    const form = formByRecipient[recipient.id] || {
+      paymentAmount: centsToAmount(recipient.remainingBalanceCents),
+      paymentDate: todayIsoDate(),
+      paymentNote: '',
+      paymentError: '',
+      adjustmentAmount: '',
+      adjustmentReason: '',
+      adjustmentError: ''
+    };
+    updateForm(recipient.id, { paymentError: '' });
     setSuccess('');
-    setSubmittingId(recipient.id);
+    setSubmittingId(`payment:${recipient.id}`);
     try {
       await recordOfflineTeamFeePayment({
         teamId,
         batchId: selectedBatchId,
         recipient,
-        amount: form.amount,
-        date: form.date,
-        note: form.note,
+        amount: form.paymentAmount,
+        date: form.paymentDate,
+        note: form.paymentNote,
         user: auth.user
       });
-      setSuccess(`Recorded ${formatMoney(Number(form.amount) * 100)} for ${recipient.playerName}.`);
+      setSuccess(`Recorded ${formatMoney(Number(form.paymentAmount) * 100)} for ${recipient.playerName}.`);
       await refresh();
     } catch (submitError: any) {
-      updateForm(recipient.id, { error: submitError?.message || 'Unable to record payment.' });
+      updateForm(recipient.id, { paymentError: submitError?.message || 'Unable to record payment.' });
+    } finally {
+      setSubmittingId('');
+    }
+  };
+
+  const submitAdjustment = async (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => {
+    event.preventDefault();
+    const form = formByRecipient[recipient.id] || {
+      paymentAmount: centsToAmount(recipient.remainingBalanceCents),
+      paymentDate: todayIsoDate(),
+      paymentNote: '',
+      paymentError: '',
+      adjustmentAmount: '',
+      adjustmentReason: '',
+      adjustmentError: ''
+    };
+    updateForm(recipient.id, { adjustmentError: '' });
+    setSuccess('');
+    setSubmittingId(`adjustment:${recipient.id}`);
+    try {
+      await recordTeamFeeBalanceAdjustment({
+        teamId,
+        batchId: selectedBatchId,
+        recipient,
+        amount: form.adjustmentAmount,
+        note: form.adjustmentReason,
+        user: auth.user
+      });
+      setSuccess(`Adjusted ${recipient.playerName} by ${formatSignedMoney(form.adjustmentAmount)}.`);
+      await refresh();
+    } catch (submitError: any) {
+      updateForm(recipient.id, { adjustmentError: submitError?.message || 'Unable to save adjustment.' });
     } finally {
       setSubmittingId('');
     }
@@ -126,7 +180,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   }
 
   if (!model.canManageFees) {
-    return <StatusCard title="Admin access required" message="Only team owners, team admins, and global admins can record offline team fee payments." backTo={`/teams/${encodeURIComponent(teamId)}`} />;
+    return <StatusCard title="Admin access required" message="Only team owners, team admins, and global admins can record offline team fee payments or adjust balances." backTo={`/teams/${encodeURIComponent(teamId)}`} />;
   }
 
   return (
@@ -135,8 +189,8 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.06em] text-primary-700"><DollarSign className="h-4 w-4" aria-hidden="true" /> Team fees</div>
-            <h1 className="mt-1 text-2xl font-black text-gray-950">Record offline payment</h1>
-            <p className="mt-1 text-sm font-semibold text-gray-600">{model.team.name}: record cash, check, or other offline payments against existing fee recipients.</p>
+            <h1 className="mt-1 text-2xl font-black text-gray-950">Manage fee balances</h1>
+            <p className="mt-1 text-sm font-semibold text-gray-600">{model.team.name}: record offline payments and apply one signed balance adjustment with a required reason for each recipient.</p>
           </div>
           <button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /> Refresh
@@ -172,7 +226,16 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           {actionableRecipients.length ? actionableRecipients.map((recipient) => {
-            const form = formByRecipient[recipient.id] || { amount: centsToAmount(recipient.remainingBalanceCents), date: todayIsoDate(), note: '', error: '' };
+            const form = formByRecipient[recipient.id] || {
+              paymentAmount: centsToAmount(recipient.remainingBalanceCents),
+              paymentDate: todayIsoDate(),
+              paymentNote: '',
+              paymentError: '',
+              adjustmentAmount: '',
+              adjustmentReason: '',
+              adjustmentError: ''
+            };
+            const recipientSubmitting = isRecipientSubmitting(recipient.id);
             return (
               <section key={recipient.id} className="app-card p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -183,26 +246,43 @@ export function TeamFees({ auth }: { auth: AuthState }) {
                   <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black uppercase text-gray-700">{recipient.status}</span>
                 </div>
 
-                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
+                  <Metric label="Status" value={recipient.status} />
+                  <Metric label="Amount due" value={formatMoney(recipient.amountDueCents)} />
                   <Metric label="Paid" value={formatMoney(recipient.amountPaidCents)} />
-                  <Metric label="Balance" value={formatMoney(recipient.remainingBalanceCents)} urgent={recipient.remainingBalanceCents > 0} />
-                  <Metric label="Ledger" value={String(recipient.paymentLedger.length)} />
+                  <Metric label="Outstanding" value={formatMoney(recipient.remainingBalanceCents)} urgent={recipient.remainingBalanceCents > 0} />
                 </div>
 
                 <form className="mt-4 space-y-3" onSubmit={(event) => submitPayment(event, recipient)}>
+                  <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Record offline payment</div>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment amount
-                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={form.amount} onChange={(event) => updateForm(recipient.id, { amount: event.target.value })} />
+                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={form.paymentAmount} onChange={(event) => updateForm(recipient.id, { paymentAmount: event.target.value })} disabled={recipientSubmitting} />
                     </label>
                     <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment date
-                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" type="date" value={form.date} onChange={(event) => updateForm(recipient.id, { date: event.target.value })} />
+                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" type="date" value={form.paymentDate} onChange={(event) => updateForm(recipient.id, { paymentDate: event.target.value })} disabled={recipientSubmitting} />
                     </label>
                   </div>
-                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Note
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" placeholder="Cash, check #, Venmo note..." value={form.note} onChange={(event) => updateForm(recipient.id, { note: event.target.value })} />
+                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment note
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" placeholder="Cash, check #, Venmo note..." value={form.paymentNote} onChange={(event) => updateForm(recipient.id, { paymentNote: event.target.value })} disabled={recipientSubmitting} />
                   </label>
-                  {form.error ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.error}</div> : null}
-                  <button type="submit" className="primary-button w-full" disabled={submittingId === recipient.id}>{submittingId === recipient.id ? 'Recording...' : 'Record payment'}</button>
+                  {form.paymentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.paymentError}</div> : null}
+                  <button type="submit" className="primary-button w-full" disabled={recipientSubmitting}>{submittingId === `payment:${recipient.id}` ? 'Recording...' : 'Record payment'}</button>
+                </form>
+
+                <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" onSubmit={(event) => submitAdjustment(event, recipient)}>
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Adjust balance</div>
+                    <p className="mt-1 text-xs font-semibold text-gray-500">Positive credits reduce what is owed. Negative charges increase it.</p>
+                  </div>
+                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Signed amount
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} disabled={recipientSubmitting} />
+                  </label>
+                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Reason
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} disabled={recipientSubmitting} />
+                  </label>
+                  {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
+                  <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
                 </form>
               </section>
             );
@@ -223,7 +303,18 @@ export function TeamFees({ auth }: { auth: AuthState }) {
           </summary>
           <p className="mt-2 text-xs font-semibold text-gray-500">Fully paid recipients stay available for review without editable payment controls.</p>
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {paidRecipients.map((recipient) => (
+            {paidRecipients.map((recipient) => {
+              const form = formByRecipient[recipient.id] || {
+                paymentAmount: centsToAmount(recipient.remainingBalanceCents),
+                paymentDate: todayIsoDate(),
+                paymentNote: '',
+                paymentError: '',
+                adjustmentAmount: '',
+                adjustmentReason: '',
+                adjustmentError: ''
+              };
+              const recipientSubmitting = isRecipientSubmitting(recipient.id);
+              return (
               <section key={recipient.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -233,13 +324,30 @@ export function TeamFees({ auth }: { auth: AuthState }) {
                   <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black uppercase text-emerald-700">{recipient.status}</span>
                 </div>
 
-                <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
+                  <Metric label="Status" value={recipient.status} />
+                  <Metric label="Amount due" value={formatMoney(recipient.amountDueCents)} />
                   <Metric label="Paid" value={formatMoney(recipient.amountPaidCents)} />
-                  <Metric label="Balance" value={formatMoney(recipient.remainingBalanceCents)} />
-                  <Metric label="Ledger" value={String(recipient.paymentLedger.length)} />
+                  <Metric label="Outstanding" value={formatMoney(recipient.remainingBalanceCents)} />
                 </div>
+
+                <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-white p-3" onSubmit={(event) => submitAdjustment(event, recipient)}>
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Adjust balance</div>
+                    <p className="mt-1 text-xs font-semibold text-gray-500">Positive credits reduce what is owed. Negative charges increase it.</p>
+                  </div>
+                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Signed amount
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} disabled={recipientSubmitting} />
+                  </label>
+                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Reason
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} disabled={recipientSubmitting} />
+                  </label>
+                  {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
+                  <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
+                </form>
               </section>
-            ))}
+              );
+            })}
           </div>
         </details>
       ) : null}
@@ -248,23 +356,32 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         <section className="app-card p-5 text-center">
           <DollarSign className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-950">No fee recipients</div>
-          <p className="mt-1 text-xs font-semibold text-gray-500">Create fee batches in the full website manager, then record offline payments here.</p>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Create fee batches in the full website manager, then record offline payments or adjustments here.</p>
         </section>
       ) : null}
     </div>
   );
 }
 
-function seedRecipientForms(current: Record<string, { amount: string; date: string; note: string; error: string }>, recipients: TeamFeeRecipientSummary[]) {
-  return recipients.reduce<Record<string, { amount: string; date: string; note: string; error: string }>>((next, recipient) => {
+function seedRecipientForms(current: Record<string, { paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>, recipients: TeamFeeRecipientSummary[]) {
+  return recipients.reduce<Record<string, { paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>>((next, recipient) => {
     next[recipient.id] = current[recipient.id] || {
-      amount: centsToAmount(recipient.remainingBalanceCents),
-      date: todayIsoDate(),
-      note: '',
-      error: ''
+      paymentAmount: centsToAmount(recipient.remainingBalanceCents),
+      paymentDate: todayIsoDate(),
+      paymentNote: '',
+      paymentError: '',
+      adjustmentAmount: '',
+      adjustmentReason: '',
+      adjustmentError: ''
     };
     return next;
   }, {});
+}
+
+function formatSignedMoney(value: string) {
+  const amount = Number(String(value || '').replace(/[$,]/g, '').trim());
+  if (!Number.isFinite(amount)) return String(value || '').trim();
+  return `${amount >= 0 ? '+' : '-'}${formatMoney(Math.round(Math.abs(amount) * 100))}`;
 }
 
 function Metric({ label, value, urgent = false }: { label: string; value: string; urgent?: boolean }) {

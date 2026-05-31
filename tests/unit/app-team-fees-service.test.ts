@@ -13,9 +13,11 @@ vi.mock('../../js/team-access.js', () => ({
 }));
 
 import {
+    buildBalanceAdjustmentUpdate,
     buildManualPaymentUpdate,
     loadTeamFeeManagementModel,
-    recordOfflineTeamFeePayment
+    recordOfflineTeamFeePayment,
+    recordTeamFeeBalanceAdjustment
 } from '../../apps/app/src/lib/teamFeesService.ts';
 
 describe('React app team fee offline payment service', () => {
@@ -73,6 +75,59 @@ describe('React app team fee offline payment service', () => {
         expect(() => buildManualPaymentUpdate({ amount: '0', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '-1.00', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '5.00', date: '' })).toThrow('payment date');
+    });
+
+    it('treats positive adjustments as credits that reduce the amount owed', () => {
+        const update = buildBalanceAdjustmentUpdate({
+            amount: '20.00',
+            note: 'Scholarship credit',
+            actorId: 'coach-1',
+            currentBalanceCents: 15000,
+            currentPaidCents: 2500
+        });
+
+        expect(update).toMatchObject({
+            status: 'partial',
+            amountDueCents: 13000,
+            remainingBalanceCents: 10500,
+            adjustment: {
+                amountCents: 2000,
+                previousAmountDueCents: 15000,
+                amountDueCents: 13000,
+                note: 'Scholarship credit',
+                adjustedBy: 'coach-1'
+            }
+        });
+        expect(update.ledgerEntries).toEqual([
+            expect.objectContaining({
+                type: 'balance_adjustment',
+                amountCents: 2000,
+                previousAmountDueCents: 15000,
+                amountDueCents: 13000,
+                reason: 'Scholarship credit'
+            })
+        ]);
+    });
+
+    it('treats negative adjustments as charges that increase the amount owed', () => {
+        const update = buildBalanceAdjustmentUpdate({
+            amount: '-5.00',
+            note: 'Late fee',
+            actorId: 'coach-1',
+            currentBalanceCents: 15000,
+            currentPaidCents: 0
+        });
+
+        expect(update.status).toBe('unpaid');
+        expect(update.amountDueCents).toBe(15500);
+        expect(update.remainingBalanceCents).toBe(15500);
+        expect(update.adjustment.amountCents).toBe(-500);
+    });
+
+    it('rejects zero adjustments and missing reasons', () => {
+        expect(() => buildBalanceAdjustmentUpdate({ amount: '0', note: 'No-op' })).toThrow('positive or negative adjustment');
+        expect(() => buildBalanceAdjustmentUpdate({ amount: '', note: 'No-op' })).toThrow('positive or negative adjustment');
+        expect(() => buildBalanceAdjustmentUpdate({ amount: '5.00', note: '' })).toThrow('adjustment reason');
     });
 
     it('loads batches and recipients only for fee managers', async () => {
@@ -159,10 +214,11 @@ describe('React app team fee offline payment service', () => {
         }));
     });
 
-    it('blocks non-managers from recording offline payments', async () => {
+    it('writes balance adjustments to the existing recipient document', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.updateTeamFeeRecipient.mockResolvedValue(undefined);
 
-        await expect(recordOfflineTeamFeePayment({
+        await recordTeamFeeBalanceAdjustment({
             teamId: 'team-1',
             batchId: 'batch-1',
             recipient: {
@@ -170,14 +226,55 @@ describe('React app team fee offline payment service', () => {
                 playerName: 'Pat Star',
                 parentName: '',
                 parentEmail: '',
-                status: 'unpaid',
+                status: 'paid',
                 amountDueCents: 10000,
-                amountPaidCents: 0,
-                remainingBalanceCents: 10000,
+                amountPaidCents: 10000,
+                remainingBalanceCents: 0,
                 paymentLedger: []
             },
+            amount: '-10.00',
+            note: 'Late fee',
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        });
+
+        expect(dbMocks.updateTeamFeeRecipient).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1', expect.objectContaining({
+            status: 'partial',
+            amountDueCents: 11000,
+            remainingBalanceCents: 1000,
+            adjustment: expect.objectContaining({ amountCents: -1000, note: 'Late fee' }),
+            ledgerEntries: [expect.objectContaining({ type: 'balance_adjustment', amountCents: -1000, reason: 'Late fee' })]
+        }));
+    });
+
+    it('blocks non-managers from recording offline payments or adjustments', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+
+        const recipient = {
+            id: 'recipient-1',
+            playerName: 'Pat Star',
+            parentName: '',
+            parentEmail: '',
+            status: 'unpaid',
+            amountDueCents: 10000,
+            amountPaidCents: 0,
+            remainingBalanceCents: 10000,
+            paymentLedger: []
+        };
+
+        await expect(recordOfflineTeamFeePayment({
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipient,
             amount: '10.00',
             date: '2026-05-28',
+            user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] }
+        })).rejects.toThrow('do not have access');
+        await expect(recordTeamFeeBalanceAdjustment({
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipient,
+            amount: '10.00',
+            note: 'Scholarship',
             user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] }
         })).rejects.toThrow('do not have access');
         expect(dbMocks.updateTeamFeeRecipient).not.toHaveBeenCalled();
