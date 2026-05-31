@@ -168,6 +168,31 @@ async function installModuleMocks(page) {
             return store.config ? [clone(store.config)] : [];
         }
 
+        export async function getGames() {
+            const store = loadStore();
+            return [clone(store.game)];
+        }
+
+        export async function getRosterFieldDefinitions() {
+            return [];
+        }
+
+        export async function updatePlayerProfile() {
+            return null;
+        }
+
+        export async function updatePlayerPrivateProfile() {
+            return null;
+        }
+
+        export async function getPlayerPrivateProfile() {
+            return null;
+        }
+
+        export async function uploadPlayerPhoto() {
+            return '';
+        }
+
         export function collection(_db, path) {
             return { path };
         }
@@ -308,6 +333,13 @@ async function installModuleMocks(page) {
 
         export async function getDocs(ref) {
             return buildSnapshot(ref.path);
+        }
+
+        export async function getDoc() {
+            return {
+                exists() { return false; },
+                data() { return null; }
+            };
         }
 
         export function writeBatch() {
@@ -467,12 +499,38 @@ async function installModuleMocks(page) {
         export async function generateGameInsights() {
             return { teamTakeaways: [], playerSignals: [] };
         }
+
+        export function generatePlayerGameInsights() {
+            return [];
+        }
     `;
 
     const liveGameStateModule = `
         export function resolveLiveStatConfig({ configs = [], game = {} } = {}) {
             return configs.find((config) => config.id === game.statTrackerConfigId) || configs[0] || null;
         }
+    `;
+
+    const rosterProfileFieldsModule = `
+        export function collectRosterProfileValues() { return {}; }
+        export function getRosterProfileValues() { return {}; }
+        export function normalizeRosterFieldDefinitions() { return []; }
+        export function renderRosterProfileFields(container) { if (container) container.innerHTML = ''; }
+        export function validateRosterProfileValues() { return { ok: true, values: {} }; }
+    `;
+
+    const teamAccessModule = `
+        export function hasFullTeamAccess() { return true; }
+    `;
+
+    const rosterFieldPrivacyModule = `
+        export function getVisibleRosterFieldValues() { return []; }
+        export function getRosterFieldAccess() { return {}; }
+    `;
+
+    const premiumEntitlementsModule = `
+        export async function readAccountPremiumEntitlement() { return { state: 'active' }; }
+        export function renderPremiumGateState() { return false; }
     `;
 
     await page.route(/\/js\/db\.js\?v=\d+$/, async (route) => {
@@ -513,6 +571,22 @@ async function installModuleMocks(page) {
 
     await page.route(/\/js\/live-game-state\.js\?v=\d+$/, async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameStateModule });
+    });
+
+    await page.route(/\/js\/roster-profile-fields\.js\?v=\d+$/, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/javascript', body: rosterProfileFieldsModule });
+    });
+
+    await page.route(/\/js\/team-access\.js$/, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/javascript', body: teamAccessModule });
+    });
+
+    await page.route(/\/js\/roster-field-privacy\.js$/, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/javascript', body: rosterFieldPrivacyModule });
+    });
+
+    await page.route(/\/js\/premium-entitlements\.js\?v=\d+$/, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/javascript', body: premiumEntitlementsModule });
     });
 }
 
@@ -620,6 +694,53 @@ test('blocks apply until every included home row is mapped, then saves report da
         statsheet_2: { name: 'Kai North', number: '11', pts: 9, reb: 0, ast: 0, fouls: 2 }
     });
 
+});
+
+test('keeps zero-stat statsheet import appearances in player history', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario({
+        players: [
+            { id: 'p1', name: 'Ava Cole', number: '3' },
+            { id: 'p2', name: 'Mia Diaz', number: '5' },
+            { id: 'p3', name: 'Zoe Quinn', number: '0' }
+        ],
+        aiResponse: {
+            homePlayers: [
+                { number: '3', name: 'Ava Cole', totalPoints: 12, fouls: 2 },
+                { number: '0', name: 'Zoe Quinn', totalPoints: 0, fouls: 0 }
+            ],
+            visitorPlayers: [
+                { number: '10', name: 'River Stone', totalPoints: 15, fouls: 4 }
+            ],
+            scores: {
+                homeFinal: 12,
+                visitorFinal: 15
+            }
+        }
+    }));
+
+    await analyzeStatsheet(page, baseURL);
+    await page.locator('#apply-btn').click();
+    await expect(page.locator('#apply-status')).toHaveText('Stats saved! Now you can add a game summary.');
+
+    const savedState = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(savedState.aggregatedStats.p3).toEqual({
+        playerName: 'Zoe Quinn',
+        playerNumber: '0',
+        participated: true,
+        participationStatus: 'appeared',
+        participationSource: 'statsheet-import',
+        stats: { pts: 0, reb: 0, ast: 0, fouls: 0 }
+    });
+
+    await page.goto(buildUrl(baseURL, '/player.html#teamId=team-1&playerId=p3'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#season-stats')).toContainText('Games Played:');
+    await expect(page.locator('#season-stats')).toContainText('1');
+    await expect(page.locator('#game-stats')).toContainText('vs. Rockets');
+    await expect(page.locator('#game-stats')).toContainText('0');
+    await expect(page.locator('#game-stats')).not.toContainText('No statistics available');
 });
 
 test('respects overwrite confirmation and renders rewritten stats on the game report', async ({ page, baseURL }) => {
