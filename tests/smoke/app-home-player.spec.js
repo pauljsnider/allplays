@@ -422,7 +422,8 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await expect(page.locator('a[href="#/home?section=friends"]')).toBeVisible();
     await page.getByRole('button', { name: 'Player moment' }).click();
     await expect(page.getByRole('heading', { name: 'What happened?' })).toBeVisible();
-    await expect(page.getByText('Pick one')).toBeVisible();
+    await expect(page.getByText('Pick one')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Change share type' })).toBeVisible();
     await expect(page.getByText('Write one short note')).toBeVisible();
     await expect(page.getByText('Proud of the effort today.')).toBeVisible();
     await expect(page.getByText('Post type')).toHaveCount(0);
