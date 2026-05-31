@@ -93,6 +93,14 @@ async function mockTeamsModules(page) {
                     };
                 }
 
+                export async function loadParentHomeSummary(...args) {
+                    return loadParentHome(...args);
+                }
+
+                export async function loadParentHomeWithSecondaryData(...args) {
+                    return loadParentHome(...args);
+                }
+
                 export async function loadParentHome() {
                     window.__homeLoads += 1;
                     if (window.location.hash.includes('scenario=error')) {
