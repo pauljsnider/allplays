@@ -80,7 +80,7 @@ export function getHelpKnowledgeDocs(): HelpKnowledgeDoc[] {
 export function searchHelpKnowledge({
   query,
   roles = [],
-  roleFilter = 'all',
+  roleFilter,
   limit = 5
 }: {
   query: string;
