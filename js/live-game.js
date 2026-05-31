@@ -1886,7 +1886,7 @@ function resetViewerStateFromGameDoc(gameDoc, placeholder = 'Game reset. Waiting
   renderLineup();
 }
 
-function processNewEvents(events, { announce = true } = {}) {
+function processNewEvents(events, { announce = true, preserveSeededOpponentGoalStats = false } = {}) {
   const newEvents = collectVisibleLiveEventsSequentially(events, {
     seenIds: state.eventIds,
     resetBoundaryMs: state.lastResetAt
@@ -1909,7 +1909,7 @@ function processNewEvents(events, { announce = true } = {}) {
       renderLineup();
       return;
     }
-    const transition = applyViewerEventToState(state, event);
+    const transition = applyViewerEventToState(state, event, { preserveSeededOpponentGoalStats });
     Object.assign(state, transition.state);
 
     if (transition.shouldRenderLineup) {
@@ -1995,7 +1995,10 @@ function startLiveEvents() {
       }
     }
     state.liveEventsFirstLoad = false;
-    processNewEvents(events, { announce: !isInitialLiveEventsLoad });
+    processNewEvents(events, {
+      announce: !isInitialLiveEventsLoad,
+      preserveSeededOpponentGoalStats: isInitialLiveEventsLoad
+    });
   }, (error) => {
     console.warn('Live events subscription failed:', error);
     setConnectionBanner(true, formatFirestoreError(error));

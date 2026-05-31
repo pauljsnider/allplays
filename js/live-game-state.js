@@ -293,7 +293,7 @@ export function applyResetEventState(currentState, event) {
   };
 }
 
-export function applyViewerEventToState(currentState = {}, event = {}) {
+export function applyViewerEventToState(currentState = {}, event = {}, options = {}) {
   const nextState = {
     ...currentState,
     events: Array.isArray(currentState?.events) ? currentState.events : [],
@@ -360,8 +360,14 @@ export function applyViewerEventToState(currentState = {}, event = {}) {
         number: event.opponentPlayerNumber || existing.number || '',
         photoUrl: event.opponentPlayerPhoto || existing.photoUrl || ''
       };
-      nextState.opponentStats[event.playerId][event.statKey] =
-        (nextState.opponentStats[event.playerId][event.statKey] || 0) + (event.value || 0);
+      const hasSeededOpponentGoalStat = options.preserveSeededOpponentGoalStats &&
+        event.type === 'goal' &&
+        Number.isFinite(Number(existing[event.statKey])) &&
+        Number(existing[event.statKey]) > 0;
+      if (!hasSeededOpponentGoalStat) {
+        nextState.opponentStats[event.playerId][event.statKey] =
+          (nextState.opponentStats[event.playerId][event.statKey] || 0) + (event.value || 0);
+      }
     } else {
       const existing = currentState?.stats?.[event.playerId] || {};
       nextState.stats = { ...currentState?.stats };
