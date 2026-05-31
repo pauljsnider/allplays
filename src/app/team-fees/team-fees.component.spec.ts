@@ -354,6 +354,50 @@ describe('TeamFeesComponent checkout flow', () => {
     ]);
   });
 
+  it('orders actionable unpaid fees before completed and canceled fees', async () => {
+    const paidFee = feeDoc('teams/team-real/feeBatches/batch-paid/feeRecipients/recipient-paid', 'recipient-paid', {
+      parentUserId: 'parent-123',
+      title: 'Paid registration',
+      balanceDueCents: 0,
+      status: 'paid',
+      collectionMode: 'online_stripe'
+    });
+    const canceledFee = feeDoc('teams/team-real/feeBatches/batch-canceled/feeRecipients/recipient-canceled', 'recipient-canceled', {
+      parentUserId: 'parent-123',
+      title: 'Canceled registration',
+      balanceDueCents: 6500,
+      status: 'canceled',
+      collectionMode: 'online_stripe'
+    });
+    const offlineFee = feeDoc('teams/team-real/feeBatches/batch-offline/feeRecipients/recipient-offline', 'recipient-offline', {
+      parentUserId: 'parent-123',
+      title: 'Cash registration',
+      balanceDueCents: 6500,
+      status: 'unpaid',
+      collectionMode: 'offline_manual'
+    });
+    const onlineFee = feeDoc('teams/team-real/feeBatches/batch-online/feeRecipients/recipient-online', 'recipient-online', {
+      parentUserId: 'parent-123',
+      title: 'Online registration',
+      balanceDueCents: 12500,
+      status: 'unpaid',
+      collectionMode: 'online_stripe'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [paidFee, canceledFee, offlineFee, onlineFee] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(component.teamFees.map((fee) => ({ id: fee.id, status: fee.status, canPayOnline: fee.canPayOnline }))).toEqual([
+      { id: 'recipient-online', status: 'unpaid', canPayOnline: true },
+      { id: 'recipient-offline', status: 'unpaid', canPayOnline: false },
+      { id: 'recipient-paid', status: 'paid', canPayOnline: false },
+      { id: 'recipient-canceled', status: 'canceled', canPayOnline: false }
+    ]);
+  });
+
   it('passes the selected fee recipient IDs to StripeService before redirecting', async () => {
     const selectedFee = {
       id: 'recipient-real',
