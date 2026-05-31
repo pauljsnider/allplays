@@ -11,8 +11,10 @@ import {
     canTransitionRegistrationStatus,
     getRegistrationGuardianDrafts,
     getRegistrationPlayerDraft,
+    matchesRegistrationReviewScreeningStatus,
     matchesRegistrationReviewStatus,
     normalizeRegistrationStatus,
+    summarizeRegistrationReviewScreening,
     summarizeRegistration
 } from '../../js/registration-review.js';
 
@@ -71,6 +73,39 @@ describe('registration review helpers', () => {
         expect(matchesRegistrationReviewStatus({ registrationApproved: false }, 'rejected')).toBe(true);
         expect(matchesRegistrationReviewStatus({ rosterApproved: false }, 'rejected')).toBe(true);
         expect(matchesRegistrationReviewStatus({ rosterApproved: false }, 'roster-approved')).toBe(false);
+    });
+
+    it('summarizes volunteer screening counts for required registrations only', () => {
+        const summary = summarizeRegistrationReviewScreening([
+            { screeningRequired: true, screeningStatus: 'pending' },
+            { screeningRequired: true, screeningStatus: 'submitted' },
+            { screeningRequired: true, screeningStatus: 'cleared' },
+            { screeningRequired: true, screeningStatus: 'flagged' },
+            { screeningRequired: true, screeningStatus: 'expired' },
+            { screeningRequired: true, screeningStatus: 'rejected' },
+            { screeningRequired: true, screeningStatus: 'needs review' },
+            { screeningRequired: false, screeningStatus: 'rejected' }
+        ]);
+
+        expect(summary.counts).toEqual({
+            pending: 2,
+            submitted: 1,
+            cleared: 1,
+            flagged: 1,
+            expired: 1,
+            rejected: 1
+        });
+        expect(summary.totalRequired).toBe(7);
+        expect(summary.notCleared).toBe(6);
+        expect(summary.statuses).toEqual(['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected']);
+    });
+
+    it('matches volunteer screening status filters without changing registration status filters', () => {
+        expect(matchesRegistrationReviewScreeningStatus({ screeningRequired: false }, 'all')).toBe(true);
+        expect(matchesRegistrationReviewScreeningStatus({ screeningRequired: true, screeningStatus: 'Submitted' }, 'submitted')).toBe(true);
+        expect(matchesRegistrationReviewScreeningStatus({ screeningRequired: true, screeningStatus: 'submitted' }, 'cleared')).toBe(false);
+        expect(matchesRegistrationReviewScreeningStatus({ screeningRequired: false, screeningStatus: 'submitted' }, 'submitted')).toBe(false);
+        expect(matchesRegistrationReviewScreeningStatus({ screeningRequired: true, screeningStatus: 'unknown' }, 'pending')).toBe(true);
     });
 
     it('builds an auditable roster approval decision', () => {
@@ -168,6 +203,10 @@ describe('registration review helpers', () => {
         const editRosterPage = fs.readFileSync('edit-roster.html', 'utf8');
 
         expect(editRosterPage).toContain('Manual screening');
+        expect(editRosterPage).toContain('registration-screening-summary');
+        expect(editRosterPage).toContain('registration-screening-status-filter');
+        expect(editRosterPage).toContain('summarizeRegistrationReviewScreening');
+        expect(editRosterPage).toContain('matchesRegistrationReviewScreeningStatus');
         expect(editRosterPage).toContain('screening-status-select');
         expect(editRosterPage).toContain('screening-provider-reference');
         expect(editRosterPage).toContain('updateRegistrationScreening');
