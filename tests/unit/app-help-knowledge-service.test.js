@@ -30,6 +30,17 @@ describe('app help knowledge service', () => {
         expect(results.map((result) => result.id)).not.toContain('schedule');
     });
 
+    it('includes admin workflow help for platform admin role lookups', async () => {
+        const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const results = searchHelpKnowledge({
+            query: 'platform admin controls',
+            roles: ['platformAdmin'],
+            limit: 5
+        });
+
+        expect(results.map((result) => result.id)).toContain('admin-ops');
+    });
+
     it('finds functional workflow help with source pages and snippets', async () => {
         const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
         const results = searchHelpKnowledge({

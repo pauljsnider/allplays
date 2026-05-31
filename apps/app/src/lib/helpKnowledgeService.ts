@@ -163,6 +163,7 @@ function buildSnippet(doc: HelpKnowledgeDoc, tokens: string[]) {
 function normalizeRoles(roles: unknown[]) {
   const normalized = roles
     .map((role) => compactText(role).toLowerCase())
+    .flatMap((role) => role === 'platformadmin' || role === 'platform admin' ? ['platformadmin', 'admin'] : [role])
     .map((role) => role === 'administrator' || role === 'admins' || role === 'administrators' ? 'admin' : role)
     .map((role) => role === 'parents' ? 'parent' : role)
     .map((role) => role === 'coaches' ? 'coach' : role)
