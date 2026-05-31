@@ -378,7 +378,7 @@ export function applyViewerEventToState(currentState = {}, event = {}) {
   }
 
   const statKey = String(event.statKey || '').toLowerCase();
-  const isScoreEvent = event.type === 'goal' || event.type === 'football_score' ||
+  const isScoreEvent = event.type === 'goal' || event.type === 'football_score' || event.type === 'score_update' ||
     (event.type === 'stat' && ['pts', 'points', 'goals'].includes(statKey));
 
   return {

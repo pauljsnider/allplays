@@ -318,6 +318,18 @@ async function mockScheduleModules(page, options = {}) {
                     return payload;
                 }
 
+                export async function publishLiveScoreUpdateEvent(teamId, gameId, score, user, previousScore) {
+                    const payload = {
+                        homeScore: Number(score?.homeScore ?? 0),
+                        awayScore: Number(score?.awayScore ?? 0),
+                        previousHomeScore: Number(previousScore?.homeScore ?? 0),
+                        previousAwayScore: Number(previousScore?.awayScore ?? 0),
+                        userId: user?.uid || null
+                    };
+                    window.__scheduleCalls.liveScoreEvents = (window.__scheduleCalls.liveScoreEvents || []).concat({ teamId, gameId, payload });
+                    return { type: 'score_update', ...payload };
+                }
+
                 export async function cancelScheduledGameForApp(teamId, gameId, user) {
                     window.__scheduleCalls.cancellations = (window.__scheduleCalls.cancellations || []).concat({ teamId, gameId, userId: user?.uid || null });
                     return { status: 'cancelled', isCancelled: true };
@@ -896,7 +908,7 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
     const mobileRows = page.locator('.schedule-list > a');
-    await page.waitForSelector('.schedule-list > a');
+    await expect(mobileRows.first()).toBeVisible();
     await expect(mobileRows).toHaveCount(20);
     await expect(page.getByText(/Showing 20 of 2[45] events/)).toBeVisible();
     await page.getByRole('button', { name: /Show [45] more/ }).click();
@@ -921,6 +933,7 @@ test('schedule role permissions let admins manage non-owned rideshare requests',
     await mockScheduleModules(page, { isAdmin: true });
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
+    await expect(page.getByRole('button', { name: 'Rideshare', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Rideshare', exact: true }).click();
     const rideshareSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Rideshare' }) });
     const danaCard = rideshareSection.locator('article').filter({ hasText: 'Dana Driver' });
