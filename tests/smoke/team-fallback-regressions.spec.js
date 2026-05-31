@@ -584,6 +584,9 @@ export function getReplayStartTimeAfterSpeedChange() {
 export function getReplayTimestampMs(value) {
     return value?.toMillis?.() ?? value ?? null;
 }
+export function rebaseReplayStartTimeMs() {
+    return 0;
+}
 `;
 
 const LIVE_GAME_VIDEO_STUB = `
