@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -28,8 +28,8 @@ import {
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
-import { AppSearchDialog } from './AppSearchDialog';
-import { openPublicUrl } from '../lib/publicActions';
+
+const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -82,6 +82,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const handleAddWorkflow = async (workflow: AddWorkflow) => {
     setAddTeamOpen(false);
     if (workflow.kind === 'website') {
+      const { openPublicUrl } = await import('../lib/publicActions');
       await openPublicUrl(workflow.href);
       return;
     }
@@ -257,7 +258,11 @@ export function AppShell({ auth, children }: AppShellProps) {
         </>
       )}
 
-      <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
+      {searchOpen ? (
+        <Suspense fallback={null}>
+          <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
+        </Suspense>
+      ) : null}
 
       {addTeamOpen ? (
         <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add workflow">

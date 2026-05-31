@@ -5,7 +5,9 @@ import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
 import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
 
 const homeMocks = vi.hoisted(() => ({
-    loadParentHome: vi.fn()
+    loadParentHome: vi.fn(),
+    loadParentHomeSummary: vi.fn(),
+    loadParentHomeWithSecondaryData: vi.fn()
 }));
 
 const socialMocks = vi.hoisted(() => ({
@@ -220,6 +222,8 @@ beforeEach(() => {
     window.URL.createObjectURL = vi.fn((file) => `blob:${file.name}`);
     window.URL.revokeObjectURL = vi.fn();
     window.scrollTo = vi.fn();
+    homeMocks.loadParentHomeSummary.mockImplementation((user) => homeMocks.loadParentHome(user));
+    homeMocks.loadParentHomeWithSecondaryData.mockImplementation((user) => homeMocks.loadParentHome(user));
 
     const nextEvent = event({ id: 'game-next', opponent: 'Falcons' });
     const practice = event({
@@ -674,7 +678,7 @@ describe('React app Home and player drill-in integration', () => {
     });
 
     it('surfaces chat-access teams without linked players so Home and Messages stay aligned', async () => {
-        homeMocks.loadParentHome.mockResolvedValueOnce({
+        homeMocks.loadParentHome.mockResolvedValue({
             players: [],
             teams: [
                 {
