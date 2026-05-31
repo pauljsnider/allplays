@@ -193,6 +193,14 @@ async function mockTeamsModules(page) {
                     return { status: 'sent', email: 'coach@example.com' };
                 }
 
+                export async function grantScorekeeperAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function revokeScorekeeperAccessForApp() {
+                    return { success: true };
+                }
+
                 export async function loadParentTeamDetail(teamId) {
                     if (teamId === 'team-empty') {
                         return {
