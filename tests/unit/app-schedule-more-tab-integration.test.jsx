@@ -26,6 +26,7 @@ const scheduleMocks = vi.hoisted(() => ({
         confirmed: 0,
         isFull: false
     })),
+    publishLiveScoreUpdateEvent: vi.fn(),
     updateGameScore: vi.fn(),
     updateParentScheduleRideRequestStatus: vi.fn()
 }));
@@ -151,6 +152,7 @@ beforeEach(() => {
     scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
     scheduleMocks.publishGamePlanForApp.mockResolvedValue({ gamePlan: {}, notificationError: null });
     scheduleMocks.updateGameScore.mockResolvedValue({ homeScore: 5, awayScore: 2, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
+    scheduleMocks.publishLiveScoreUpdateEvent.mockResolvedValue({ type: 'score_update', homeScore: 5, awayScore: 2 });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
         id: 'user-1__player-1',
         parentUserId: 'user-1',
@@ -344,8 +346,39 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             { homeScore: 5, awayScore: 2 },
             auth.user
         );
-        await waitForText(container, 'Score saved.');
+        expect(scheduleMocks.publishLiveScoreUpdateEvent).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            { homeScore: 5, awayScore: 2 },
+            auth.user,
+            { homeScore: 4, awayScore: 2 }
+        );
+        await waitForText(container, 'Score saved and posted to live play-by-play.');
         expect(container.textContent).toContain('5-2');
+    });
+
+    it('does not publish a live event when the saved score is unchanged', async () => {
+        scheduleMocks.updateGameScore.mockResolvedValue({
+            homeScore: 4,
+            awayScore: 2,
+            scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'),
+            scoreUpdatedBy: 'user-1'
+        });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ homeScore: 4, awayScore: 2, canUpdateScore: true })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+
+        expect(buttonByText(container, 'Save score').disabled).toBe(true);
+        await clickButton(container, 'Home score up');
+        await clickButton(container, 'Save score');
+
+        await waitForText(container, 'Score saved.');
+        expect(scheduleMocks.publishLiveScoreUpdateEvent).not.toHaveBeenCalled();
     });
 
     it('lets staff undo the latest score change and save the restored score', async () => {
@@ -374,7 +407,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(container.textContent).toContain('5-2');
         expect(container.textContent).toContain('Undo last score change');
         await clickButton(container, 'Save score');
-        await waitForText(container, 'Score saved.');
+        await waitForText(container, 'Score saved and posted to live play-by-play.');
 
         await clickButton(container, 'Undo last score change');
         expect(container.textContent).toContain('4-2');
@@ -388,7 +421,31 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             { homeScore: 4, awayScore: 2 },
             auth.user
         );
-        await waitForText(container, 'Score saved.');
+        await waitForText(container, 'Score saved and posted to live play-by-play.');
+    });
+
+    it('keeps a saved score when live play-by-play posting fails', async () => {
+        scheduleMocks.updateGameScore.mockImplementation(async (_teamId, _gameId, score) => ({
+            ...score,
+            scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'),
+            scoreUpdatedBy: 'user-1'
+        }));
+        scheduleMocks.publishLiveScoreUpdateEvent.mockRejectedValue(new Error('live event failed'));
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ homeScore: 4, awayScore: 2, canUpdateScore: true })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+
+        await clickButton(container, 'Away score up');
+        await clickButton(container, 'Save score');
+
+        await waitForText(container, 'Score saved. Live play-by-play post failed.');
+        expect(container.textContent).toContain('4-3');
+        expect(container.textContent).toContain('Saved score controls');
     });
 
     it('disables undo while a live score save is in flight', async () => {

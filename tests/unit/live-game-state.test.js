@@ -236,6 +236,33 @@ describe('live game state helpers', () => {
     expect(shouldReset).toBe(true);
   });
 
+  it('applies score_update events to the scoreboard and play-by-play without stats mutation', () => {
+    const currentState = {
+      events: [],
+      stats: { p1: { pts: 2 } },
+      opponentStats: {},
+      homeScore: 4,
+      awayScore: 2
+    };
+
+    const result = applyViewerEventToState(currentState, {
+      id: 'score-update-1',
+      type: 'score_update',
+      description: 'Score update: Home 5, Away 2.',
+      homeScore: 5,
+      awayScore: 2
+    });
+
+    expect(result.state.homeScore).toBe(5);
+    expect(result.state.awayScore).toBe(2);
+    expect(result.state.events).toHaveLength(1);
+    expect(result.state.stats).toEqual({ p1: { pts: 2 } });
+    expect(result.shouldRenderScoreboard).toBe(true);
+    expect(result.shouldRenderPlayByPlay).toBe(true);
+    expect(result.animateScoreboard).toBe(true);
+    expect(result.shouldCelebrateScore).toBe(true);
+  });
+
   it('does not force reset from game doc when no tracked state exists', () => {
     const shouldReset = shouldResetViewerFromGameDoc(
       { liveStatus: 'scheduled', liveHasData: false, homeScore: 0, awayScore: 0 },
