@@ -1189,27 +1189,48 @@
             return option.detail ? `${option.name} (${option.detail})` : option.name;
         }
 
+        function getPlayerGuardianRecipientIds(player = {}) {
+            const contacts = [
+                ...(Array.isArray(player?.parents) ? player.parents : []),
+                ...(Array.isArray(player?.contacts) ? player.contacts : []),
+                ...(Array.isArray(player?.guardians) ? player.guardians : [])
+            ];
+            return Array.from(new Set(contacts.flatMap((contact) => {
+                const parentKey = contact?.userId || contact?.email || '';
+                if (!parentKey) return [];
+                return [getRecipientOptionId(contact.userId ? 'user' : 'email', parentKey)];
+            })));
+        }
+
         async function loadRecipientOptions() {
             try {
                 const players = await getPlayers(teamId);
                 const options = [];
                 players.forEach((player) => {
                     if (!player?.id) return;
+                    const guardianRecipientIds = getPlayerGuardianRecipientIds(player);
                     const number = player.number !== undefined && player.number !== null && String(player.number).trim() !== ''
                         ? `#${player.number}`
                         : 'Roster';
-                    options.push({
-                        id: getRecipientOptionId('player', player.id),
-                        name: player.name || `Player ${player.id.slice(0, 6)}`,
-                        detail: number
-                    });
-                    (Array.isArray(player.parents) ? player.parents : []).forEach((parent) => {
-                        const parentKey = parent?.userId || parent?.email || '';
-                        if (!parentKey) return;
-                        const parentName = parent.name || parent.fullName || parent.email || 'Guardian';
+                    if (guardianRecipientIds.length > 0) {
                         options.push({
-                            id: getRecipientOptionId(parent.userId ? 'user' : 'email', parentKey),
-                            name: parentName,
+                            id: getRecipientOptionId('player', player.id),
+                            recipientIds: guardianRecipientIds,
+                            name: player.name || `Player ${player.id.slice(0, 6)}`,
+                            detail: `${number} family`
+                        });
+                    }
+                    [
+                        ...(Array.isArray(player.parents) ? player.parents : []),
+                        ...(Array.isArray(player.contacts) ? player.contacts : []),
+                        ...(Array.isArray(player.guardians) ? player.guardians : [])
+                    ].forEach((contact) => {
+                        const contactKey = contact?.userId || contact?.email || '';
+                        if (!contactKey) return;
+                        const contactName = contact.name || contact.fullName || contact.email || 'Guardian';
+                        options.push({
+                            id: getRecipientOptionId(contact.userId ? 'user' : 'email', contactKey),
+                            name: contactName,
                             detail: player.name ? `Guardian for ${player.name}` : 'Guardian'
                         });
                     });
@@ -1617,9 +1638,16 @@
                 };
             }
             if (selectedRecipientTarget === 'individuals' && selectedRecipientIds.size > 0) {
+                const selectedOptionsById = new Map(recipientOptions.map((option) => [option.id, option]));
+                const recipientIds = Array.from(new Set(Array.from(selectedRecipientIds).flatMap((id) => {
+                    const option = selectedOptionsById.get(id);
+                    return Array.isArray(option?.recipientIds) && option.recipientIds.length > 0
+                        ? option.recipientIds
+                        : [id];
+                }))).sort();
                 return {
                     targetType: 'individuals',
-                    recipientIds: Array.from(selectedRecipientIds).sort(),
+                    recipientIds,
                     targetRole: null
                 };
             }
