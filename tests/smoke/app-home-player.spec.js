@@ -330,6 +330,10 @@ async function mockHomePlayerModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export async function inviteTeamAdminForApp() {
+                    return { status: 'sent', email: 'coach@example.com' };
+                }
+
                 export async function loadParentTeamDetail() {
                     const nextDate = new Date('2100-06-01T18:00:00Z');
                     return {

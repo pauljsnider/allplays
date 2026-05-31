@@ -177,6 +177,10 @@ async function mockTeamsModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export async function inviteTeamAdminForApp() {
+                    return { status: 'sent', email: 'coach@example.com' };
+                }
+
                 export async function loadParentTeamDetail(teamId) {
                     if (teamId === 'team-empty') {
                         return {
