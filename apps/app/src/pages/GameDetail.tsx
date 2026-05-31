@@ -1,22 +1,23 @@
 import { useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { BarChart3, Brain, Car, ClipboardCheck, FileText, ListTree, MessageCircleReply, Radio, Share2, Shield, Trophy, Users } from 'lucide-react';
-import { mockGames, mockPlayers } from '../data/mockData';
+import { mockGames, mockPlayers, mockTeams } from '../data/mockData';
 import { applyWalk, createBaseballLiveState, type BaseballBases, type BaseballLiveState } from '../lib/sportScoring/baseballScorekeepingService';
 import type { AuthState } from '../lib/types';
 
 export function GameDetail({ auth }: { auth: AuthState }) {
   const { gameId } = useParams();
   const game = mockGames.find((item) => item.id === gameId);
+  const [baseballState, setBaseballState] = useState<BaseballLiveState>(() => createBaseballLiveState());
+  const [lastScoringAction, setLastScoringAction] = useState('Ready for pitch');
+  const team = game ? mockTeams.find((item) => item.id === game.teamId) : null;
+  const canScoreBaseball = (auth.isCoach || auth.isAdmin) && (team?.sport === 'Baseball' || team?.sport === 'Softball');
 
   if (!game) {
     return <Navigate to="/schedule" replace />;
   }
 
   const players = mockPlayers.filter((player) => game.playerIds.includes(player.id));
-  const [baseballState, setBaseballState] = useState<BaseballLiveState>(() => createBaseballLiveState());
-  const [lastScoringAction, setLastScoringAction] = useState('Ready for pitch');
-  const canScoreBaseball = auth.isCoach || auth.isAdmin;
 
   function toggleBase(base: keyof BaseballBases) {
     setBaseballState((current) => ({
