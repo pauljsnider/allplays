@@ -97,7 +97,7 @@ async function mockSearchModules(page) {
                     ];
                 }
 
-                export function computeAppSearchResults({ queryText, auth, teams, players }) {
+                export function computeAppSearchResults({ queryText, auth, teams, players, helpRoleFilter = 'all' }) {
                     const q = String(queryText || '').trim().toLowerCase();
                     const actions = [
                         { id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams on ALL PLAYS', href: 'https://allplays.ai/teams.html' },
@@ -115,14 +115,39 @@ async function mockSearchModules(page) {
                         route: '/teams/' + encodeURIComponent(team.id)
                     }));
                     const matches = (item) => !q || (item.title + ' ' + item.subtitle).toLowerCase().includes(q);
+                    const helpItems = q.includes('live') || q.includes('tracker') ? [
+                        {
+                            id: 'help:live-tracker-coach-guide',
+                            kind: 'help',
+                            title: 'Track Live Games with the Live Tracker',
+                            subtitle: 'Coaches and admins can run live tracker game flows.',
+                            route: '/help/live-tracker-coach-guide',
+                            href: 'https://allplays.ai/help-live-tracker.html',
+                            roles: ['coach', 'admin'],
+                            snippet: 'Coaches and admins can run live tracker game flows.'
+                        },
+                        {
+                            id: 'help:watch-live-games',
+                            kind: 'help',
+                            title: 'Watch Live Games and Replays',
+                            subtitle: 'Parents and members can watch live game feeds.',
+                            route: '/help/watch-live-games',
+                            href: 'https://allplays.ai/help-watch-chat.html',
+                            roles: ['parent', 'member'],
+                            snippet: 'Parents and members can watch live game feeds.'
+                        }
+                    ] : [];
+                    const roleMatches = (item) => helpRoleFilter === 'all' || item.roles.includes('all') || item.roles.includes(helpRoleFilter);
                     const matchedActions = actions.filter(matches);
                     const matchedTeams = teamItems.filter(matches);
+                    const matchedHelp = helpItems.filter(roleMatches);
                     const matchedPlayers = players.filter(matches);
                     return {
                         actions: matchedActions,
                         teams: matchedTeams,
+                        help: matchedHelp,
                         players: matchedPlayers,
-                        flat: [...matchedActions, ...matchedTeams, ...matchedPlayers]
+                        flat: [...matchedActions, ...matchedTeams, ...matchedHelp, ...matchedPlayers]
                     };
                 }
             `
@@ -204,6 +229,24 @@ test.describe('desktop app global search', () => {
         await page.getByRole('button', { name: 'Search' }).click();
         await page.getByRole('button', { name: /Browse Teams/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual(['https://allplays.ai/teams.html']);
+    });
+
+    test('desktop search filters help results by selected role', async ({ page, baseURL }) => {
+        await mockSearchModules(page);
+        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+
+        await page.getByRole('button', { name: 'Search' }).click();
+        await page.getByLabel('Search teams, players, actions, help').fill('live tracker');
+        await expect(page.getByRole('button', { name: /Track Live Games with the Live Tracker/ })).toBeVisible();
+        await expect(page.getByRole('button', { name: /Watch Live Games and Replays/ })).toBeVisible();
+
+        await page.getByRole('button', { name: 'Coach', exact: true }).click();
+        await expect(page.getByRole('button', { name: /Track Live Games with the Live Tracker/ })).toBeVisible();
+        await expect(page.getByRole('button', { name: /Watch Live Games and Replays/ })).toBeHidden();
+
+        await page.getByRole('button', { name: 'Member', exact: true }).click();
+        await expect(page.getByRole('button', { name: /Watch Live Games and Replays/ })).toBeVisible();
+        await expect(page.getByRole('button', { name: /Track Live Games with the Live Tracker/ })).toBeHidden();
     });
 
     test('desktop search supports typed keyboard navigation from the dialog', async ({ page, baseURL }) => {

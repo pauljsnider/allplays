@@ -367,22 +367,26 @@ function buildAppSearchHelpResults(
   const normalized = normalizeSearchQuery(queryText);
   if (normalized.length < 2) return [];
 
+  const normalizedRoleFilter = normalizeAppSearchHelpRoleFilter(helpRoleFilter);
   return searchHelpKnowledge({
     query: queryText,
     roles: getSearchHelpAuthRoles(auth),
-    roleFilter: normalizeAppSearchHelpRoleFilter(helpRoleFilter),
+    roleFilter: normalizedRoleFilter,
     limit: 5
-  }).map((result) => ({
-    id: `help:${result.id}`,
-    kind: 'help' as const,
-    title: result.title,
-    subtitle: result.snippet || result.summary,
-    route: `/help/${encodeURIComponent(result.id)}`,
-    href: result.url,
-    roles: result.roles,
-    snippet: result.snippet
-  }));
+  })
+    .filter((result) => normalizedRoleFilter === 'all' || helpResultMatchesRole(result.roles, normalizedRoleFilter))
+    .map((result) => ({
+      id: `help:${result.id}`,
+      kind: 'help' as const,
+      title: result.title,
+      subtitle: result.snippet || result.summary,
+      route: `/help/${encodeURIComponent(result.id)}`,
+      href: result.url,
+      roles: result.roles,
+      snippet: result.snippet
+    }));
 }
+
 
 function getSearchHelpAuthRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
   const roles = new Set<UserRole>();
@@ -395,6 +399,11 @@ function getSearchHelpAuthRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPl
 
 function normalizeAppSearchHelpRoleFilter(role: AppSearchHelpRoleFilter): Exclude<AppSearchHelpRoleFilter, 'platformAdmin'> {
   return role === 'platformAdmin' ? 'admin' : role;
+}
+
+function helpResultMatchesRole(resultRoles: string[] = [], helpRoleFilter: Exclude<AppSearchHelpRoleFilter, 'platformAdmin'>) {
+  const normalizedRoles = resultRoles.map((role) => cleanString(role).toLowerCase());
+  return normalizedRoles.includes('all') || normalizedRoles.includes(helpRoleFilter);
 }
 
 export function resetAppSearchCacheForTests() {
