@@ -5,9 +5,11 @@ import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
 import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
 
 const teamDetailMocks = vi.hoisted(() => ({
-    loadParentTeamDetail: vi.fn()
+    loadParentTeamDetail: vi.fn(),
+    inviteTeamAdminForApp: vi.fn()
 }));
 const publicActionMocks = vi.hoisted(() => ({
+    copyPublicText: vi.fn(),
     openPublicUrl: vi.fn()
 }));
 
@@ -63,6 +65,7 @@ function makeModel(staffPermissions) {
         leaderboards: [],
         trackingSummaries: [],
         sponsors: [],
+        canManageTeam: Boolean(staffPermissions),
         staffPermissions,
         counts: { games: 0, practices: 0, completedGames: 0 }
     };
@@ -95,6 +98,17 @@ async function flush() {
     });
 }
 
+
+async function fillInput(container, selector, value) {
+    const input = container.querySelector(selector);
+    if (!input) throw new Error(`Input not found: ${selector}`);
+    await act(async () => {
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+}
+
 async function clickButton(container, text) {
     const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.includes(text));
     if (!button) throw new Error(`Button not found: ${text}`);
@@ -111,6 +125,14 @@ beforeEach(() => {
         return 0;
     };
     window.scrollTo = vi.fn();
+    publicActionMocks.copyPublicText.mockResolvedValue('copied');
+    teamDetailMocks.inviteTeamAdminForApp.mockResolvedValue({
+        email: 'newcoach@example.com',
+        status: 'sent',
+        code: 'CODE123',
+        teamName: 'Bears',
+        acceptInviteUrl: 'https://allplays.ai/accept-invite?code=CODE123&type=admin'
+    });
 });
 
 describe('React app TeamDetail staff permissions overview', () => {
@@ -138,6 +160,52 @@ describe('React app TeamDetail staff permissions overview', () => {
 
         await clickButton(container, 'Manage staff');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/edit-team.html#teamId=team-1');
+    });
+
+
+
+    it('blocks duplicate staff and pending invite emails before calling the service', async () => {
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }, { label: 'coach@example.com', role: 'Admin' }],
+            pendingInvites: ['pending@example.com'],
+            helperPermissions: [],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+        await fillInput(container, 'input[type="email"]', ' Pending@Example.com ');
+        await clickButton(container, 'Send invite');
+
+        expect(container.textContent).toContain('That email is already listed as staff or pending.');
+        expect(teamDetailMocks.inviteTeamAdminForApp).not.toHaveBeenCalled();
+    });
+
+    it('sends one native admin invite, refreshes staff state, and exposes fallback copy controls', async () => {
+        teamDetailMocks.inviteTeamAdminForApp.mockResolvedValueOnce({
+            email: 'newcoach@example.com',
+            status: 'fallback_code',
+            code: 'CODE123',
+            teamName: 'Bears',
+            acceptInviteUrl: 'https://allplays.ai/accept-invite?code=CODE123&type=admin'
+        });
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }],
+            pendingInvites: [],
+            helperPermissions: [],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+        await fillInput(container, 'input[type="email"]', ' NewCoach@Example.com ');
+        await clickButton(container, 'Send invite');
+
+        expect(teamDetailMocks.inviteTeamAdminForApp).toHaveBeenCalledWith('team-1', 'newcoach@example.com');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Email delivery needs a fallback for newcoach@example.com.');
+        await clickButton(container, 'Copy code');
+        await clickButton(container, 'Copy link');
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('CODE123');
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/accept-invite?code=CODE123&type=admin');
     });
 
     it('hides staff permissions when the service omits the admin-only payload', async () => {
