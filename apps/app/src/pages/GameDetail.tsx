@@ -1,17 +1,39 @@
+import { useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { BarChart3, Brain, Car, ClipboardCheck, FileText, ListTree, MessageCircleReply, Radio, Share2, Shield, Trophy, Users } from 'lucide-react';
-import { mockGames, mockPlayers } from '../data/mockData';
+import { mockGames, mockPlayers, mockTeams } from '../data/mockData';
+import { applyWalk, createBaseballLiveState, type BaseballBases, type BaseballLiveState } from '../lib/sportScoring/baseballScorekeepingService';
 import type { AuthState } from '../lib/types';
 
 export function GameDetail({ auth }: { auth: AuthState }) {
   const { gameId } = useParams();
   const game = mockGames.find((item) => item.id === gameId);
+  const [baseballState, setBaseballState] = useState<BaseballLiveState>(() => createBaseballLiveState());
+  const [lastScoringAction, setLastScoringAction] = useState('Ready for pitch');
+  const team = game ? mockTeams.find((item) => item.id === game.teamId) : null;
+  const canScoreBaseball = (auth.isCoach || auth.isAdmin) && (team?.sport === 'Baseball' || team?.sport === 'Softball');
 
   if (!game) {
     return <Navigate to="/schedule" replace />;
   }
 
   const players = mockPlayers.filter((player) => game.playerIds.includes(player.id));
+
+  function toggleBase(base: keyof BaseballBases) {
+    setBaseballState((current) => ({
+      ...current,
+      bases: {
+        ...current.bases,
+        [base]: !current.bases[base]
+      }
+    }));
+  }
+
+  function recordWalk() {
+    const result = applyWalk(baseballState);
+    setBaseballState(result.state);
+    setLastScoringAction(result.description);
+  }
 
   return (
     <div className="space-y-4">
@@ -40,6 +62,53 @@ export function GameDetail({ auth }: { auth: AuthState }) {
               <Link key={label} to={`/capabilities/${label === 'Lineup' ? 'game-plan' : label === 'Tracker' ? 'track-standard' : label === 'RSVP' ? 'game-day' : 'game-report'}`} className="secondary-button justify-center">
                 {label}
               </Link>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {canScoreBaseball ? (
+        <section className="app-card p-4" aria-labelledby="baseball-live-scoring-title">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="app-label">Baseball live scoring</div>
+              <h2 id="baseball-live-scoring-title" className="mt-1 text-lg font-black text-gray-950">Scorekeeper actions</h2>
+              <p className="mt-1 text-xs font-semibold text-gray-500">{lastScoringAction}</p>
+            </div>
+            <button type="button" className="primary-button" onClick={recordWalk}>Walk</button>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <div className="text-xs font-black uppercase tracking-wide text-gray-500">Score</div>
+              <div className="mt-1 text-sm font-black text-gray-950">{game.teamName} {baseballState.homeScore} · {game.opponent} {baseballState.awayScore}</div>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <div className="text-xs font-black uppercase tracking-wide text-gray-500">Count</div>
+              <div className="mt-1 text-sm font-black text-gray-950" data-testid="baseball-count">{baseballState.balls}-{baseballState.strikes}</div>
+            </div>
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <div className="text-xs font-black uppercase tracking-wide text-gray-500">Game state</div>
+              <div className="mt-1 text-sm font-black text-gray-950">{baseballState.half === 'top' ? 'Top' : 'Bottom'} {baseballState.inning} · {baseballState.outs} outs</div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2" aria-label="Base runners">
+            {([
+              ['first', '1B'],
+              ['second', '2B'],
+              ['third', '3B']
+            ] as const).map(([base, label]) => (
+              <button
+                key={base}
+                type="button"
+                data-testid={`baseball-base-${base}`}
+                aria-pressed={baseballState.bases[base]}
+                onClick={() => toggleBase(base)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-black ${baseballState.bases[base] ? 'border-primary-500 bg-primary-600 text-white' : 'border-gray-200 bg-white text-gray-600'}`}
+              >
+                {label} {baseballState.bases[base] ? 'occupied' : 'empty'}
+              </button>
             ))}
           </div>
         </section>
