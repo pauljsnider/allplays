@@ -111,6 +111,15 @@ async function clickButton(container, text) {
     await flush();
 }
 
+async function clickButtonWithin(container, text) {
+    const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim().includes(text));
+    if (!button) throw new Error(`Button not found: ${text}`);
+    await act(async () => {
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+}
+
 async function submitForm(container, text) {
     const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim().includes(text));
     if (!button) throw new Error(`Submit button not found: ${text}`);
@@ -290,6 +299,10 @@ describe('React app parent tools integration', () => {
         await submitForm(container, 'Create share link');
         expect(serviceMocks.createParentFamilyShare).toHaveBeenCalledWith(auth.user, 'Grandpa', []);
         await clickButton(container, 'Revoke');
+        expect(serviceMocks.revokeParentFamilyShare).not.toHaveBeenCalled();
+        const confirmDialog = container.querySelector('[role="dialog"]');
+        expect(confirmDialog?.textContent).toContain('Anyone using the family share link for Grandma will lose access.');
+        await clickButtonWithin(confirmDialog, 'Revoke link');
         expect(serviceMocks.revokeParentFamilyShare).toHaveBeenCalledWith('token-1');
 
         await clickButton(container, 'Register');
@@ -310,6 +323,53 @@ describe('React app parent tools integration', () => {
             title: 'Hustle Award',
             url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
         }));
+    });
+
+    it('requires confirmation before revoking a family share link', async () => {
+        const { container } = await renderParentTools('/parent-tools/share');
+        await waitForText(container, 'Grandma');
+
+        await clickButton(container, 'Revoke');
+
+        expect(serviceMocks.revokeParentFamilyShare).not.toHaveBeenCalled();
+        const confirmDialog = container.querySelector('[role="dialog"]');
+        expect(confirmDialog?.textContent).toContain('Anyone using the family share link for Grandma will lose access.');
+
+        await clickButtonWithin(confirmDialog, 'Cancel');
+
+        expect(serviceMocks.revokeParentFamilyShare).not.toHaveBeenCalled();
+        expect(container.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it('only revokes a family share link after confirmation', async () => {
+        const { container } = await renderParentTools('/parent-tools/share');
+        await waitForText(container, 'Grandma');
+
+        await clickButton(container, 'Revoke');
+        const confirmDialog = container.querySelector('[role="dialog"]');
+        await clickButtonWithin(confirmDialog, 'Revoke link');
+
+        expect(serviceMocks.revokeParentFamilyShare).toHaveBeenCalledWith('token-1');
+        await waitForText(container, 'Family link revoked.');
+    });
+
+    it('keeps revoke disabled for already revoked family share links', async () => {
+        serviceMocks.loadFamilyShareModel.mockResolvedValueOnce({
+            children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
+            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [], revoked: true }]
+        });
+        const { container } = await renderParentTools('/parent-tools/share');
+        await waitForText(container, 'Revoked');
+
+        const revokeButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim() === 'Revoke');
+        expect(revokeButton?.disabled).toBe(true);
+        await act(async () => {
+            revokeButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+        await flush();
+
+        expect(container.querySelector('[role="dialog"]')).toBeNull();
+        expect(serviceMocks.revokeParentFamilyShare).not.toHaveBeenCalled();
     });
 
     it('renders fee notes and offline payment guidance without changing checkout', async () => {
