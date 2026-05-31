@@ -35,6 +35,7 @@ describe('admin users official links', () => {
 
         expect(summary).toEqual({
             email: 'ref@one.com',
+            phone: null,
             teamIds: ['team-1', 'team-2'],
             teamNames: ['Blue Jays', 'Storm'],
             officialNames: ['Robin Ref'],
@@ -44,6 +45,28 @@ describe('admin users official links', () => {
         expect(matchesOfficialUserSearch({ fullName: 'Robin Ref' }, summary, 'storm')).toBe(true);
         expect(matchesOfficialUserSearch({ fullName: 'Robin Ref' }, summary, 'official')).toBe(true);
         expect(matchesOfficialUserSearch({ fullName: 'Robin Ref' }, summary, 'wolves')).toBe(false);
+    });
+
+    it('matches phone-only officials by normalized phone number', () => {
+        const lookup = buildOfficialUserLookup([
+            {
+                teamId: 'team-4',
+                teamName: 'Falcons',
+                official: { phone: '+1 (555) 123-4567', name: 'Pat Phone' }
+            }
+        ]);
+
+        const summary = getOfficialUserSummary({ phone: '5551234567' }, lookup);
+
+        expect(summary).toEqual({
+            email: null,
+            phone: '5551234567',
+            teamIds: ['team-4'],
+            teamNames: ['Falcons'],
+            officialNames: ['Pat Phone'],
+            teamCount: 1
+        });
+        expect(formatOfficialUserSummary(summary)).toBe('1 team: Falcons');
     });
 
     it('wires the admin users tab to show and filter official-linked users', () => {

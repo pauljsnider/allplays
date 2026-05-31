@@ -2,15 +2,31 @@ export function normalizeOfficialLinkEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
 
+export function normalizeOfficialLinkPhone(phone) {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length === 11 && digits.startsWith('1')) {
+        return digits.slice(1);
+    }
+    return digits;
+}
+
+function getOfficialLookupKeys(official = {}) {
+    return [
+        normalizeOfficialLinkEmail(official.email),
+        normalizeOfficialLinkPhone(official.phone)
+    ].filter(Boolean);
+}
+
 export function buildOfficialUserLookup(officialEntries = []) {
     const lookup = new Map();
 
     officialEntries.forEach((entry) => {
-        const email = normalizeOfficialLinkEmail(entry?.official?.email);
-        if (!email) return;
+        const lookupKeys = getOfficialLookupKeys(entry?.official);
+        if (!lookupKeys.length) return;
 
-        const existing = lookup.get(email) || {
-            email,
+        const existing = lookupKeys.map((key) => lookup.get(key)).find(Boolean) || {
+            email: normalizeOfficialLinkEmail(entry?.official?.email) || null,
+            phone: normalizeOfficialLinkPhone(entry?.official?.phone) || null,
             teamIds: new Set(),
             teamNames: new Set(),
             officialNames: new Set()
@@ -22,11 +38,12 @@ export function buildOfficialUserLookup(officialEntries = []) {
         const officialName = String(entry?.official?.name || entry?.official?.displayName || '').trim();
         if (officialName) existing.officialNames.add(officialName);
 
-        lookup.set(email, existing);
+        lookupKeys.forEach((key) => lookup.set(key, existing));
     });
 
-    return new Map(Array.from(lookup.entries()).map(([email, summary]) => [email, {
-        email,
+    return new Map(Array.from(lookup.entries()).map(([key, summary]) => [key, {
+        email: summary.email,
+        phone: summary.phone,
         teamIds: Array.from(summary.teamIds),
         teamNames: Array.from(summary.teamNames).sort((a, b) => a.localeCompare(b)),
         officialNames: Array.from(summary.officialNames).sort((a, b) => a.localeCompare(b))
@@ -35,9 +52,8 @@ export function buildOfficialUserLookup(officialEntries = []) {
 
 export function getOfficialUserSummary(user = {}, lookup = new Map()) {
     const email = normalizeOfficialLinkEmail(user?.email);
-    if (!email) return null;
-
-    const summary = lookup.get(email);
+    const phone = normalizeOfficialLinkPhone(user?.phone);
+    const summary = (email && lookup.get(email)) || (phone && lookup.get(phone)) || null;
     if (!summary) return null;
 
     return {
