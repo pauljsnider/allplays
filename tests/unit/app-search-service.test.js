@@ -358,7 +358,8 @@ describe('React app search service', () => {
 
         expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledWith({
             query: 'live tracker',
-            roles: ['member'],
+            roles: ['parent'],
+            roleFilter: 'member',
             limit: 5
         });
         expect(results.help.map((item) => item.title)).toEqual(['Watch Live Games and Replays']);

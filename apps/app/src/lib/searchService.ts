@@ -368,10 +368,9 @@ function buildAppSearchHelpResults(
   if (normalized.length < 2) return [];
 
   const normalizedRoleFilter = normalizeAppSearchHelpRoleFilter(helpRoleFilter);
-  const selectedRoles = getSearchHelpQueryRoles(auth, normalizedRoleFilter);
   return searchHelpKnowledge({
     query: queryText,
-    roles: selectedRoles,
+    roles: getSearchHelpAuthRoles(auth),
     roleFilter: normalizedRoleFilter,
     limit: 5
   })
@@ -388,13 +387,6 @@ function buildAppSearchHelpResults(
     }));
 }
 
-function getSearchHelpQueryRoles(
-  auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>,
-  helpRoleFilter: Exclude<AppSearchHelpRoleFilter, 'platformAdmin'>
-): string[] {
-  if (helpRoleFilter !== 'all') return [helpRoleFilter];
-  return getSearchHelpAuthRoles(auth);
-}
 
 function getSearchHelpAuthRoles(auth: Pick<AuthState, 'user' | 'isAdmin' | 'isPlatformAdmin'> & Partial<Pick<AuthState, 'roles' | 'isParent' | 'isCoach'>>): UserRole[] {
   const roles = new Set<UserRole>();

@@ -272,7 +272,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 }
 
 const helpRoleOptions: Array<{ value: AppSearchHelpRoleFilter; label: string }> = [
-  { value: 'all', label: 'All roles' },
+  { value: 'all', label: 'All' },
   { value: 'parent', label: 'Parent' },
   { value: 'coach', label: 'Coach' },
   { value: 'admin', label: 'Admin' },
@@ -284,7 +284,7 @@ function HelpRoleFilter({ value, onChange }: {
   onChange: (value: AppSearchHelpRoleFilter) => void;
 }) {
   return (
-    <div className="mt-3" aria-label="Help role filter">
+    <div className="mt-3" aria-label="Filter help by role">
       <div className="mb-1 text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Help role</div>
       <div className="flex flex-wrap gap-1.5">
         {helpRoleOptions.map((option) => (
