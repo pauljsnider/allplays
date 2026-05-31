@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { Link, Navigate, useParams } from 'react-router-dom';
+import { isSupportedTeamMediaDocument } from '../../../../js/team-media-utils.js';
 import {
   AlertCircle,
   CheckCircle2,
@@ -229,6 +230,11 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     try {
       for (const [index, queueItem] of queueItems.entries()) {
         const file = files[index];
+        if (!isSupportedTeamMediaDocument(file)) {
+          failed += 1;
+          updateUploadQueueItem(queueItem.id, 'error', 'Unsupported file or file exceeds 10 MB.');
+          continue;
+        }
         try {
           await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
           uploaded += 1;
@@ -250,11 +256,11 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         }
       } else {
         setMessage('');
-        setError(failed > 0 ? 'No files uploaded.' : 'File upload failed.');
+        setError(failed > 0 ? 'No files uploaded. Choose supported documents that are 10 MB or smaller.' : 'File upload failed.');
       }
     } finally {
       setUploading('');
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (uploaded > 0 && fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 

@@ -643,6 +643,38 @@ describe('React app parent tools integration', () => {
         await waitForText(container, '1 photo uploaded; 1 failed.');
     });
 
+    it('uploads multiple app team media files in one batch, skips invalid files, and refreshes once', async () => {
+        let resolveUpload;
+        const pendingUpload = new Promise((resolve) => {
+            resolveUpload = resolve;
+        });
+        serviceMocks.uploadParentTeamMediaFile.mockImplementation(() => pendingUpload);
+        const { container } = await renderParentTools('/teams/team-1/media');
+        await waitForText(container, 'Bears media');
+
+        const photoButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim().includes('Photo'));
+        const fileButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim().includes('File'));
+        const fileInput = container.querySelector('input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]');
+        const invalidFile = new File(['image'], 'photo.png', { type: 'image/png' });
+        const validFile = new File(['doc'], 'packet.pdf', { type: 'application/pdf' });
+        expect(fileInput.hasAttribute('multiple')).toBe(true);
+        Object.defineProperty(fileInput, 'files', { value: [invalidFile, validFile], configurable: true });
+        await act(async () => {
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await vi.waitUntil(() => serviceMocks.uploadParentTeamMediaFile.mock.calls.length === 1);
+        expect(photoButton.disabled).toBe(true);
+        expect(fileButton.disabled).toBe(true);
+
+        expect(serviceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', validFile);
+        await act(async () => {
+            resolveUpload();
+        });
+        expect(serviceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(2);
+        await waitForText(container, '1 file uploaded; 1 failed.');
+        expect(container.textContent).toContain('Unsupported file or file exceeds 10 MB.');
+    });
+
     it('loads team media, uploads photos/files, adds links, and opens media items', async () => {
         const { container } = await renderParentTools('/teams/team-1/media');
         await waitForText(container, 'Bears media');

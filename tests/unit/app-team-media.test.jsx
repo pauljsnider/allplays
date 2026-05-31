@@ -241,6 +241,25 @@ describe('React app TeamMedia upload flow', () => {
 
     await act(async () => root.unmount());
   });
+
+  it('skips invalid files, uploads remaining valid documents, and reports partial failure', async () => {
+    parentToolsServiceMocks.uploadParentTeamMediaFile.mockResolvedValue(undefined);
+
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const fileInput = container.querySelector('input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]');
+    const invalidFile = new File(['image'], 'photo.png', { type: 'image/png' });
+    const validFile = new File(['alpha'], 'report.pdf', { type: 'application/pdf' });
+
+    changeFiles(fileInput, [invalidFile, validFile]);
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(1);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', validFile);
+    expect(container.textContent).toContain('Unsupported file or file exceeds 10 MB.');
+    expect(container.textContent).toContain('1 file uploaded; 1 failed.');
+
+    await act(async () => root.unmount());
+  });
 });
 
 describe('React app TeamMedia move flow', () => {
