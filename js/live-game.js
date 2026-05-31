@@ -29,7 +29,8 @@ import {
   collectReplayStreamWindow,
   getReplayElapsedMs,
   getReplayStartTimeAfterSpeedChange,
-  getReplayTimestampMs
+  getReplayTimestampMs,
+  rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
 import { BROADCAST_SETUP_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=8';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=2';
@@ -2177,6 +2178,10 @@ function advanceReplayStreams(elapsed) {
 }
 
 function seekReplay(targetMs) {
+  if (state.replayPlaying) {
+    state.replayStartTime = rebaseReplayStartTimeMs(Date.now(), targetMs, state.replaySpeed);
+  }
+
   if (!Array.isArray(state.replayEvents) || state.replayEvents.length === 0) {
     state.gameClockMs = targetMs;
     renderScoreboard();
