@@ -318,6 +318,18 @@ async function mockScheduleModules(page, options = {}) {
                     return payload;
                 }
 
+                export async function publishLiveScoreUpdateEvent(teamId, gameId, score, user, previousScore) {
+                    const payload = {
+                        homeScore: Number(score?.homeScore ?? 0),
+                        awayScore: Number(score?.awayScore ?? 0),
+                        previousHomeScore: Number(previousScore?.homeScore ?? 0),
+                        previousAwayScore: Number(previousScore?.awayScore ?? 0),
+                        userId: user?.uid || null
+                    };
+                    window.__scheduleCalls.liveScoreEvents = (window.__scheduleCalls.liveScoreEvents || []).concat({ teamId, gameId, payload });
+                    return { type: 'score_update', ...payload };
+                }
+
                 export async function cancelScheduledGameForApp(teamId, gameId, user) {
                     window.__scheduleCalls.cancellations = (window.__scheduleCalls.cancellations || []).concat({ teamId, gameId, userId: user?.uid || null });
                     return { status: 'cancelled', isCancelled: true };
