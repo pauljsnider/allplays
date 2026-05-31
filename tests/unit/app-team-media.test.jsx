@@ -105,6 +105,16 @@ function selectValue(select, value) {
   });
 }
 
+function changeFiles(input, files) {
+  act(() => {
+    Object.defineProperty(input, 'files', {
+      configurable: true,
+      value: files,
+    });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   parentToolsServiceMocks.updateTeamMediaItemForApp.mockResolvedValue(undefined);
@@ -158,6 +168,80 @@ describe('React app TeamMedia rename flow', () => {
   });
 });
 
+
+describe('React app TeamMedia upload flow', () => {
+  const uploadableModel = () => mediaModel({
+    canManage: true,
+    canContribute: true,
+  });
+
+  it('uploads every selected photo and renders per-file status rows', async () => {
+    parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockResolvedValue(undefined);
+
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const photoInput = container.querySelector('input[accept="image/*"]');
+    const files = [
+      new File(['first'], 'tipoff.jpg', { type: 'image/jpeg' }),
+      new File(['second'], 'bench.png', { type: 'image/png' }),
+    ];
+
+    changeFiles(photoInput, files);
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(2);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0]);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1]);
+    expect(container.textContent).toContain('Upload progress');
+    expect(container.textContent).toContain('tipoff.jpg');
+    expect(container.textContent).toContain('bench.png');
+    expect((container.textContent.match(/Uploaded/g) || []).length).toBe(2);
+    expect(container.textContent).toContain('2 photos uploaded.');
+
+    await act(async () => root.unmount());
+  });
+
+  it('uploads every selected file sequentially and keeps the file picker multi-select enabled', async () => {
+    const pendingResolvers = [];
+    parentToolsServiceMocks.uploadParentTeamMediaFile.mockImplementation(() => new Promise((resolve) => {
+      pendingResolvers.push(resolve);
+    }));
+
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const fileInput = container.querySelector('input[accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx"]');
+    const files = [
+      new File(['alpha'], 'report.pdf', { type: 'application/pdf' }),
+      new File(['beta'], 'waiver.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }),
+    ];
+
+    expect(fileInput.hasAttribute('multiple')).toBe(true);
+
+    changeFiles(fileInput, files);
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(1);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0]);
+    expect(container.textContent).toContain('report.pdf');
+    expect(container.textContent).toContain('waiver.docx');
+    expect(container.textContent).toContain('Uploading');
+
+    await act(async () => {
+      pendingResolvers[0](undefined);
+    });
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledTimes(2);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1]);
+
+    await act(async () => {
+      pendingResolvers[1](undefined);
+    });
+    await act(async () => {});
+
+    expect((container.textContent.match(/Uploaded/g) || []).length).toBe(2);
+
+    await act(async () => root.unmount());
+  });
+});
 
 describe('React app TeamMedia move flow', () => {
   const twoAlbumModel = () => mediaModel({

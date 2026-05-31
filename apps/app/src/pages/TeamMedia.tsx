@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -48,6 +49,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [albumVisibility, setAlbumVisibility] = useState<'team' | 'private'>('team');
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState('');
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [creatingAlbum, setCreatingAlbum] = useState(false);
   const [deletingItemId, setDeletingItemId] = useState('');
   const [renamingItemId, setRenamingItemId] = useState('');
@@ -161,26 +163,38 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const emptyStateLabel = selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
   const featured = activeFolder?.items[0] || allItems[0] || null;
 
+  const updateUploadQueueItem = (id: string, nextStatus: UploadQueueItem['status'], errorMessage = '') => {
+    setUploadQueue((current) => current.map((item) => item.id === id ? { ...item, status: nextStatus, errorMessage } : item));
+  };
+
   const uploadPhotos = async (files: File[]) => {
     if (!files.length || !activeFolder || creatingAlbum) return;
+    const queueItems = files.map((file, index) => createUploadQueueItem(file, 'photo', index));
+    flushSync(() => {
+      setUploadQueue((current) => [...queueItems, ...current].slice(0, 12));
+    });
     setUploading('photo');
     setError('');
     setMessage(`Uploading ${files.length} photo${files.length === 1 ? '' : 's'}...`);
     let uploaded = 0;
     let failed = 0;
     try {
-      for (const file of files) {
+      await Promise.all(queueItems.map(async (queueItem, index) => {
+        const file = files[index];
         if (!isSupportedPhotoUpload(file)) {
           failed += 1;
-          continue;
+          updateUploadQueueItem(queueItem.id, 'error', 'Unsupported image or file exceeds 10 MB.');
+          return;
         }
         try {
           await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file);
           uploaded += 1;
+          updateUploadQueueItem(queueItem.id, 'success');
         } catch {
           failed += 1;
+          updateUploadQueueItem(queueItem.id, 'error', 'Upload failed.');
         }
-      }
+      }));
 
       if (uploaded > 0) {
         const resultMessage = getPhotoUploadMessage(uploaded, failed);
@@ -201,18 +215,43 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     }
   };
 
-  const uploadFile = async (file: File | null | undefined) => {
-    if (!file || !activeFolder || creatingAlbum) return;
+  const uploadFiles = async (files: File[]) => {
+    if (!files.length || !activeFolder || creatingAlbum) return;
+    const queueItems = files.map((file, index) => createUploadQueueItem(file, 'file', index));
+    flushSync(() => {
+      setUploadQueue((current) => [...queueItems, ...current].slice(0, 12));
+    });
     setUploading('file');
     setError('');
-    setMessage('Uploading file...');
+    setMessage(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}...`);
+    let uploaded = 0;
+    let failed = 0;
     try {
-      await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
-      setMessage('File uploaded.');
-      await refresh({ showLoading: false });
-    } catch (uploadError: any) {
-      setError(uploadError?.message || 'File upload failed.');
-      setMessage('');
+      for (const [index, queueItem] of queueItems.entries()) {
+        const file = files[index];
+        try {
+          await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
+          uploaded += 1;
+          updateUploadQueueItem(queueItem.id, 'success');
+        } catch (uploadError: any) {
+          failed += 1;
+          updateUploadQueueItem(queueItem.id, 'error', uploadError?.message || 'Upload failed.');
+        }
+      }
+
+      if (uploaded > 0) {
+        await refresh({ showLoading: false, preferredFolderId: activeFolder.id });
+        const resultMessage = getFileUploadMessage(uploaded, failed);
+        if (failed > 0) {
+          setError(resultMessage);
+          setMessage('');
+        } else {
+          setMessage(resultMessage);
+        }
+      } else {
+        setMessage('');
+        setError(failed > 0 ? 'No files uploaded.' : 'File upload failed.');
+      }
     } finally {
       setUploading('');
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -384,7 +423,28 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             </button>
           </div>
           <input ref={photoInputRef} className="hidden" type="file" accept="image/*" multiple onChange={(event) => uploadPhotos(Array.from(event.target.files || []))} />
-          <input ref={fileInputRef} className="hidden" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx" onChange={(event) => uploadFile(event.target.files?.[0])} />
+          <input ref={fileInputRef} className="hidden" type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.ppt,.pptx" multiple onChange={(event) => uploadFiles(Array.from(event.target.files || []))} />
+          {uploadQueue.length ? (
+            <div className="mt-3 space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-3" aria-live="polite" aria-label="Upload progress list">
+              <div className="text-xs font-black uppercase tracking-wide text-gray-600">Upload progress</div>
+              {uploadQueue.map((item) => (
+                <div key={item.id} className="rounded-xl border border-gray-200 bg-white p-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-black text-gray-950">{item.name}</div>
+                      <div className={`text-[11px] font-semibold ${item.status === 'error' ? 'text-rose-700' : item.status === 'success' ? 'text-emerald-700' : 'text-gray-500'}`}>
+                        {item.status === 'uploading' ? 'Uploading…' : item.status === 'success' ? 'Uploaded' : item.errorMessage || 'Upload failed.'}
+                      </div>
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${item.kind === 'photo' ? 'bg-primary-50 text-primary-700' : 'bg-amber-50 text-amber-700'}`}>{item.kind}</span>
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-gray-100" aria-hidden="true">
+                    <div className={`h-full rounded-full transition-all ${item.status === 'success' ? 'w-full bg-emerald-500' : item.status === 'error' ? 'w-full bg-rose-500' : 'w-2/3 bg-primary-500'}`} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <form className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={addLink}>
             <input className="auth-input" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} placeholder="Video or link title" />
             <input className="auth-input" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://..." inputMode="url" />
@@ -431,6 +491,13 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
 }
 
 type MediaTypeFilter = 'all' | 'photos' | 'videos' | 'files';
+type UploadQueueItem = {
+  id: string;
+  kind: 'photo' | 'file';
+  name: string;
+  status: 'uploading' | 'success' | 'error';
+  errorMessage: string;
+};
 
 const MEDIA_TYPE_FILTERS: { id: MediaTypeFilter; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -448,6 +515,22 @@ function getPhotoUploadMessage(uploaded: number, failed: number) {
   const uploadedLabel = `${uploaded} photo${uploaded === 1 ? '' : 's'} uploaded`;
   if (failed > 0) return `${uploadedLabel}; ${failed} failed.`;
   return `${uploadedLabel}.`;
+}
+
+function getFileUploadMessage(uploaded: number, failed: number) {
+  const uploadedLabel = `${uploaded} file${uploaded === 1 ? '' : 's'} uploaded`;
+  if (failed > 0) return `${uploadedLabel}; ${failed} failed.`;
+  return `${uploadedLabel}.`;
+}
+
+function createUploadQueueItem(file: File, kind: 'photo' | 'file', index: number): UploadQueueItem {
+  return {
+    id: `${kind}-${file.name || 'upload'}-${file.size || 0}-${index}`,
+    kind,
+    name: file.name || `Untitled ${kind}`,
+    status: 'uploading',
+    errorMessage: ''
+  };
 }
 
 function isPhotoMediaItem(item: TeamMediaItem) {
