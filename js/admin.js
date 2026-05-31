@@ -1,6 +1,7 @@
 import {
     getTeams,
     getAllUsers,
+    getOfficials,
     deleteTeam,
     getTelemetryEvents,
     getTelemetryDaily,
@@ -21,9 +22,16 @@ import {
     validateAdminRegistrationFormPayload
 } from './admin-registration-forms.js?v=3';
 import { buildRecentGameResultsRows } from './admin-game-results.js?v=1';
+import {
+    buildOfficialUserLookup,
+    formatOfficialUserSummary,
+    getOfficialUserSummary,
+    matchesOfficialUserSearch
+} from './admin-user-official-links.js?v=1';
 
 let allTeams = [];
 let allUsers = [];
+let officialUserLookup = new Map();
 let currentUser = null; // Declare currentUser
 let showInactiveTeams = false;
 let activeRegistrationTeam = null;
@@ -88,7 +96,8 @@ async function loadData() {
         // Load game stats for all teams and telemetry in parallel after core data is available.
         await Promise.all([
             loadGameStats(),
-            loadTelemetryData({ silent: true })
+            loadTelemetryData({ silent: true }),
+            loadOfficialUserLinks()
         ]);
 
         updateDashboard();
@@ -102,6 +111,24 @@ async function loadData() {
 }
 
 let allGames = [];
+
+async function loadOfficialUserLinks() {
+    const officialEntries = (await Promise.all(allTeams.map(async (team) => {
+        try {
+            const officials = await getOfficials(team.id);
+            return officials.map((official) => ({
+                teamId: team.id,
+                teamName: team.name || 'Team',
+                official
+            }));
+        } catch (error) {
+            console.warn('Failed to load officials for admin users view:', team.id, error);
+            return [];
+        }
+    }))).flat();
+
+    officialUserLookup = buildOfficialUserLookup(officialEntries);
+}
 
 async function loadGameStats() {
     // Load games from all teams
@@ -645,6 +672,8 @@ function renderTeams(teams) {
 function renderUsers(users) {
     const tbody = document.getElementById('users-table-body');
     tbody.innerHTML = users.map(u => {
+        const officialSummary = getOfficialUserSummary(u, officialUserLookup);
+        const officialSummaryText = formatOfficialUserSummary(officialSummary);
         // Determine verification status:
         // - emailVerificationRequired=true + not verified → unverified (red)
         // - emailVerificationRequired not set → signed up via Google/OAuth (inherently verified)
@@ -658,13 +687,21 @@ function renderUsers(users) {
         return `
         <tr>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                ${escapeHtml(u.email || '-')}
+                <div class="flex items-center gap-2">
+                    <span>${escapeHtml(u.email || '-')}</span>
+                    ${officialSummary ? '<span class="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Official</span>' : ''}
+                </div>
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 ${escapeHtml(u.fullName || '-')}
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 ${escapeHtml(u.phone || '-')}
+            </td>
+            <td class="px-6 py-4 text-sm text-gray-500">
+                ${officialSummary
+                ? `<div class="text-sm text-gray-700">${escapeHtml(officialSummaryText)}</div>`
+                : '<span class="text-gray-400">-</span>'}
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 ${u.updatedAt?.toDate ? u.updatedAt.toDate().toLocaleDateString() : '-'}
@@ -993,14 +1030,20 @@ function setupSearch() {
         renderTeams(filtered);
     });
 
-    document.getElementById('search-users').addEventListener('input', (e) => {
-        const term = e.target.value.toLowerCase();
-        const filtered = allUsers.filter(u =>
-            (u.email || '').toLowerCase().includes(term) ||
-            (u.fullName || '').toLowerCase().includes(term)
-        );
+    const filterUsers = () => {
+        const term = (document.getElementById('search-users')?.value || '').toLowerCase();
+        const officialFilter = document.getElementById('filter-users-official-status')?.value || 'all';
+        const filtered = allUsers.filter((u) => {
+            const officialSummary = getOfficialUserSummary(u, officialUserLookup);
+            if (officialFilter === 'officials' && !officialSummary) return false;
+            if (officialFilter === 'non-officials' && officialSummary) return false;
+            return matchesOfficialUserSearch(u, officialSummary, term);
+        });
         renderUsers(filtered);
-    });
+    };
+
+    document.getElementById('search-users').addEventListener('input', filterUsers);
+    document.getElementById('filter-users-official-status')?.addEventListener('change', filterUsers);
 
     const telemetryRange = document.getElementById('telemetry-range');
     const telemetryRefresh = document.getElementById('telemetry-refresh');
