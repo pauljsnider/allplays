@@ -1101,29 +1101,33 @@ async function generateTeamCertificates() {
         renderReview();
         showAlert(`Generating descriptions for ${state.drafts.length} certificates. Completed rows will fill in as they finish.`, 'info');
 
-        const recentGames = selectRecentCompletedGames(state.games, state.shared.statsWindow);
-        const totalsByPlayer = state.demoMode
-            ? getDemoData().totalsByPlayer
-            : await getAggregatedStatsForGames(state.teamId, recentGames.map((game) => game.id));
-        const demoDescription = "proved to be a composed and reliable mid-fielder who reads the game exceptionally well. Her smart positioning, hustle in midfield, and support in transition made her a dependable two-way player and a key part of the team's defensive success!";
-        const results = await generateDescriptionsForDrafts({
-            drafts: state.drafts,
-            team: state.team,
-            shared: state.shared,
-            games: state.games,
-            totalsByPlayer,
-            generator: state.demoMode
-                ? async ({ player }) => player.name === 'Vivian Karpuk' ? demoDescription : `${player.name} showed commitment, energy, and a team-first approach throughout the season while making important contributions in key moments.`
-                : generateCertificateDescription,
-            concurrency: state.demoMode ? 3 : 2,
-            onResult: ({ draft, result, completed, total }) => {
-                const currentDraft = state.drafts.find((item) => item.id === draft.id);
-                applyDescriptionResultToDraft(currentDraft, result);
-                updateDescriptionGenerationProgress(completed, total);
-                renderReviewGrid();
-                if (currentDraft?.id === state.selectedDraftId) renderReviewPreview();
-            }
-        });
+        const descriptionRun = (async () => {
+            const recentGames = selectRecentCompletedGames(state.games, state.shared.statsWindow);
+            const totalsByPlayer = state.demoMode
+                ? getDemoData().totalsByPlayer
+                : await getAggregatedStatsForGames(state.teamId, recentGames.map((game) => game.id));
+            const demoDescription = "proved to be a composed and reliable mid-fielder who reads the game exceptionally well. Her smart positioning, hustle in midfield, and support in transition made her a dependable two-way player and a key part of the team's defensive success!";
+            return generateDescriptionsForDrafts({
+                drafts: state.drafts,
+                team: state.team,
+                shared: state.shared,
+                games: state.games,
+                totalsByPlayer,
+                generator: state.demoMode
+                    ? async ({ player }) => player.name === 'Vivian Karpuk' ? demoDescription : `${player.name} showed commitment, energy, and a team-first approach throughout the season while making important contributions in key moments.`
+                    : generateCertificateDescription,
+                concurrency: state.demoMode ? 3 : 2,
+                onResult: ({ draft, result, completed, total }) => {
+                    const currentDraft = state.drafts.find((item) => item.id === draft.id);
+                    applyDescriptionResultToDraft(currentDraft, result);
+                    updateDescriptionGenerationProgress(completed, total);
+                    renderReviewGrid();
+                    if (currentDraft?.id === state.selectedDraftId) renderReviewPreview();
+                }
+            });
+        })();
+        state.activeRegenerationPromise = descriptionRun;
+        const results = await descriptionRun;
 
         state.drafts.forEach((draft) => {
             const result = results.get(draft.id);
@@ -1138,6 +1142,7 @@ async function generateTeamCertificates() {
         state.descriptionGeneration = null;
         showAlert(error?.message || 'Unable to generate certificates.', 'error');
     } finally {
+        state.activeRegenerationPromise = null;
         if (button) {
             button.disabled = false;
             button.textContent = 'Create drafts for selected players';
@@ -1621,6 +1626,10 @@ function renderDescriptionProgress() {
 }
 
 function renderReviewGrid() {
+    const descriptionGenerationActive = Boolean(state.descriptionGeneration?.active);
+    const publishDisabledAttrs = descriptionGenerationActive
+        ? 'disabled aria-disabled="true" title="Descriptions are still generating"'
+        : '';
     const rows = state.drafts.map((draft) => {
         const remaining = DESCRIPTION_MAX_LENGTH - String(draft.description || '').length;
         const pendingDescription = draft.descriptionStatus === 'pending';
@@ -1661,7 +1670,7 @@ function renderReviewGrid() {
                 <div class="flex flex-wrap gap-2">
                     <button id="cert-regenerate-selected-btn" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">Regenerate selected</button>
                     <button id="cert-save-drafts-btn" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">Save progress</button>
-                    <button id="cert-publish-btn" type="button" class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Publish certificates</button>
+                    <button id="cert-publish-btn" type="button" class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50" ${publishDisabledAttrs}>Publish certificates</button>
                     <button id="cert-print-btn" type="button" class="rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white">Print selected</button>
                     <button id="cert-png-btn" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">PNG selected</button>
                     <button id="cert-zip-btn" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">ZIP</button>

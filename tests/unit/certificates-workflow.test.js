@@ -104,6 +104,23 @@ describe('awards and certificates workflow wiring', () => {
         expect(saveBody).toContain('createCertificate(state.teamId');
     });
 
+    it('blocks publishing while initial certificate descriptions are still generating', () => {
+        const studio = readRepoFile('js/certificates/studio.js');
+        const generateBody = studio.match(/async function generateTeamCertificates\(\) \{[\s\S]*?function renderReview\(\)/)?.[0] || '';
+        const reviewGridBody = studio.match(/function renderReviewGrid\(\) \{[\s\S]*?function bindReviewEvents\(\)/)?.[0] || '';
+        const waitBody = studio.match(/async function waitForActiveRegeneration\(\) \{[\s\S]*?async function runDraftRegeneration/)?.[0] || '';
+
+        expect(generateBody).toContain('const descriptionRun = (async () =>');
+        expect(generateBody).toContain('state.activeRegenerationPromise = descriptionRun;');
+        expect(generateBody).toContain('const results = await descriptionRun;');
+        expect(generateBody).toContain('state.activeRegenerationPromise = null;');
+        expect(waitBody).toContain('await state.activeRegenerationPromise;');
+        expect(reviewGridBody).toContain('const descriptionGenerationActive = Boolean(state.descriptionGeneration?.active);');
+        expect(reviewGridBody).toContain('disabled aria-disabled="true" title="Descriptions are still generating"');
+        expect(reviewGridBody).toContain('<button id="cert-publish-btn"');
+        expect(reviewGridBody).toContain('${publishDisabledAttrs}>Publish certificates</button>');
+    });
+
     it('adds coach and parent navigation without exposing certificates on the public team page', () => {
         const banner = readRepoFile('js/team-admin-banner.js');
         const dashboard = readRepoFile('dashboard.html');
