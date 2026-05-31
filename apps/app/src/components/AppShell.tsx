@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -26,6 +26,7 @@ import {
   X
 } from 'lucide-react';
 import { useShellLayout } from '../lib/useShellLayout';
+import { recordUxTiming } from '../lib/uxTiming';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 
@@ -61,9 +62,19 @@ export function AppShell({ auth, children }: AppShellProps) {
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
+  const routeStartedAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
   const isAiRoute = location.pathname === '/ai';
   const isMobileChatDetail = !isDesktopWeb && location.pathname.startsWith('/messages/') && location.pathname !== '/messages';
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
+
+  useEffect(() => {
+    const startedAt = routeStartedAtRef.current;
+    const frame = window.requestAnimationFrame(() => {
+      recordUxTiming('route paint', startedAt, { route: `${location.pathname}${location.search}` || '/' });
+      routeStartedAtRef.current = performance.now();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.pathname, location.search]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

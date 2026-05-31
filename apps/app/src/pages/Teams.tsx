@@ -27,7 +27,7 @@ import {
 import { RoleBadge } from '../components/Badges';
 import { PublicTeamSearch } from '../components/PublicTeamSearch';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
-import { loadParentHomeSummary } from '../lib/homeService';
+import { loadParentHomeSummary, loadParentTeamsSummary } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
@@ -74,7 +74,16 @@ export function Teams({ auth }: { auth: AuthState }) {
     }
     setError('');
     try {
-      setHome(await loadParentHomeSummary(auth.user, { force: !showLoading }));
+      const fastHome = await loadParentTeamsSummary(auth.user, { force: !showLoading });
+      setHome(fastHome);
+      setLoading(false);
+      setRefreshing(true);
+      try {
+        const enrichedHome = await loadParentHomeSummary(auth.user, { force: !showLoading });
+        setHome((current) => mergeTeamSummary(current, enrichedHome));
+      } catch (enrichError) {
+        console.warn('[teams-page] Unable to enrich team summary:', enrichError);
+      }
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load teams.');
       setHome(emptyHome());
@@ -146,6 +155,21 @@ export function Teams({ auth }: { auth: AuthState }) {
       <PublicTeamSearch />
     </div>
   );
+}
+
+function mergeTeamSummary(current: ParentHomeModel, enriched: ParentHomeModel): ParentHomeModel {
+  if (!enriched.teams.length) return current;
+  const currentByTeamId = new Map(current.teams.map((team) => [team.teamId, team]));
+  return {
+    ...enriched,
+    teams: enriched.teams.map((team) => ({
+      ...team,
+      unreadCount: currentByTeamId.get(team.teamId)?.unreadCount || team.unreadCount,
+      role: currentByTeamId.get(team.teamId)?.role || team.role,
+      sport: currentByTeamId.get(team.teamId)?.sport || team.sport,
+      photoUrl: currentByTeamId.get(team.teamId)?.photoUrl || team.photoUrl
+    }))
+  };
 }
 
 function TeamsHeader({ loading, refreshing, teams, teamRoles, onRefresh }: {

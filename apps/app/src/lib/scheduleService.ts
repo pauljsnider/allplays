@@ -45,6 +45,7 @@ import { buildScheduleNotificationTargets, postScheduleNotificationTargets } fro
 import { isTeamActive } from '../../../../js/team-visibility.js';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { startUxTimer } from './uxTiming';
 import {
   getNextRideConfirmedSeatCount,
   getScheduleRideshareSummary,
@@ -87,6 +88,7 @@ import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
+const parentScheduleTeamConcurrency = 3;
 
 export type ParentScheduleChild = {
   teamId: string;
@@ -102,6 +104,7 @@ export type ParentScheduleLoadResult = {
 
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
+  expandStaffPlayers?: boolean;
 };
 
 type FirestoreDocument = Record<string, any> & { id: string };
@@ -420,6 +423,26 @@ async function readWithNativeFallback<T>(label: string, primary: () => Promise<T
 
 function compactString(value: unknown) {
   return String(value || '').trim();
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  }));
+
+  return results;
 }
 
 export function normalizeGameScoreValue(value: unknown) {
@@ -1378,49 +1401,77 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   if (!user?.uid) {
     return { children: [], events: [] };
   }
+  const timer = startUxTimer('parent schedule service load');
   const hydrateDetails = options.hydrateDetails !== false;
+  const expandStaffPlayers = options.expandStaffPlayers !== false;
 
-  const profile = await loadProfileDocument(user.uid);
-  const children = normalizeChildLinks(user, profile as Record<string, unknown>);
-  const byTeam = new Map<string, ParentScheduleChild[]>();
-  children.forEach((child) => {
-    if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
-    byTeam.get(child.teamId)?.push(child);
-  });
+  try {
+    const profile = await loadProfileDocument(user.uid);
+    const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+    const byTeam = new Map<string, ParentScheduleChild[]>();
+    children.forEach((child) => {
+      if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
+      byTeam.get(child.teamId)?.push(child);
+    });
 
-  const staffTeams = await loadStaffTeams(user).catch(() => []);
-  await Promise.all(staffTeams.map(async (team: any) => {
-    const teamId = compactString(team?.id);
-    if (!teamId) return;
-    const existingPlayerIds = new Set((byTeam.get(teamId) || []).map((child) => child.playerId));
-    const players = await loadPlayers(teamId).catch(() => []);
-    const staffChildren = (Array.isArray(players) ? players : [])
-      .filter((player: any) => player?.active !== false && compactString(player?.id) && !existingPlayerIds.has(compactString(player.id)))
-      .map((player: any) => ({
-        teamId,
-        teamName: compactString(team?.name) || teamId,
-        playerId: compactString(player.id),
-        playerName: compactString(player.name) || compactString(player.displayName) || 'Player'
-      }));
-    if (staffChildren.length) {
-      byTeam.set(teamId, [...(byTeam.get(teamId) || []), ...staffChildren]);
+    const staffTeams = await loadStaffTeams(user).catch(() => []);
+    await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
+      const teamId = compactString(team?.id);
+      if (!teamId) return;
+      const teamName = compactString(team?.name) || teamId;
+      const existingPlayerIds = new Set((byTeam.get(teamId) || []).map((child) => child.playerId));
+      if (!expandStaffPlayers) {
+        if (!existingPlayerIds.size) {
+          byTeam.set(teamId, [{
+            teamId,
+            teamName,
+            playerId: `staff-team-${teamId}`,
+            playerName: 'Team schedule'
+          }]);
+        }
+        return;
+      }
+      const players = await loadPlayers(teamId).catch(() => []);
+      const staffChildren = (Array.isArray(players) ? players : [])
+        .filter((player: any) => player?.active !== false && compactString(player?.id) && !existingPlayerIds.has(compactString(player.id)))
+        .map((player: any) => ({
+          teamId,
+          teamName,
+          playerId: compactString(player.id),
+          playerName: compactString(player.name) || compactString(player.displayName) || 'Player'
+        }));
+      if (staffChildren.length) {
+        byTeam.set(teamId, [...(byTeam.get(teamId) || []), ...staffChildren]);
+      }
+    });
+
+    const teamEntries = [...byTeam.entries()];
+    const eventBatches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
+      try {
+        return await buildTeamSchedule(teamId, teamChildren, user);
+      } catch (error) {
+        console.warn('[schedule-service] Failed to load team schedule:', teamId, error);
+        return [];
+      }
+    });
+
+    const events = eventBatches.flat().sort((a, b) => a.date.getTime() - b.date.getTime());
+    if (hydrateDetails) {
+      await hydrateEventDetails(events, user);
     }
-  }));
-
-  const eventBatches = await Promise.all([...byTeam.entries()].map(async ([teamId, teamChildren]) => {
-    try {
-      return await buildTeamSchedule(teamId, teamChildren, user);
-    } catch (error) {
-      console.warn('[schedule-service] Failed to load team schedule:', teamId, error);
-      return [];
-    }
-  }));
-
-  const events = eventBatches.flat().sort((a, b) => a.date.getTime() - b.date.getTime());
-  if (hydrateDetails) {
-    await hydrateEventDetails(events, user);
+    timer.end({
+      hydrateDetails,
+      expandStaffPlayers,
+      childLinks: children.length,
+      teams: byTeam.size,
+      staffTeams: staffTeams.length,
+      eventRows: events.length
+    });
+    return { children, events };
+  } catch (error: any) {
+    timer.end({ hydrateDetails, expandStaffPlayers, error: error?.message || 'Unable to load parent schedule.' });
+    throw error;
   }
-  return { children, events };
 }
 
 async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: AuthUser, childId: string, response: RsvpResponse, note = '') {

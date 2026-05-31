@@ -24,7 +24,9 @@ describe('React app auth/profile capability parity', () => {
             'path="/accept-invite"',
             'path="/reset-password"',
             'path="/verify-pending"',
-            'path="/profile"'
+            'path="/profile"',
+            'path="/teams/:teamId/fees"',
+            'path="/teams/:teamId/fees/:batchId"'
         ]);
     });
 
@@ -33,6 +35,16 @@ describe('React app auth/profile capability parity', () => {
 
         expect(appRoutes).toContain('auth.loading && !auth.user');
         expect(appRoutes).not.toContain('if (auth.loading) {');
+    });
+
+    it('defaults a browser refresh on My Teams back to Home', () => {
+        const appRoutes = readProjectFile('apps/app/src/App.tsx');
+
+        expectContains(appRoutes, [
+            'location.pathname === \'/teams\'',
+            'isBrowserReload()',
+            'shouldDefaultReloadToHome ? <Navigate to="/home" replace />'
+        ]);
     });
 
     it('hydrates team media upload grants into app auth users', () => {
