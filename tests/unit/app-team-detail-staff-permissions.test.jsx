@@ -255,6 +255,25 @@ describe('React app TeamDetail staff permissions overview', () => {
         expect(container.textContent).toContain('Scorekeeper access revoked.');
     });
 
+    it('disables individual scorekeeper grants when all confirmed members can score games', async () => {
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }],
+            pendingInvites: [],
+            helperPermissions: [],
+            scorekeepingMode: 'all_confirmed',
+            scorekeeperGrantTargets: [
+                { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false }
+            ],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+
+        expect(container.textContent).toContain('All confirmed team members can score games');
+        expect(container.textContent).not.toContain('Grant scorekeeper');
+        expect(teamDetailMocks.grantScorekeeperAccessForApp).not.toHaveBeenCalled();
+    });
+
     it('hides staff permissions when the service omits the admin-only payload', async () => {
         const { container } = await renderTeamDetail(null);
 

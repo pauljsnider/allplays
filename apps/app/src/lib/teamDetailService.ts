@@ -99,6 +99,7 @@ export type TeamStaffPermissionsSummary = {
     grants: string[];
     emptyText: string;
   }>;
+  scorekeepingMode: string;
   scorekeeperGrantTargets: TeamScorekeeperGrantTarget[];
   hasAnyStaff: boolean;
 };
@@ -493,6 +494,7 @@ export function buildTeamDetailModel({
   const staffPermissions = canManageTeam
     ? {
       ...buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites),
+      scorekeepingMode: cleanString(team?.teamPermissions?.scorekeeping?.mode),
       scorekeeperGrantTargets: buildScorekeeperGrantTargets(team, players)
     }
     : null;

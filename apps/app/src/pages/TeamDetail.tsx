@@ -495,6 +495,7 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
     ...summary.pendingInvites.map((inviteEmail) => `${inviteEmail} · Pending admin invite`)
   ];
   const scorekeeperGrantTargets = summary.scorekeeperGrantTargets || [];
+  const isAllConfirmedScorekeeping = summary.scorekeepingMode === 'all_confirmed';
   const existingEmails = getStaffPermissionEmails(summary);
 
   async function submitInvite(event: FormEvent<HTMLFormElement>) {
@@ -608,7 +609,12 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
         ) : null}
       </form>
 
-      {scorekeeperGrantTargets.length ? (
+      {isAllConfirmedScorekeeping ? (
+        <div className="mt-4 rounded-xl border border-primary-100 bg-white p-3">
+          <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Scorekeeper helper access</div>
+          <p className="mt-2 text-xs font-semibold leading-5 text-gray-600">All confirmed team members can score games, so individual scorekeeper grants are disabled to preserve that team-wide access.</p>
+        </div>
+      ) : scorekeeperGrantTargets.length ? (
         <div className="mt-4 rounded-xl border border-primary-100 bg-white p-3">
           <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Scorekeeper helper access</div>
           <p className="mt-2 text-xs font-semibold leading-5 text-gray-600">Grant an existing linked team member scorekeeping duty without making them a full admin or giving roster, schedule, settings, or broader team access.</p>

@@ -237,6 +237,7 @@ describe('React app team detail model', () => {
             { label: 'coach@example.com', role: 'Admin' }
         ]);
         expect(adminModel.staffPermissions.pendingInvites).toEqual(['pending@example.com']);
+        expect(adminModel.staffPermissions.scorekeepingMode).toBe('selected');
         expect(adminModel.staffPermissions.helperPermissions).toEqual([
             expect.objectContaining({ key: 'scorekeeper', grants: ['scorekeeper-1'] }),
             expect.objectContaining({ key: 'stream-score', grants: ['scorekeeper-1'] }),
