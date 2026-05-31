@@ -251,6 +251,9 @@ async function mockParentToolsModules(page) {
                 export async function updateTeamMediaItemForApp() {
                     return undefined;
                 }
+                export async function moveTeamMediaItemForApp() {
+                    return undefined;
+                }
             `
         });
     });
