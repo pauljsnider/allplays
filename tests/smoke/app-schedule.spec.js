@@ -269,6 +269,25 @@ async function mockScheduleModules(page, options = {}) {
                     return 'imported-practice';
                 }
 
+                export async function loadHomeScoringPlayers() {
+                    return [
+                        { id: 'player-1', name: 'Pat', number: '7', points: 12 },
+                        { id: 'player-2', name: 'Sam', number: '8', points: 4 }
+                    ];
+                }
+
+                export async function recordPlayerScoringStat(teamId, gameId, playerId, stat) {
+                    const player = (await loadHomeScoringPlayers()).find((candidate) => candidate.id === playerId);
+                    const points = Number(stat?.value || 0);
+                    window.__scheduleCalls.playerScoring = (window.__scheduleCalls.playerScoring || []).concat({ teamId, gameId, playerId, stat });
+                    return {
+                        homeScore: (${JSON.stringify(gameHomeScore)} ?? 0) + points,
+                        awayScore: ${JSON.stringify(gameAwayScore)} ?? 0,
+                        playerPoints: Number(player?.points || 0) + points,
+                        liveEventId: 'live-player-score'
+                    };
+                }
+
                 export async function loadParentSchedule() {
                     if (${JSON.stringify(scheduleLoadError)}) {
                         throw new Error(${JSON.stringify(scheduleLoadError)});
