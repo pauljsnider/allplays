@@ -42,7 +42,23 @@ export type ManualTeamFeePaymentInput = {
   currentPaidCents?: string | number | null;
 };
 
+export type TeamFeeBalanceAdjustmentInput = {
+  amount: string | number;
+  note?: string;
+  actorId?: string;
+  currentBalanceCents?: string | number | null;
+  currentPaidCents?: string | number | null;
+};
+
 export function toFeeCents(value: string | number | null | undefined) {
+  const normalized = String(value ?? '').replace(/[$,]/g, '').trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100);
+}
+
+function toSignedFeeCents(value: string | number | null | undefined) {
   const normalized = String(value ?? '').replace(/[$,]/g, '').trim();
   if (!normalized) return null;
   const parsed = Number(normalized);
@@ -97,6 +113,45 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
   };
 }
 
+export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBalanceCents, currentPaidCents }: TeamFeeBalanceAdjustmentInput) {
+  const adjustmentCents = toSignedFeeCents(amount);
+  const reason = normalizeString(note);
+  if (adjustmentCents === null || adjustmentCents === 0) {
+    throw new Error('Enter a positive or negative adjustment amount.');
+  }
+  if (!reason) throw new Error('Enter an adjustment reason.');
+
+  const currentBalance = Number(currentBalanceCents);
+  const priorBalanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : 0;
+  const paid = Number(currentPaidCents);
+  const amountPaidCents = Number.isFinite(paid) ? Math.max(0, paid) : 0;
+  const amountDueCents = Math.max(0, priorBalanceCents - adjustmentCents);
+  const remainingBalanceCents = Math.max(0, amountDueCents - amountPaidCents);
+  const status = normalizeLedgerStatus(amountDueCents, amountPaidCents);
+  const ledgerEntry = {
+    type: 'balance_adjustment',
+    amountCents: adjustmentCents,
+    previousAmountDueCents: priorBalanceCents,
+    amountDueCents,
+    reason,
+    adjustedBy: actorId || null
+  };
+
+  return {
+    status,
+    amountDueCents,
+    remainingBalanceCents,
+    adjustment: {
+      amountCents: adjustmentCents,
+      previousAmountDueCents: priorBalanceCents,
+      amountDueCents,
+      note: reason,
+      adjustedBy: actorId || null
+    },
+    ledgerEntries: [ledgerEntry]
+  };
+}
+
 export async function loadTeamFeeManagementModel(teamId: string, batchId: string | undefined, user: AuthUser | null): Promise<TeamFeeManagementModel> {
   if (!teamId) throw new Error('Missing team context.');
   const team = await Promise.resolve(getTeam(teamId));
@@ -144,6 +199,30 @@ export async function recordOfflineTeamFeePayment({ teamId, batchId, recipient, 
   const updates = buildManualPaymentUpdate({
     amount,
     date,
+    note,
+    actorId: user?.uid,
+    currentBalanceCents: recipient.amountDueCents,
+    currentPaidCents: recipient.amountPaidCents
+  });
+
+  await Promise.resolve(updateTeamFeeRecipient(teamId, batchId, recipient.id, updates));
+  return updates;
+}
+
+export async function recordTeamFeeBalanceAdjustment({ teamId, batchId, recipient, amount, note, user }: {
+  teamId: string;
+  batchId: string;
+  recipient: TeamFeeRecipientSummary;
+  amount: string;
+  note: string;
+  user: AuthUser | null;
+}) {
+  if (!teamId || !batchId || !recipient?.id) throw new Error('Missing fee recipient context.');
+  const team = await Promise.resolve(getTeam(teamId));
+  if (!hasFullTeamAccess(user, team)) throw new Error('You do not have access to adjust team fee balances.');
+
+  const updates = buildBalanceAdjustmentUpdate({
+    amount,
     note,
     actorId: user?.uid,
     currentBalanceCents: recipient.amountDueCents,
