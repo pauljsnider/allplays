@@ -168,6 +168,16 @@ function getOfflinePaymentInstructions(data: FeeRecipientData): string {
   ).trim();
 }
 
+function getTeamFeeDisplayPriority(fee: TeamFee): number {
+  if (fee.canPayOnline) return 0;
+  if (fee.status === 'unpaid') return 1;
+  return 2;
+}
+
+function sortTeamFeesForDisplay(fees: TeamFee[]): TeamFee[] {
+  return [...fees].sort((feeA, feeB) => getTeamFeeDisplayPriority(feeA) - getTeamFeeDisplayPriority(feeB));
+}
+
 @Component({
   selector: 'app-team-fees',
   templateUrl: './team-fees.component.html',
@@ -289,7 +299,7 @@ export class TeamFeesComponent implements OnInit {
       });
     });
 
-    return Array.from(feesByPath.values());
+    return sortTeamFeesForDisplay(Array.from(feesByPath.values()));
   }
 
   private async loadUserProfile(db: ReturnType<typeof getFirestore>, userId: string): Promise<UserProfileData> {
