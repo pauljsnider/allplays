@@ -21,7 +21,9 @@ describe('admin officials directory modal', () => {
         expect(adminJs).toContain('window.closeOfficialsAdmin');
         expect(adminJs).toContain('window.startOfficialsAdminEdit');
         expect(adminJs).toContain('loadOfficialsForActiveTeam()');
-        expect(adminJs).toContain('await getOfficials(teamId);');
+        expect(adminJs).toContain('const officials = await getOfficials(teamId);');
+        expect(adminJs).toContain('if (activeOfficialsTeam?.id !== teamId) return;');
+        expect(adminJs).toContain('activeOfficials = officials;');
         expect(adminJs).toContain('await addOfficial(teamId, draft);');
         expect(adminJs).toContain('await updateOfficial(teamId, officialId, draft);');
         expect(adminJs).toContain('await deleteOfficial(activeOfficialsTeam.id, deleteId);');

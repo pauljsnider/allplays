@@ -753,10 +753,15 @@ async function loadOfficialsForActiveTeam() {
 
     list.innerHTML = '<p class="text-sm text-gray-500">Loading officials...</p>';
     try {
-        activeOfficials = await getOfficials(teamId);
+        const officials = await getOfficials(teamId);
+        if (activeOfficialsTeam?.id !== teamId) return;
+
+        activeOfficials = officials;
         renderOfficialsAdminList();
     } catch (error) {
         console.error('Error loading officials for admin modal:', error);
+        if (activeOfficialsTeam?.id !== teamId) return;
+
         activeOfficials = [];
         list.innerHTML = '<p class="text-sm text-red-600">Failed to load officials. Please try again.</p>';
     }
