@@ -107,6 +107,16 @@ export interface Game {
   };
   assignments: string[];
   status: 'upcoming' | 'past' | 'live';
+  liveEvents?: LiveGameEvent[];
+}
+
+export interface LiveGameEvent {
+  id: string;
+  type?: string;
+  period?: string;
+  gameClockMs?: number;
+  description: string;
+  createdAt?: number | string;
 }
 
 export interface MessagePreview {
