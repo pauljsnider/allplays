@@ -1,5 +1,5 @@
 import { lazy, ReactNode, Suspense } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
@@ -27,6 +27,8 @@ const VerifyPending = lazy(() => import('./pages/VerifyPending').then((module) =
 
 export default function App() {
   const auth = useAuth();
+  const location = useLocation();
+  const shouldDefaultReloadToHome = auth.user && location.pathname === '/teams' && isBrowserReload();
 
   return (
     <Suspense fallback={<LoadingScreen />}>
@@ -43,7 +45,7 @@ export default function App() {
         <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
-        <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
+        <Route path="/teams" element={shouldDefaultReloadToHome ? <Navigate to="/home" replace /> : <Protected auth={auth}><Teams auth={auth} /></Protected>} />
         <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/fees" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/fees/:batchId" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
@@ -61,6 +63,12 @@ export default function App() {
       </Routes>
     </Suspense>
   );
+}
+
+function isBrowserReload() {
+  const navigation = performance.getEntriesByType?.('navigation')?.[0] as PerformanceNavigationTiming | undefined;
+  if (navigation?.type) return navigation.type === 'reload';
+  return (performance as Performance & { navigation?: { type?: number } }).navigation?.type === 1;
 }
 
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {

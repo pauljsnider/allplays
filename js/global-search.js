@@ -1,5 +1,5 @@
 import { escapeHtml } from './utils.js?v=8';
-import { getTeams } from './db.js?v=32';
+import { getTeams } from './db.js?v=33';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=2';
 import {
     db,
@@ -9,7 +9,7 @@ import {
     where,
     orderBy,
     limit
-} from './firebase.js?v=15';
+} from './firebase.js?v=17';
 
 let cachedTeams = null;
 let cachedTeamsLoadedAt = 0;

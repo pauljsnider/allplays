@@ -18,6 +18,7 @@ vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({
 }));
 
 import { Schedule } from '../../apps/app/src/pages/Schedule.tsx';
+import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,6 +30,10 @@ const auth = {
     }
 };
 
+function futureDate(offsetHours = 24) {
+    return new Date(Date.now() + offsetHours * 60 * 60 * 1000);
+}
+
 function event(overrides = {}) {
     return {
         eventKey: overrides.eventKey || 'team-1::game-1::player-1',
@@ -36,7 +41,7 @@ function event(overrides = {}) {
         teamId: overrides.teamId || 'team-1',
         teamName: overrides.teamName || 'Bears',
         type: overrides.type || 'game',
-        date: overrides.date || new Date('2099-05-28T18:00:00Z'),
+        date: overrides.date || futureDate(7 * 24),
         location: overrides.location || 'Main Gym',
         opponent: overrides.opponent || 'Falcons',
         title: overrides.title || null,
@@ -114,6 +119,7 @@ async function changeSelect(select, value) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    clearAppDataCache('app-schedule-summary');
     document.body.innerHTML = '';
     scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
@@ -186,11 +192,27 @@ describe('React app desktop Schedule controls', () => {
 
         expect(scheduleMocks.addTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/team.ics', auth.user);
         await waitForText(container, 'Calendar link saved and schedule refreshed.');
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(4);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(3, auth.user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(4, auth.user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+    });
+
+    it('reuses the cached schedule when the route remounts', async () => {
+        const first = await renderSchedule();
+        await waitForText(first.container, 'Main Gym');
+
+        await act(async () => {
+            first.root.unmount();
+        });
+        first.container.remove();
+        scheduleMocks.loadParentSchedule.mockRejectedValue(new Error('network should not be needed'));
+
+        const second = await renderSchedule();
+        await waitForText(second.container, 'Main Gym');
+
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+        expect(second.container.textContent).not.toContain('Loading schedule');
+
     });
 
     it('shows saved staff calendar links and removes one after confirmation', async () => {
@@ -209,12 +231,28 @@ describe('React app desktop Schedule controls', () => {
 
         expect(window.confirm).toHaveBeenCalledWith('Remove this external calendar link? Imported events from this feed will disappear after the schedule refreshes.');
         expect(scheduleMocks.removeTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/stale.ics', auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(4);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(3, auth.user, { hydrateDetails: false });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(4, auth.user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
         await waitForText(container, 'Calendar link removed and schedule refreshed.');
+    });
+
+    it('groups duplicate family event rows into one visible schedule card', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+                { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [
+                event({ childId: 'player-1', childName: 'Pat', eventKey: 'team-1::game-1::player-1' }),
+                event({ childId: 'player-2', childName: 'Sam', eventKey: 'team-1::game-1::player-2' })
+            ]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Pat, Sam · Bears');
+
+        expect(container.querySelectorAll('.schedule-event-card')).toHaveLength(1);
     });
 
     it('hides calendar import from parent-only teams and validates .ics input inline', async () => {
@@ -228,6 +266,7 @@ describe('React app desktop Schedule controls', () => {
             ],
             events: [event({ isTeamStaff: true })]
         });
+        clearAppDataCache('app-schedule-summary');
         const staff = await renderSchedule();
         await waitForText(staff.container, 'Add external calendar');
         await clickButton(staff.container, 'Save calendar');
@@ -247,6 +286,7 @@ describe('React app desktop Schedule controls', () => {
             ],
             events: [event({ isTeamStaff: true })]
         });
+        clearAppDataCache('app-schedule-summary');
 
         const { container } = await renderSchedule();
         await waitForText(container, 'Import schedule CSV');
@@ -276,7 +316,8 @@ describe('React app desktop Schedule controls', () => {
             eventType: 'practice',
             title: 'Speed Session'
         }), auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(6);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenLastCalledWith(auth.user, { hydrateDetails: false, expandStaffPlayers: false });
         await waitForText(container, 'Imported 2 schedule row(s) and refreshed the schedule.');
     });
 

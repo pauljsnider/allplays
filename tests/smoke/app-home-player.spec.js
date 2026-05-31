@@ -79,6 +79,10 @@ async function mockHomePlayerModules(page) {
                     return loadParentHome(...args);
                 }
 
+                export async function loadParentTeamsSummary(...args) {
+                    return loadParentHome(...args);
+                }
+
                 export async function loadParentHomeWithSecondaryData(...args) {
                     return loadParentHome(...args);
                 }

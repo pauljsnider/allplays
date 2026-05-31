@@ -9,7 +9,7 @@ const redeemParentInviteMock = vi.fn();
 const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=15', async (importOriginal) => {
+vi.mock('../../js/firebase.js?v=17', async (importOriginal) => {
     const actual = await importOriginal();
     return {
         ...actual,
@@ -34,7 +34,7 @@ vi.mock('../../js/firebase.js?v=15', async (importOriginal) => {
     };
 });
 
-vi.mock('../../js/db.js?v=32', () => ({
+vi.mock('../../js/db.js?v=33', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,

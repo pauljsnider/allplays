@@ -1,6 +1,12 @@
 function toDate(value) {
     if (!value) return null;
     if (value instanceof Date) return value;
+    if (typeof value === 'string') {
+        const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (dateOnly) {
+            return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+        }
+    }
     if (typeof value.toDate === 'function') return value.toDate();
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? null : date;

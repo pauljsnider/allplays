@@ -18,24 +18,7 @@ import {
   signOut as firebaseSignOut,
   updatePassword,
   verifyPasswordResetCode
-} from '../../../../js/firebase.js';
-import {
-  getTeam,
-  getUserProfile,
-  getUserTeams,
-  listMyParentMembershipRequests,
-  markAccessCodeAsUsed,
-  redeemAdminInviteAtomically,
-  redeemHouseholdInvite,
-  redeemParentInvite,
-  updateTeam,
-  updateUserProfile,
-  validateAccessCode
-} from '../../../../js/db.js';
-import { redeemAdminInviteAcceptance } from '../../../../js/admin-invite.js';
-import { createInviteProcessor } from '../../../../js/accept-invite-flow.js';
-import { executeEmailPasswordSignup } from '../../../../js/signup-flow.js';
-import { mergeApprovedParentMembershipRequests } from '../../../../js/parent-membership-utils.js';
+} from './firebaseAuthRuntime';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -50,6 +33,43 @@ const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
 const nativeAuthSessionStorageKey = 'allplays-native-auth-session';
+
+type AuthDbModule = typeof import('../../../../js/db.js');
+type AdminInviteModule = typeof import('../../../../js/admin-invite.js');
+type InviteFlowModule = typeof import('../../../../js/accept-invite-flow.js');
+type SignupFlowModule = typeof import('../../../../js/signup-flow.js');
+type ParentMembershipUtilsModule = typeof import('../../../../js/parent-membership-utils.js');
+
+let authDbPromise: Promise<AuthDbModule> | null = null;
+let adminInvitePromise: Promise<AdminInviteModule> | null = null;
+let inviteFlowPromise: Promise<InviteFlowModule> | null = null;
+let signupFlowPromise: Promise<SignupFlowModule> | null = null;
+let parentMembershipUtilsPromise: Promise<ParentMembershipUtilsModule> | null = null;
+
+function loadAuthDb() {
+  authDbPromise ||= import('../../../../js/db.js');
+  return authDbPromise;
+}
+
+function loadAdminInvite() {
+  adminInvitePromise ||= import('../../../../js/admin-invite.js');
+  return adminInvitePromise;
+}
+
+function loadInviteFlow() {
+  inviteFlowPromise ||= import('../../../../js/accept-invite-flow.js');
+  return inviteFlowPromise;
+}
+
+function loadSignupFlow() {
+  signupFlowPromise ||= import('../../../../js/signup-flow.js');
+  return signupFlowPromise;
+}
+
+function loadParentMembershipUtils() {
+  parentMembershipUtilsPromise ||= import('../../../../js/parent-membership-utils.js');
+  return parentMembershipUtilsPromise;
+}
 
 type FirebaseUser = {
   uid: string;
@@ -850,9 +870,10 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   }
 
   let profile: Record<string, unknown> = {};
+  const dbModule = await loadAuthDb();
   try {
     profile = await withTimeout(
-      Promise.resolve(getUserProfile(user.uid)),
+      Promise.resolve(dbModule.getUserProfile(user.uid)),
       'Profile load timed out.',
       profileHydrationTimeoutMs
     ) || {};
@@ -864,14 +885,15 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   }
 
   try {
+    const { mergeApprovedParentMembershipRequests } = await loadParentMembershipUtils();
     const approvedRequests = await withTimeout(
-      Promise.resolve(listMyParentMembershipRequests(user.uid)),
+      Promise.resolve(dbModule.listMyParentMembershipRequests(user.uid)),
       'Parent membership sync timed out.',
       profileHydrationTimeoutMs
     );
     const parentRequestSync = mergeApprovedParentMembershipRequests(profile, approvedRequests);
     if (parentRequestSync.changed) {
-      await updateUserProfile(user.uid, parentRequestSync.userUpdate);
+      await dbModule.updateUserProfile(user.uid, parentRequestSync.userUpdate);
       profile = {
         ...profile,
         ...parentRequestSync.userUpdate
@@ -884,7 +906,7 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   if (!Array.isArray(profile.coachOf) || profile.coachOf.length === 0) {
     try {
       const teams = await withTimeout(
-        Promise.resolve(getUserTeams(user.uid)),
+        Promise.resolve(dbModule.getUserTeams(user.uid)),
         'Team access load timed out.',
         profileHydrationTimeoutMs
       );
@@ -943,6 +965,7 @@ export function getCurrentFirebaseUser(): FirebaseUser | null {
 
 export async function signInWithEmail(email: string, password: string) {
   const normalizedEmail = normalizeEmail(email);
+  const { updateUserProfile } = await loadAuthDb();
 
   if (isNativeRuntime()) {
     const user = await signInWithNativeRestSession(normalizedEmail, password);
@@ -970,20 +993,30 @@ export async function signInWithEmail(email: string, password: string) {
 }
 
 export async function signUpWithEmail(email: string, password: string, activationCode: string) {
+  const [
+    dbModule,
+    { redeemAdminInviteAcceptance },
+    { executeEmailPasswordSignup }
+  ] = await Promise.all([
+    loadAuthDb(),
+    loadAdminInvite(),
+    loadSignupFlow()
+  ]);
+
   return executeEmailPasswordSignup({
     email: email.trim(),
     password,
     activationCode: normalizeCode(activationCode),
     auth,
     dependencies: {
-      validateAccessCode,
+      validateAccessCode: dbModule.validateAccessCode,
       createUserWithEmailAndPassword,
-      redeemParentInvite,
+      redeemParentInvite: dbModule.redeemParentInvite,
       redeemAdminInviteAcceptance,
-      updateUserProfile,
-      markAccessCodeAsUsed,
-      getTeam,
-      getUserProfile,
+      updateUserProfile: dbModule.updateUserProfile,
+      markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed,
+      getTeam: dbModule.getTeam,
+      getUserProfile: dbModule.getUserProfile,
       sendEmailVerification,
       signOut: firebaseSignOut
     }
@@ -1019,9 +1052,10 @@ async function processGoogleResult(result: UserCredential | null, activationCode
   if (!result?.user) {
     return null;
   }
+  const dbModule = await loadAuthDb();
 
   if (!isNewFirebaseUser(result.user)) {
-    await updateUserProfile(result.user.uid, {
+    await dbModule.updateUserProfile(result.user.uid, {
       email: result.user.email || '',
       fullName: result.user.displayName || '',
       photoUrl: result.user.photoURL || '',
@@ -1039,7 +1073,7 @@ async function processGoogleResult(result: UserCredential | null, activationCode
     throw new Error('Activation code is required for new Google accounts.');
   }
 
-  const validation = await validateAccessCode(code);
+  const validation = await dbModule.validateAccessCode(code);
   if (!validation.valid) {
     window.sessionStorage.removeItem(pendingActivationCodeKey);
     await cleanupFailedNewUser(result.user, 'invalid activation code');
@@ -1050,21 +1084,22 @@ async function processGoogleResult(result: UserCredential | null, activationCode
     assertInviteEmailMatches(validation, result.user.email, 'sign up');
 
     if (validation.type === 'parent_invite') {
-      await redeemParentInvite(result.user.uid, validation.data.code);
+      await dbModule.redeemParentInvite(result.user.uid, validation.data.code);
     } else if (validation.type === 'admin_invite') {
+      const { redeemAdminInviteAcceptance } = await loadAdminInvite();
       await redeemAdminInviteAcceptance({
         userId: result.user.uid,
         userEmail: result.user.email,
         teamId: validation.data.teamId,
         codeId: validation.codeId,
-        getTeam,
-        getUserProfile
+        getTeam: dbModule.getTeam,
+        getUserProfile: dbModule.getUserProfile
       });
     } else {
-      await markAccessCodeAsUsed(validation.codeId, result.user.uid);
+      await dbModule.markAccessCodeAsUsed(validation.codeId, result.user.uid);
     }
 
-    await updateUserProfile(result.user.uid, {
+    await dbModule.updateUserProfile(result.user.uid, {
       email: result.user.email || '',
       fullName: result.user.displayName || '',
       photoUrl: result.user.photoURL || '',
@@ -1205,6 +1240,7 @@ export function isEmailLink(url: string) {
 
 export async function completeEmailLink(email: string, url: string) {
   const result = await signInWithEmailLink(auth, email.trim(), url) as UserCredential;
+  const { updateUserProfile } = await loadAuthDb();
   await updateUserProfile(result.user.uid, {
     email: email.trim(),
     lastLogin: new Date(),
@@ -1214,6 +1250,7 @@ export async function completeEmailLink(email: string, url: string) {
 }
 
 export async function setCurrentUserPassword(newPassword: string) {
+  const { updateUserProfile } = await loadAuthDb();
   const user = auth.currentUser;
   if (user) {
     await updatePassword(user, newPassword);
@@ -1246,23 +1283,30 @@ export async function setCurrentUserPassword(newPassword: string) {
   }).catch((error: unknown) => console.warn('[app-auth] Unable to mark native password as set:', error));
 }
 
-export const processInvite = createInviteProcessor({
-  validateAccessCode,
-  redeemParentInvite,
-  redeemHouseholdInvite,
-  redeemAdminInviteAtomically,
-  updateUserProfile,
-  updateTeam,
-  getTeam,
-  getUserProfile,
-  markAccessCodeAsUsed
-});
-
 export async function redeemInviteForUser(userId: string, code: string, authEmail?: string | null) {
   const normalizedCode = normalizeCode(code);
   if (!normalizedCode || normalizedCode.length !== 8) {
     throw new Error('Please enter a valid 8-character invite code.');
   }
+
+  const [
+    dbModule,
+    { createInviteProcessor }
+  ] = await Promise.all([
+    loadAuthDb(),
+    loadInviteFlow()
+  ]);
+  const processInvite = createInviteProcessor({
+    validateAccessCode: dbModule.validateAccessCode,
+    redeemParentInvite: dbModule.redeemParentInvite,
+    redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
+    redeemAdminInviteAtomically: dbModule.redeemAdminInviteAtomically,
+    updateUserProfile: dbModule.updateUserProfile,
+    updateTeam: dbModule.updateTeam,
+    getTeam: dbModule.getTeam,
+    getUserProfile: dbModule.getUserProfile,
+    markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed
+  });
   return processInvite(userId, normalizedCode, authEmail || null);
 }
 

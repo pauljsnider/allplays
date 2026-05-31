@@ -77,6 +77,8 @@ export type ChatConversation = {
   mutedBy?: string[];
   isDefault?: boolean;
   isLegacy?: boolean;
+  updatedAt?: unknown;
+  lastMessageAt?: unknown;
 };
 
 export type ChatAttachment = {
@@ -134,6 +136,10 @@ export type SentTeamEmail = {
 
 export type ChatInboxLoadResult = {
   teams: ChatTeam[];
+};
+
+export type ChatInboxLoadOptions = {
+  includeLastMessages?: boolean;
 };
 
 export type ChatSubscribeResult = {
@@ -388,13 +394,26 @@ async function nativeLoadUserTeams(user: AuthUser, profile: Record<string, any>)
     .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
 }
 
-async function getLatestMessagePreview(teamId: string): Promise<ChatMessage | null> {
+function getMessageTime(message: ChatMessage | null) {
+  return toDate(message?.createdAt)?.getTime() || 0;
+}
+
+function getNewestChatMessage(messages: Array<ChatMessage | null>) {
+  return messages.reduce<ChatMessage | null>((newest, message) => (
+    getMessageTime(message) > getMessageTime(newest) ? message : newest
+  ), null);
+}
+
+async function getLatestConversationMessage(teamId: string, conversationId: string): Promise<ChatMessage | null> {
   try {
-    const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1 })), `latest chat ${teamId}`, 2500);
+    const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
     return message || null;
   } catch (error) {
     if (!isNativeRuntime()) return null;
-    const [message] = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/chatMessages`, {
+    const path = isDefaultTeamConversation(conversationId)
+      ? `teams/${encodeURIComponent(teamId)}/chatMessages`
+      : `teams/${encodeURIComponent(teamId)}/chatConversations/${encodeURIComponent(conversationId)}/chatMessages`;
+    const [message] = await nativeListCollection(path, {
       orderBy: 'createdAt desc',
       pageSize: 1
     }).catch(() => []);
@@ -402,8 +421,42 @@ async function getLatestMessagePreview(teamId: string): Promise<ChatMessage | nu
   }
 }
 
-export async function loadChatInbox(user: AuthUser | null): Promise<ChatInboxLoadResult> {
+async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<ChatMessage | null> {
+  let conversations: ChatConversation[] = [buildDefaultTeamConversation(team)];
+  try {
+    const loadedConversations = await withTimeout(
+      Promise.resolve(getChatConversations(teamId, user, { team, canModerate })),
+      `latest chat conversations ${teamId}`,
+      2500
+    ) as ChatConversation[];
+    conversations = Array.isArray(loadedConversations) && loadedConversations.length
+      ? loadedConversations
+      : [buildDefaultTeamConversation(team)];
+  } catch (error) {
+    if (!isNativeRuntime()) {
+      conversations = [buildDefaultTeamConversation(team)];
+    } else {
+      console.warn('[chat-service] Latest inbox preview limited to team chat:', error);
+    }
+  }
+
+  const recentConversations = conversations
+    .filter((conversation) => conversation?.id)
+    .sort((a, b) => {
+      const aTime = toDate(a.lastMessageAt || a.updatedAt)?.getTime() || 0;
+      const bTime = toDate(b.lastMessageAt || b.updatedAt)?.getTime() || 0;
+      return bTime - aTime;
+    })
+    .slice(0, 8);
+  const messages = await Promise.all(recentConversations.map((conversation) => (
+    getLatestConversationMessage(teamId, conversation.id)
+  )));
+  return getNewestChatMessage(messages);
+}
+
+export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
   if (!user?.uid) return { teams: [] };
+  const includeLastMessages = options.includeLastMessages !== false;
 
   const profile = await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load').catch(async (error) => {
     if (!isNativeRuntime()) throw error;
@@ -435,20 +488,24 @@ export async function loadChatInbox(user: AuthUser | null): Promise<ChatInboxLoa
     3000
   ).catch(() => ({} as Record<string, number>));
 
-  const previews = await Promise.all(accessibleTeams.map(async (team) => ({
-    team,
-    lastMessage: await getLatestMessagePreview(team.id)
-  })));
+  const previews = await Promise.all(accessibleTeams.map(async (team) => {
+    const canModerate = canModerateChat(userWithProfile, { ...team, id: team.id });
+    return {
+      team,
+      canModerate,
+      lastMessage: includeLastMessages ? await getLatestMessagePreview(team.id, userWithProfile, team, canModerate) : null
+    };
+  }));
 
   return {
-    teams: previews.map(({ team, lastMessage }) => ({
+    teams: previews.map(({ team, canModerate, lastMessage }) => ({
       id: team.id,
       name: team.name || 'Team',
       sport: team.sport || null,
       photoUrl: team.photoUrl || null,
       active: team.active,
       role: getTeamRole(user, team, profile),
-      canModerate: canModerateChat(userWithProfile, { ...team, id: team.id }),
+      canModerate,
       unreadCount: Number(unreadCounts[team.id] || 0),
       lastMessage
     })).sort((a, b) => {
