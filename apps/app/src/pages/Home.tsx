@@ -1229,6 +1229,7 @@ function SocialComposerModal({
   const [caption, setCaption] = useState('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [typePickerOpen, setTypePickerOpen] = useState(initialType === 'manual_post');
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState('');
 
@@ -1309,29 +1310,6 @@ function SocialComposerModal({
         <div className="max-h-[72dvh] space-y-4 overflow-y-auto p-4">
           {localError ? <Status tone="error" message={localError} /> : null}
 
-          <div>
-            <div className="mb-2 text-xs font-black uppercase tracking-[0.04em] text-gray-500">Pick one</div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-              {socialPostPresets.map((preset) => {
-                const active = preset.id === activePreset.id;
-                return (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    className={`min-h-[82px] rounded-xl border p-2 text-left transition ${active ? 'border-primary-300 bg-primary-50 text-primary-950 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200'}`}
-                    onClick={() => selectPreset(preset.id)}
-                    aria-pressed={active}
-                  >
-                    <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
-                      <SocialTypeIcon type={preset.type} />
-                    </span>
-                    <span className="mt-2 block text-xs font-black leading-4">{preset.shortLabel}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-white text-primary-700 ring-1 ring-gray-200">
@@ -1343,6 +1321,9 @@ function SocialComposerModal({
               </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-primary-700 ring-1 ring-primary-100" onClick={() => setTypePickerOpen((value) => !value)}>
+                Change share type
+              </button>
               <button type="button" className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-gray-700 ring-1 ring-gray-200" onClick={() => setDetailsOpen((value) => !value)}>
                 {subjectLabel}
               </button>
@@ -1351,6 +1332,31 @@ function SocialComposerModal({
               </button>
             </div>
           </div>
+
+          {typePickerOpen ? (
+            <div>
+              <div className="mb-2 text-xs font-black uppercase tracking-[0.04em] text-gray-500">Pick one</div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                {socialPostPresets.map((preset) => {
+                  const active = preset.id === activePreset.id;
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={`min-h-[82px] rounded-xl border p-2 text-left transition ${active ? 'border-primary-300 bg-primary-50 text-primary-950 shadow-sm' : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200'}`}
+                      onClick={() => selectPreset(preset.id)}
+                      aria-pressed={active}
+                    >
+                      <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700'}`}>
+                        <SocialTypeIcon type={preset.type} />
+                      </span>
+                      <span className="mt-2 block text-xs font-black leading-4">{preset.shortLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
 
           {detailsOpen ? (
             <div className="grid gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:grid-cols-2">
