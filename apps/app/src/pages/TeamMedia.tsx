@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -169,7 +170,9 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const uploadPhotos = async (files: File[]) => {
     if (!files.length || !activeFolder || creatingAlbum) return;
     const queueItems = files.map((file, index) => createUploadQueueItem(file, 'photo', index));
-    setUploadQueue((current) => [...queueItems, ...current].slice(0, 12));
+    flushSync(() => {
+      setUploadQueue((current) => [...queueItems, ...current].slice(0, 12));
+    });
     setUploading('photo');
     setError('');
     setMessage(`Uploading ${files.length} photo${files.length === 1 ? '' : 's'}...`);
@@ -215,7 +218,9 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const uploadFiles = async (files: File[]) => {
     if (!files.length || !activeFolder || creatingAlbum) return;
     const queueItems = files.map((file, index) => createUploadQueueItem(file, 'file', index));
-    setUploadQueue((current) => [...queueItems, ...current].slice(0, 12));
+    flushSync(() => {
+      setUploadQueue((current) => [...queueItems, ...current].slice(0, 12));
+    });
     setUploading('file');
     setError('');
     setMessage(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}...`);

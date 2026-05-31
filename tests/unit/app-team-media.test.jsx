@@ -194,6 +194,7 @@ describe('React app TeamMedia upload flow', () => {
     expect(container.textContent).toContain('Upload progress');
     expect(container.textContent).toContain('tipoff.jpg');
     expect(container.textContent).toContain('bench.png');
+    expect((container.textContent.match(/Uploaded/g) || []).length).toBe(2);
     expect(container.textContent).toContain('2 photos uploaded.');
 
     await act(async () => root.unmount());
@@ -226,6 +227,8 @@ describe('React app TeamMedia upload flow', () => {
       pendingResolvers.forEach((resolve) => resolve(undefined));
     });
     await act(async () => {});
+
+    expect((container.textContent.match(/Uploaded/g) || []).length).toBe(2);
 
     await act(async () => root.unmount());
   });
