@@ -5134,6 +5134,26 @@ export async function sendTeamEmail(teamId, {
     return result.data;
 }
 
+export async function postSharedGameCancellationNotification({
+    teamId,
+    gameId,
+    counterpartTeamId,
+    text,
+    senderName,
+    senderEmail
+} = {}) {
+    const callable = httpsCallable(functions, 'postSharedGameCancellationNotification');
+    const result = await callable({
+        teamId,
+        gameId,
+        counterpartTeamId,
+        text,
+        senderName,
+        senderEmail
+    });
+    return result.data;
+}
+
 export async function createRegistrationCheckoutSession(
     teamId,
     formId,

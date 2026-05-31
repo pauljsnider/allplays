@@ -1428,6 +1428,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
+  const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
 
   useEffect(() => {
@@ -1440,7 +1441,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
   const cancelGame = async () => {
     if (!auth.user) return;
     const opponentLabel = event.opponent || event.title || 'this game';
-    const confirmed = window.confirm(`Cancel ${opponentLabel} on ${formatEventDateLabel(event.date)}? This marks the game cancelled and notifies the team in chat.`);
+    const confirmed = window.confirm(`Cancel ${opponentLabel} on ${formatEventDateLabel(event.date)}? This marks the game cancelled and notifies ${notifiesCounterpartTeam ? 'both team chats' : 'the team in chat'}.`);
     if (!confirmed) return;
 
     setCancelling(true);
@@ -1450,7 +1451,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
       onGameCancelled();
       setCancelStatus(result.notificationError
         ? { tone: 'error', message: `Game cancelled, but team chat notification failed: ${result.notificationError}` }
-        : { tone: 'success', message: 'Game cancelled and team chat notified.' });
+        : { tone: 'success', message: notifiesCounterpartTeam ? 'Game cancelled and both team chats notified.' : 'Game cancelled and team chat notified.' });
     } catch (error: any) {
       setCancelStatus({ tone: 'error', message: error?.message || 'Unable to cancel game.' });
     } finally {
@@ -1525,7 +1526,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-xs font-black uppercase tracking-[0.04em] text-rose-700">Schedule management</div>
-                  <div className="mt-1 text-sm font-semibold text-rose-900">Cancel this game and notify the team chat.</div>
+                  <div className="mt-1 text-sm font-semibold text-rose-900">{notifiesCounterpartTeam ? 'Cancel this game and notify both team chats.' : 'Cancel this game and notify the team chat.'}</div>
                 </div>
                 <button
                   type="button"

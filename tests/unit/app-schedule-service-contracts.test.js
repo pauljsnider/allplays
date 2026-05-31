@@ -167,6 +167,8 @@ beforeEach(() => {
             endDate: new Date('2026-05-21T19:30:00Z'),
             location: 'Main Gym',
             opponent: 'Falcons',
+            opponentTeamId: 'team-2',
+            sharedScheduleOpponentTeamId: 'team-2',
             status: 'scheduled',
             seasonLabel: 'Spring 2026',
             competitionType: 'league',
@@ -325,6 +327,9 @@ describe('React app schedule service contract integration', () => {
         expect(patGame).toMatchObject({
             teamName: 'Bears',
             opponent: 'Falcons',
+            opponentTeamId: 'team-2',
+            sharedScheduleOpponentTeamId: 'team-2',
+            counterpartTitle: 'vs. Bears',
             myRsvp: 'going',
             myRsvpNote: 'Needs a ride home',
             rsvpSummary: { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 },

@@ -12,9 +12,12 @@ describe('React app schedule event detail cancellation action', () => {
         expect(source).toContain('cancelScheduledGameForApp');
         expect(source).toContain("const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);");
         expect(source).toContain('Cancel game');
-        expect(source).toContain('This marks the game cancelled and notifies the team in chat.');
+        expect(source).toContain("const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);");
+        expect(source).toContain("This marks the game cancelled and notifies ${notifiesCounterpartTeam ? 'both team chats' : 'the team in chat'}.");
         expect(source).toContain("{ ...event, status: 'cancelled', isCancelled: true, availabilityLocked: true }");
         expect(source).toContain('Game cancelled, but team chat notification failed:');
+        expect(source).toContain("Game cancelled and both team chats notified.");
+        expect(source).toContain("Cancel this game and notify both team chats.");
     });
 
     it('includes Forecast link logic when a location is present', () => {

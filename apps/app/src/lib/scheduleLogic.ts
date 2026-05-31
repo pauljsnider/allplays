@@ -113,8 +113,11 @@ export type ParentScheduleEvent = {
   endDate?: Date | null;
   location: string;
   opponent?: string | null;
+  opponentTeamId?: string | null;
   opponentTeamName?: string | null;
   opponentTeamPhoto?: string | null;
+  sharedScheduleOpponentTeamId?: string | null;
+  counterpartTitle?: string | null;
   title?: string | null;
   childId: string;
   childName: string;
