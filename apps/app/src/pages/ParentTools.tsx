@@ -593,6 +593,7 @@ function FamilyShareTool({ auth }: { auth: AuthState }) {
   const [label, setLabel] = useState('');
   const [calendarText, setCalendarText] = useState('');
   const [editingTokenId, setEditingTokenId] = useState('');
+  const [pendingRevokeToken, setPendingRevokeToken] = useState<FamilyShareTokenCard | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -648,6 +649,7 @@ function FamilyShareTool({ auth }: { auth: AuthState }) {
       setError(revokeError?.message || 'Unable to revoke family link.');
     } finally {
       setSaving(false);
+      setPendingRevokeToken(null);
     }
   };
 
@@ -700,12 +702,30 @@ function FamilyShareTool({ auth }: { auth: AuthState }) {
               onCancel={() => setEditingTokenId('')}
               onCopy={(text) => copyText(text, setMessage)}
               onShare={() => sharePublicUrl({ title: 'ALL PLAYS family page', text: token.label || 'Family schedule', url: token.url })}
-              onRevoke={() => revoke(token.id)}
+              onRevoke={() => setPendingRevokeToken(token)}
               onSaveCalendars={saveCalendars}
             />
           )) : <EmptyState icon={Share2} title="No family links" detail="Create a link when someone needs schedule access without a full account." />}
         </div>
       )}
+
+      {pendingRevokeToken ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/40 px-4 py-5 sm:items-center" role="presentation">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="family-share-revoke-title">
+            <h3 id="family-share-revoke-title" className="text-base font-black text-gray-950">Revoke this share link?</h3>
+            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+              Anyone using the family share link{pendingRevokeToken.label ? ` for ${pendingRevokeToken.label}` : ''} will lose access.
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button type="button" className="secondary-button justify-center text-xs" onClick={() => setPendingRevokeToken(null)} disabled={saving}>Cancel</button>
+              <button type="button" className="primary-button justify-center text-xs !bg-rose-600 hover:!bg-rose-700" onClick={() => revoke(pendingRevokeToken.id)} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+                Revoke link
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
