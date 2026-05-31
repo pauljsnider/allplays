@@ -606,9 +606,10 @@ function formatCancelledGameDate(value: unknown) {
   });
 }
 
-export function buildCancelScheduledGameChatMessage(event: Pick<ParentScheduleEvent, 'opponent' | 'title' | 'date'>) {
+export function buildCancelScheduledGameChatMessage(event: Pick<ParentScheduleEvent, 'opponent' | 'title' | 'date'>, titleOverride?: string | null) {
+  const title = compactString(titleOverride);
   const opponent = compactString(event.opponent);
-  const opponentLabel = opponent ? `vs. ${opponent}` : compactString(event.title) || 'Game';
+  const opponentLabel = title || (opponent ? `vs. ${opponent}` : compactString(event.title) || 'Game');
   return `⚠️ Game cancelled: ${opponentLabel} on ${formatCancelledGameDate(event.date)}`;
 }
 
@@ -1168,8 +1169,11 @@ function createScheduleEvent(input: {
   endDate?: unknown;
   location?: string | null;
   opponent?: string | null;
+  opponentTeamId?: string | null;
   opponentTeamName?: string | null;
   opponentTeamPhoto?: string | null;
+  sharedScheduleOpponentTeamId?: string | null;
+  counterpartTitle?: string | null;
   title?: string | null;
   isDbGame: boolean;
   isCancelled?: boolean;
@@ -1220,8 +1224,11 @@ function createScheduleEvent(input: {
     endDate,
     location: input.location || 'TBD',
     opponent: input.opponent || null,
+    opponentTeamId: compactString(input.opponentTeamId) || null,
     opponentTeamName: input.opponentTeamName || null,
     opponentTeamPhoto: input.opponentTeamPhoto || null,
+    sharedScheduleOpponentTeamId: compactString(input.sharedScheduleOpponentTeamId) || null,
+    counterpartTitle: compactString(input.counterpartTitle) || null,
     title: input.title || null,
     childId: input.child.playerId,
     childName: input.child.playerName,
@@ -1367,8 +1374,11 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           endDate: game.endDate || game.end || game.endTime || null,
           location: game.location || 'TBD',
           opponent: game.opponent || 'TBD',
+          opponentTeamId: game.opponentTeamId || null,
           opponentTeamName: game.opponentTeamName || game.awayTeamName || null,
           opponentTeamPhoto: game.opponentTeamPhoto || null,
+          sharedScheduleOpponentTeamId: game.sharedScheduleOpponentTeamId || null,
+          counterpartTitle: teamName ? `vs. ${teamName}` : null,
           title: game.title || null,
           isDbGame: true,
           isCancelled,
@@ -2070,9 +2080,12 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   let notificationError: string | null = null;
   try {
     const { postChatMessage } = await import('../../../../js/db.js');
+    const counterpartTeamId = compactString(event.opponentTeamId || event.sharedScheduleOpponentTeamId) || null;
     const targets = buildScheduleNotificationTargets({
       teamId: event.teamId,
-      title: `vs. ${event.opponent || 'Opponent'}`
+      title: `vs. ${event.opponent || 'Opponent'}`,
+      counterpartTeamId,
+      counterpartTitle: event.counterpartTitle || null
     });
     const result = await postScheduleNotificationTargets({
       targets,
@@ -2080,7 +2093,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
       senderId: user.uid,
       senderName: user.displayName || user.email,
       senderEmail: user.email,
-      buildText: () => buildCancelScheduledGameChatMessage(event)
+      buildText: (target: { title?: string | null }) => buildCancelScheduledGameChatMessage(event, target.title)
     });
     notificationError = result.failedCount > 0 ? result.errorMessage || 'Team chat notification failed.' : null;
   } catch (error: any) {

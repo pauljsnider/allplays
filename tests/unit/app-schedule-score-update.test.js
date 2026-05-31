@@ -168,9 +168,9 @@ describe('React app schedule score updates', () => {
         expect(result).toEqual({ cancelled: true, notificationError: null });
     });
 
-    it('reports chat notification failure without failing the cancellation', async () => {
+    it('posts shared-game cancellation notices to both unique team chats', async () => {
         dbMocks.updateGame.mockResolvedValue(undefined);
-        dbMocks.postChatMessage.mockRejectedValue(new Error('chat write failed'));
+        dbMocks.postChatMessage.mockResolvedValue(undefined);
 
         const result = await cancelScheduledGameForApp({
             eventKey: 'team-1__game-1__player-1',
@@ -181,6 +181,46 @@ describe('React app schedule score updates', () => {
             date: new Date('2026-05-21T18:00:00Z'),
             location: 'Main Gym',
             opponent: 'Falcons',
+            opponentTeamId: 'team-2',
+            sharedScheduleOpponentTeamId: 'team-2',
+            counterpartTitle: 'vs. Bears',
+            childId: 'player-1',
+            childName: 'Pat',
+            isDbGame: true,
+            isCancelled: false,
+            canUpdateScore: true,
+            assignments: []
+        }, user);
+
+        expect(dbMocks.postChatMessage).toHaveBeenCalledTimes(2);
+        expect(dbMocks.postChatMessage).toHaveBeenNthCalledWith(1, 'team-1', expect.objectContaining({
+            text: '⚠️ Game cancelled: vs. Falcons on Thu, May 21'
+        }));
+        expect(dbMocks.postChatMessage).toHaveBeenNthCalledWith(2, 'team-2', expect.objectContaining({
+            text: '⚠️ Game cancelled: vs. Bears on Thu, May 21'
+        }));
+        expect(result).toEqual({ cancelled: true, notificationError: null });
+    });
+
+    it('reports counterpart notification failure without failing the cancellation', async () => {
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        dbMocks.postChatMessage.mockImplementation(async (teamId) => {
+            if (teamId === 'team-2') {
+                throw new Error('counterpart chat write failed');
+            }
+        });
+
+        const result = await cancelScheduledGameForApp({
+            eventKey: 'team-1__game-1__player-1',
+            id: 'game-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            location: 'Main Gym',
+            opponent: 'Falcons',
+            opponentTeamId: 'team-2',
+            counterpartTitle: 'vs. Bears',
             childId: 'player-1',
             childName: 'Pat',
             isDbGame: true,
@@ -190,7 +230,7 @@ describe('React app schedule score updates', () => {
         }, user);
 
         expect(dbMocks.updateGame).toHaveBeenCalledTimes(1);
-        expect(result).toEqual({ cancelled: true, notificationError: 'chat write failed' });
+        expect(result).toEqual({ cancelled: true, notificationError: 'counterpart chat write failed' });
     });
 
     it('rejects missing cancellation inputs before writing', async () => {
