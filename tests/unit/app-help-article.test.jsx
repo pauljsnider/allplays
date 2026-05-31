@@ -68,7 +68,7 @@ describe('HelpArticle', () => {
     it('is registered as a protected app route', () => {
         const appSource = readFileSync('apps/app/src/App.tsx', 'utf8');
 
-        expect(appSource).toContain("import { HelpArticle } from './pages/HelpArticle';");
+        expect(appSource).toContain("const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({ default: module.HelpArticle })));");
         expect(appSource).toContain('<Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />');
     });
 

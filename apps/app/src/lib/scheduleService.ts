@@ -99,6 +99,10 @@ export type ParentScheduleLoadResult = {
   events: ParentScheduleEvent[];
 };
 
+export type ParentScheduleLoadOptions = {
+  hydrateDetails?: boolean;
+};
+
 type FirestoreDocument = Record<string, any> & { id: string };
 
 export type StaffRsvpReminderSendResult = StaffRsvpReminderPreview & {
@@ -1364,10 +1368,11 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
   return events;
 }
 
-export async function loadParentSchedule(user: AuthUser | null): Promise<ParentScheduleLoadResult> {
+export async function loadParentSchedule(user: AuthUser | null, options: ParentScheduleLoadOptions = {}): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) {
     return { children: [], events: [] };
   }
+  const hydrateDetails = options.hydrateDetails !== false;
 
   const profile = await loadProfileDocument(user.uid);
   const children = normalizeChildLinks(user, profile as Record<string, unknown>);
@@ -1406,7 +1411,9 @@ export async function loadParentSchedule(user: AuthUser | null): Promise<ParentS
   }));
 
   const events = eventBatches.flat().sort((a, b) => a.date.getTime() - b.date.getTime());
-  await hydrateEventDetails(events, user);
+  if (hydrateDetails) {
+    await hydrateEventDetails(events, user);
+  }
   return { children, events };
 }
 

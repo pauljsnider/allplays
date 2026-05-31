@@ -185,8 +185,12 @@ describe('React app desktop Schedule controls', () => {
         await clickButton(container, 'Save calendar');
 
         expect(scheduleMocks.addTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/team.ics', auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
         await waitForText(container, 'Calendar link saved and schedule refreshed.');
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(4);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(3, auth.user, { hydrateDetails: false });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(4, auth.user);
     });
 
     it('shows saved staff calendar links and removes one after confirmation', async () => {
@@ -268,7 +272,7 @@ describe('React app desktop Schedule controls', () => {
             eventType: 'practice',
             title: 'Speed Session'
         }), auth.user);
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(6);
         await waitForText(container, 'Imported 2 schedule row(s) and refreshed the schedule.');
     });
 

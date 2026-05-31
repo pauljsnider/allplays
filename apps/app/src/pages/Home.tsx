@@ -26,7 +26,7 @@ import {
   Users,
   type LucideIcon
 } from 'lucide-react';
-import { loadParentHome } from '../lib/homeService';
+import { loadParentHomeSummary, loadParentHomeWithSecondaryData } from '../lib/homeService';
 import {
   blockFriend,
   commentOnSocialPost,
@@ -139,23 +139,34 @@ export function Home({ auth }: { auth: AuthState }) {
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const refreshHome = async () => {
+  const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
     if (!auth.user) return;
     setLoading(true);
     setSocialLoading(true);
     setError('');
     setSocialStatus(null);
     try {
-      const nextHome = await loadParentHome(auth.user);
+      const nextHome = await loadParentHomeSummary(auth.user, { force });
       setHome(nextHome);
-      setSocial(await loadSocialHome(auth.user, nextHome));
+      setLoading(false);
+
+      void loadParentHomeWithSecondaryData(auth.user, { force })
+        .then(async (secondaryHome) => {
+          setHome(secondaryHome);
+          setSocial(await loadSocialHome(auth.user, secondaryHome));
+        })
+        .catch((secondaryError: any) => {
+          setSocialStatus({ tone: 'error', message: secondaryError?.message || 'Unable to refresh Home details.' });
+        })
+        .finally(() => {
+          setSocialLoading(false);
+        });
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load Home.');
       setHome(emptyHome());
       setSocial(emptySocialHome());
-    } finally {
-      setLoading(false);
       setSocialLoading(false);
+      setLoading(false);
     }
   };
 
@@ -253,7 +264,7 @@ export function Home({ auth }: { auth: AuthState }) {
             <h1 className="mt-0.5 truncate text-xl font-black leading-tight text-gray-950">Today for your players</h1>
             <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{displayName}</p>
           </div>
-          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={refreshHome} disabled={loading} aria-label="Refresh Home" title="Refresh Home">
+          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refreshHome({ force: true })} disabled={loading} aria-label="Refresh Home" title="Refresh Home">
             {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
             <span className="hidden sm:inline">Refresh</span>
           </button>

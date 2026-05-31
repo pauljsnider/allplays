@@ -106,9 +106,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setError(null);
     setStatusMessage(null);
     try {
-      const result = await loadParentSchedule(auth.user);
+      const result = await loadParentSchedule(auth.user, { hydrateDetails: false });
       setChildren(result.children);
       setEvents(result.events);
+      setLoading(false);
       if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
         setSelectedPlayerId('');
       }
@@ -119,10 +120,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
       if (firstUpcoming) {
         setCalendarMonth(new Date(firstUpcoming.date.getFullYear(), firstUpcoming.date.getMonth(), 1));
       }
+
+      void loadParentSchedule(auth.user)
+        .then((hydratedResult) => {
+          setChildren(hydratedResult.children);
+          setEvents(hydratedResult.events);
+        })
+        .catch((hydrateError: any) => {
+          console.warn('[app-schedule] Unable to hydrate schedule details:', hydrateError);
+        });
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load schedule.');
       setEvents([]);
-    } finally {
       setLoading(false);
     }
   };
