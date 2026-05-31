@@ -75,6 +75,14 @@ async function mockHomePlayerModules(page) {
                     };
                 }
 
+                export async function loadParentHomeSummary(...args) {
+                    return loadParentHome(...args);
+                }
+
+                export async function loadParentHomeWithSecondaryData(...args) {
+                    return loadParentHome(...args);
+                }
+
                 export async function loadParentHome() {
                     const nextEvent = event();
                     const practice = event({
