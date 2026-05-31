@@ -6,6 +6,8 @@ import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-r
 
 const teamDetailMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn(),
+    grantScorekeeperAccessForApp: vi.fn(),
+    revokeScorekeeperAccessForApp: vi.fn(),
     inviteTeamAdminForApp: vi.fn()
 }));
 const publicActionMocks = vi.hoisted(() => ({
@@ -126,6 +128,8 @@ beforeEach(() => {
     };
     window.scrollTo = vi.fn();
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
+    teamDetailMocks.grantScorekeeperAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.revokeScorekeeperAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.inviteTeamAdminForApp.mockResolvedValue({
         email: 'newcoach@example.com',
         status: 'sent',
@@ -206,6 +210,49 @@ describe('React app TeamDetail staff permissions overview', () => {
         await clickButton(container, 'Copy link');
         expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('CODE123');
         expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/accept-invite?code=CODE123&type=admin');
+    });
+
+    it('grants scorekeeper access to an existing linked team member and refreshes staff state', async () => {
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }],
+            pendingInvites: [],
+            helperPermissions: [],
+            scorekeeperGrantTargets: [
+                { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false }
+            ],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+
+        expect(container.textContent).toContain('Scorekeeper helper access');
+        expect(container.textContent).toContain('No scorekeeper helper grant. Linked to Sam Wing.');
+        await clickButton(container, 'Grant scorekeeper');
+
+        expect(teamDetailMocks.grantScorekeeperAccessForApp).toHaveBeenCalledWith('team-1', 'parent-1');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Scorekeeper access granted.');
+    });
+
+    it('revokes scorekeeper access from an existing linked team member and refreshes staff state', async () => {
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }],
+            pendingInvites: [],
+            helperPermissions: [],
+            scorekeeperGrantTargets: [
+                { userId: 'scorekeeper-1', name: 'Score Keeper', email: '', playerNames: ['Pat Star'], isGranted: true }
+            ],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+
+        expect(container.textContent).toContain('Can score games. Linked to Pat Star.');
+        await clickButton(container, 'Revoke scorekeeper');
+
+        expect(teamDetailMocks.revokeScorekeeperAccessForApp).toHaveBeenCalledWith('team-1', 'scorekeeper-1');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Scorekeeper access revoked.');
     });
 
     it('hides staff permissions when the service omits the admin-only payload', async () => {
