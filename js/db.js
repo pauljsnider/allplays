@@ -4202,11 +4202,6 @@ export async function getParentDashboardData(userId) {
         return { upcomingGames: [], children: [], registrationApplications };
     }
 
-    // Use the cached parentOf links on the user profile as the
-    // source of truth for which players this parent can see.
-    // We no longer require the player doc to have a matching
-    // parents[] entry, because production rules may block that
-    // write even when the profile is updated successfully.
     const children = userProfile.parentOf;
     const activeChildren = [];
     const upcomingGames = [];
@@ -4220,10 +4215,23 @@ export async function getParentDashboardData(userId) {
     now.setHours(0, 0, 0, 0);
 
     for (const child of children) {
-        if (!child.teamId) continue;
+        if (!child.teamId || !child.playerId) continue;
         const team = await getTeam(child.teamId);
         if (!team) continue;
-        activeChildren.push(child);
+
+        const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);
+        const playerSnap = await getDoc(playerRef);
+        if (!playerSnap.exists()) continue;
+        const player = { id: playerSnap.id, ...playerSnap.data() };
+        if (player.active === false) continue;
+
+        const activeChild = {
+            ...child,
+            playerName: player.name || child.playerName || '',
+            playerNumber: player.number ?? child.playerNumber ?? '',
+            playerPhotoUrl: player.photoUrl || child.playerPhotoUrl || null
+        };
+        activeChildren.push(activeChild);
 
         let events = eventsByTeam.get(child.teamId);
         if (!events) {
@@ -4239,8 +4247,8 @@ export async function getParentDashboardData(userId) {
             .map(e => ({
                 ...e,
                 teamId: child.teamId,
-                teamName: child.teamName,
-                childName: child.playerName
+                teamName: activeChild.teamName,
+                childName: activeChild.playerName
             }));
 
         upcomingGames.push(...futureEvents);
