@@ -88,6 +88,12 @@ describe('live game state helpers', () => {
     })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
 
     expect(resolveGoalSportTrackerProfile({
+      game: {},
+      team: { sport: 'Basketball' },
+      config: { id: 'cfg-soccer', baseType: 'Soccer', columns: ['GOALS', 'SHOTS'] }
+    })).toBeNull();
+
+    expect(resolveGoalSportTrackerProfile({
       game: { sport: 'Soccer', statTrackerConfigId: 'cfg-soccer' },
       team: { sport: 'Soccer' },
       config: { baseType: 'Soccer', columns: ['GOALS', 'SHOTS'] }
