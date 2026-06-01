@@ -2988,6 +2988,20 @@ export async function getUserAccessCodes(userId) {
     });
 }
 
+export async function getTeamAccessCodes(teamId) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) {
+        return [];
+    }
+
+    const q = query(
+        collection(db, "accessCodes"),
+        where("teamId", "==", normalizedTeamId)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+}
+
 export async function validateAccessCode(code) {
     const q = query(
         collection(db, "accessCodes"),

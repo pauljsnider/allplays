@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import {
     processPendingAdminInvites,
     buildAdminInviteFollowUp,
-    inviteExistingTeamAdmin
+    inviteExistingTeamAdmin,
+    loadPendingAdminInviteEmails
 } from '../../js/edit-team-admin-invites.js';
 
 describe('edit team admin invite processing', () => {
@@ -98,6 +99,26 @@ describe('edit team admin invite processing', () => {
             teamName: 'Tigers',
             reason: 'missing_invite_code'
         });
+    });
+
+    it('hydrates pending invite emails from active team access codes', async () => {
+        const future = Date.now() + 60_000;
+        const getTeamAccessCodes = vi.fn().mockResolvedValue([
+            { email: 'pending@example.com', teamId: 'team-123', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } },
+            { email: 'PENDING@example.com ', teamId: 'team-123', type: 'admin_invite', used: false, status: 'active', expiresAt: { toMillis: () => future } },
+            { email: 'expired@example.com', teamId: 'team-123', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future - 120_000 } },
+            { email: 'used@example.com', teamId: 'team-123', type: 'admin_invite', used: true, expiresAt: { toMillis: () => future } },
+            { email: 'inactive@example.com', teamId: 'team-123', type: 'admin_invite', used: false, active: false, expiresAt: { toMillis: () => future } },
+            { email: 'wrongtype@example.com', teamId: 'team-123', type: 'standard', used: false, expiresAt: { toMillis: () => future } }
+        ]);
+
+        const emails = await loadPendingAdminInviteEmails({
+            teamId: 'team-123',
+            getTeamAccessCodes
+        });
+
+        expect(getTeamAccessCodes).toHaveBeenCalledWith('team-123');
+        expect(emails).toEqual(['pending@example.com']);
     });
 
     it('processes each pending invite after team creation', async () => {
