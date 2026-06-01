@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-r
 
 const teamDetailMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn(),
+    saveTeamScheduleNotificationsForApp: vi.fn(),
     buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
     canExposePublicFanFeed: vi.fn((team, events = []) => (events || []).some((event) => event?.type === 'game' && event?.visibility !== 'private' && event?.isPrivate !== true && event?.status !== 'deleted' && event?.liveStatus !== 'deleted' && ((team?.isPublic !== false && team?.active !== false) || event?.isPublic === true || event?.shareable === true || event?.publicCalendar === true)))
 }));
@@ -21,6 +22,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
     loadParentTeamDetail: teamDetailMocks.loadParentTeamDetail,
+    saveTeamScheduleNotificationsForApp: teamDetailMocks.saveTeamScheduleNotificationsForApp,
     buildPublicTeamGamesIcsUrl: teamDetailMocks.buildPublicTeamGamesIcsUrl,
     canExposePublicFanFeed: teamDetailMocks.canExposePublicFanFeed
 }));
@@ -67,7 +69,14 @@ function model() {
             streamUrl: 'https://youtube.example.test/watch',
             websiteUrl: 'https://allplays.ai/team.html#teamId=team-1',
             mediaUrl: 'https://allplays.ai/team-media.html#teamId=team-1',
-            registrationProvider: [{ label: 'Provider', value: 'Sports Connect' }]
+            registrationProvider: [{ label: 'Provider', value: 'Sports Connect' }],
+            scheduleNotifications: {
+                enabled: true,
+                reminderHours: 24,
+                delivery: 'team_chat',
+                hasExplicitReminderHours: false,
+                summary: 'Fallback reminder window: 24 hours before event start. No team default is set yet.'
+            }
         },
         players: [
             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true },
@@ -153,6 +162,26 @@ async function clickLink(container, text) {
     await flush();
 }
 
+async function changeSelect(container, label, value) {
+    const select = Array.from(container.querySelectorAll('select')).find((candidate) => candidate.getAttribute('aria-label') === label);
+    if (!select) throw new Error(`Select not found: ${label}`);
+    await act(async () => {
+        select.value = value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+}
+
+async function toggleCheckbox(container, text) {
+    const label = Array.from(container.querySelectorAll('label')).find((candidate) => candidate.textContent.includes(text));
+    const checkbox = label?.querySelector('input[type="checkbox"]');
+    if (!checkbox) throw new Error(`Checkbox not found: ${text}`);
+    await act(async () => {
+        checkbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+}
+
 function hrefs(container) {
     return Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'));
 }
@@ -178,6 +207,13 @@ beforeEach(() => {
         eligibleEmails: [],
         players: [],
         emailSentCount: 0
+    });
+    teamDetailMocks.saveTeamScheduleNotificationsForApp.mockResolvedValue({
+        enabled: true,
+        reminderHours: 24,
+        delivery: 'team_chat',
+        hasExplicitReminderHours: true,
+        summary: 'Team default reminder window: 24 hours before event start.'
     });
     teamDetailMocks.loadParentTeamDetail.mockResolvedValue(model());
 });
@@ -291,6 +327,58 @@ describe('React app TeamDetail page', () => {
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'More');
         expect(hidden.container.textContent).not.toContain('Scoreboard widget');
+    });
+
+    it('lets team managers load and save reminder timing defaults from the More tab', async () => {
+        const managerModel = model();
+        managerModel.canManageTeam = true;
+        managerModel.team.scheduleNotifications = {
+            enabled: false,
+            reminderHours: 72,
+            delivery: 'team_chat',
+            hasExplicitReminderHours: true,
+            summary: 'Team default reminder window: 72 hours before event start.'
+        };
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel).mockResolvedValueOnce({
+            ...managerModel,
+            team: {
+                ...managerModel.team,
+                scheduleNotifications: {
+                    enabled: true,
+                    reminderHours: 48,
+                    delivery: 'team_chat',
+                    hasExplicitReminderHours: true,
+                    summary: 'Team default reminder window: 48 hours before event start.'
+                }
+            }
+        });
+
+        const { container } = await renderTeamDetail();
+        await clickButton(container, 'More');
+
+        expect(container.textContent).toContain('Reminder timing defaults');
+        expect(container.textContent).toContain('Team default reminder window: 72 hours before event start.');
+        expect(container.querySelector('select').value).toBe('72');
+        expect(container.querySelector('input[type="checkbox"]').checked).toBe(false);
+
+        await toggleCheckbox(container, 'Enable team-wide pre-event reminders');
+        await changeSelect(container, 'Reminder window', '48');
+        await clickButton(container, 'Save Timing Defaults');
+
+        expect(teamDetailMocks.saveTeamScheduleNotificationsForApp).toHaveBeenCalledWith('team-1', {
+            enabled: true,
+            reminderHours: 48,
+            delivery: 'team_chat'
+        });
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Reminder timing defaults saved.');
+        expect(container.textContent).toContain('Team default reminder window: 48 hours before event start.');
+
+        const parentModel = model();
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(parentModel);
+        const hidden = await renderTeamDetail();
+        await clickButton(hidden.container, 'More');
+        expect(hidden.container.textContent).not.toContain('Reminder timing defaults');
     });
 
     it('exposes schedule, parent action links, and recent scores', async () => {

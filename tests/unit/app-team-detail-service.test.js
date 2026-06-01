@@ -11,6 +11,7 @@ vi.mock('../../js/db.js', () => ({
     getPlayerTrackingStatuses: vi.fn(),
     getPublicTrackingItems: vi.fn(),
     getTeam: vi.fn(),
+    updateTeam: vi.fn(),
     grantScorekeeperAccess: vi.fn(),
     inviteAdmin: vi.fn(),
     addTeamAdminEmail: vi.fn(),
@@ -34,9 +35,9 @@ vi.mock('../../apps/app/src/lib/authService', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { getDocs } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 describe('React app team detail model', () => {
@@ -94,6 +95,27 @@ describe('React app team detail model', () => {
         await expect(grantScorekeeperAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
         await expect(grantScorekeeperAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
         expect(grantScorekeeperAccess).not.toHaveBeenCalled();
+    });
+
+    it('normalizes and saves team schedule reminder defaults with the legacy payload', async () => {
+        updateTeam.mockResolvedValue(undefined);
+
+        const saved = await saveTeamScheduleNotificationsForApp(' team-1 ', { enabled: false, reminderHours: 99, delivery: 'email' });
+
+        expect(updateTeam).toHaveBeenCalledWith('team-1', {
+            scheduleNotifications: {
+                enabled: false,
+                reminderHours: 24,
+                delivery: 'team_chat'
+            }
+        });
+        expect(saved).toMatchObject({
+            enabled: false,
+            reminderHours: 24,
+            delivery: 'team_chat',
+            hasExplicitReminderHours: false,
+            summary: 'Fallback reminder window: 24 hours before event start. No team default is set yet.'
+        });
     });
 
     it('builds public fan feed URLs and gates them to public or shareable games', () => {
@@ -176,6 +198,13 @@ describe('React app team detail model', () => {
         expect(model.team.bracketUrl).toBe('https://bracket.example.test/path');
         expect(model.team.isPublic).toBe(false);
         expect(model.team.active).toBe(true);
+        expect(model.team.scheduleNotifications).toMatchObject({
+            enabled: true,
+            reminderHours: 24,
+            delivery: 'team_chat',
+            hasExplicitReminderHours: false,
+            summary: 'Fallback reminder window: 24 hours before event start. No team default is set yet.'
+        });
         expect(model.team.registrationProvider.map((row) => row.value)).toContain('Sports Connect');
         expect(model.players.find((player) => player.id === 'player-1').photoUrl).toBe('https://img.example.test/player.png');
         expect(model.linkedPlayers.map((player) => player.id)).toEqual(['player-1']);
@@ -197,6 +226,7 @@ describe('React app team detail model', () => {
                 sport: 'Soccer',
                 logoUrl: 'https://img.example.test/logo.png',
                 twitchChannel: 'allplayslive',
+                scheduleNotifications: { enabled: false, reminderHours: '48', delivery: 'email' },
                 registrationProvider: {
                     providerName: 'League Apps',
                     teamId: 'remote-team-1',
@@ -233,6 +263,13 @@ describe('React app team detail model', () => {
 
         expect(model.team.photoUrl).toBe('https://img.example.test/logo.png');
         expect(model.team.streamUrl).toBe('https://twitch.tv/allplayslive');
+        expect(model.team.scheduleNotifications).toMatchObject({
+            enabled: false,
+            reminderHours: 48,
+            delivery: 'team_chat',
+            hasExplicitReminderHours: true,
+            summary: 'Team default reminder window: 48 hours before event start.'
+        });
         expect(model.team.websiteUrl).toBe('https://allplays.ai/team.html#teamId=team%2Fwith+slash');
         expect(model.team.editTeamUrl).toBe('https://allplays.ai/edit-team.html#teamId=team%2Fwith+slash');
         expect(model.team.mediaUrl).toBe('https://allplays.ai/team-media.html#teamId=team%2Fwith+slash');

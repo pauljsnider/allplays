@@ -9,6 +9,7 @@ const teamDetailMocks = vi.hoisted(() => ({
     grantScorekeeperAccessForApp: vi.fn(),
     revokeScorekeeperAccessForApp: vi.fn(),
     inviteTeamAdminForApp: vi.fn(),
+    saveTeamScheduleNotificationsForApp: vi.fn(),
     buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
     canExposePublicFanFeed: vi.fn(() => false)
 }));
@@ -60,7 +61,14 @@ function makeModel(staffPermissions) {
             websiteUrl: 'https://allplays.ai/team.html#teamId=team-1',
             editTeamUrl: 'https://allplays.ai/edit-team.html#teamId=team-1',
             mediaUrl: 'https://allplays.ai/team-media.html#teamId=team-1',
-            registrationProvider: []
+            registrationProvider: [],
+            scheduleNotifications: {
+                enabled: true,
+                reminderHours: 24,
+                delivery: 'team_chat',
+                hasExplicitReminderHours: false,
+                summary: 'Fallback reminder window: 24 hours before event start. No team default is set yet.'
+            }
         },
         players: [],
         linkedPlayers: [],
@@ -141,6 +149,13 @@ beforeEach(() => {
         code: 'CODE123',
         teamName: 'Bears',
         acceptInviteUrl: 'https://allplays.ai/accept-invite?code=CODE123&type=admin'
+    });
+    teamDetailMocks.saveTeamScheduleNotificationsForApp.mockResolvedValue({
+        enabled: true,
+        reminderHours: 24,
+        delivery: 'team_chat',
+        hasExplicitReminderHours: true,
+        summary: 'Team default reminder window: 24 hours before event start.'
     });
 });
 
