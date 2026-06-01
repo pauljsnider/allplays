@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './AppShell';
@@ -13,7 +13,7 @@ vi.mock('../lib/uxTiming', () => ({
 }));
 
 vi.mock('./AppSearchDialog', () => ({
-  AppSearchDialog: () => null,
+  AppSearchDialog: ({ open }: { open: boolean }) => (open ? <div role="dialog" aria-label="Search teams, players, actions, and help" /> : null),
 }));
 
 const auth: AuthState = {
@@ -50,5 +50,18 @@ describe('AppShell', () => {
 
     const searchButton = screen.getByRole('button', { name: 'Search' });
     expect(searchButton).toHaveAttribute('aria-label', 'Search');
+  });
+
+  it('opens the search dialog immediately when the desktop search button is clicked', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={auth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeInTheDocument();
   });
 });

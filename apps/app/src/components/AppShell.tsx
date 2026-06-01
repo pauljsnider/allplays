@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -29,8 +29,7 @@ import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
-
-const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
+import { AppSearchDialog } from './AppSearchDialog';
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -272,9 +271,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       )}
 
       {searchOpen ? (
-        <Suspense fallback={null}>
-          <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
-        </Suspense>
+        <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
       ) : null}
 
       {addTeamOpen ? (

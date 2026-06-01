@@ -16,6 +16,7 @@ import {
   MapPin,
   MessageCircle,
   Radio,
+  Save,
   Shield,
   Ticket,
   Trophy,
@@ -26,7 +27,7 @@ import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActi
 import { getEventDetailPath } from '../lib/homeLogic';
 import { loadStaffRsvpReminderPreview, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
+import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -163,7 +164,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
       {activeTab === 'roster' ? <RosterTab model={model} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} /> : null}
-      {activeTab === 'more' ? <MoreTab model={model} onStaffInviteSuccess={refreshTeamDetail} /> : null}
+      {activeTab === 'more' ? <MoreTab model={model} onTeamDetailRefresh={refreshTeamDetail} /> : null}
     </div>
   );
 }
@@ -345,10 +346,11 @@ function InsightsTab({ model }: { model: TeamDetailModel }) {
   );
 }
 
-function MoreTab({ model, onStaffInviteSuccess }: { model: TeamDetailModel; onStaffInviteSuccess: () => Promise<void> }) {
+function MoreTab({ model, onTeamDetailRefresh }: { model: TeamDetailModel; onTeamDetailRefresh: () => Promise<void> }) {
   return (
     <div className="space-y-4">
-      {model.staffPermissions ? <StaffPermissionsCard model={model} onInviteSuccess={onStaffInviteSuccess} /> : null}
+      {model.staffPermissions ? <StaffPermissionsCard model={model} onInviteSuccess={onTeamDetailRefresh} /> : null}
+      {model.canManageTeam ? <ReminderTimingDefaultsCard model={model} onSaved={onTeamDetailRefresh} /> : null}
       {canExposePublicFanFeed(model.team, [...model.upcomingEvents, ...model.recentResults]) ? <FanFeedCard model={model} /> : null}
       {model.canManageTeam ? <ScoreboardWidgetCard model={model} /> : null}
 
@@ -405,6 +407,95 @@ function MoreTab({ model, onStaffInviteSuccess }: { model: TeamDetailModel; onSt
         </section>
       ) : null}
     </div>
+  );
+}
+
+function ReminderTimingDefaultsCard({ model, onSaved }: { model: TeamDetailModel; onSaved: () => Promise<void> }) {
+  const [enabled, setEnabled] = useState(model.team.scheduleNotifications.enabled);
+  const [reminderHours, setReminderHours] = useState(model.team.scheduleNotifications.reminderHours);
+  const [submitting, setSubmitting] = useState(false);
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  useEffect(() => {
+    setEnabled(model.team.scheduleNotifications.enabled);
+    setReminderHours(model.team.scheduleNotifications.reminderHours);
+  }, [model.team.scheduleNotifications.enabled, model.team.scheduleNotifications.reminderHours]);
+
+  const hasChanges = enabled !== model.team.scheduleNotifications.enabled
+    || reminderHours !== model.team.scheduleNotifications.reminderHours;
+
+  async function saveSettings() {
+    if (submitting || !hasChanges) return;
+    setSubmitting(true);
+    setStatus(null);
+    try {
+      await saveTeamScheduleNotificationsForApp(model.team.id, { enabled, reminderHours, delivery: 'team_chat' });
+      await onSaved();
+      setStatus({ success: true, message: 'Reminder timing defaults saved.' });
+    } catch (saveError: any) {
+      setStatus({ success: false, message: saveError?.message || 'Unable to save reminder timing defaults.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <CalendarDays className="h-5 w-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-gray-950">Reminder timing defaults</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Save the inherited team RSVP reminder timing for future schedule events in web and mobile.</div>
+
+          <div className="mt-4 space-y-3 rounded-xl border border-primary-100 bg-primary-50 p-3">
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                checked={enabled}
+                onChange={(event) => {
+                  setEnabled(event.target.checked);
+                  setStatus(null);
+                }}
+                disabled={submitting}
+              />
+              <span>
+                <span className="block text-sm font-black text-gray-950">Enable team-wide pre-event reminders</span>
+                <span className="mt-1 block text-xs font-semibold leading-5 text-gray-600">When enabled, new schedule flows can inherit this team reminder window.</span>
+              </span>
+            </label>
+
+            <label className="block">
+              <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Reminder window</span>
+              <select
+                aria-label="Reminder window"
+                className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                value={String(reminderHours)}
+                onChange={(event) => {
+                  setReminderHours(Number.parseInt(event.target.value, 10) as 24 | 48 | 72);
+                  setStatus(null);
+                }}
+                disabled={submitting}
+              >
+                <option value="24">24 hours before event start</option>
+                <option value="48">48 hours before event start</option>
+                <option value="72">72 hours before event start</option>
+              </select>
+            </label>
+
+            <div className="rounded-lg border border-white/80 bg-white p-3 text-xs font-semibold leading-5 text-gray-600">{model.team.scheduleNotifications.summary}</div>
+
+            <button type="button" className="primary-button !min-h-10 text-xs" disabled={submitting || !hasChanges} onClick={saveSettings}>
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+              Save Timing Defaults
+            </button>
+            {status ? <div className={`text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{status.message}</div> : null}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

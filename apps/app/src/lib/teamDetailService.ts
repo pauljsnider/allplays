@@ -8,6 +8,10 @@ import {
   getPlayerTrackingStatuses,
   getPublicTrackingItems,
   getTeam,
+  updateTeam,
+  getEvents,
+  updateEvent,
+  updateGame,
   grantScorekeeperAccess,
   inviteAdmin,
   addTeamAdminEmail,
@@ -16,6 +20,7 @@ import {
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
 import { collection, db, getDocs, query, where } from '../../../../js/firebase.js';
+import { buildScheduleNotificationMetadata, describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
@@ -120,6 +125,14 @@ export type InviteTeamAdminForAppResult = {
   reason?: string;
 };
 
+export type TeamScheduleNotificationSettings = {
+  enabled: boolean;
+  reminderHours: 24 | 48 | 72;
+  delivery: 'team_chat';
+  hasExplicitReminderHours: boolean;
+  summary: string;
+};
+
 export type TeamDetailModel = {
   team: {
     id: string;
@@ -137,6 +150,7 @@ export type TeamDetailModel = {
     editTeamUrl: string;
     mediaUrl: string;
     registrationProvider: Array<{ label: string; value: string }>;
+    scheduleNotifications: TeamScheduleNotificationSettings;
   };
   players: TeamDetailPlayer[];
   linkedPlayers: TeamDetailPlayer[];
@@ -400,6 +414,45 @@ export async function revokeScorekeeperAccessForApp(teamId: string, memberUserId
   await revokeScorekeeperAccess(normalizedTeamId, normalizedUserId);
 }
 
+export async function saveTeamScheduleNotificationsForApp(teamId: string, settings: Partial<TeamScheduleNotificationSettings>) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  const normalizedSettings = normalizeTeamScheduleNotifications(settings);
+  const teamScheduleNotifications = {
+    enabled: normalizedSettings.enabled,
+    reminderHours: normalizedSettings.reminderHours,
+    delivery: normalizedSettings.delivery
+  };
+
+  await updateTeam(normalizedTeamId, {
+    scheduleNotifications: teamScheduleNotifications
+  });
+
+  const events = await Promise.resolve(getEvents(normalizedTeamId)).catch(() => []);
+  for (const event of Array.isArray(events) ? events : []) {
+    const eventId = cleanString(event?.id || event?.gameId);
+    if (!eventId) continue;
+    const eventType = cleanString(event?.type).toLowerCase() === 'practice' ? 'practice' : 'game';
+    const isCanceled = ['cancelled', 'canceled'].includes(cleanString(event?.status).toLowerCase()) || event?.deleted === true;
+    const payload = {
+      scheduleNotifications: buildScheduleNotificationMetadata({
+        settings: teamScheduleNotifications,
+        action: isCanceled ? 'cancelled' : 'updated',
+        eventDate: event?.date,
+        canceled: isCanceled
+      })
+    };
+
+    if (eventType === 'practice') {
+      await updateEvent(normalizedTeamId, eventId, payload);
+    } else {
+      await updateGame(normalizedTeamId, eventId, payload);
+    }
+  }
+
+  return normalizedSettings;
+}
+
 export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseUrl()) {
   const inviteCode = cleanString(code);
   if (!inviteCode) return null;
@@ -557,7 +610,8 @@ export function buildTeamDetailModel({
       websiteUrl: getPublicHashUrl('team.html', teamId),
       editTeamUrl: getPublicHashUrl('edit-team.html', teamId),
       mediaUrl: getPublicHashUrl('team-media.html', teamId),
-      registrationProvider: getRegistrationProviderDetails(team, teamId)
+      registrationProvider: getRegistrationProviderDetails(team, teamId),
+      scheduleNotifications: normalizeTeamScheduleNotifications(team?.scheduleNotifications)
     },
     players: normalizedPlayers,
     linkedPlayers: normalizedPlayers.filter((player) => player.isLinked),
@@ -583,6 +637,19 @@ export function buildTeamDetailModel({
       practices: games.filter((game: any) => game?.type === 'practice').length,
       completedGames: completedGames.length
     }
+  };
+}
+
+function normalizeTeamScheduleNotifications(settings: any): TeamScheduleNotificationSettings {
+  const normalized = normalizeScheduleNotificationSettings(settings || {});
+  const reminderHours = normalized.reminderHours as 24 | 48 | 72;
+  return {
+    enabled: normalized.enabled,
+    reminderHours,
+    delivery: 'team_chat',
+    hasExplicitReminderHours: Object.prototype.hasOwnProperty.call(settings || {}, 'reminderHours')
+      && [24, 48, 72].includes(Number.parseInt(settings?.reminderHours, 10)),
+    summary: describeScheduleReminderWindow(settings || {})
   };
 }
 

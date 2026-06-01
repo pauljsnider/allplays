@@ -201,6 +201,16 @@ async function mockTeamsModules(page) {
                     return { success: true };
                 }
 
+                export async function saveTeamScheduleNotificationsForApp(teamId, settings = {}) {
+                    return {
+                        enabled: settings.enabled !== false,
+                        reminderHours: settings.reminderHours || 24,
+                        delivery: 'team_chat',
+                        hasExplicitReminderHours: true,
+                        summary: 'Team default reminder window: 24 hours before event start.'
+                    };
+                }
+
                 export function buildPublicTeamGamesIcsUrl(teamId) {
                     return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
                 }
