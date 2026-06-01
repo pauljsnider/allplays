@@ -101,6 +101,16 @@ describe('CapabilityPage launch CTAs', () => {
         await act(async () => root.unmount());
     });
 
+    it('routes the help capability to the in-app help portal', async () => {
+        const { container, root } = await renderCapabilityPage('/capabilities/help');
+
+        expect(linkByText(container, 'Open app route').getAttribute('href')).toBe('/help');
+        expect(container.textContent).not.toContain('Open current page');
+        expect(openPublicUrl).not.toHaveBeenCalled();
+
+        await act(async () => root.unmount());
+    });
+
     it('does not show a primary launch CTA for future capabilities', async () => {
         const { container, root } = await renderCapabilityPage('/capabilities/organization-schedule');
 

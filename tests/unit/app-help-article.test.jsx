@@ -65,10 +65,14 @@ describe('HelpArticle', () => {
         await act(async () => root.unmount());
     });
 
-    it('is registered as a protected app route', () => {
+    it('is registered as protected help portal routes', () => {
         const appSource = readFileSync('apps/app/src/App.tsx', 'utf8');
 
-        expect(appSource).toContain("const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({ default: module.HelpArticle })));");
+        expect(appSource).toContain("const HelpPortal = lazy(() => import('./pages/HelpPortal').then((module) => ({ default: module.HelpPortal })));"
+        );
+        expect(appSource).toContain("const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({ default: module.HelpArticle })));"
+        );
+        expect(appSource).toContain('<Route path="/help" element={<Protected auth={auth}><HelpPortal /></Protected>} />');
         expect(appSource).toContain('<Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />');
     });
 

@@ -88,13 +88,14 @@ export function searchHelpKnowledge({
   roleFilter?: HelpKnowledgeRoleFilter;
   limit?: number;
 }): HelpKnowledgeResult[] {
+  const docs = getHelpKnowledgeDocs();
   const cleanQuery = compactText(query);
   const queryTokens = tokenize(cleanQuery);
   const roleTokens = normalizeRoles(roles);
   const [normalizedRoleFilter] = normalizeRoles([roleFilter]);
-  const maxResults = Math.min(Math.max(Number(limit) || 5, 1), 8);
+  const maxResults = Math.min(Math.max(Number(limit) || 5, 1), Math.max(docs.length, 1));
 
-  return getHelpKnowledgeDocs()
+  return docs
     .filter((doc) => normalizedRoleFilter
       ? roleFilterMatches(doc.roles, normalizedRoleFilter)
       : (!roleTokens.length || roleMatches(doc.roles, roleTokens)))
