@@ -27,7 +27,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
-        expect(studio).toContain("from '../db.js?v=32'");
+        expect(studio).toContain("from '../db.js?v=33'");
 
         expect(studio).toContain('Create drafts for selected players');
         expect(studio).toContain('Saved work');
@@ -53,6 +53,8 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain('certificateLimit = 6');
         expect(studio).toContain('Showing ${visible.length} of ${items.length}');
         expect(studio).toContain('openSavedBatch');
+        expect(studio).toContain('getCertificateBatch(state.teamId, batchId)');
+        expect(studio).toContain('upsertSavedBatch(batch);');
         expect(studio).toContain('openSavedCertificate');
         expect(studio).toContain("params.get('certificateId')");
         expect(studio).toContain("params.get('batchId')");
@@ -145,6 +147,7 @@ describe('awards and certificates workflow wiring', () => {
             'getCertificateDefaults',
             'setCertificateDefaults',
             'createCertificateBatch',
+            'getCertificateBatch',
             'listCertificateBatches',
             'createCertificate',
             'updateCertificate',
