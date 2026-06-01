@@ -124,6 +124,9 @@
         const params = new URLSearchParams(window.location.search);
         const teamId = params.get('teamId') || '';
         const formId = params.get('formId') || params.get('id') || '';
+        const retryRegistrationId = params.get('registrationId') || '';
+        const retryCheckoutAttemptToken = params.get('checkoutAttemptToken') || '';
+        const retryPaymentRequested = params.get('retryPayment') === '1' && !!retryRegistrationId;
         let activeForm = null;
 
         const loadingState = document.getElementById('loading-state');
@@ -271,11 +274,13 @@
                 return;
             }
 
-            notice.textContent = paymentNotice;
+            notice.textContent = retryPaymentRequested && onlineCheckoutEnabled
+                ? 'We found your previous registration. Use the button below to retry payment without submitting a new registration.'
+                : paymentNotice;
             if (onlineCheckoutEnabled) {
                 submitButton.classList.add('hidden');
                 payRegistrationButton.classList.remove('hidden');
-                payRegistrationButton.textContent = 'Pay registration with Stripe';
+                payRegistrationButton.textContent = retryPaymentRequested ? 'Retry payment with Stripe' : 'Pay registration with Stripe';
             } else {
                 submitButton.classList.remove('hidden');
                 payRegistrationButton.classList.add('hidden');
@@ -645,6 +650,22 @@
             }
 
             try {
+                if (retryPaymentRequested) {
+                    const checkoutUrl = await initiateStripeCheckout({
+                        teamId,
+                        formId,
+                        registrationId: retryRegistrationId,
+                        checkoutAttemptToken: retryCheckoutAttemptToken,
+                        retryPayment: true
+                    });
+                    if (checkoutUrl) {
+                        window.location.href = checkoutUrl;
+                    } else {
+                        showFormError('Failed to get Stripe checkout URL.');
+                    }
+                    return;
+                }
+
                 const feeSnapshot = submission.feeSnapshot;
                 const amountCents = Math.max(0, Number(feeSnapshot?.finalAmountDueCents || 0));
                 const currency = String(feeSnapshot?.currency || activeForm.currency || 'USD').toLowerCase();
@@ -683,6 +704,9 @@
                     registrationId: result.registrationId,
                     checkoutAttemptToken
                 });
+                if (retryPaymentRequested) {
+                    returnParams.set('retryPayment', '1');
+                }
                 const successUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=success`;
                 const cancelUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=cancelled`;
 

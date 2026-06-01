@@ -149,12 +149,13 @@ function normalizeCheckoutAttemptToken(value, label = 'checkoutAttemptToken') {
 }
 
 function normalizeRegistrationCheckoutInput(data = {}) {
-  const amountCents = Math.round(Number(data.amount ?? data.amountCents ?? 0));
-  const currency = String(data.currency || 'usd').trim().toLowerCase();
-  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+  const hasAmount = data.amount !== undefined || data.amountCents !== undefined;
+  const amountCents = hasAmount ? Math.round(Number(data.amount ?? data.amountCents ?? 0)) : null;
+  const currency = String(data.currency || '').trim().toLowerCase();
+  if (hasAmount && (!Number.isFinite(amountCents) || amountCents <= 0)) {
     throw new Error('A positive checkout amount is required.');
   }
-  if (!/^[a-z]{3}$/.test(currency)) {
+  if (currency && !/^[a-z]{3}$/.test(currency)) {
     throw new Error('A valid checkout currency is required.');
   }
   return {
@@ -163,7 +164,8 @@ function normalizeRegistrationCheckoutInput(data = {}) {
     registrationId: normalizeFirestoreId(data.registrationId, 'registrationId'),
     amountCents,
     currency,
-    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)
+    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken),
+    retryPayment: data.retryPayment === true || String(data.retryPayment || '').trim() === '1'
   };
 }
 
@@ -197,6 +199,9 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   });
   if (input.checkoutAttemptToken) {
     params.set('checkoutAttemptToken', input.checkoutAttemptToken);
+  }
+  if (input.retryPayment) {
+    params.set('retryPayment', '1');
   }
   return {
     successUrl: `${baseUrl}/registration.html?${params.toString()}&status=success`,
@@ -1772,13 +1777,17 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   }
 
   const expectedAmountCents = getRegistrationCheckoutAmountCents(registration);
-  if (input.amountCents !== expectedAmountCents) {
+  const amountCents = input.amountCents ?? expectedAmountCents;
+  if (input.amountCents !== null && input.amountCents !== expectedAmountCents) {
     throw new functions.https.HttpsError('failed-precondition', 'Checkout amount does not match the registration fee.');
   }
+  const currency = String(
+    input.currency || registration.feeSnapshot?.currency || registration.currency || form.currency || 'usd'
+  ).trim().toLowerCase() || 'usd';
   if (!registrationCheckoutAttemptMatches(registration, input)) {
     throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
   }
-  if (canReuseRegistrationCheckoutSession(registration, input.amountCents, input)) {
+  if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
     return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
   }
 
@@ -1790,8 +1799,8 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     mode: 'payment',
     line_items: [{
       price_data: {
-        currency: input.currency,
-        unit_amount: input.amountCents,
+        currency,
+        unit_amount: amountCents,
         product_data: {
           name: title
         }
@@ -1814,7 +1823,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     paymentStatus: 'checkout_open',
     stripeCheckoutSessionId: session.id,
     stripePaymentStatus: session.payment_status || 'unpaid',
-    checkoutAmountCents: input.amountCents,
+    checkoutAmountCents: amountCents,
     checkoutAttemptToken: input.checkoutAttemptToken || null,
     checkoutCreatedAt: now,
     updatedAt: now
