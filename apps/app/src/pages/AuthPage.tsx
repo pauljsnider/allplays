@@ -23,7 +23,8 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const inviteCode = (searchParams.get('code') || '').trim().toUpperCase();
   const inviteType = (searchParams.get('type') || 'parent').trim().toLowerCase();
-  const initialMode: AuthMode = searchParams.get('mode') === 'signup' || inviteCode ? 'signup' : 'login';
+  const requestedMode = searchParams.get('mode');
+  const initialMode: AuthMode = requestedMode === 'signup' ? 'signup' : 'login';
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
