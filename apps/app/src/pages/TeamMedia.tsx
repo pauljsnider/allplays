@@ -14,6 +14,7 @@ import {
   ImageIcon,
   LinkIcon,
   Loader2,
+  MessageCircle,
   Plus,
   RefreshCw,
   Share2,
@@ -22,6 +23,8 @@ import {
   Video
 } from 'lucide-react';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
+import { sendTeamChatMessage, type ChatAttachment } from '../lib/chatService';
+import { DEFAULT_TEAM_CONVERSATION_ID } from '../lib/chatLogic';
 import {
   addParentTeamMediaLink,
   createTeamMediaAlbumForApp,
@@ -57,6 +60,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [movingItemId, setMovingItemId] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [postingItemId, setPostingItemId] = useState('');
 
   const refresh = async ({ showLoading = model === null, preferredFolderId = '' }: { showLoading?: boolean; preferredFolderId?: string } = {}) => {
     if (!teamId) return;
@@ -486,7 +490,39 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.length ? filteredItems.map((item) => (
-            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} currentUserId={auth.user?.uid || ''} folders={model.folders} currentFolderId={activeFolder?.id || ''} deleting={deletingItemId === item.id} renaming={renamingItemId === item.id} moving={movingItemId === item.id} onRenameItem={handleRenameItem} onDeleteItem={handleDeleteItem} onMoveItem={handleMoveItem} />
+            <TeamMediaItemCard key={item.id} item={item} onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)} canManage={model.canManage} currentUserId={auth.user?.uid || ''} folders={model.folders} currentFolderId={activeFolder?.id || ''} deleting={deletingItemId === item.id} renaming={renamingItemId === item.id} moving={movingItemId === item.id} posting={postingItemId === item.id} onRenameItem={handleRenameItem} onDeleteItem={handleDeleteItem} onMoveItem={handleMoveItem} onPostToTeamChat={async (item, caption) => {
+              if (!teamId || !auth.user) return;
+              setPostingItemId(item.id);
+              setError('');
+              setMessage('');
+              try {
+                const existingAttachment: ChatAttachment = {
+                  type: 'image',
+                  url: item.url,
+                  name: item.title || 'Team media photo',
+                  mimeType: null,
+                  path: null,
+                  size: null,
+                  thumbnailUrl: item.url,
+                };
+                await sendTeamChatMessage({
+                  teamId,
+                  user: auth.user,
+                  profile: auth.profile || {},
+                  text: caption.trim(),
+                  existingAttachments: [existingAttachment],
+                  selectedConversationId: DEFAULT_TEAM_CONVERSATION_ID,
+                  selectedRecipientTarget: 'full_team',
+                  selectedRecipientIds: [],
+                });
+                setMessage('Photo posted to team chat.');
+              } catch (postError: any) {
+                setError(postError?.message || 'Unable to post photo to team chat.');
+                throw postError;
+              } finally {
+                setPostingItemId('');
+              }
+            }} />
           )) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
@@ -578,9 +614,11 @@ function TeamMediaItemCard({
   deleting,
   renaming,
   moving,
+  posting,
   onRenameItem,
   onDeleteItem,
-  onMoveItem
+  onMoveItem,
+  onPostToTeamChat
 }: {
   item: TeamMediaItem;
   onStatus: (tone: 'error' | 'success', message: string) => void;
@@ -591,21 +629,26 @@ function TeamMediaItemCard({
   deleting: boolean;
   renaming: boolean;
   moving: boolean;
+  posting: boolean;
   onRenameItem: (item: TeamMediaItem, title: string) => Promise<void>;
   onDeleteItem: (item: TeamMediaItem) => void;
   onMoveItem: (item: TeamMediaItem, targetFolderId: string) => Promise<void>;
+  onPostToTeamChat: (item: TeamMediaItem, caption: string) => Promise<void>;
 }) {
   const Icon = getItemIcon(item);
   const isPhoto = item.type === 'photo';
   const title = item.title || 'Team media';
   const [isRenaming, setIsRenaming] = useState(false);
+  const [isPosting, setIsPosting] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
+  const [postCaption, setPostCaption] = useState('');
   const [moveFolderId, setMoveFolderId] = useState('');
   const alternateFolders = folders.filter((folder) => folder.id && folder.id !== currentFolderId);
   const canMove = canManage && alternateFolders.length > 0;
   const selectedMoveFolderId = moveFolderId && moveFolderId !== currentFolderId ? moveFolderId : '';
   const canRename = canManage || item.uploadedBy === currentUserId;
   const canDelete = canManage || (['photo', 'file'].includes(String(item.type || '').toLowerCase()) && item.uploadedBy === currentUserId);
+  const canPostToTeamChat = canManage && isPhoto && Boolean(item.url);
 
   const startRename = () => {
     setDraftTitle(title);
@@ -626,6 +669,12 @@ function TeamMediaItemCard({
     if (!selectedMoveFolderId || moving) return;
     await onMoveItem(item, selectedMoveFolderId);
     setMoveFolderId('');
+  };
+
+  const postToTeamChat = async () => {
+    await onPostToTeamChat(item, postCaption);
+    setPostCaption('');
+    setIsPosting(false);
   };
 
   const copyLink = async () => {
@@ -718,6 +767,12 @@ function TeamMediaItemCard({
               Rename
             </button>
           )}
+          {canPostToTeamChat && (
+            <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => setIsPosting((current) => !current)} disabled={posting} aria-label={`Post ${title} to team chat`}>
+              {posting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" />}
+              Post to team chat
+            </button>
+          )}
           {canMove && (
             <div className="flex w-full flex-wrap items-center gap-2 rounded-xl border border-gray-100 bg-gray-50 p-2">
               <label className="sr-only" htmlFor={`move-media-${item.id}`}>Move media item to album</label>
@@ -747,6 +802,27 @@ function TeamMediaItemCard({
             </button>
           )}
         </div>
+        {isPosting ? (
+          <div className="mt-3 rounded-xl border border-primary-100 bg-primary-50 p-2">
+            <label className="sr-only" htmlFor={`post-media-caption-${item.id}`}>Caption for team chat</label>
+            <input
+              id={`post-media-caption-${item.id}`}
+              className="auth-input min-h-10 w-full bg-white"
+              value={postCaption}
+              onChange={(event) => setPostCaption(event.target.value)}
+              disabled={posting}
+              placeholder="Add an optional caption"
+              aria-label="Caption for team chat"
+            />
+            <div className="mt-2 flex gap-2">
+              <button type="button" className="primary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={postToTeamChat} disabled={posting}>
+                {posting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" />}
+                Send to chat
+              </button>
+              <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => setIsPosting(false)} disabled={posting}>Cancel</button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </article>
   );

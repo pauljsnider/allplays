@@ -820,6 +820,7 @@ export async function sendTeamChatMessage({
   profile,
   text,
   files = [],
+  existingAttachments = [],
   selectedConversation,
   selectedConversationId,
   selectedRecipientTarget,
@@ -832,6 +833,7 @@ export async function sendTeamChatMessage({
   profile: Record<string, any>;
   text: string;
   files?: File[];
+  existingAttachments?: ChatAttachment[];
   selectedConversation?: ChatConversation | null;
   selectedConversationId: string;
   selectedRecipientTarget: ChatTargetType;
@@ -844,11 +846,14 @@ export async function sendTeamChatMessage({
     throw new Error('Choose at least one selected member before sending.');
   }
 
-  const attachments: ChatAttachment[] = [];
+  const uploadedAttachments: ChatAttachment[] = [];
+  const attachments: ChatAttachment[] = [...existingAttachments];
   try {
     for (const file of files) {
       onProgress?.('uploading');
-      attachments.push(await uploadTeamChatAttachment(teamId, file));
+      const uploadedAttachment = await uploadTeamChatAttachment(teamId, file);
+      uploadedAttachments.push(uploadedAttachment);
+      attachments.push(uploadedAttachment);
     }
     onProgress?.('posting');
 
@@ -900,9 +905,9 @@ export async function sendTeamChatMessage({
       wantsAi: hasAllPlaysMention(text)
     };
   } catch (error) {
-    if (attachments.length > 0) {
+    if (uploadedAttachments.length > 0) {
       try {
-        await deleteUploadedChatAttachments(attachments);
+        await deleteUploadedChatAttachments(uploadedAttachments);
       } catch (cleanupError) {
         console.error('Failed to clean up uploaded chat attachments:', cleanupError);
       }
