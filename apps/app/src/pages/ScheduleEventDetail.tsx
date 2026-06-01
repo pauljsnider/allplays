@@ -84,6 +84,41 @@ const gameReportSections: Array<{ id: GameReportSectionId; label: string }> = [
   { id: 'media', label: 'Media' }
 ];
 
+const liveReportStatuses = new Set(['live', 'in_progress', 'in-progress', 'halftime']);
+
+function hasOpponentReportData(report: GameReportData) {
+  return report.opponentRows.length > 0 && report.opponentStatKeys.length > 0;
+}
+
+function hasInsightReportData(report: GameReportData) {
+  return report.teamInsights.length > 0 || report.playerInsightRows.length > 0;
+}
+
+function hasMediaReportData(report: GameReportData) {
+  return (report.highlightClips?.length || 0) > 0
+    || Boolean(report.statSheetPhotoUrl)
+    || (report.teamStatKeys?.length || 0) > 0;
+}
+
+function shouldShowPlayByPlaySection(report: GameReportData) {
+  const liveStatus = String(report.game?.liveStatus || report.game?.status || '').trim().toLowerCase();
+  return report.plays.length > 0 || liveReportStatuses.has(liveStatus);
+}
+
+function getVisibleGameReportSections(report: GameReportData | null) {
+  if (!report) {
+    return gameReportSections.filter((section) => section.id === 'summary' || section.id === 'players' || section.id === 'plays');
+  }
+  return gameReportSections.filter((section) => {
+    if (section.id === 'summary' || section.id === 'players') return true;
+    if (section.id === 'plays') return shouldShowPlayByPlaySection(report);
+    if (section.id === 'opponent') return hasOpponentReportData(report);
+    if (section.id === 'insights') return hasInsightReportData(report);
+    if (section.id === 'media') return hasMediaReportData(report);
+    return false;
+  });
+}
+
 const hubIconComponents: Record<ScheduleHubIcon, LucideIcon> = {
   video: Video,
   radio: Radio,
@@ -2083,6 +2118,7 @@ function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const [report, setReport] = useState<GameReportData | null>(null);
   const [loadingReport, setLoadingReport] = useState(true);
   const [reportError, setReportError] = useState<string | null>(null);
+  const visibleReportSections = useMemo(() => getVisibleGameReportSections(report), [report]);
 
   const refreshReport = useCallback(async (showLoading = true) => {
     if (showLoading) setLoadingReport(true);
@@ -2111,6 +2147,19 @@ function GameReportSections({ event }: { event: ParentScheduleEvent }) {
     return () => window.clearInterval(intervalId);
   }, [activeReportSection, refreshReport]);
 
+  useEffect(() => {
+    const handleFocus = () => {
+      void refreshReport(false);
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [refreshReport]);
+
+  useEffect(() => {
+    if (visibleReportSections.some((section) => section.id === activeReportSection)) return;
+    setActiveReportSection('summary');
+  }, [activeReportSection, visibleReportSections]);
+
   return (
     <div className="app-card overflow-hidden p-0">
       <div className="border-b border-gray-100 px-3 py-3 sm:px-4">
@@ -2125,7 +2174,7 @@ function GameReportSections({ event }: { event: ParentScheduleEvent }) {
 
       <div className="border-b border-gray-100 px-2 py-2">
         <div className="flex gap-1 overflow-x-auto pb-0.5">
-          {gameReportSections.map((section) => {
+          {visibleReportSections.map((section) => {
             const active = section.id === activeReportSection;
             return (
               <button
