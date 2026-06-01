@@ -20,8 +20,19 @@ const publicActionsMocks = vi.hoisted(() => ({
   sharePublicUrl: vi.fn().mockResolvedValue('shared'),
 }));
 
+const chatServiceMocks = vi.hoisted(() => ({
+  sendTeamChatMessage: vi.fn(),
+}));
+
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
+vi.mock('../../apps/app/src/lib/chatService.ts', async () => {
+  const actual = await vi.importActual('../../apps/app/src/lib/chatService.ts');
+  return {
+    ...actual,
+    sendTeamChatMessage: chatServiceMocks.sendTeamChatMessage,
+  };
+});
 
 import { TeamMedia } from '../../apps/app/src/pages/TeamMedia.tsx';
 
@@ -119,6 +130,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   parentToolsServiceMocks.updateTeamMediaItemForApp.mockResolvedValue(undefined);
   parentToolsServiceMocks.moveTeamMediaItemForApp.mockResolvedValue(undefined);
+  chatServiceMocks.sendTeamChatMessage.mockResolvedValue({
+    conversationId: 'team-main',
+    createdConversation: null,
+    wantsAi: false,
+  });
 });
 
 afterEach(() => {
@@ -279,6 +295,65 @@ describe('React app TeamMedia upload flow', () => {
     expect(parentToolsServiceMocks.uploadParentTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', file);
     expect(fileInput.value).toBe('');
     expect(container.textContent).toContain('No files uploaded. Choose supported documents that are 10 MB or smaller.');
+
+    await act(async () => root.unmount());
+  });
+});
+
+describe('React app TeamMedia post to team chat flow', () => {
+  it('shows the post action for any media item classified as a photo when managers can post to team chat', async () => {
+    const managerModel = mediaModel({
+      canManage: true,
+      folders: [{
+        id: 'folder-1',
+        name: 'Game media',
+        visibility: 'team',
+        itemCount: 3,
+        items: [
+          { id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' },
+          { id: 'uploaded-image', title: 'Warmups', type: 'image', url: 'https://example.test/warmups.jpg', uploadedBy: 'user-2' },
+          { id: 'other-file', title: 'Scouting PDF', type: 'file', url: 'https://example.test/scout.pdf', uploadedBy: 'user-2' },
+        ],
+      }],
+    });
+    const { container, root } = await renderTeamMedia(managerModel);
+
+    expect(container.querySelector('[aria-label="Post Tipoff to team chat"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Post Warmups to team chat"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Post Scouting PDF to team chat"]')).toBeNull();
+
+    await act(async () => root.unmount());
+
+    const nonManagerModel = mediaModel({ canManage: false });
+    const rendered = await renderTeamMedia(nonManagerModel);
+    expect(rendered.container.querySelector('[aria-label="Post Tipoff to team chat"]')).toBeNull();
+
+    await act(async () => rendered.root.unmount());
+  });
+
+  it('sends the selected photo URL to the default team conversation with an optional caption', async () => {
+    const { container, root } = await renderTeamMedia(mediaModel({ canManage: true }));
+
+    click(container.querySelector('[aria-label="Post Tipoff to team chat"]'));
+    inputValue(container.querySelector('[aria-label="Caption for team chat"]'), '  Great start  ');
+    await act(async () => {
+      const buttons = [...container.querySelectorAll('button')];
+      buttons.find((button) => button.textContent.includes('Send to chat')).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const sendCall = chatServiceMocks.sendTeamChatMessage.mock.calls[0][0];
+    expect(sendCall.teamId).toBe('team-1');
+    expect(sendCall.text).toBe('Great start');
+    expect(sendCall.selectedConversationId).toBe('team');
+    expect(sendCall.selectedRecipientTarget).toBe('full_team');
+    expect(sendCall.selectedRecipientIds).toEqual([]);
+    expect(sendCall.existingAttachments).toEqual([expect.objectContaining({
+      type: 'image',
+      url: 'https://example.test/tipoff.jpg',
+      name: 'Tipoff',
+    })]);
+    expect(container.textContent).toContain('Photo posted to team chat.');
+    expect(container.querySelector('[aria-label="Caption for team chat"]')).toBeNull();
 
     await act(async () => root.unmount());
   });
