@@ -248,6 +248,9 @@ async function mockParentToolsModules(page) {
                     await new Promise((resolve) => setTimeout(resolve, 50));
                     return undefined;
                 }
+                export async function bulkDeleteTeamMediaItemsForApp() {
+                    return undefined;
+                }
                 export async function updateTeamMediaItemForApp() {
                     return undefined;
                 }
