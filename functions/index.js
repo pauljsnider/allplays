@@ -56,6 +56,15 @@ const {
   isVerifiedAccountMergeRequest,
   mergePreferenceObjects
 } = require('./account-merge-core.cjs');
+const {
+  REGISTRATION_PAYMENT_REMINDER_CADENCE_DAYS,
+  buildQueuedReminderAuditEntry,
+  buildRegistrationFailedPaymentReminderState,
+  buildRegistrationPaymentReminderMailDocId,
+  buildRegistrationPaymentReminderMessage,
+  buildRegistrationPaymentRetryUrl,
+  shouldStopRegistrationPaymentReminders
+} = require('./registration-payment-reminders-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -140,12 +149,13 @@ function normalizeCheckoutAttemptToken(value, label = 'checkoutAttemptToken') {
 }
 
 function normalizeRegistrationCheckoutInput(data = {}) {
-  const amountCents = Math.round(Number(data.amount ?? data.amountCents ?? 0));
-  const currency = String(data.currency || 'usd').trim().toLowerCase();
-  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+  const hasAmount = data.amount !== undefined || data.amountCents !== undefined;
+  const amountCents = hasAmount ? Math.round(Number(data.amount ?? data.amountCents ?? 0)) : null;
+  const currency = String(data.currency || '').trim().toLowerCase();
+  if (hasAmount && (!Number.isFinite(amountCents) || amountCents <= 0)) {
     throw new Error('A positive checkout amount is required.');
   }
-  if (!/^[a-z]{3}$/.test(currency)) {
+  if (currency && !/^[a-z]{3}$/.test(currency)) {
     throw new Error('A valid checkout currency is required.');
   }
   return {
@@ -154,7 +164,8 @@ function normalizeRegistrationCheckoutInput(data = {}) {
     registrationId: normalizeFirestoreId(data.registrationId, 'registrationId'),
     amountCents,
     currency,
-    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)
+    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken),
+    retryPayment: data.retryPayment === true || String(data.retryPayment || '').trim() === '1'
   };
 }
 
@@ -175,6 +186,10 @@ function buildRegistrationFormRef({ teamId, formId }) {
   return firestore.doc(`teams/${teamId}/registrationForms/${formId}`);
 }
 
+function buildRegistrationReminderMailRef(mailDocId) {
+  return firestore.collection('mail').doc(mailDocId);
+}
+
 function buildRegistrationCheckoutUrls(appUrl, input) {
   const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
   const params = new URLSearchParams({
@@ -184,6 +199,9 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   });
   if (input.checkoutAttemptToken) {
     params.set('checkoutAttemptToken', input.checkoutAttemptToken);
+  }
+  if (input.retryPayment) {
+    params.set('retryPayment', '1');
   }
   return {
     successUrl: `${baseUrl}/registration.html?${params.toString()}&status=success`,
@@ -259,6 +277,156 @@ function buildRegistrationRefFromStripeSession(session = {}) {
     formId: normalizeFirestoreId(metadata.formId, 'formId'),
     registrationId: normalizeFirestoreId(metadata.registrationId, 'registrationId')
   });
+}
+
+function buildRegistrationReminderMailJob({
+  registration = {},
+  form = {},
+  retryUrl = '',
+  reminderLabel,
+  metadata = {}
+} = {}) {
+  const programName = registration.programName || form.programName || form.title || form.name || 'Program registration';
+  const amountDueCents = getRegistrationCheckoutAmountCents(registration);
+  const currency = registration.currency || 'USD';
+  const message = buildRegistrationPaymentReminderMessage({
+    programName,
+    amountDueCents,
+    currency,
+    retryUrl,
+    reminderLabel
+  });
+  return {
+    to: [metadata.recipientEmail],
+    message,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    metadata: {
+      type: 'registration_failed_payment',
+      teamId: metadata.teamId,
+      formId: metadata.formId,
+      registrationId: metadata.registrationId,
+      reminderKind: metadata.reminderKind,
+      reminderNumber: metadata.reminderNumber,
+      stripeEventId: metadata.stripeEventId || null,
+      retryUrl,
+      amountDueCents,
+      currency
+    }
+  };
+}
+
+function buildRegistrationReminderStopUpdate({ reason = 'resolved', nowIso = '' } = {}) {
+  return {
+    'paymentReminder.status': reason,
+    'paymentReminder.resolvedAt': nowIso,
+    'paymentReminder.nextReminderAt': admin.firestore.FieldValue.delete(),
+    'paymentReminder.lastReminderKind': reason,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+}
+
+async function queueDueRegistrationFailedPaymentReminders() {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const { appUrl } = getStripeConfig();
+  const dueSnap = await firestore.collectionGroup('registrations')
+    .where('paymentReminder.nextReminderAt', '<=', nowIso)
+    .limit(50)
+    .get();
+
+  const results = [];
+  for (const docSnap of dueSnap.docs) {
+    const registrationRef = docSnap.ref;
+    let queued = false;
+    await firestore.runTransaction(async (transaction) => {
+      const freshSnap = await transaction.get(registrationRef);
+      if (!freshSnap.exists) return;
+
+      const registration = freshSnap.data() || {};
+      const reminder = registration.paymentReminder || {};
+      const nextReminderAt = String(reminder.nextReminderAt || '').trim();
+      if (!nextReminderAt || nextReminderAt > nowIso) return;
+
+      if (shouldStopRegistrationPaymentReminders(registration)) {
+        transaction.update(registrationRef, buildRegistrationReminderStopUpdate({
+          reason: registration.paymentStatus === 'paid' ? 'paid' : 'closed',
+          nowIso
+        }));
+        return;
+      }
+
+      const recipientEmail = String(reminder.recipientEmail || getRegistrationCustomerEmail(registration) || '').trim().toLowerCase();
+      if (!recipientEmail) {
+        transaction.update(registrationRef, {
+          'paymentReminder.status': 'missing_email',
+          'paymentReminder.lastReminderKind': 'missing_email',
+          'paymentReminder.nextReminderAt': admin.firestore.FieldValue.delete(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        return;
+      }
+
+      const reminderNumber = Math.max(1, Number(reminder.reminderCount || 0) + 1);
+      const registrationInput = {
+        teamId: registration.teamId,
+        formId: registration.formId,
+        registrationId: registration.id || registrationRef.id,
+        checkoutAttemptToken: registration.checkoutAttemptToken || ''
+      };
+      const mailDocId = buildRegistrationPaymentReminderMailDocId({
+        teamId: registration.teamId,
+        formId: registration.formId,
+        registrationId: registration.id || registrationRef.id,
+        eventId: reminder.lastEventId || 'manual',
+        sequence: `followup_${reminderNumber}`
+      });
+      const retryUrl = String(reminder.retryUrl || '').trim() || buildRegistrationPaymentRetryUrl(appUrl, registrationInput);
+      const form = {
+        programName: registration.programName || 'Program registration'
+      };
+      const mailJob = buildRegistrationReminderMailJob({
+        registration,
+        form,
+        retryUrl,
+        reminderLabel: 'Your registration payment is still due.',
+        metadata: {
+          recipientEmail,
+          teamId: registration.teamId,
+          formId: registration.formId,
+          registrationId: registration.id || registrationRef.id,
+          reminderKind: 'followup',
+          reminderNumber,
+          stripeEventId: reminder.lastEventId || null
+        }
+      });
+
+      transaction.set(buildRegistrationReminderMailRef(mailDocId), mailJob);
+      transaction.update(registrationRef, {
+        'paymentReminder.status': 'active',
+        'paymentReminder.recipientEmail': recipientEmail,
+        'paymentReminder.retryUrl': retryUrl,
+        'paymentReminder.reminderCount': reminderNumber,
+        'paymentReminder.lastQueuedAt': nowIso,
+        'paymentReminder.lastMailId': mailDocId,
+        'paymentReminder.lastReminderKind': 'followup',
+        'paymentReminder.lastAudit': buildQueuedReminderAuditEntry({
+          kind: 'followup',
+          eventId: reminder.lastEventId || '',
+          mailDocId,
+          queuedAtIso: nowIso
+        }),
+        'paymentReminder.nextReminderAt': new Date(now.getTime() + REGISTRATION_PAYMENT_REMINDER_CADENCE_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      queued = true;
+    });
+
+    if (queued) {
+      results.push(registrationRef.path);
+    }
+  }
+
+  return results;
 }
 
 async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
@@ -1609,13 +1777,17 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   }
 
   const expectedAmountCents = getRegistrationCheckoutAmountCents(registration);
-  if (input.amountCents !== expectedAmountCents) {
+  const amountCents = input.amountCents ?? expectedAmountCents;
+  if (input.amountCents !== null && input.amountCents !== expectedAmountCents) {
     throw new functions.https.HttpsError('failed-precondition', 'Checkout amount does not match the registration fee.');
   }
+  const currency = String(
+    input.currency || registration.feeSnapshot?.currency || registration.currency || form.currency || 'usd'
+  ).trim().toLowerCase() || 'usd';
   if (!registrationCheckoutAttemptMatches(registration, input)) {
     throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
   }
-  if (canReuseRegistrationCheckoutSession(registration, input.amountCents, input)) {
+  if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
     return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
   }
 
@@ -1627,8 +1799,8 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     mode: 'payment',
     line_items: [{
       price_data: {
-        currency: input.currency,
-        unit_amount: input.amountCents,
+        currency,
+        unit_amount: amountCents,
         product_data: {
           name: title
         }
@@ -1651,7 +1823,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     paymentStatus: 'checkout_open',
     stripeCheckoutSessionId: session.id,
     stripePaymentStatus: session.payment_status || 'unpaid',
-    checkoutAmountCents: input.amountCents,
+    checkoutAmountCents: amountCents,
     checkoutAttemptToken: input.checkoutAttemptToken || null,
     checkoutCreatedAt: now,
     updatedAt: now
@@ -1707,6 +1879,8 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
     try {
       const session = event.data.object;
       const receivedAt = admin.firestore.FieldValue.serverTimestamp();
+      const queuedAtIso = new Date().toISOString();
+      const { appUrl } = getStripeConfig();
       const eventRef = firestore.doc(`stripeEvents/${event.id}`);
       const registrationRef = buildRegistrationRefFromStripeSession(session);
       const registrationInput = normalizeRegistrationCheckoutCancelInput(session.metadata || {});
@@ -1738,6 +1912,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             stripeEventId: event.id,
             updatedAt: receivedAt
           }, { merge: true });
+          transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'paid', nowIso: queuedAtIso }));
         } else {
           const form = formSnap.data() || {};
           const registration = registrationSnap.data() || {};
@@ -1781,6 +1956,60 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             capacityReleasedAt: receivedAt,
             updatedAt: receivedAt
           }, { merge: true });
+
+          if (event.type === 'checkout.session.async_payment_failed') {
+            const recipientEmail = String(getRegistrationCustomerEmail(registration) || '').trim().toLowerCase();
+            if (recipientEmail) {
+              const mailDocId = buildRegistrationPaymentReminderMailDocId({
+                teamId: registrationInput.teamId,
+                formId: registrationInput.formId,
+                registrationId: registrationInput.registrationId,
+                eventId: event.id,
+                sequence: 'initial'
+              });
+              const reminderState = buildRegistrationFailedPaymentReminderState({
+                registration,
+                input: registrationInput,
+                eventId: event.id,
+                appUrl,
+                queuedAtIso,
+                mailDocId
+              });
+              transaction.set(buildRegistrationReminderMailRef(mailDocId), buildRegistrationReminderMailJob({
+                registration,
+                form,
+                retryUrl: reminderState.retryUrl,
+                reminderLabel: 'We could not process your registration payment.',
+                metadata: {
+                  recipientEmail,
+                  teamId: registrationInput.teamId,
+                  formId: registrationInput.formId,
+                  registrationId: registrationInput.registrationId,
+                  reminderKind: 'initial',
+                  reminderNumber: 1,
+                  stripeEventId: event.id
+                }
+              }));
+              transaction.set(registrationRef, {
+                paymentReminder: {
+                  ...reminderState,
+                  recipientEmail
+                }
+              }, { merge: true });
+            } else {
+              transaction.set(registrationRef, {
+                paymentReminder: {
+                  status: 'missing_email',
+                  reminderCount: 0,
+                  lastEventId: event.id,
+                  lastReminderKind: 'missing_email',
+                  lastQueuedAt: queuedAtIso
+                }
+              }, { merge: true });
+            }
+          } else {
+            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'closed', nowIso: queuedAtIso }));
+          }
         }
 
         transaction.set(eventRef, {
@@ -2943,6 +3172,10 @@ async function dispatchDuePreEventReminders(now = new Date()) {
 exports.dispatchDuePreEventReminders = functions.pubsub
   .schedule('every 15 minutes')
   .onRun(() => dispatchDuePreEventReminders());
+
+exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
+  .schedule('every 6 hours')
+  .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
 exports.notifyTeamChatMessageCreated = functions.firestore
   .document('teams/{teamId}/chatMessages/{messageId}')

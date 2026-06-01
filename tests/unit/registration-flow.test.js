@@ -364,6 +364,13 @@ describe('public registration flow', () => {
         expect(page).toContain(': await submitRegistrationWithoutCapacity(submission);');
         expect(page).toContain('registrationId: result.registrationId');
         expect(page).toContain('let preparedCheckoutRegistration = null;');
+        expect(page).toContain("const retryRegistrationId = params.get('registrationId') || '';");
+        expect(page).toContain("const retryPaymentRequested = params.get('retryPayment') === '1' && !!retryRegistrationId;");
+        expect(page).toContain('Use the button below to retry payment without submitting a new registration.');
+        expect(page).toContain('if (retryPaymentRequested) {');
+        expect(page).toContain('registrationId: retryRegistrationId,');
+        expect(page).toContain('retryPayment: true');
+        expect(page).toContain("returnParams.set('retryPayment', '1');");
         expect(page).toContain('const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);');
         expect(page).toContain('preparedCheckoutRegistration?.retryKey === retryKey');
         expect(page).toContain('preparedCheckoutRegistration = { retryKey, result, checkoutAttemptToken };');
@@ -713,6 +720,10 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain("registrationCapacityReleased: true");
         expect(functionsSource).toContain("product: 'registration'");
         expect(functionsSource).toContain('getRegistrationCheckoutAmountCents(registration)');
+        expect(functionsSource).toContain("if (input.retryPayment) {");
+        expect(functionsSource).toContain("params.set('retryPayment', '1');");
+        expect(functionsSource).toContain('const amountCents = input.amountCents ?? expectedAmountCents;');
+        expect(functionsSource).toContain("const currency = String(");
         expect(functionsSource).toContain("form.paymentSettings?.onlineCheckoutEnabled !== true");
         expect(functionsSource).toContain("checkoutStatus: 'open'");
         expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
