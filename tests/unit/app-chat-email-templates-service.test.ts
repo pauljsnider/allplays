@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// Keep app chat template coverage in tests/unit so the root npm test script runs it in CI.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
