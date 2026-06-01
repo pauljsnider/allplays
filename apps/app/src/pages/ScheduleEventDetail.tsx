@@ -94,10 +94,21 @@ function hasInsightReportData(report: GameReportData) {
   return report.teamInsights.length > 0 || report.playerInsightRows.length > 0;
 }
 
+function hasRecordedTeamStatValue(report: GameReportData, key: string) {
+  const teamStats = report.teamStats || {};
+  if (!Object.prototype.hasOwnProperty.call(teamStats, key)) return false;
+  const value = teamStats[key];
+  return value !== null && value !== undefined && String(value).trim() !== '';
+}
+
+function getRecordedTeamStatKeys(report: GameReportData) {
+  return (report.teamStatKeys || []).filter((key) => hasRecordedTeamStatValue(report, key));
+}
+
 function hasMediaReportData(report: GameReportData) {
   return (report.highlightClips?.length || 0) > 0
     || Boolean(report.statSheetPhotoUrl)
-    || (report.teamStatKeys?.length || 0) > 0;
+    || getRecordedTeamStatKeys(report).length > 0;
 }
 
 function shouldShowPlayByPlaySection(report: GameReportData) {
@@ -2387,7 +2398,7 @@ function OpponentStatsSection({ report }: { report: GameReportData }) {
 
 function ReportMediaSection({ report }: { report: GameReportData }) {
   const highlightClips = report.highlightClips || [];
-  const teamStatKeys = report.teamStatKeys || [];
+  const teamStatKeys = getRecordedTeamStatKeys(report);
   const hasTeamStats = teamStatKeys.length > 0;
   const hasMedia = highlightClips.length > 0 || Boolean(report.statSheetPhotoUrl) || hasTeamStats;
   if (!hasMedia) {

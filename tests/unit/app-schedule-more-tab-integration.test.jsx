@@ -94,6 +94,11 @@ function report(overrides = {}) {
         opponentRows: [],
         opponentStatKeys: [],
         opponentStatLabels: {},
+        teamStatKeys: [],
+        teamStatLabels: {},
+        teamStats: {},
+        statSheetPhotoUrl: '',
+        highlightClips: [],
         teamInsights: [],
         playerInsightRows: [],
         emptyInsightsMessage: 'No insights yet.',
@@ -328,7 +333,12 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [event({ liveStatus: 'completed', homeScore: 4, awayScore: 2 })]
         });
-        reportMocks.loadGameReportSections.mockResolvedValue(report({ plays: [] }));
+        reportMocks.loadGameReportSections.mockResolvedValue(report({
+            plays: [],
+            teamStatKeys: ['shots'],
+            teamStatLabels: { shots: 'Shots' },
+            teamStats: {}
+        }));
 
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
