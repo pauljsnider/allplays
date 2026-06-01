@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -60,7 +62,7 @@ function renderProfile() {
     );
 }
 
-describe('Profile account merge', () => {
+describe('Profile', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.stubGlobal('scrollTo', vi.fn());
@@ -69,37 +71,104 @@ describe('Profile account merge', () => {
             return 0;
         });
         profileServiceMocks.loadProfileDocument.mockResolvedValue({ fullName: 'Parent User', signInMethod: 'password', hasPassword: true });
-        profileServiceMocks.loadNotificationTeams.mockResolvedValue([]);
+        profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears' }]);
         profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: false, liveScore: false, schedule: false });
-        profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([]);
+        profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([{ id: 'code-1', code: 'ABCD1234', used: false }]);
+        profileServiceMocks.loadParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears' }]);
         profileServiceMocks.requestAccountMerge.mockResolvedValue('merge-1');
     });
 
-    it('shows the merge entry point for parent-linked users', async () => {
-        profileServiceMocks.loadParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears' }]);
-
+    it('loads only account data on initial render', async () => {
         renderProfile();
 
-        expect(await screen.findByRole('button', { name: 'Merge another account' })).toBeInTheDocument();
+        expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeInTheDocument();
+        await waitFor(() => {
+            expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
+        });
+        expect(profileServiceMocks.loadNotificationTeams).not.toHaveBeenCalled();
+        expect(profileServiceMocks.loadNotificationPreferences).not.toHaveBeenCalled();
+        expect(profileServiceMocks.loadProfileAccessCodes).not.toHaveBeenCalled();
+        expect(profileServiceMocks.loadParentTeams).not.toHaveBeenCalled();
     });
 
-    it('hides the merge entry point for users without parent-linked teams', async () => {
+    it('loads alerts data once when Alerts opens and reuses it on return', async () => {
+        renderProfile();
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+        await waitFor(() => {
+            expect(profileServiceMocks.loadNotificationTeams).toHaveBeenCalledTimes(1);
+            expect(profileServiceMocks.loadNotificationTeams).toHaveBeenCalledWith('user-1', 'parent@example.com');
+        });
+        await waitFor(() => {
+            expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1);
+            expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1');
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Alerts' }));
+
+        await waitFor(() => {
+            expect(profileServiceMocks.loadNotificationTeams).toHaveBeenCalledTimes(1);
+            expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1);
+        });
+        expect(profileServiceMocks.loadParentTeams).not.toHaveBeenCalled();
+    });
+
+    it('loads invite history only when Invites opens and reuses it on return', async () => {
+        renderProfile();
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+
+        await waitFor(() => {
+            expect(profileServiceMocks.loadProfileAccessCodes).toHaveBeenCalledTimes(1);
+            expect(profileServiceMocks.loadProfileAccessCodes).toHaveBeenCalledWith('user-1');
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Invites' }));
+
+        await waitFor(() => {
+            expect(profileServiceMocks.loadProfileAccessCodes).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    it('loads parent-linked teams only when merge options expand and does not refetch', async () => {
+        renderProfile();
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge another account' }));
+
+        await waitFor(() => {
+            expect(profileServiceMocks.loadParentTeams).toHaveBeenCalledTimes(1);
+            expect(profileServiceMocks.loadParentTeams).toHaveBeenCalledWith('user-1');
+        });
+        expect(profileServiceMocks.loadNotificationTeams).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Security' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Account' }));
+
+        await waitFor(() => {
+            expect(profileServiceMocks.loadParentTeams).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    it('shows a neutral message when no parent-linked teams are available', async () => {
         profileServiceMocks.loadParentTeams.mockResolvedValue([]);
 
         renderProfile();
 
-        await waitFor(() => {
-            expect(profileServiceMocks.loadParentTeams).toHaveBeenCalledWith('user-1');
-        });
-        expect(screen.queryByRole('button', { name: 'Merge another account' })).not.toBeInTheDocument();
+        fireEvent.click(await screen.findByRole('button', { name: 'Merge another account' }));
+
+        expect(await screen.findByText('No parent-linked teams are available for account merge.')).toBeInTheDocument();
     });
 
     it('rejects invalid and same-account emails without calling the merge service', async () => {
-        profileServiceMocks.loadParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears' }]);
-
         renderProfile();
 
         fireEvent.click(await screen.findByRole('button', { name: 'Merge another account' }));
+        await waitFor(() => {
+            expect(profileServiceMocks.loadParentTeams).toHaveBeenCalledTimes(1);
+        });
 
         fireEvent.click(screen.getByRole('button', { name: 'Request merge' }));
         expect(await screen.findByText('Enter the email address for the other account.')).toBeInTheDocument();
@@ -115,11 +184,12 @@ describe('Profile account merge', () => {
     });
 
     it('submits a valid merge request, clears the field, and shows pending verification', async () => {
-        profileServiceMocks.loadParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears' }]);
-
         renderProfile();
 
         fireEvent.click(await screen.findByRole('button', { name: 'Merge another account' }));
+        await waitFor(() => {
+            expect(profileServiceMocks.loadParentTeams).toHaveBeenCalledTimes(1);
+        });
 
         const input = screen.getByLabelText('Secondary account email') as HTMLInputElement;
         fireEvent.change(input, { target: { value: 'child@example.com' } });

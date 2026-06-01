@@ -97,6 +97,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [copyStatus, setCopyStatus] = useState('');
   const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
   const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>('account');
+  const [notificationTeamsLoaded, setNotificationTeamsLoaded] = useState(false);
+  const [accessCodesLoaded, setAccessCodesLoaded] = useState(false);
+  const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
+  const [loadedNotificationTeamId, setLoadedNotificationTeamId] = useState('');
 
   const displayName = fullName || user?.displayName || profile.displayName || user?.email || 'ALL PLAYS User';
   const showPasswordSection = profile.signInMethod === 'emailLink' && !profile.hasPassword;
@@ -104,7 +108,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const signupLink = generatedCode ? buildSignupLink(generatedCode) : '';
   const visibleAccessCodes = inviteHistoryExpanded ? accessCodes : accessCodes.slice(0, collapsedInviteCount);
   const hiddenAccessCodeCount = Math.max(0, accessCodes.length - visibleAccessCodes.length);
-  const canRequestAccountMerge = parentLinkedTeams.length > 0;
+  const canRequestAccountMerge = auth.isParent && (accountMergeExpanded || !parentLinkedTeamsLoaded || parentLinkedTeams.length > 0);
 
   const selectProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
@@ -126,30 +130,24 @@ export function Profile({ auth }: { auth: AuthState }) {
       setNotificationStatus(null);
       setInviteStatus(null);
       setAccountMergeStatus(null);
+      setNotificationTeams([]);
+      setNotificationTeamsLoaded(false);
+      setNotificationPreferences(emptyPreferences);
+      setLoadedNotificationTeamId('');
+      setSelectedTeamId('');
+      setAccessCodes([]);
+      setAccessCodesLoaded(false);
+      setParentLinkedTeams([]);
+      setParentLinkedTeamsLoaded(false);
+      setAccountMergeExpanded(false);
+      setAccountMergeEmail('');
 
       try {
-        const [loadedProfile, teams, codes, parentTeams] = await Promise.all([
-          loadProfileDocument(user.uid).catch((error) => {
-            console.warn('[profile] Unable to load profile:', error);
-            setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
-            return {} as ProfileDocument;
-          }),
-          loadNotificationTeams(user.uid, user.email).catch((error) => {
-            console.warn('[profile] Unable to load notification teams:', error);
-            setNotificationStatus({ message: 'Unable to load teams for notifications.', tone: 'error' });
-            return [];
-          }),
-          loadProfileAccessCodes(user.uid).catch((error) => {
-            console.warn('[profile] Unable to load access codes:', error);
-            setInviteStatus({ message: 'Unable to load invite history.', tone: 'error' });
-            return [];
-          }),
-          loadParentTeams(user.uid).catch((error) => {
-            console.warn('[profile] Unable to load parent-linked teams:', error);
-            setAccountMergeStatus({ message: 'Unable to load account merge options right now.', tone: 'error' });
-            return [];
-          })
-        ]);
+        const loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
+          console.warn('[profile] Unable to load profile:', error);
+          setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
+          return {} as ProfileDocument;
+        });
 
         if (cancelled) {
           return;
@@ -162,17 +160,6 @@ export function Profile({ auth }: { auth: AuthState }) {
         setPhotoPreview(loadedProfile.photoUrl || '');
         setPhotoFile(null);
         setPhotoChanged(false);
-        setNotificationTeams(teams);
-        setParentLinkedTeams(parentTeams);
-        setAccountMergeExpanded(false);
-        setAccountMergeEmail('');
-        setSelectedTeamId((current) => {
-          if (current && teams.some((team) => team.id === current)) {
-            return current;
-          }
-          return teams[0]?.id || '';
-        });
-        setAccessCodes(codes);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -189,9 +176,54 @@ export function Profile({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
 
+    async function loadAlertsData() {
+      if (!user || activeProfileSection !== 'alerts' || notificationTeamsLoaded) {
+        return;
+      }
+
+      try {
+        const teams = await loadNotificationTeams(user.uid, user.email).catch((error) => {
+          console.warn('[profile] Unable to load notification teams:', error);
+          setNotificationStatus({ message: 'Unable to load teams for notifications.', tone: 'error' });
+          return [];
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        setNotificationTeams(teams);
+        setSelectedTeamId((current) => {
+          if (current && teams.some((team) => team.id === current)) {
+            return current;
+          }
+          return teams[0]?.id || '';
+        });
+        setNotificationTeamsLoaded(true);
+      } catch {
+        // no-op: handled inline above
+      }
+    }
+
+    loadAlertsData();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProfileSection, notificationTeamsLoaded, user]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function loadPreferences() {
-      if (!user || !selectedTeamId) {
+      if (!user || activeProfileSection !== 'alerts') {
+        return;
+      }
+      if (!selectedTeamId) {
         setNotificationPreferences(emptyPreferences);
+        setLoadedNotificationTeamId('');
+        return;
+      }
+      if (loadedNotificationTeamId === selectedTeamId) {
         return;
       }
 
@@ -199,11 +231,13 @@ export function Profile({ auth }: { auth: AuthState }) {
         const preferences = await loadNotificationPreferences(user.uid, selectedTeamId);
         if (!cancelled) {
           setNotificationPreferences(preferences);
+          setLoadedNotificationTeamId(selectedTeamId);
         }
       } catch (error) {
         console.warn('[profile] Unable to load notification preferences:', error);
         if (!cancelled) {
           setNotificationPreferences(emptyPreferences);
+          setLoadedNotificationTeamId('');
           setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
         }
       }
@@ -213,7 +247,67 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [selectedTeamId, user]);
+  }, [activeProfileSection, loadedNotificationTeamId, selectedTeamId, user]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadInvitesData() {
+      if (!user || activeProfileSection !== 'invites' || accessCodesLoaded) {
+        return;
+      }
+
+      try {
+        const codes = await loadProfileAccessCodes(user.uid).catch((error) => {
+          console.warn('[profile] Unable to load access codes:', error);
+          setInviteStatus({ message: 'Unable to load invite history.', tone: 'error' });
+          return [];
+        });
+
+        if (!cancelled) {
+          setAccessCodes(codes);
+          setAccessCodesLoaded(true);
+        }
+      } catch {
+        // no-op: handled inline above
+      }
+    }
+
+    loadInvitesData();
+    return () => {
+      cancelled = true;
+    };
+  }, [accessCodesLoaded, activeProfileSection, user]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadParentLinkedTeams() {
+      if (!user || !accountMergeExpanded || parentLinkedTeamsLoaded) {
+        return;
+      }
+
+      try {
+        const teams = await loadParentTeams(user.uid).catch((error) => {
+          console.warn('[profile] Unable to load parent-linked teams:', error);
+          setAccountMergeStatus({ message: 'Unable to load account merge options right now.', tone: 'error' });
+          return [];
+        });
+
+        if (!cancelled) {
+          setParentLinkedTeams(teams);
+          setParentLinkedTeamsLoaded(true);
+        }
+      } catch {
+        // no-op: handled inline above
+      }
+    }
+
+    loadParentLinkedTeams();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountMergeExpanded, parentLinkedTeamsLoaded, user]);
 
   const handlePhotoChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -439,6 +533,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       setInviteEmail('');
       setInvitePhone('');
       setAccessCodes(await loadProfileAccessCodes(user.uid));
+      setAccessCodesLoaded(true);
       setInviteHistoryExpanded(true);
       setInviteStatus({ message: 'Invite code generated.', tone: 'success' });
     } catch (error: any) {
@@ -620,27 +715,31 @@ export function Profile({ auth }: { auth: AuthState }) {
             </div>
 
             {accountMergeExpanded ? (
-              <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" onSubmit={submitAccountMerge} noValidate>
-                <label className="block">
-                  <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Secondary account email</span>
-                  <input
-                    className="auth-input"
-                    type="email"
-                    aria-label="Secondary account email"
-                    value={accountMergeEmail}
-                    onChange={(event) => setAccountMergeEmail(event.target.value)}
-                    placeholder="other-email@example.com"
-                    autoComplete="email"
-                  />
-                </label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button type="submit" className="primary-button" disabled={busy === 'account-merge'}>
-                    {busy === 'account-merge' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
-                    Request merge
-                  </button>
-                  <StatusMessage status={accountMergeStatus} />
-                </div>
-              </form>
+              parentLinkedTeamsLoaded && parentLinkedTeams.length === 0 ? (
+                <StatusMessage status={accountMergeStatus || { message: 'No parent-linked teams are available for account merge.', tone: 'neutral' }} className="mt-4 block" />
+              ) : (
+                <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" onSubmit={submitAccountMerge} noValidate>
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Secondary account email</span>
+                    <input
+                      className="auth-input"
+                      type="email"
+                      aria-label="Secondary account email"
+                      value={accountMergeEmail}
+                      onChange={(event) => setAccountMergeEmail(event.target.value)}
+                      placeholder="other-email@example.com"
+                      autoComplete="email"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button type="submit" className="primary-button" disabled={busy === 'account-merge' || !parentLinkedTeamsLoaded}>
+                      {busy === 'account-merge' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
+                      Request merge
+                    </button>
+                    {!parentLinkedTeamsLoaded ? <StatusMessage status={{ message: 'Loading merge options...', tone: 'neutral' }} /> : <StatusMessage status={accountMergeStatus} />}
+                  </div>
+                </form>
+              )
             ) : null}
           </div>
         ) : null}
