@@ -94,6 +94,11 @@ function report(overrides = {}) {
         opponentRows: [],
         opponentStatKeys: [],
         opponentStatLabels: {},
+        teamStatKeys: [],
+        teamStatLabels: {},
+        teamStats: {},
+        statSheetPhotoUrl: '',
+        highlightClips: [],
         teamInsights: [],
         playerInsightRows: [],
         emptyInsightsMessage: 'No insights yet.',
@@ -140,6 +145,12 @@ function buttonByText(container, text) {
     ));
     if (!button) throw new Error(`Button not found: ${text}`);
     return button;
+}
+
+function queryButtonByText(container, text) {
+    return Array.from(container.querySelectorAll('button')).find((candidate) => (
+        candidate.textContent.trim() === text || candidate.getAttribute('aria-label') === text
+    )) || null;
 }
 
 async function clickButton(container, text) {
@@ -316,6 +327,92 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(shareCall.title).toBe('Bears vs. Falcons match report');
         expect(shareCall.url).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
         expect(shareCall.clipboardText).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
+    });
+
+    it('hides empty optional postgame report tabs for completed games', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ liveStatus: 'completed', homeScore: 4, awayScore: 2 })]
+        });
+        reportMocks.loadGameReportSections.mockResolvedValue(report({
+            plays: [],
+            teamStatKeys: ['shots'],
+            teamStatLabels: { shots: 'Shots' },
+            teamStats: {}
+        }));
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Report sections');
+        await waitForText(container, 'Match Summary');
+
+        expect(queryButtonByText(container, 'Summary')).not.toBeNull();
+        expect(queryButtonByText(container, 'Players')).not.toBeNull();
+        expect(queryButtonByText(container, 'Plays')).toBeNull();
+        expect(queryButtonByText(container, 'Opponent')).toBeNull();
+        expect(queryButtonByText(container, 'Insights')).toBeNull();
+        expect(queryButtonByText(container, 'Media')).toBeNull();
+    });
+
+    it('shows optional postgame report tabs only when their data exists', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ liveStatus: 'completed', homeScore: 4, awayScore: 2 })]
+        });
+        reportMocks.loadGameReportSections.mockResolvedValue(report({
+            opponentRows: [{ id: 'opp-1', name: 'Jordan', number: '12', stats: { pts: 9 } }],
+            opponentStatKeys: ['pts'],
+            opponentStatLabels: { pts: 'PTS' },
+            highlightClips: [{
+                title: 'Late goal',
+                description: 'Late goal',
+                period: 'Q4',
+                gameTime: '01:20',
+                startMs: 1000,
+                endMs: 3000,
+                url: 'https://example.com/highlight'
+            }]
+        }));
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Report sections');
+        await waitForText(container, 'Match Summary');
+
+        expect(queryButtonByText(container, 'Opponent')).not.toBeNull();
+        expect(queryButtonByText(container, 'Media')).not.toBeNull();
+        expect(queryButtonByText(container, 'Insights')).toBeNull();
+    });
+
+    it('falls back to Summary when a refreshed report removes the active optional tab', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ liveStatus: 'completed', homeScore: 4, awayScore: 2 })]
+        });
+        reportMocks.loadGameReportSections
+            .mockResolvedValueOnce(report({
+                opponentRows: [{ id: 'opp-1', name: 'Jordan', number: '12', stats: { pts: 9 } }],
+                opponentStatKeys: ['pts'],
+                opponentStatLabels: { pts: 'PTS' }
+            }))
+            .mockResolvedValueOnce(report());
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Report sections');
+        await waitForText(container, 'Opponent');
+
+        await clickButton(container, 'Opponent');
+        await waitForText(container, 'Jordan');
+
+        await act(async () => {
+            window.dispatchEvent(new Event('focus'));
+            await Promise.resolve();
+        });
+        await waitForText(container, 'Match Summary');
+
+        expect(queryButtonByText(container, 'Opponent')).toBeNull();
+        expect(container.textContent).not.toContain('Jordan');
     });
 
     it('renders the live period and clock chip beside the score for live games', async () => {
