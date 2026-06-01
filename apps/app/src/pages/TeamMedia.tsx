@@ -532,7 +532,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               item={item}
               onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)}
               canManage={model.canManage}
-              canPostToChat={model.canContribute && Boolean(auth.user)}
+              canPostToChat={model.canPostChat && Boolean(auth.user)}
               currentUserId={auth.user?.uid || ''}
               folders={model.folders}
               currentFolderId={activeFolder?.id || ''}

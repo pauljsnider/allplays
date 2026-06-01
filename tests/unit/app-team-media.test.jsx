@@ -60,6 +60,7 @@ const mediaModel = (overrides = {}) => ({
   team: { id: 'team-1', name: 'Bears' },
   canManage: false,
   canContribute: false,
+  canPostChat: false,
   folders: [{
     id: 'folder-1',
     name: 'Game media',
@@ -300,7 +301,16 @@ describe('React app TeamMedia team chat posting', () => {
   const postableModel = (overrides = {}) => mediaModel({
     canManage: true,
     canContribute: true,
+    canPostChat: true,
     ...overrides,
+  });
+
+  it('hides photo chat posting when the viewer can upload media but cannot access team chat', async () => {
+    const { container, root } = await renderTeamMedia(postableModel({ canPostChat: false }));
+
+    expect(container.querySelector('[aria-label="Post Tipoff to team chat"]')).toBeNull();
+
+    await act(async () => root.unmount());
   });
 
   it('shows the post action only for photo media when contributors can post to team chat', async () => {
