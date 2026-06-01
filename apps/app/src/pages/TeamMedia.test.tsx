@@ -135,7 +135,10 @@ describe('TeamMedia bulk delete', () => {
     expect(screen.getByText('2 selected in this view')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
 
-    expect(parentToolsServiceMocks.bulkDeleteTeamMediaItemsForApp).toHaveBeenCalledWith('team-1', ['photo-1', 'photo-2']);
+    expect(parentToolsServiceMocks.bulkDeleteTeamMediaItemsForApp).toHaveBeenCalledWith('team-1', [
+      expect.objectContaining({ id: 'photo-1', type: 'photo', url: 'https://example.com/photo-1.jpg' }),
+      expect.objectContaining({ id: 'photo-2', type: 'photo', url: 'https://example.com/photo-2.jpg' })
+    ]);
     expect(await screen.findByText('2 media items deleted.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Photos0' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByText('No photos in this album.')).toBeTruthy();

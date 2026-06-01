@@ -208,7 +208,8 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const mediaTypeCounts = useMemo(() => getMediaTypeCounts(activeFolder?.items || []), [activeFolder]);
   const filteredItems = useMemo(() => (activeFolder?.items || []).filter((item) => matchesMediaTypeFilter(item, selectedMediaType)), [activeFolder, selectedMediaType]);
   const visibleItemIds = useMemo(() => filteredItems.map((item) => item.id).filter(Boolean), [filteredItems]);
-  const selectedCount = selectedIds.length;
+  const selectedItems = useMemo(() => filteredItems.filter((item) => selectedIds.includes(item.id)), [filteredItems, selectedIds]);
+  const selectedCount = selectedItems.length;
   const selectedMediaTypeLabel = MEDIA_TYPE_FILTERS.find((filter) => filter.id === selectedMediaType)?.label || 'All';
   const emptyStateLabel = selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
   const featured = activeFolder?.items[0] || allItems[0] || null;
@@ -223,8 +224,8 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   };
 
   const handleBulkDelete = async () => {
-    if (!teamId || !selectedIds.length) return;
-    const deleteCount = selectedIds.length;
+    if (!teamId || !selectedItems.length) return;
+    const deleteCount = selectedItems.length;
     const confirmed = window.confirm(`Are you sure you want to delete ${deleteCount} media item${deleteCount === 1 ? '' : 's'}? This cannot be undone.`);
     if (!confirmed) return;
 
@@ -232,7 +233,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setError('');
     setMessage('');
     try {
-      await bulkDeleteTeamMediaItemsForApp(teamId, selectedIds);
+      await bulkDeleteTeamMediaItemsForApp(teamId, selectedItems);
       setSelectedIds([]);
       await refresh({ showLoading: false, preferredFolderId: activeFolder?.id || '' });
       setMessage(`${deleteCount} media item${deleteCount === 1 ? '' : 's'} deleted.`);
