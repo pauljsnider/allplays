@@ -8,7 +8,8 @@ import type { AuthState } from '../lib/types';
 const teamFeesServiceMocks = vi.hoisted(() => ({
   loadTeamFeeManagementModel: vi.fn(),
   recordOfflineTeamFeePayment: vi.fn(),
-  recordTeamFeeBalanceAdjustment: vi.fn()
+  recordTeamFeeBalanceAdjustment: vi.fn(),
+  recordOfflineTeamFeeRefund: vi.fn()
 }));
 
 vi.mock('../lib/teamFeesService', () => teamFeesServiceMocks);
@@ -51,9 +52,11 @@ describe('TeamFees recipient queue', () => {
     vi.clearAllMocks();
     teamFeesServiceMocks.recordOfflineTeamFeePayment.mockReset();
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockReset();
+    teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockReset();
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockReset();
     teamFeesServiceMocks.recordOfflineTeamFeePayment.mockResolvedValue(undefined);
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockResolvedValue(undefined);
+    teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockResolvedValue(undefined);
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
       team: { id: 'team-1', name: 'Bears' },
       batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
@@ -106,6 +109,7 @@ describe('TeamFees recipient queue', () => {
     expect(within(queue).queryByText('Paid Player')).toBeNull();
     expect(within(queue).getAllByRole('button', { name: 'Record payment' })).toHaveLength(2);
     expect(within(queue).getAllByRole('button', { name: 'Save adjustment' })).toHaveLength(2);
+    expect(within(queue).getByRole('button', { name: 'Record refund' })).toBeTruthy();
     expect(screen.getByDisplayValue('100.00')).toBeTruthy();
     expect(screen.getByDisplayValue('75.00')).toBeTruthy();
     expect(screen.getAllByText('Positive credits reduce what is owed. Negative charges increase it.')).toHaveLength(3);
@@ -123,7 +127,83 @@ describe('TeamFees recipient queue', () => {
     expect(within(reviewCard).queryByRole('button', { name: 'Record payment' })).toBeNull();
     expect(within(reviewCard).queryByText('Record offline payment')).toBeNull();
     expect(within(reviewCard).getByRole('button', { name: 'Save adjustment' })).toBeTruthy();
+    expect(within(reviewCard).getByRole('button', { name: 'Record refund' })).toBeTruthy();
     expect(within(reviewCard).getByText('Positive credits reduce what is owed. Negative charges increase it.')).toBeTruthy();
+  });
+
+  it('submits a recipient refund and refreshes the totals in place', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
+        selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
+        canManageFees: true,
+        recipients: [{
+          id: 'recipient-1',
+          playerName: 'Pat Star',
+          parentName: 'Pat Parent',
+          parentEmail: 'pat@example.com',
+          status: 'paid',
+          amountDueCents: 10000,
+          amountPaidCents: 10000,
+          remainingBalanceCents: 0,
+          paymentLedger: []
+        }]
+      })
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
+        selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
+        canManageFees: true,
+        recipients: [{
+          id: 'recipient-1',
+          playerName: 'Pat Star',
+          parentName: 'Pat Parent',
+          parentEmail: 'pat@example.com',
+          status: 'partial',
+          amountDueCents: 10000,
+          amountPaidCents: 7500,
+          remainingBalanceCents: 2500,
+          paymentLedger: [{ type: 'offline_refund' }]
+        }]
+      });
+
+    renderTeamFees();
+
+    const refundTrigger = await screen.findByRole('button', { name: 'Record refund' });
+    fireEvent.click(refundTrigger);
+    fireEvent.change(screen.getByDisplayValue('Full refund'), { target: { value: 'partial' } });
+    fireEvent.change(screen.getByPlaceholderText('100.00'), { target: { value: '25.00' } });
+    fireEvent.change(screen.getByDisplayValue('Select method'), { target: { value: 'cash' } });
+    fireEvent.change(screen.getByPlaceholderText('Why this was refunded and how it was handled'), { target: { value: 'Refunded at the field' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit refund' }));
+
+    expect(await screen.findByText('Recorded partial refund for Pat Star.')).toBeTruthy();
+    expect(teamFeesServiceMocks.recordOfflineTeamFeeRefund).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      batchId: 'batch-1',
+      refundType: 'partial',
+      amount: '25.00',
+      method: 'cash',
+      note: 'Refunded at the field'
+    }));
+    expect((await screen.findAllByText('$25.00')).length).toBeGreaterThan(0);
+  });
+
+  it('keeps the refund form open and shows validation errors when a refund is invalid', async () => {
+    teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockRejectedValue(new Error('Select cash or check as the refund method.'));
+
+    renderTeamFees();
+
+    const recipientCard = (await screen.findByText('Partial Player')).closest('section');
+    if (!recipientCard) throw new Error('Recipient card not found');
+
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Record refund' }));
+    fireEvent.change(within(recipientCard).getByPlaceholderText('Why this was refunded and how it was handled'), { target: { value: 'Need to fix overcollection' } });
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Submit refund' }));
+
+    expect(await screen.findByText('Select cash or check as the refund method.')).toBeTruthy();
+    expect(within(recipientCard).getByRole('button', { name: 'Submit refund' })).toBeTruthy();
   });
 
   it('submits one recipient adjustment and refreshes the totals in place', async () => {
@@ -196,10 +276,10 @@ describe('TeamFees recipient queue', () => {
 
     fireEvent.click(within(recipientCard).getByRole('button', { name: 'Record payment' }));
 
-    expect(await within(recipientCard).findByRole('button', { name: 'Recording...' })).toBeDisabled();
-    expect(within(recipientCard).getByRole('button', { name: 'Save adjustment' })).toBeDisabled();
-    expect(within(recipientCard).getByDisplayValue('100.00')).toBeDisabled();
-    expect(within(recipientCard).getByPlaceholderText('25.00 or -10.00')).toBeDisabled();
+    expect((await within(recipientCard).findByRole('button', { name: 'Recording...' })).hasAttribute('disabled')).toBe(true);
+    expect(within(recipientCard).getByRole('button', { name: 'Save adjustment' }).hasAttribute('disabled')).toBe(true);
+    expect(within(recipientCard).getByDisplayValue('100.00').hasAttribute('disabled')).toBe(true);
+    expect(within(recipientCard).getByPlaceholderText('25.00 or -10.00').hasAttribute('disabled')).toBe(true);
 
     await act(async () => {
       resolvePayment?.();
