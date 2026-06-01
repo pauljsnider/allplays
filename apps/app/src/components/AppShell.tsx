@@ -220,6 +220,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   title="Search (Ctrl+K / Cmd+K)"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
+                  <span className="sr-only">Search</span>
                 </button>
                 <button
                   type="button"

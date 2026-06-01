@@ -32,6 +32,7 @@ import {
   uploadParentTeamMediaFile,
   uploadParentTeamMediaPhoto,
   deleteTeamMediaItemForApp,
+  bulkDeleteTeamMediaItemsForApp,
   updateTeamMediaItemForApp,
   moveTeamMediaItemForApp,
   type TeamMediaFolder,
@@ -47,6 +48,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [model, setModel] = useState<TeamMediaModel | null>(null);
   const [activeFolderId, setActiveFolderId] = useState('');
   const [selectedMediaType, setSelectedMediaType] = useState<MediaTypeFilter>('all');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [linkTitle, setLinkTitle] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
   const [albumName, setAlbumName] = useState('');
@@ -75,6 +77,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         if (current && nextModel.folders.some((folder) => folder.id === current)) return current;
         return nextModel.folders[0]?.id || '';
       });
+      setSelectedIds((current) => current.filter((itemId) => nextModel.folders.some((folder) => folder.items.some((item) => item.id === itemId))));
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load media.');
       if (showLoading) setModel(null);
@@ -204,9 +207,42 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const allItems = useMemo(() => model?.folders.flatMap((folder) => folder.items.map((item) => ({ ...item, folderName: folder.name || 'Album' }))) || [], [model]);
   const mediaTypeCounts = useMemo(() => getMediaTypeCounts(activeFolder?.items || []), [activeFolder]);
   const filteredItems = useMemo(() => (activeFolder?.items || []).filter((item) => matchesMediaTypeFilter(item, selectedMediaType)), [activeFolder, selectedMediaType]);
+  const visibleItemIds = useMemo(() => filteredItems.map((item) => item.id).filter(Boolean), [filteredItems]);
+  const selectedItems = useMemo(() => filteredItems.filter((item) => selectedIds.includes(item.id)), [filteredItems, selectedIds]);
+  const selectedCount = selectedItems.length;
   const selectedMediaTypeLabel = MEDIA_TYPE_FILTERS.find((filter) => filter.id === selectedMediaType)?.label || 'All';
   const emptyStateLabel = selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
   const featured = activeFolder?.items[0] || allItems[0] || null;
+
+  useEffect(() => {
+    setSelectedIds((current) => current.filter((itemId) => visibleItemIds.includes(itemId)));
+  }, [visibleItemIds]);
+
+  const toggleItemSelection = (itemId: string, checked: boolean) => {
+    if (!itemId || !model?.canManage) return;
+    setSelectedIds((current) => checked ? current.includes(itemId) ? current : [...current, itemId] : current.filter((selectedId) => selectedId !== itemId));
+  };
+
+  const handleBulkDelete = async () => {
+    if (!teamId || !selectedItems.length) return;
+    const deleteCount = selectedItems.length;
+    const confirmed = window.confirm(`Are you sure you want to delete ${deleteCount} media item${deleteCount === 1 ? '' : 's'}? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setDeletingItemId('__bulk__');
+    setError('');
+    setMessage('');
+    try {
+      await bulkDeleteTeamMediaItemsForApp(teamId, selectedItems);
+      setSelectedIds([]);
+      await refresh({ showLoading: false, preferredFolderId: activeFolder?.id || '' });
+      setMessage(`${deleteCount} media item${deleteCount === 1 ? '' : 's'} deleted.`);
+    } catch (deleteError: any) {
+      setError(deleteError?.message || 'Unable to delete selected media items.');
+    } finally {
+      setDeletingItemId('');
+    }
+  };
 
   const updateUploadQueueItem = (id: string, nextStatus: UploadQueueItem['status'], errorMessage = '') => {
     setUploadQueue((current) => current.map((item) => item.id === id ? { ...item, status: nextStatus, errorMessage } : item));
@@ -399,6 +435,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               onClick={() => {
                 setActiveFolderId(folder.id);
                 setSelectedMediaType('all');
+                setSelectedIds([]);
               }}
               aria-pressed={activeFolder?.id === folder.id}
             >
@@ -520,7 +557,10 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               key={filter.id}
               type="button"
               className={`flex min-h-9 flex-none items-center gap-2 rounded-full border px-3 text-xs font-black ${selectedMediaType === filter.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-200 bg-gray-50 text-gray-700'}`}
-              onClick={() => setSelectedMediaType(filter.id)}
+              onClick={() => {
+                setSelectedMediaType(filter.id);
+                setSelectedIds([]);
+              }}
               aria-pressed={selectedMediaType === filter.id}
             >
               {filter.label}
@@ -528,6 +568,26 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             </button>
           ))}
         </div>
+        {model.canManage ? (
+          <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" aria-label="Selected media actions">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-black uppercase tracking-wide text-gray-600">Bulk actions</div>
+                <div className="text-sm font-semibold text-gray-700">{selectedCount} selected in this view</div>
+              </div>
+              <button
+                type="button"
+                className="ghost-button justify-center text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                onClick={handleBulkDelete}
+                disabled={!selectedCount || deletingItemId === '__bulk__'}
+                aria-disabled={!selectedCount || deletingItemId === '__bulk__'}
+              >
+                {deletingItemId === '__bulk__' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
+                {deletingItemId === '__bulk__' ? 'Deleting selected' : 'Delete selected'}
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filteredItems.length ? filteredItems.map((item) => (
             <TeamMediaItemCard
@@ -540,9 +600,12 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               folders={model.folders}
               currentFolderId={activeFolder?.id || ''}
               deleting={deletingItemId === item.id}
+              selectable={model.canManage}
+              selected={selectedIds.includes(item.id)}
               renaming={renamingItemId === item.id}
               moving={movingItemId === item.id}
               posting={postingItemId === item.id}
+              onToggleSelected={toggleItemSelection}
               onRenameItem={handleRenameItem}
               onDeleteItem={handleDeleteItem}
               onMoveItem={handleMoveItem}
@@ -638,9 +701,12 @@ function TeamMediaItemCard({
   folders,
   currentFolderId,
   deleting,
+  selectable,
+  selected,
   renaming,
   moving,
   posting,
+  onToggleSelected,
   onRenameItem,
   onDeleteItem,
   onMoveItem,
@@ -654,9 +720,12 @@ function TeamMediaItemCard({
   folders: TeamMediaFolder[];
   currentFolderId: string;
   deleting: boolean;
+  selectable: boolean;
+  selected: boolean;
   renaming: boolean;
   moving: boolean;
   posting: boolean;
+  onToggleSelected: (itemId: string, checked: boolean) => void;
   onRenameItem: (item: TeamMediaItem, title: string) => Promise<void>;
   onDeleteItem: (item: TeamMediaItem) => void;
   onMoveItem: (item: TeamMediaItem, targetFolderId: string) => Promise<void>;
@@ -738,8 +807,19 @@ function TeamMediaItemCard({
   };
 
   return (
-    <article className="overflow-hidden rounded-xl border border-gray-200 bg-white transition hover:border-primary-200 hover:shadow-app">
-      <div className="aspect-video bg-gray-100">
+    <article className={`overflow-hidden rounded-xl border bg-white transition hover:border-primary-200 hover:shadow-app ${selected ? 'border-primary-500 ring-2 ring-primary-100' : 'border-gray-200'}`}>
+      <div className="relative aspect-video bg-gray-100">
+        {selectable ? (
+          <label className="absolute left-2 top-2 z-10 flex items-center gap-2 rounded-full bg-white/95 px-2 py-1 text-[11px] font-black text-gray-700 shadow-sm">
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={(event) => onToggleSelected(item.id, event.target.checked)}
+              aria-label={`Select ${title}`}
+            />
+            Select
+          </label>
+        ) : null}
         {isPhoto ? (
           <img src={item.url} alt="" className="h-full w-full object-cover" loading="lazy" />
         ) : (

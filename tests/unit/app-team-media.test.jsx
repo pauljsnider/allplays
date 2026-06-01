@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-r
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
   addParentTeamMediaLink: vi.fn(),
+  bulkDeleteTeamMediaItemsForApp: vi.fn(),
   createTeamMediaAlbumForApp: vi.fn(),
   loadTeamMediaForApp: vi.fn(),
   uploadParentTeamMediaFile: vi.fn(),
@@ -129,6 +130,7 @@ function changeFiles(input, files) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  parentToolsServiceMocks.bulkDeleteTeamMediaItemsForApp.mockResolvedValue(undefined);
   parentToolsServiceMocks.updateTeamMediaItemForApp.mockResolvedValue(undefined);
   parentToolsServiceMocks.moveTeamMediaItemForApp.mockResolvedValue(undefined);
   chatServiceMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
@@ -136,6 +138,35 @@ beforeEach(() => {
 
 afterEach(() => {
   document.body.innerHTML = '';
+});
+
+describe('React app TeamMedia bulk delete flow', () => {
+  it('passes full media items to the bulk delete helper so storage objects can be removed', async () => {
+    globalThis.confirm = vi.fn(() => true);
+    const { container, root } = await renderTeamMedia(mediaModel({ canManage: true }));
+
+    click(container.querySelector('[aria-label="Select Tipoff"]'));
+    click(container.querySelector('[aria-label="Select Scouting PDF"]'));
+    const deleteSelectedButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Delete selected'));
+    await act(async () => {
+      deleteSelectedButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(parentToolsServiceMocks.bulkDeleteTeamMediaItemsForApp).toHaveBeenCalledWith('team-1', [
+      expect.objectContaining({
+        id: 'owned-photo',
+        type: 'photo',
+        url: 'https://example.test/tipoff.jpg',
+      }),
+      expect.objectContaining({
+        id: 'other-file',
+        type: 'file',
+        url: 'https://example.test/scout.pdf',
+      }),
+    ]);
+
+    await act(async () => root.unmount());
+  });
 });
 
 describe('React app TeamMedia rename flow', () => {

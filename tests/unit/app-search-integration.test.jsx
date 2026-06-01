@@ -188,9 +188,10 @@ afterEach(() => {
 });
 
 describe('React app shell search', () => {
-    it('loads actions and visible teams, searches players, and navigates native results', async () => {
+    it('renders a mobile search trigger with a stable text label and opens search results', async () => {
         const { container } = await renderShell();
 
+        expect(buttonByText(container, 'Search').textContent).toContain('Search');
         await clickButton(container, 'Search');
         await waitForText(container, 'Browse Teams');
         expect(container.textContent).toContain('Bears');

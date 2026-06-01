@@ -231,6 +231,13 @@ export async function moveTeamMediaItemForApp(teamId: string, itemId: string, ta
   return moveTeamMediaItems(teamId, [itemId], targetFolderId);
 }
 
+export async function bulkDeleteTeamMediaItemsForApp(teamId: string, items: TeamMediaItem[]) {
+  const itemsToDelete = Array.isArray(items) ? items.filter((item) => compactString(item?.id)) : [];
+  if (!teamId) throw new Error('Missing team ID.');
+  if (!itemsToDelete.length) throw new Error('Select at least one media item to delete.');
+  await Promise.all(itemsToDelete.map((item) => deleteTeamMediaItem(teamId, item)));
+}
+
 export function getLegacyUrl(path: string, params: Record<string, string> = {}, hashParams: Record<string, string> = {}) {
   const url = new URL(path, legacyOrigin);
   Object.entries(params).forEach(([key, value]) => {
