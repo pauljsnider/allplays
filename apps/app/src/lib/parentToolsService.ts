@@ -9,6 +9,7 @@ import {
   getTeamMediaFolders,
   getTeamMediaItems,
   getTeams,
+  canAccessTeamChat,
   listCertificatesForPlayer,
   listFamilyShareTokens,
   listMyParentMembershipRequests,
@@ -209,6 +210,7 @@ export type TeamMediaModel = {
   team: Record<string, any>;
   canManage: boolean;
   canContribute: boolean;
+  canPostChat: boolean;
   folders: TeamMediaFolder[];
 };
 
@@ -661,8 +663,10 @@ export async function loadTeamMediaForApp(user: AuthUser | null, teamId: string)
   const team = await Promise.resolve(getTeam(teamId));
   if (!team) throw new Error('Team not found.');
   const appUser = user ? { ...user, parentOf: user.parentOf || [] } : null;
-  const canManage = canManageTeamMedia(appUser, { ...team, id: teamId });
-  const canContribute = canContributeTeamMedia(appUser, { ...team, id: teamId });
+  const teamWithId = { ...team, id: teamId };
+  const canManage = canManageTeamMedia(appUser, teamWithId);
+  const canContribute = canContributeTeamMedia(appUser, teamWithId);
+  const canPostChat = canAccessTeamChat(appUser, teamWithId);
   const folders = await Promise.resolve(getTeamMediaFolders(teamId, { includePrivate: canManage }));
   const visibleFolders = (folders || [])
     .filter((folder: any) => canManage || canReadTeamMediaAlbum(folder, false));
@@ -682,9 +686,10 @@ export async function loadTeamMediaForApp(user: AuthUser | null, teamId: string)
   });
 
   return {
-    team: { ...team, id: teamId },
+    team: teamWithId,
     canManage,
     canContribute,
+    canPostChat,
     folders: folderCards
   };
 }
