@@ -7,7 +7,7 @@ import {
 } from '../../js/edit-team-admin-invites.js';
 
 describe('edit team admin invite processing', () => {
-    it('persists invited admin access immediately for existing teams', async () => {
+    it('creates an existing-team admin invite without granting access before redemption', async () => {
         const inviteAdmin = vi.fn().mockResolvedValue({
             code: 'CODE1111',
             teamName: 'Tigers',
@@ -25,9 +25,8 @@ describe('edit team admin invite processing', () => {
         });
 
         expect(inviteAdmin).toHaveBeenCalledWith('team-123', 'coach@example.com');
-        expect(addTeamAdminEmail).toHaveBeenCalledWith('team-123', 'coach@example.com');
+        expect(addTeamAdminEmail).not.toHaveBeenCalled();
         expect(sendInviteEmail).toHaveBeenCalledWith('coach@example.com', 'CODE1111', 'admin', { teamName: 'Tigers' });
-        expect(addTeamAdminEmail.mock.invocationCallOrder[0]).toBeLessThan(sendInviteEmail.mock.invocationCallOrder[0]);
         expect(result).toEqual({
             email: 'coach@example.com',
             status: 'sent',
@@ -36,7 +35,7 @@ describe('edit team admin invite processing', () => {
         });
     });
 
-    it('still persists invited admin access when the invited user already exists', async () => {
+    it('returns an existing-user invite without granting access before redemption', async () => {
         const inviteAdmin = vi.fn().mockResolvedValue({
             code: 'EXIST111',
             teamName: 'Tigers',
@@ -53,7 +52,7 @@ describe('edit team admin invite processing', () => {
             sendInviteEmail
         });
 
-        expect(addTeamAdminEmail).toHaveBeenCalledWith('team-123', 'coach@example.com');
+        expect(addTeamAdminEmail).not.toHaveBeenCalled();
         expect(sendInviteEmail).not.toHaveBeenCalled();
         expect(result).toEqual({
             email: 'coach@example.com',

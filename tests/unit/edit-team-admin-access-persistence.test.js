@@ -690,7 +690,7 @@ describe('edit team admin access persistence', () => {
         }
     });
 
-  it('adds a mixed-case admin once in lowercase and keeps next-load access aligned with the saved list', async () => {
+  it('normalizes an invited existing-team admin email without granting access before redemption', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -718,8 +718,7 @@ describe('edit team admin access persistence', () => {
 
             expect(env.state.updateCalls).toHaveLength(1);
             expect(env.state.updateCalls[0].teamData.adminEmails).toEqual([
-                'existing@example.com',
-                'newadmin@example.com'
+                'existing@example.com'
             ]);
         } finally {
             env.cleanup();
@@ -730,10 +729,53 @@ describe('edit team admin access persistence', () => {
             currentUser: { uid: 'user-new', email: 'newadmin@example.com' }
         });
         try {
-            expect(reloadEnv.elements.get('page-title').textContent).toBe('Edit Team');
-            expect(reloadEnv.elements.get('admin-list').textContent).toContain('existing@example.com');
-            expect(reloadEnv.elements.get('admin-list').textContent).toContain('newadmin@example.com');
-            expect(reloadEnv.elements.get('admin-list').querySelectorAll('.remove-admin-btn')).toHaveLength(2);
+            expect(reloadEnv.alerts).toContain("You don't have permission to edit this team.");
+            expect(reloadEnv.window.location.href).toBe('http://example.com/dashboard.html');
+        } finally {
+            reloadEnv.cleanup();
+        }
+    });
+
+    it('keeps invited existing-team admins out of the saved admin list until redemption', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: ['existing@example.com']
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            await env.elements.get('add-admin-btn').click();
+            env.elements.get('admin-email-input').value = 'pending@example.com';
+            await env.elements.get('save-admin-btn').click();
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.adminEmails).toEqual(['existing@example.com']);
+            expect(env.elements.get('admin-list').textContent).not.toContain('pending@example.com');
+        } finally {
+            env.cleanup();
+        }
+
+        const reloadEnv = await bootEditTeam({
+            ...env.state,
+            currentUser: { uid: 'user-pending', email: 'pending@example.com' }
+        });
+        try {
+            expect(reloadEnv.alerts).toContain("You don't have permission to edit this team.");
+            expect(reloadEnv.window.location.href).toBe('http://example.com/dashboard.html');
         } finally {
             reloadEnv.cleanup();
         }

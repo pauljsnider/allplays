@@ -1479,6 +1479,10 @@
                 showAdminStatus('This email is already an admin.', 'error');
                 return;
             }
+            if (pendingAdminInviteEmails.includes(email)) {
+                showAdminStatus('This email already has a pending invite.', 'error');
+                return;
+            }
 
             btn.disabled = true;
             btn.textContent = 'Sending...';
@@ -1488,6 +1492,7 @@
             try {
                 // If we have a team ID (editing existing team), send invite email
                 let showCode = false;
+                let inviteCode = '';
                 if (currentTeamId) {
                     const result = await inviteExistingTeamAdmin({
                         teamId: currentTeamId,
@@ -1496,13 +1501,13 @@
                         addTeamAdminEmail,
                         sendInviteEmail
                     });
-                    const code = typeof result?.code === 'string' ? result.code.trim() : '';
+                    inviteCode = typeof result?.code === 'string' ? result.code.trim() : '';
 
                     if (result.status === 'existing_user') {
                         // User exists - show code for them when available
-                        if (code) {
+                        if (inviteCode) {
                             showAdminStatus(`${email} already has an account. Share this code or link with them:`, 'info');
-                            showAdminCode(code);
+                            showAdminCode(inviteCode);
                             showCode = true;
                         } else {
                             showAdminStatus('No invite code generated. Please try sending the invite again.', 'warning');
@@ -1512,20 +1517,26 @@
                         showAdminStatus(`Invite sent to ${email}! They'll receive an email to join as an admin.`, 'success');
                     } else if (result.status === 'fallback_code') {
                         showAdminStatus(`Could not send email. Share this code or link instead:`, 'warning');
-                        if (code) {
-                            showAdminCode(code);
+                        if (inviteCode) {
+                            showAdminCode(inviteCode);
                             showCode = true;
                         }
                     } else {
                         throw new Error('Unexpected admin invite result');
                     }
                 } else {
-                    pendingAdminInviteEmails.push(email);
+                    pendingAdminInviteEmails = normalizeAdminEmailList([...pendingAdminInviteEmails, email]);
                     showAdminStatus(`Invite for ${email} will be sent when you save this new team.`, 'info');
                 }
 
+                if (currentTeamId && inviteCode) {
+                    pendingAdminInviteEmails = normalizeAdminEmailList([...pendingAdminInviteEmails, email]);
+                }
+
                 // Add to local list and update UI
-                adminEmails = normalizeAdminEmailList([...adminEmails, email]);
+                if (!currentTeamId) {
+                    adminEmails = normalizeAdminEmailList([...adminEmails, email]);
+                }
                 renderAdminList();
                 renderRolloverAccessPreview();
                 input.value = '';

@@ -23,7 +23,6 @@ export async function inviteExistingTeamAdmin({
     const code = parsedCode || null;
 
     if (parsedInviteResult?.existingUser) {
-        await addTeamAdminEmail(teamId, normalizedEmail);
         return {
             email: normalizedEmail,
             status: 'existing_user',
@@ -41,8 +40,6 @@ export async function inviteExistingTeamAdmin({
             reason: 'missing_invite_code'
         };
     }
-
-    await addTeamAdminEmail(teamId, normalizedEmail);
 
     try {
         await sendInviteEmail(normalizedEmail, code, 'admin', { teamName: parsedInviteResult?.teamName || null });

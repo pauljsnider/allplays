@@ -53,7 +53,7 @@ describe('React app team detail model', () => {
         const result = await inviteTeamAdminForApp(' team-1 ', ' Coach@Example.com ');
 
         expect(inviteAdmin).toHaveBeenCalledWith('team-1', 'coach@example.com');
-        expect(addTeamAdminEmail).toHaveBeenCalledWith('team-1', 'coach@example.com');
+        expect(addTeamAdminEmail).not.toHaveBeenCalled();
         expect(sendInviteEmail).toHaveBeenCalledWith('coach@example.com', 'CODE 1', 'admin', { teamName: 'Bears' });
         expect(result).toMatchObject({
             email: 'coach@example.com',
