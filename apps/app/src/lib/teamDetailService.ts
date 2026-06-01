@@ -52,6 +52,12 @@ export type TeamDetailEvent = {
   location: string;
   opponent: string;
   status: string;
+  liveStatus: string;
+  visibility: string;
+  isPrivate: boolean;
+  isPublic: boolean;
+  shareable: boolean;
+  publicCalendar: boolean;
   homeScore: number | null;
   awayScore: number | null;
   isCancelled: boolean;
@@ -122,6 +128,8 @@ export type TeamDetailModel = {
     photoUrl: string | null;
     description: string;
     zip: string;
+    isPublic: boolean;
+    active: boolean;
     leagueUrl: string | null;
     bracketUrl: string | null;
     streamUrl: string | null;
@@ -403,6 +411,40 @@ export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseU
   return url.toString();
 }
 
+export function buildPublicTeamGamesIcsUrl(teamId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) return '';
+  const configured = (window as any).__ALLPLAYS_CONFIG__?.publicTeamGamesIcsFunctionUrl || (window as any).ALLPLAYS_PUBLIC_GAMES_ICS_URL;
+  const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
+  const baseUrl = typeof configured === 'string' && configured.trim()
+    ? configured.trim()
+    : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
+      ? fallback.replace('fetchCalendarIcs', 'publicTeamGamesIcs')
+      : 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs';
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${separator}teamId=${encodeURIComponent(normalizedTeamId)}`;
+}
+
+export function isShareableFanFeedEvent(event: Partial<TeamDetailEvent> = {}) {
+  const visibility = cleanString(event.visibility).toLowerCase();
+  if (visibility === 'private' || event.isPrivate === true) return false;
+  return visibility === 'public'
+    || event.isPublic === true
+    || event.shareable === true
+    || event.publicCalendar === true;
+}
+
+export function canExposePublicFanFeed(team: Partial<TeamDetailModel['team']> = {}, events: Array<Partial<TeamDetailEvent>> = []) {
+  return (events || []).some((event) => {
+    if (cleanString(event.type || 'game').toLowerCase() !== 'game') return false;
+    if (cleanString(event.visibility).toLowerCase() === 'private') return false;
+    if (event.isPrivate === true) return false;
+    if (cleanString(event.status).toLowerCase() === 'deleted') return false;
+    if (cleanString(event.liveStatus).toLowerCase() === 'deleted') return false;
+    return (team.isPublic === true && team.active !== false) || isShareableFanFeedEvent(event);
+  });
+}
+
 function getPublicBaseUrl() {
   if (typeof window !== 'undefined' && /^https?:$/i.test(window.location.protocol)) {
     return window.location.origin;
@@ -507,6 +549,8 @@ export function buildTeamDetailModel({
       photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl),
       description: cleanString(team?.description),
       zip: cleanString(team?.zip),
+      isPublic: team?.isPublic === true,
+      active: team?.active !== false,
       leagueUrl: getFirstUrl(team?.leagueUrl),
       bracketUrl: getFirstUrl(team?.bracketUrl),
       streamUrl: getStreamUrl(team),
@@ -631,6 +675,12 @@ function normalizeEvents(games: any[]) {
         location: cleanString(game?.location) || 'TBD',
         opponent: cleanString(game?.opponent) || 'TBD',
         status: cleanString(game?.status || game?.liveStatus),
+        liveStatus: cleanString(game?.liveStatus),
+        visibility: cleanString(game?.visibility),
+        isPrivate: game?.isPrivate === true || game?.private === true,
+        isPublic: game?.isPublic === true || game?.public === true,
+        shareable: game?.shareable === true || game?.isShareable === true,
+        publicCalendar: game?.publicCalendar === true,
         homeScore: toNullableNumber(game?.homeScore),
         awayScore: toNullableNumber(game?.awayScore),
         isCancelled: cleanString(game?.status).toLowerCase() === 'cancelled'

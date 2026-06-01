@@ -5,11 +5,14 @@ import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
 import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
 
 const teamDetailMocks = vi.hoisted(() => ({
-    loadParentTeamDetail: vi.fn()
+    loadParentTeamDetail: vi.fn(),
+    buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
+    canExposePublicFanFeed: vi.fn((team, events = []) => (events || []).some((event) => event?.type === 'game' && event?.visibility !== 'private' && event?.isPrivate !== true && event?.status !== 'deleted' && event?.liveStatus !== 'deleted' && ((team?.isPublic !== false && team?.active !== false) || event?.isPublic === true || event?.shareable === true || event?.publicCalendar === true)))
 }));
 const publicActionMocks = vi.hoisted(() => ({
     copyPublicText: vi.fn(),
-    openPublicUrl: vi.fn()
+    openPublicUrl: vi.fn(),
+    sharePublicUrl: vi.fn()
 }));
 const scheduleServiceMocks = vi.hoisted(() => ({
     loadStaffRsvpReminderPreview: vi.fn(),
@@ -17,7 +20,9 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
-    loadParentTeamDetail: teamDetailMocks.loadParentTeamDetail
+    loadParentTeamDetail: teamDetailMocks.loadParentTeamDetail,
+    buildPublicTeamGamesIcsUrl: teamDetailMocks.buildPublicTeamGamesIcsUrl,
+    canExposePublicFanFeed: teamDetailMocks.canExposePublicFanFeed
 }));
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleServiceMocks);
@@ -56,6 +61,8 @@ function model() {
             photoUrl: 'https://img.example.test/team.png',
             description: 'Fast, parent-friendly team page.',
             zip: '66210',
+            isPublic: true,
+            active: true,
             leagueUrl: 'https://league.example.test/standings',
             streamUrl: 'https://youtube.example.test/watch',
             websiteUrl: 'https://allplays.ai/team.html#teamId=team-1',
@@ -70,12 +77,12 @@ function model() {
             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true }
         ],
         upcomingEvents: [
-            { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false }
+            { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false }
         ],
         recentResults: [
-            { id: 'game-final', type: 'game', title: 'vs. Wolves', date: new Date('2026-05-01T18:00:00Z'), location: 'Main Gym', opponent: 'Wolves', status: 'completed', homeScore: 42, awayScore: 35, isCancelled: false }
+            { id: 'game-final', type: 'game', title: 'vs. Wolves', date: new Date('2026-05-01T18:00:00Z'), location: 'Main Gym', opponent: 'Wolves', status: 'completed', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: false, publicCalendar: false, homeScore: 42, awayScore: 35, isCancelled: false }
         ],
-        nextEvent: { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false },
+        nextEvent: { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false },
         record: { label: '2100', wins: 4, losses: 2, ties: 1, gamesPlayed: 7, winPercentage: 64.3 },
         standings: {
             enabled: true,
@@ -158,6 +165,7 @@ beforeEach(() => {
         return 0;
     };
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
+    publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
     scheduleServiceMocks.loadStaffRsvpReminderPreview.mockResolvedValue({
         missingPlayerCount: 0,
         eligibleEmailCount: 0,
@@ -218,6 +226,41 @@ describe('React app TeamDetail page', () => {
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://youtube.example.test/watch');
         await clickLink(container, 'Pizza Place');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pizza.example.test');
+    });
+
+    it('renders and shares the public fan feed when at least one game is public or shareable', async () => {
+        const fanModel = model();
+        fanModel.team.id = 'team 1/blue';
+        fanModel.team.name = 'Bears & Wolves';
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(fanModel);
+
+        const { container } = await renderTeamDetail();
+
+        await clickButton(container, 'More');
+        expect(container.textContent).toContain('Fan Feed');
+        expect(container.textContent).toContain('public games-only calendar link for fans');
+
+        await clickButton(container, 'Copy or Share Fan Feed');
+        expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
+            title: 'Bears & Wolves fan feed',
+            text: 'Bears & Wolves public games calendar feed',
+            url: 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue',
+            clipboardText: 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=team%201%2Fblue'
+        });
+        expect(container.textContent).toContain('Fan feed link copied.');
+
+        const hiddenModel = model();
+        hiddenModel.team.isPublic = false;
+        hiddenModel.upcomingEvents = [
+            { id: 'private-game', type: 'game', title: 'vs. Tigers', date: new Date('2100-06-03T18:00:00Z'), location: 'Gym', opponent: 'Tigers', status: '', liveStatus: '', visibility: 'private', isPrivate: true, isPublic: false, shareable: false, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false },
+            { id: 'practice-1', type: 'practice', title: 'Practice', date: new Date('2100-06-04T18:00:00Z'), location: 'Gym', opponent: '', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: true, shareable: false, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false }
+        ];
+        hiddenModel.recentResults = [];
+        hiddenModel.nextEvent = hiddenModel.upcomingEvents[0];
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(hiddenModel);
+        const hidden = await renderTeamDetail();
+        await clickButton(hidden.container, 'More');
+        expect(hidden.container.textContent).not.toContain('Fan Feed');
     });
 
     it('renders scoreboard widget copy tools only for managers', async () => {

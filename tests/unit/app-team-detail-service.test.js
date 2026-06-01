@@ -29,12 +29,12 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/authService.ts', () => ({
+vi.mock('../../apps/app/src/lib/authService', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildAdminAcceptInviteUrl, buildTeamDetailModel, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { getDocs } from '../../js/firebase.js';
 import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
@@ -96,6 +96,45 @@ describe('React app team detail model', () => {
         expect(grantScorekeeperAccess).not.toHaveBeenCalled();
     });
 
+    it('builds public fan feed URLs and gates them to public or shareable games', () => {
+        window.__ALLPLAYS_CONFIG__ = {
+            publicTeamGamesIcsFunctionUrl: 'https://calendar.example.test/publicTeamGamesIcs',
+            calendarFetchFunctionUrl: 'https://calendar.example.test/fetchCalendarIcs'
+        };
+
+        expect(buildPublicTeamGamesIcsUrl('team 1/blue')).toBe('https://calendar.example.test/publicTeamGamesIcs?teamId=team%201%2Fblue');
+        expect(buildPublicTeamGamesIcsUrl('')).toBe('');
+        expect(canExposePublicFanFeed(
+            { isPublic: false, active: true },
+            [
+                { id: 'shareable-game', type: 'game', shareable: true, isPrivate: false, visibility: '', status: 'scheduled', liveStatus: '' },
+                { id: 'practice-1', type: 'practice', isPublic: true, status: 'scheduled', liveStatus: '' }
+            ]
+        )).toBe(true);
+        expect(canExposePublicFanFeed(
+            { active: true },
+            [
+                { id: 'legacy-private-game', type: 'game', visibility: '', isPrivate: false, shareable: false, publicCalendar: false, status: 'scheduled', liveStatus: '' }
+            ]
+        )).toBe(false);
+        expect(canExposePublicFanFeed(
+            { isPublic: false, active: true },
+            [
+                { id: 'private-game', type: 'game', visibility: 'private', isPrivate: true, shareable: false, status: 'scheduled', liveStatus: '' },
+                { id: 'deleted-game', type: 'game', isPublic: true, status: 'deleted', liveStatus: '' },
+                { id: 'practice-2', type: 'practice', isPublic: true, status: 'scheduled', liveStatus: '' }
+            ]
+        )).toBe(false);
+        expect(canExposePublicFanFeed(
+            { isPublic: true, active: true },
+            [
+                { id: 'public-team-game', type: 'game', visibility: '', isPrivate: false, status: 'scheduled', liveStatus: '' }
+            ]
+        )).toBe(true);
+
+        delete window.__ALLPLAYS_CONFIG__;
+    });
+
     it('projects team.html parent features into the native team model', () => {
         const model = buildTeamDetailModel({
             teamId: 'team-1',
@@ -113,7 +152,7 @@ describe('React app team detail model', () => {
                 { id: 'player-2', name: 'Sam Wing', number: '12' }
             ],
             games: [
-                { id: 'game-1', opponent: 'Falcons', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled', homeScore: null, awayScore: null },
+                { id: 'game-1', opponent: 'Falcons', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled', homeScore: null, awayScore: null, shareable: true },
                 { id: 'game-2', opponent: 'Wolves', date: new Date('2026-05-01T18:00:00Z'), status: 'completed', homeScore: 42, awayScore: 35, isHome: true },
                 { id: 'practice-1', type: 'practice', title: 'Practice', date: new Date('2100-06-02T18:00:00Z') }
             ],
@@ -135,11 +174,14 @@ describe('React app team detail model', () => {
 
         expect(model.team.photoUrl).toBe('https://img.example.test/team.png');
         expect(model.team.bracketUrl).toBe('https://bracket.example.test/path');
+        expect(model.team.isPublic).toBe(false);
+        expect(model.team.active).toBe(true);
         expect(model.team.registrationProvider.map((row) => row.value)).toContain('Sports Connect');
         expect(model.players.find((player) => player.id === 'player-1').photoUrl).toBe('https://img.example.test/player.png');
         expect(model.linkedPlayers.map((player) => player.id)).toEqual(['player-1']);
         expect(model.record).toMatchObject({ wins: 1, losses: 0, ties: 0, gamesPlayed: 1 });
         expect(model.upcomingEvents.map((event) => event.id)).toEqual(['game-1', 'practice-1']);
+        expect(model.upcomingEvents[0]).toMatchObject({ shareable: true, isPrivate: false, publicCalendar: false, liveStatus: '' });
         expect(model.standings.currentRow.record).toBe('1-0');
         expect(model.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
         expect(model.trackingSummaries[0].items[0]).toMatchObject({ title: 'Bring ball', isComplete: true });

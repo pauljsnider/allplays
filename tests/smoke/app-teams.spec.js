@@ -201,6 +201,22 @@ async function mockTeamsModules(page) {
                     return { success: true };
                 }
 
+                export function buildPublicTeamGamesIcsUrl(teamId) {
+                    return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
+                }
+
+                export function canExposePublicFanFeed(team = {}, events = []) {
+                    return (events || []).some((event) => event?.type === 'game'
+                        && event?.visibility !== 'private'
+                        && event?.isPrivate !== true
+                        && event?.status !== 'deleted'
+                        && event?.liveStatus !== 'deleted'
+                        && ((team?.isPublic !== false && team?.active !== false)
+                            || event?.isPublic === true
+                            || event?.shareable === true
+                            || event?.publicCalendar === true));
+                }
+
                 export async function loadParentTeamDetail(teamId) {
                     if (teamId === 'team-empty') {
                         return {
