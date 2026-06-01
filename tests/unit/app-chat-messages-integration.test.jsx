@@ -241,6 +241,10 @@ beforeEach(() => {
             writeText: vi.fn(async () => {})
         }
     });
+    Object.defineProperty(navigator, 'language', {
+        configurable: true,
+        value: 'en-US'
+    });
     window.requestAnimationFrame = (callback) => {
         callback(0);
         return 0;
@@ -850,7 +854,7 @@ describe('React app messages integration', () => {
         expect(container.querySelector('button[aria-label="Voice to text"]')).toBeNull();
     });
 
-    it('uses browser speech dictation to fill the composer and return to the compact toolbar state', async () => {
+    it('uses the browser locale for web voice dictation and returns to the compact toolbar state', async () => {
         let recognitionInstance;
         class MockSpeechRecognition {
             constructor() {
@@ -862,6 +866,10 @@ describe('React app messages integration', () => {
             }
         }
 
+        Object.defineProperty(navigator, 'language', {
+            configurable: true,
+            value: 'es-MX'
+        });
         voiceMocks.hasBrowserSupport.mockReturnValue(true);
         Object.defineProperty(window, 'webkitSpeechRecognition', {
             configurable: true,
@@ -871,6 +879,7 @@ describe('React app messages integration', () => {
         const { container } = await renderMessages('/messages/team-1');
 
         await click(container, 'Voice to text');
+        expect(recognitionInstance.lang).toBe('es-MX');
         expect(recognitionInstance.start).toHaveBeenCalled();
         expect(container.textContent).toContain('Listening...');
 
@@ -895,7 +904,41 @@ describe('React app messages integration', () => {
         expect(container.textContent).not.toContain('Listening...');
     });
 
-    it('keeps native dictation listening when iOS resolves start without a result payload', async () => {
+    it('falls back to en-US for browser voice dictation when navigator.language is empty', async () => {
+        let recognitionInstance;
+        class MockSpeechRecognition {
+            constructor() {
+                recognitionInstance = this;
+                this.start = vi.fn();
+                this.stop = vi.fn(() => {
+                    this.onend?.();
+                });
+            }
+        }
+
+        Object.defineProperty(navigator, 'language', {
+            configurable: true,
+            value: ''
+        });
+        voiceMocks.hasBrowserSupport.mockReturnValue(true);
+        Object.defineProperty(window, 'webkitSpeechRecognition', {
+            configurable: true,
+            value: MockSpeechRecognition
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Voice to text');
+
+        expect(recognitionInstance.lang).toBe('en-US');
+        expect(recognitionInstance.start).toHaveBeenCalled();
+    });
+
+    it('passes the device locale to native dictation and keeps listening when iOS resolves start without a result payload', async () => {
+        Object.defineProperty(navigator, 'language', {
+            configurable: true,
+            value: 'fr-CA'
+        });
         nativeMocks.isNativePlatform = true;
         voiceMocks.start.mockResolvedValue(undefined);
         const { container } = await renderMessages('/messages/team-1');
@@ -904,6 +947,7 @@ describe('React app messages integration', () => {
         await click(container, 'Voice to text');
 
         expect(voiceMocks.start).toHaveBeenCalledWith(expect.objectContaining({
+            language: 'fr-CA',
             partialResults: true
         }));
         expect(container.textContent).toContain('Listening...');
@@ -917,5 +961,21 @@ describe('React app messages integration', () => {
         const textarea = container.querySelector('textarea');
         expect(textarea.value).toBe('Leaving now');
         expect(container.querySelector('button[aria-label="Stop voice input"]')).toBeTruthy();
+    });
+
+    it('falls back to en-US for native dictation when navigator.language is empty', async () => {
+        Object.defineProperty(navigator, 'language', {
+            configurable: true,
+            value: ''
+        });
+        nativeMocks.isNativePlatform = true;
+        voiceMocks.start.mockResolvedValue(undefined);
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Voice to text');
+
+        expect(voiceMocks.start).toHaveBeenCalledWith(expect.objectContaining({
+            language: 'en-US'
+        }));
     });
 });
