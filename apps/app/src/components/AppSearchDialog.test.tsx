@@ -29,7 +29,7 @@ const auth: AuthState = {
 };
 
 describe('AppSearchDialog', () => {
-  it('does not close from backdrop mousedown alone but still closes on backdrop click', () => {
+  it('closes from a backdrop mousedown but not from pressing inside the search panel', () => {
     const onClose = vi.fn();
 
     render(
@@ -38,11 +38,11 @@ describe('AppSearchDialog', () => {
       </MemoryRouter>
     );
 
-    const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
-    fireEvent.mouseDown(dialog);
+    fireEvent.mouseDown(screen.getByTestId('app-search-panel'));
     expect(onClose).not.toHaveBeenCalled();
 
-    fireEvent.click(dialog);
+    const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
+    fireEvent.mouseDown(dialog);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
