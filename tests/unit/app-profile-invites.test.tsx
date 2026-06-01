@@ -1,10 +1,10 @@
+import React from 'react';
 // @vitest-environment jsdom
-import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Profile } from './Profile';
-import type { AuthState } from '../lib/types';
+import { Profile } from '../../apps/app/src/pages/Profile';
+import type { AuthState } from '../../apps/app/src/lib/types';
 
 const profileServiceMocks = vi.hoisted(() => ({
   createProfileAccessCode: vi.fn(),
@@ -24,15 +24,15 @@ const publicActionsMocks = vi.hoisted(() => ({
   sharePublicUrl: vi.fn()
 }));
 
-vi.mock('../lib/profileService', () => profileServiceMocks);
-vi.mock('../lib/publicActions', () => publicActionsMocks);
-vi.mock('../lib/pushService', () => ({
+vi.mock('../../apps/app/src/lib/profileService', () => profileServiceMocks);
+vi.mock('../../apps/app/src/lib/publicActions', () => publicActionsMocks);
+vi.mock('../../apps/app/src/lib/pushService', () => ({
   enablePushNotificationsForUser: vi.fn()
 }));
-vi.mock('../lib/useShellLayout', () => ({
+vi.mock('../../apps/app/src/lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktopWeb: false })
 }));
-vi.mock('../lib/authService', () => ({
+vi.mock('../../apps/app/src/lib/authService', () => ({
   describeAuthError: (error: any) => error?.message || 'Authentication failed.',
   reloadCurrentUser: vi.fn(),
   resendVerificationEmail: vi.fn(),
@@ -121,7 +121,7 @@ describe('Profile invites', () => {
       url: expect.stringContaining('/login.html?code=NEWMVP42'),
       clipboardText: expect.stringContaining('/login.html?code=NEWMVP42')
     })));
-    expect(screen.getByText('Share sheet opened.')).toBeInTheDocument();
+    expect(screen.getByText('Share sheet opened.')).toBeTruthy();
   });
 
   it('shows active invite share actions, hides them for used codes, and surfaces copied and cancelled statuses', async () => {
@@ -143,15 +143,15 @@ describe('Profile invites', () => {
       throw new Error('Expected invite cards to render');
     }
 
-    expect(within(activeCard).getByRole('button', { name: /Share invite link/ })).toBeInTheDocument();
-    expect(within(activeCard).getByRole('button', { name: /Copy invite link/ })).toBeInTheDocument();
-    expect(within(usedCard).queryByRole('button', { name: /Share invite link/ })).not.toBeInTheDocument();
-    expect(within(usedCard).queryByRole('button', { name: /Copy invite link/ })).not.toBeInTheDocument();
+    expect(within(activeCard).getByRole('button', { name: /Share invite link/ })).toBeTruthy();
+    expect(within(activeCard).getByRole('button', { name: /Copy invite link/ })).toBeTruthy();
+    expect(within(usedCard).queryByRole('button', { name: /Share invite link/ })).toBeNull();
+    expect(within(usedCard).queryByRole('button', { name: /Copy invite link/ })).toBeNull();
 
     fireEvent.click(within(activeCard).getByRole('button', { name: /Share invite link/ }));
-    expect(await screen.findByText('Link copied.')).toBeInTheDocument();
+    expect(await screen.findByText('Link copied.')).toBeTruthy();
 
     fireEvent.click(within(activeCard).getByRole('button', { name: /Share invite link/ }));
-    expect(await screen.findByText('Share cancelled.')).toBeInTheDocument();
+    expect(await screen.findByText('Share cancelled.')).toBeTruthy();
   });
 });
