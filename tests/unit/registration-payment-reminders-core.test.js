@@ -34,8 +34,21 @@ describe('registration payment reminder helpers', () => {
         expect(message.text).toContain('Program: Summer Skills Camp');
         expect(message.text).toContain('Amount due: $125.00');
         expect(message.text).toContain('Retry payment: https://allplays.ai/registration.html?teamId=team_123&formId=form_456&registrationId=reg_789&retryPayment=1');
-        expect(message.html).toContain('Retry payment');
+        expect(message.html).toContain('href="https://allplays.ai/registration.html?teamId=team_123&amp;formId=form_456&amp;registrationId=reg_789&amp;retryPayment=1"');
         expect(message.html).toContain('Summer Skills Camp');
+    });
+
+    it('omits retry links that do not use http or https', () => {
+        const message = buildRegistrationPaymentReminderMessage({
+            programName: 'Summer Skills Camp',
+            amountDueCents: 12500,
+            currency: 'USD',
+            retryUrl: 'javascript:alert(1)'
+        });
+
+        expect(message.text).not.toContain('Retry payment:');
+        expect(message.html).not.toContain('href=');
+        expect(message.html).not.toContain('Retry payment');
     });
 
     it('creates auditable failed payment reminder state from the webhook event id', () => {

@@ -46,6 +46,21 @@ function escapeHtml(value) {
   }[char]));
 }
 
+function sanitizeHttpUrl(value) {
+  const trimmedValue = String(value || '').trim();
+  if (!trimmedValue) {
+    return '';
+  }
+  try {
+    const parsedUrl = new URL(trimmedValue);
+    return parsedUrl.protocol === 'https:' || parsedUrl.protocol === 'http:'
+      ? parsedUrl.toString()
+      : '';
+  } catch (error) {
+    return '';
+  }
+}
+
 function buildRegistrationPaymentReminderMailDocId({ teamId, formId, registrationId, eventId, sequence = 'initial' } = {}) {
   const parts = [teamId, formId, registrationId, eventId, sequence]
     .map((part) => String(part || '').trim().replace(/[^\w.-]+/g, '_').slice(0, 120))
@@ -71,7 +86,7 @@ function buildRegistrationPaymentReminderMessage({
 } = {}) {
   const safeProgramName = String(programName || 'your registration').trim() || 'your registration';
   const amountLabel = formatRegistrationReminderAmount(amountDueCents, currency);
-  const safeRetryUrl = String(retryUrl || '').trim();
+  const safeRetryUrl = sanitizeHttpUrl(retryUrl);
   return {
     subject: `Payment reminder: ${safeProgramName}`,
     text: [
