@@ -5,24 +5,42 @@ function readTeamPage() {
     return readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
 }
 
-function extractFunctionBody(source, signature, nextSignature) {
-    const pattern = new RegExp(`${signature} \\{([\\s\\S]*?)\\n        \\}\\n\\n        ${nextSignature}`);
-    const match = source.match(pattern);
-    expect(match, `${signature} should exist`).toBeTruthy();
-    return match[1];
+function extractFunctionBody(source, signature, nextSignature, expectedFragments = []) {
+    const start = source.indexOf(signature);
+    expect(start, `${signature} should exist`).toBeGreaterThanOrEqual(0);
+
+    const nextStart = source.indexOf(nextSignature, start + signature.length);
+    expect(nextStart, `${nextSignature} should exist after ${signature}`).toBeGreaterThan(start);
+
+    const openBraceIndex = source.indexOf('{', start + signature.length - 1);
+    expect(openBraceIndex, `${signature} should have an opening brace`).toBeGreaterThan(start);
+
+    const functionSource = source.slice(start, nextStart);
+    const closingBraceIndex = functionSource.lastIndexOf('}');
+    expect(closingBraceIndex, `${signature} should have a closing brace before ${nextSignature}`).toBeGreaterThan(0);
+
+    const body = functionSource.slice(openBraceIndex - start + 1, closingBraceIndex);
+    expect(body.trim(), `${signature} should have a non-empty body`).not.toBe('');
+    expectedFragments.forEach((fragment) => {
+        expect(body, `${signature} should include ${fragment}`).toContain(fragment);
+    });
+
+    return body;
 }
 
 function buildLeagueStandingsRenderers() {
     const source = readTeamPage();
     const tableBody = extractFunctionBody(
         source,
-        'function renderStandingsTable\\(rows, highlightedRow, columns, emptyMessage\\)',
-        'function renderLeagueOverviewBody'
+        'function renderStandingsTable(rows, highlightedRow, columns, emptyMessage)',
+        'function renderLeagueOverviewBody',
+        ['safeRows.length === 0', 'bg-primary-50/70']
     );
     const overviewBody = extractFunctionBody(
         source,
-        'function renderLeagueOverviewBody\\(leagueSnapshot, team\\)',
-        'function buildNativeStandingsSnapshot'
+        'function renderLeagueOverviewBody(leagueSnapshot, team)',
+        'function buildNativeStandingsSnapshot',
+        ['Could not load standings', 'renderStandingsTable']
     );
 
     const factory = new Function('escapeHtml', `
