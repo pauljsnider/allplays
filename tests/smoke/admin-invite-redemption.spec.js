@@ -58,6 +58,10 @@ export async function getAllUsers() {
     return [];
 }
 
+export async function getTeamAccessCodes() {
+    return [];
+}
+
 export async function inviteAdmin(teamId, email) {
     window.__lastAdminInvite = { teamId, email };
     return {
