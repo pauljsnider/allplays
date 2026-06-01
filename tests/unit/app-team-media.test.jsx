@@ -301,11 +301,25 @@ describe('React app TeamMedia upload flow', () => {
 });
 
 describe('React app TeamMedia post to team chat flow', () => {
-  it('shows the post action only for photo items when managers can post to team chat', async () => {
-    const managerModel = mediaModel({ canManage: true });
+  it('shows the post action for any media item classified as a photo when managers can post to team chat', async () => {
+    const managerModel = mediaModel({
+      canManage: true,
+      folders: [{
+        id: 'folder-1',
+        name: 'Game media',
+        visibility: 'team',
+        itemCount: 3,
+        items: [
+          { id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' },
+          { id: 'uploaded-image', title: 'Warmups', type: 'image', url: 'https://example.test/warmups.jpg', uploadedBy: 'user-2' },
+          { id: 'other-file', title: 'Scouting PDF', type: 'file', url: 'https://example.test/scout.pdf', uploadedBy: 'user-2' },
+        ],
+      }],
+    });
     const { container, root } = await renderTeamMedia(managerModel);
 
     expect(container.querySelector('[aria-label="Post Tipoff to team chat"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Post Warmups to team chat"]')).not.toBeNull();
     expect(container.querySelector('[aria-label="Post Scouting PDF to team chat"]')).toBeNull();
 
     await act(async () => root.unmount());

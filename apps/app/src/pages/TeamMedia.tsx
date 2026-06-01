@@ -636,7 +636,7 @@ function TeamMediaItemCard({
   onPostToTeamChat: (item: TeamMediaItem, caption: string) => Promise<void>;
 }) {
   const Icon = getItemIcon(item);
-  const isPhoto = item.type === 'photo';
+  const isPhoto = isPhotoMediaItem(item);
   const title = item.title || 'Team media';
   const [isRenaming, setIsRenaming] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
