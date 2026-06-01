@@ -20,6 +20,7 @@ vi.mock('../../js/db.js', () => ({
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItems: vi.fn(),
     getTeams: vi.fn(),
+    canAccessTeamChat: vi.fn(() => false),
     listCertificatesForPlayer: vi.fn(),
     listFamilyShareTokens: vi.fn(),
     listMyParentMembershipRequests: vi.fn(),

@@ -9,6 +9,7 @@ import {
   getTeamMediaFolders,
   getTeamMediaItems,
   getTeams,
+  canAccessTeamChat,
   listCertificatesForPlayer,
   listFamilyShareTokens,
   listMyParentMembershipRequests,
@@ -47,7 +48,6 @@ import {
   canContributeTeamMedia,
   canManageTeamMedia,
   canReadTeamMediaAlbum,
-  canAccessTeamChat,
   getTeamMediaItemUrl,
   isSafeTeamMediaUrl,
   sortByMediaOrder
