@@ -29,7 +29,7 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/authService.ts', () => ({
+vi.mock('../../apps/app/src/lib/authService', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
@@ -112,6 +112,12 @@ describe('React app team detail model', () => {
             ]
         )).toBe(true);
         expect(canExposePublicFanFeed(
+            { active: true },
+            [
+                { id: 'legacy-private-game', type: 'game', visibility: '', isPrivate: false, shareable: false, publicCalendar: false, status: 'scheduled', liveStatus: '' }
+            ]
+        )).toBe(false);
+        expect(canExposePublicFanFeed(
             { isPublic: false, active: true },
             [
                 { id: 'private-game', type: 'game', visibility: 'private', isPrivate: true, shareable: false, status: 'scheduled', liveStatus: '' },
@@ -168,7 +174,7 @@ describe('React app team detail model', () => {
 
         expect(model.team.photoUrl).toBe('https://img.example.test/team.png');
         expect(model.team.bracketUrl).toBe('https://bracket.example.test/path');
-        expect(model.team.isPublic).toBe(true);
+        expect(model.team.isPublic).toBe(false);
         expect(model.team.active).toBe(true);
         expect(model.team.registrationProvider.map((row) => row.value)).toContain('Sports Connect');
         expect(model.players.find((player) => player.id === 'player-1').photoUrl).toBe('https://img.example.test/player.png');

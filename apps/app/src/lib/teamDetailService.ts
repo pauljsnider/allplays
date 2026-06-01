@@ -441,7 +441,7 @@ export function canExposePublicFanFeed(team: Partial<TeamDetailModel['team']> = 
     if (event.isPrivate === true) return false;
     if (cleanString(event.status).toLowerCase() === 'deleted') return false;
     if (cleanString(event.liveStatus).toLowerCase() === 'deleted') return false;
-    return (team.isPublic !== false && team.active !== false) || isShareableFanFeedEvent(event);
+    return (team.isPublic === true && team.active !== false) || isShareableFanFeedEvent(event);
   });
 }
 
@@ -549,7 +549,7 @@ export function buildTeamDetailModel({
       photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl),
       description: cleanString(team?.description),
       zip: cleanString(team?.zip),
-      isPublic: team?.isPublic !== false,
+      isPublic: team?.isPublic === true,
       active: team?.active !== false,
       leagueUrl: getFirstUrl(team?.leagueUrl),
       bracketUrl: getFirstUrl(team?.bracketUrl),
