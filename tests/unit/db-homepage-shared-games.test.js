@@ -29,6 +29,9 @@ describe('homepage shared game discovery queries', () => {
         expect(upcomingSource).toContain('games.sort(compareGamesByDateAsc)');
         expect(upcomingSource).toContain('isExcludedHomepageUpcomingStatus(gameData.status)');
         expect(upcomingSource).toContain('isExcludedHomepageUpcomingStatus(game.status)');
+        expect(upcomingSource).not.toContain("where('type', '==', 'game')");
+        expect(upcomingSource).toContain("if (!gameData.type) {");
+        expect(upcomingSource).toContain("gameData.type = 'game';");
         expect(source).toContain("normalizedStatus === 'canceled'");
         expect(source).toContain("normalizedStatus === 'deleted'");
 
@@ -43,13 +46,27 @@ describe('homepage shared game discovery queries', () => {
         expect(replaySource).toContain('return games.slice(0, limitCount)');
     });
 
-    it('declares sharedGames composite indexes used by homepage collection group queries', () => {
+    it('declares homepage collection group indexes for shared and team game date queries', () => {
         const indexConfig = readFirestoreIndexes();
         const sharedGameIndexes = indexConfig.indexes
             .filter((index) => index.collectionGroup === 'sharedGames')
             .map((index) => index.fields.map((field) => `${field.fieldPath}:${field.order || field.arrayConfig}`).join(','));
+        const dateFieldOverrides = indexConfig.fieldOverrides
+            .filter((override) => override.fieldPath === 'date')
+            .map((override) => ({
+                collectionGroup: override.collectionGroup,
+                indexes: override.indexes.map((index) => `${index.order}:${index.queryScope}`)
+            }));
 
         expect(sharedGameIndexes).toContain('type:ASCENDING,date:ASCENDING');
         expect(sharedGameIndexes).toContain('liveStatus:ASCENDING,date:DESCENDING');
+        expect(dateFieldOverrides).toContainEqual({
+            collectionGroup: 'games',
+            indexes: ['ASCENDING:COLLECTION_GROUP', 'DESCENDING:COLLECTION_GROUP']
+        });
+        expect(dateFieldOverrides).toContainEqual({
+            collectionGroup: 'sharedGames',
+            indexes: ['ASCENDING:COLLECTION_GROUP', 'DESCENDING:COLLECTION_GROUP']
+        });
     });
 });

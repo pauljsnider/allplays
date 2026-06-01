@@ -5699,7 +5699,6 @@ export async function getUpcomingLiveGames(limitCount = 10) {
 
     const gamesRef = collectionGroup(db, 'games');
     const queryConstraints = [
-        where('type', '==', 'game'),
         where('date', '>=', Timestamp.fromDate(startOfToday)),
         where('date', '<=', Timestamp.fromDate(oneWeekFromNow)),
         orderBy('date', 'asc')
