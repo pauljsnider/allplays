@@ -4,11 +4,28 @@ import { CheckCircle2, DollarSign, Loader2, RefreshCw, Shield } from 'lucide-rea
 import {
   loadTeamFeeManagementModel,
   recordOfflineTeamFeePayment,
+  recordOfflineTeamFeeRefund,
   recordTeamFeeBalanceAdjustment,
   type TeamFeeManagementModel,
   type TeamFeeRecipientSummary
 } from '../lib/teamFeesService';
 import type { AuthState } from '../lib/types';
+
+type RecipientFormState = {
+  paymentAmount: string;
+  paymentDate: string;
+  paymentNote: string;
+  paymentError: string;
+  adjustmentAmount: string;
+  adjustmentReason: string;
+  adjustmentError: string;
+  refundOpen: boolean;
+  refundType: 'full' | 'partial';
+  refundAmount: string;
+  refundMethod: string;
+  refundNote: string;
+  refundError: string;
+};
 
 function formatMoney(cents: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(cents) || 0) / 100);
@@ -30,7 +47,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   const [submittingId, setSubmittingId] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [formByRecipient, setFormByRecipient] = useState<Record<string, { paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>>({});
+  const [formByRecipient, setFormByRecipient] = useState<Record<string, RecipientFormState>>({});
 
   const selectedBatchId = model?.selectedBatch?.id || '';
 
@@ -78,23 +95,15 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     [recipients]
   );
 
-  const isRecipientSubmitting = (recipientId: string) => submittingId === `payment:${recipientId}` || submittingId === `adjustment:${recipientId}`;
+  const isRecipientSubmitting = (recipientId: string) => submittingId === `payment:${recipientId}` || submittingId === `adjustment:${recipientId}` || submittingId === `refund:${recipientId}`;
 
   if (!teamId) return <Navigate to="/teams" replace />;
 
-  const updateForm = (recipientId: string, patch: Partial<{ paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>) => {
+  const updateForm = (recipientId: string, patch: Partial<RecipientFormState>) => {
     setFormByRecipient((current) => ({
       ...current,
       [recipientId]: {
-        ...(current[recipientId] || {
-          paymentAmount: '',
-          paymentDate: todayIsoDate(),
-          paymentNote: '',
-          paymentError: '',
-          adjustmentAmount: '',
-          adjustmentReason: '',
-          adjustmentError: ''
-        }),
+        ...(current[recipientId] || buildRecipientFormState()),
         ...patch
       }
     }));
@@ -102,15 +111,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
 
   const submitPayment = async (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => {
     event.preventDefault();
-    const form = formByRecipient[recipient.id] || {
-      paymentAmount: centsToAmount(recipient.remainingBalanceCents),
-      paymentDate: todayIsoDate(),
-      paymentNote: '',
-      paymentError: '',
-      adjustmentAmount: '',
-      adjustmentReason: '',
-      adjustmentError: ''
-    };
+    const form = formByRecipient[recipient.id] || buildRecipientFormState(recipient);
     updateForm(recipient.id, { paymentError: '' });
     setSuccess('');
     setSubmittingId(`payment:${recipient.id}`);
@@ -135,15 +136,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
 
   const submitAdjustment = async (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => {
     event.preventDefault();
-    const form = formByRecipient[recipient.id] || {
-      paymentAmount: centsToAmount(recipient.remainingBalanceCents),
-      paymentDate: todayIsoDate(),
-      paymentNote: '',
-      paymentError: '',
-      adjustmentAmount: '',
-      adjustmentReason: '',
-      adjustmentError: ''
-    };
+    const form = formByRecipient[recipient.id] || buildRecipientFormState(recipient);
     updateForm(recipient.id, { adjustmentError: '' });
     setSuccess('');
     setSubmittingId(`adjustment:${recipient.id}`);
@@ -165,6 +158,33 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     }
   };
 
+  const submitRefund = async (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => {
+    event.preventDefault();
+    const form = formByRecipient[recipient.id] || buildRecipientFormState(recipient);
+    updateForm(recipient.id, { refundError: '' });
+    setSuccess('');
+    setSubmittingId(`refund:${recipient.id}`);
+    try {
+      const refundAmount = form.refundType === 'full' ? centsToAmount(recipient.amountPaidCents) : form.refundAmount;
+      await recordOfflineTeamFeeRefund({
+        teamId,
+        batchId: selectedBatchId,
+        recipient,
+        refundType: form.refundType,
+        amount: refundAmount,
+        method: form.refundMethod,
+        note: form.refundNote,
+        user: auth.user
+      });
+      setSuccess(`Recorded ${form.refundType} refund for ${recipient.playerName}.`);
+      await refresh();
+    } catch (submitError: any) {
+      updateForm(recipient.id, { refundError: submitError?.message || 'Unable to record refund.' });
+    } finally {
+      setSubmittingId('');
+    }
+  };
+
   if (loading) {
     return (
       <section className="app-card p-5 text-center">
@@ -180,7 +200,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   }
 
   if (!model.canManageFees) {
-    return <StatusCard title="Admin access required" message="Only team owners, team admins, and global admins can record offline team fee payments or adjust balances." backTo={`/teams/${encodeURIComponent(teamId)}`} />;
+    return <StatusCard title="Admin access required" message="Only team owners, team admins, and global admins can record offline team fee payments, refunds, or balance adjustments." backTo={`/teams/${encodeURIComponent(teamId)}`} />;
   }
 
   return (
@@ -190,7 +210,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
           <div>
             <div className="flex items-center gap-2 text-xs font-black uppercase tracking-[0.06em] text-primary-700"><DollarSign className="h-4 w-4" aria-hidden="true" /> Team fees</div>
             <h1 className="mt-1 text-2xl font-black text-gray-950">Manage fee balances</h1>
-            <p className="mt-1 text-sm font-semibold text-gray-600">{model.team.name}: record offline payments and apply one signed balance adjustment with a required reason for each recipient.</p>
+            <p className="mt-1 text-sm font-semibold text-gray-600">{model.team.name}: record offline payments, offline refunds, and one signed balance adjustment with a required reason for each recipient.</p>
           </div>
           <button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /> Refresh
@@ -226,15 +246,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           {actionableRecipients.length ? actionableRecipients.map((recipient) => {
-            const form = formByRecipient[recipient.id] || {
-              paymentAmount: centsToAmount(recipient.remainingBalanceCents),
-              paymentDate: todayIsoDate(),
-              paymentNote: '',
-              paymentError: '',
-              adjustmentAmount: '',
-              adjustmentReason: '',
-              adjustmentError: ''
-            };
+            const form = formByRecipient[recipient.id] || buildRecipientFormState(recipient);
             const recipientSubmitting = isRecipientSubmitting(recipient.id);
             return (
               <section key={recipient.id} className="app-card p-4">
@@ -284,6 +296,15 @@ export function TeamFees({ auth }: { auth: AuthState }) {
                   {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
                   <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
                 </form>
+
+                <RefundSection
+                  recipient={recipient}
+                  form={form}
+                  submittingId={submittingId}
+                  recipientSubmitting={recipientSubmitting}
+                  updateForm={updateForm}
+                  submitRefund={submitRefund}
+                />
               </section>
             );
           }) : recipients.length ? (
@@ -304,15 +325,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
           <p className="mt-2 text-xs font-semibold text-gray-500">Fully paid recipients stay available for review without editable payment controls.</p>
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
             {paidRecipients.map((recipient) => {
-              const form = formByRecipient[recipient.id] || {
-                paymentAmount: centsToAmount(recipient.remainingBalanceCents),
-                paymentDate: todayIsoDate(),
-                paymentNote: '',
-                paymentError: '',
-                adjustmentAmount: '',
-                adjustmentReason: '',
-                adjustmentError: ''
-              };
+              const form = formByRecipient[recipient.id] || buildRecipientFormState(recipient);
               const recipientSubmitting = isRecipientSubmitting(recipient.id);
               return (
               <section key={recipient.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
@@ -345,6 +358,16 @@ export function TeamFees({ auth }: { auth: AuthState }) {
                   {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
                   <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
                 </form>
+
+                <RefundSection
+                  recipient={recipient}
+                  form={form}
+                  submittingId={submittingId}
+                  recipientSubmitting={recipientSubmitting}
+                  updateForm={updateForm}
+                  submitRefund={submitRefund}
+                  className="mt-4"
+                />
               </section>
               );
             })}
@@ -356,24 +379,34 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         <section className="app-card p-5 text-center">
           <DollarSign className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-950">No fee recipients</div>
-          <p className="mt-1 text-xs font-semibold text-gray-500">Create fee batches in the full website manager, then record offline payments or adjustments here.</p>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Create fee batches in the full website manager, then record offline payments, refunds, or adjustments here.</p>
         </section>
       ) : null}
     </div>
   );
 }
 
-function seedRecipientForms(current: Record<string, { paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>, recipients: TeamFeeRecipientSummary[]) {
-  return recipients.reduce<Record<string, { paymentAmount: string; paymentDate: string; paymentNote: string; paymentError: string; adjustmentAmount: string; adjustmentReason: string; adjustmentError: string }>>((next, recipient) => {
-    next[recipient.id] = current[recipient.id] || {
-      paymentAmount: centsToAmount(recipient.remainingBalanceCents),
-      paymentDate: todayIsoDate(),
-      paymentNote: '',
-      paymentError: '',
-      adjustmentAmount: '',
-      adjustmentReason: '',
-      adjustmentError: ''
-    };
+function buildRecipientFormState(recipient?: TeamFeeRecipientSummary): RecipientFormState {
+  return {
+    paymentAmount: centsToAmount(recipient?.remainingBalanceCents ?? 0),
+    paymentDate: todayIsoDate(),
+    paymentNote: '',
+    paymentError: '',
+    adjustmentAmount: '',
+    adjustmentReason: '',
+    adjustmentError: '',
+    refundOpen: false,
+    refundType: 'full',
+    refundAmount: centsToAmount(recipient?.amountPaidCents ?? 0),
+    refundMethod: '',
+    refundNote: '',
+    refundError: ''
+  };
+}
+
+function seedRecipientForms(current: Record<string, RecipientFormState>, recipients: TeamFeeRecipientSummary[]) {
+  return recipients.reduce<Record<string, RecipientFormState>>((next, recipient) => {
+    next[recipient.id] = current[recipient.id] || buildRecipientFormState(recipient);
     return next;
   }, {});
 }
@@ -406,4 +439,92 @@ function StatusCard({ title, message, backTo }: { title: string; message: string
       </div>
     </section>
   );
+}
+
+function RefundSection({
+  recipient,
+  form,
+  submittingId,
+  recipientSubmitting,
+  updateForm,
+  submitRefund,
+  className = 'mt-4'
+}: {
+  recipient: TeamFeeRecipientSummary;
+  form: RecipientFormState;
+  submittingId: string;
+  recipientSubmitting: boolean;
+  updateForm: (recipientId: string, patch: Partial<RecipientFormState>) => void;
+  submitRefund: (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => Promise<void>;
+  className?: string;
+}) {
+  if (recipient.status === 'canceled' || recipient.amountPaidCents <= 0) return null;
+
+  const maxRefundLabel = formatMoney(recipient.amountPaidCents);
+  const previewError = form.refundOpen && form.refundType === 'partial'
+    ? getPartialRefundPreviewError(form.refundAmount, recipient)
+    : '';
+
+  return (
+    <section className={`${className} rounded-2xl border border-gray-200 bg-white p-3`}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Offline refund</div>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Refund up to {maxRefundLabel} by cash or check. This records the ledger change only.</p>
+        </div>
+        <button
+          type="button"
+          className="secondary-button !min-h-9 text-xs"
+          disabled={recipientSubmitting}
+          onClick={() => updateForm(recipient.id, { refundOpen: !form.refundOpen, refundError: '' })}
+        >
+          {form.refundOpen ? 'Cancel refund' : 'Record refund'}
+        </button>
+      </div>
+
+      {form.refundOpen ? (
+        <form className="mt-3 space-y-3" onSubmit={(event) => submitRefund(event, recipient)}>
+          <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Refund type
+            <select className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" value={form.refundType} onChange={(event) => updateForm(recipient.id, { refundType: event.target.value as 'full' | 'partial', refundError: '' })} disabled={recipientSubmitting}>
+              <option value="full">Full refund</option>
+              <option value="partial">Partial refund</option>
+            </select>
+          </label>
+
+          {form.refundType === 'partial' ? (
+            <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Refund amount
+              <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder={centsToAmount(recipient.amountPaidCents)} value={form.refundAmount} onChange={(event) => updateForm(recipient.id, { refundAmount: event.target.value, refundError: '' })} disabled={recipientSubmitting} />
+            </label>
+          ) : null}
+
+          <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Refund method
+            <select className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" value={form.refundMethod} onChange={(event) => updateForm(recipient.id, { refundMethod: event.target.value, refundError: '' })} disabled={recipientSubmitting}>
+              <option value="">Select method</option>
+              <option value="cash">Cash</option>
+              <option value="check">Check</option>
+            </select>
+          </label>
+
+          <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Admin note
+            <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Why this was refunded and how it was handled" value={form.refundNote} onChange={(event) => updateForm(recipient.id, { refundNote: event.target.value, refundError: '' })} disabled={recipientSubmitting} />
+          </label>
+
+          {previewError ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs font-bold text-amber-700">{previewError}</div> : null}
+          {form.refundError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.refundError}</div> : null}
+          <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting || Boolean(previewError)}>{submittingId === `refund:${recipient.id}` ? 'Recording refund...' : 'Submit refund'}</button>
+        </form>
+      ) : null}
+    </section>
+  );
+}
+
+function getPartialRefundPreviewError(amount: string, recipient: TeamFeeRecipientSummary) {
+  const refundAmountCents = Number(String(amount || '').replace(/[$,]/g, '').trim());
+  if (!String(amount || '').trim() || !Number.isFinite(refundAmountCents) || refundAmountCents <= 0) {
+    return 'Enter a refund amount greater than $0.';
+  }
+  if (Math.round(refundAmountCents * 100) > recipient.amountPaidCents) {
+    return 'Refund amount cannot exceed the recorded paid amount.';
+  }
+  return '';
 }

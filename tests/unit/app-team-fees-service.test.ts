@@ -14,9 +14,11 @@ vi.mock('../../js/team-access.js', () => ({
 
 import {
     buildBalanceAdjustmentUpdate,
+    buildOfflineTeamFeeRefundUpdate,
     buildManualPaymentUpdate,
     loadTeamFeeManagementModel,
     recordOfflineTeamFeePayment,
+    recordOfflineTeamFeeRefund,
     recordTeamFeeBalanceAdjustment
 } from '../../apps/app/src/lib/teamFeesService.ts';
 
@@ -128,6 +130,90 @@ describe('React app team fee offline payment service', () => {
         expect(() => buildBalanceAdjustmentUpdate({ amount: '0', note: 'No-op' })).toThrow('positive or negative adjustment');
         expect(() => buildBalanceAdjustmentUpdate({ amount: '', note: 'No-op' })).toThrow('positive or negative adjustment');
         expect(() => buildBalanceAdjustmentUpdate({ amount: '5.00', note: '' })).toThrow('adjustment reason');
+    });
+
+    it('builds partial offline refunds with the legacy ledger shape', () => {
+        const update = buildOfflineTeamFeeRefundUpdate({
+            refundType: 'partial',
+            amount: '15.00',
+            method: 'check',
+            note: 'Parent returned duplicate cash payment',
+            actorId: 'coach-1',
+            currentBalanceCents: 10000,
+            currentPaidCents: 8000
+        });
+
+        expect(update).toMatchObject({
+            status: 'partial',
+            amountPaidCents: 6500,
+            remainingBalanceCents: 3500,
+            paidAt: null,
+            refunded: {
+                amountCents: 1500,
+                refundType: 'partial',
+                refundMethod: 'check',
+                note: 'Parent returned duplicate cash payment',
+                recordedBy: 'coach-1'
+            }
+        });
+        expect(update.ledgerEntries).toEqual([
+            expect.objectContaining({
+                type: 'offline_refund',
+                amountCents: -1500,
+                refundAmountCents: 1500,
+                refundType: 'partial',
+                refundMethod: 'check',
+                methodLabel: 'Check'
+            })
+        ]);
+    });
+
+    it('builds full offline refunds back to unpaid', () => {
+        const update = buildOfflineTeamFeeRefundUpdate({
+            refundType: 'full',
+            method: 'cash',
+            note: 'Cash refund at practice',
+            currentBalanceCents: 10000,
+            currentPaidCents: 10000
+        });
+
+        expect(update.status).toBe('unpaid');
+        expect(update.amountPaidCents).toBe(0);
+        expect(update.remainingBalanceCents).toBe(10000);
+        expect(update.paidAt).toBeNull();
+    });
+
+    it('rejects invalid offline refund input', () => {
+        expect(() => buildOfflineTeamFeeRefundUpdate({
+            refundType: 'partial',
+            amount: '0',
+            method: 'cash',
+            note: 'Zero refund',
+            currentBalanceCents: 10000,
+            currentPaidCents: 5000
+        })).toThrow('greater than $0');
+        expect(() => buildOfflineTeamFeeRefundUpdate({
+            refundType: 'partial',
+            amount: '60.00',
+            method: 'cash',
+            note: 'Too much',
+            currentBalanceCents: 10000,
+            currentPaidCents: 5000
+        })).toThrow('cannot exceed');
+        expect(() => buildOfflineTeamFeeRefundUpdate({
+            refundType: 'full',
+            method: '',
+            note: 'Missing method',
+            currentBalanceCents: 10000,
+            currentPaidCents: 5000
+        })).toThrow('Select cash or check');
+        expect(() => buildOfflineTeamFeeRefundUpdate({
+            refundType: 'full',
+            method: 'cash',
+            note: '',
+            currentBalanceCents: 10000,
+            currentPaidCents: 5000
+        })).toThrow('admin note');
     });
 
     it('loads batches and recipients only for fee managers', async () => {
@@ -246,6 +332,40 @@ describe('React app team fee offline payment service', () => {
         }));
     });
 
+    it('writes offline refunds to the existing recipient document', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.updateTeamFeeRecipient.mockResolvedValue(undefined);
+
+        await recordOfflineTeamFeeRefund({
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipient: {
+                id: 'recipient-1',
+                playerName: 'Pat Star',
+                parentName: '',
+                parentEmail: '',
+                status: 'paid',
+                amountDueCents: 10000,
+                amountPaidCents: 10000,
+                remainingBalanceCents: 0,
+                paymentLedger: []
+            },
+            refundType: 'partial',
+            amount: '25.00',
+            method: 'cash',
+            note: 'Refunded at the field',
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        });
+
+        expect(dbMocks.updateTeamFeeRecipient).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1', expect.objectContaining({
+            status: 'partial',
+            amountPaidCents: 7500,
+            remainingBalanceCents: 2500,
+            refunded: expect.objectContaining({ amountCents: 2500, refundMethod: 'cash', note: 'Refunded at the field' }),
+            ledgerEntries: [expect.objectContaining({ type: 'offline_refund', amountCents: -2500, refundAmountCents: 2500 })]
+        }));
+    });
+
     it('blocks non-managers from recording offline payments or adjustments', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
 
@@ -277,6 +397,37 @@ describe('React app team fee offline payment service', () => {
             note: 'Scholarship',
             user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] }
         })).rejects.toThrow('do not have access');
+        await expect(recordOfflineTeamFeeRefund({
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipient: { ...recipient, status: 'partial', amountPaidCents: 5000, remainingBalanceCents: 5000 },
+            refundType: 'full',
+            method: 'cash',
+            note: 'Requested by parent',
+            user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] }
+        })).rejects.toThrow('do not have access');
         expect(dbMocks.updateTeamFeeRecipient).not.toHaveBeenCalled();
+    });
+
+    it('rejects refund submissions with missing fee context', async () => {
+        await expect(recordOfflineTeamFeeRefund({
+            teamId: '',
+            batchId: 'batch-1',
+            recipient: {
+                id: 'recipient-1',
+                playerName: 'Pat Star',
+                parentName: '',
+                parentEmail: '',
+                status: 'partial',
+                amountDueCents: 10000,
+                amountPaidCents: 5000,
+                remainingBalanceCents: 5000,
+                paymentLedger: []
+            },
+            refundType: 'full',
+            method: 'cash',
+            note: 'Missing team context',
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        })).rejects.toThrow('Missing fee recipient context');
     });
 });

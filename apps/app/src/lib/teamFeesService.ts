@@ -50,6 +50,21 @@ export type TeamFeeBalanceAdjustmentInput = {
   currentPaidCents?: string | number | null;
 };
 
+export type OfflineTeamFeeRefundInput = {
+  refundType?: string;
+  amount?: string | number;
+  method?: string;
+  note?: string;
+  actorId?: string;
+  currentBalanceCents?: string | number | null;
+  currentPaidCents?: string | number | null;
+};
+
+const REFUND_METHOD_LABELS: Record<string, string> = {
+  cash: 'Cash',
+  check: 'Check'
+};
+
 export function toFeeCents(value: string | number | null | undefined) {
   const normalized = String(value ?? '').replace(/[$,]/g, '').trim();
   if (!normalized) return null;
@@ -152,6 +167,62 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
   };
 }
 
+export function buildOfflineTeamFeeRefundUpdate({ refundType = 'full', amount, method, note, actorId, currentBalanceCents, currentPaidCents }: OfflineTeamFeeRefundInput) {
+  const priorPaid = Number(currentPaidCents);
+  const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
+  if (priorPaidCents <= 0) {
+    throw new Error('Only recipients with recorded payments can be refunded.');
+  }
+
+  const normalizedType = normalizeString(refundType).toLowerCase() === 'partial' ? 'partial' : 'full';
+  const refundAmountCents = normalizedType === 'full' ? priorPaidCents : toFeeCents(amount);
+  if (refundAmountCents === null || refundAmountCents <= 0) {
+    throw new Error('Enter a refund amount greater than $0.');
+  }
+  if (refundAmountCents > priorPaidCents) {
+    throw new Error('Refund amount cannot exceed the recorded paid amount.');
+  }
+
+  const refundMethod = normalizeString(method).toLowerCase();
+  if (!Object.prototype.hasOwnProperty.call(REFUND_METHOD_LABELS, refundMethod)) {
+    throw new Error('Select cash or check as the refund method.');
+  }
+
+  const adminNote = normalizeString(note);
+  if (!adminNote) throw new Error('Enter an admin note for the refund.');
+
+  const currentBalance = Number(currentBalanceCents);
+  const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : 0;
+  const amountPaidCents = Math.max(0, priorPaidCents - refundAmountCents);
+  const remainingBalanceCents = Math.max(0, balanceCents - amountPaidCents);
+  const status = normalizeLedgerStatus(balanceCents, amountPaidCents);
+  const ledgerEntry = {
+    type: 'offline_refund',
+    amountCents: -refundAmountCents,
+    refundAmountCents,
+    refundType: normalizedType,
+    refundMethod,
+    methodLabel: REFUND_METHOD_LABELS[refundMethod],
+    note: adminNote,
+    recordedBy: actorId || null
+  };
+
+  return {
+    status,
+    amountPaidCents,
+    remainingBalanceCents,
+    ...(status === 'paid' ? {} : { paidAt: null }),
+    refunded: {
+      amountCents: refundAmountCents,
+      refundType: normalizedType,
+      refundMethod,
+      note: adminNote,
+      recordedBy: actorId || null
+    },
+    ledgerEntries: [ledgerEntry]
+  };
+}
+
 export async function loadTeamFeeManagementModel(teamId: string, batchId: string | undefined, user: AuthUser | null): Promise<TeamFeeManagementModel> {
   if (!teamId) throw new Error('Missing team context.');
   const team = await Promise.resolve(getTeam(teamId));
@@ -223,6 +294,34 @@ export async function recordTeamFeeBalanceAdjustment({ teamId, batchId, recipien
 
   const updates = buildBalanceAdjustmentUpdate({
     amount,
+    note,
+    actorId: user?.uid,
+    currentBalanceCents: recipient.amountDueCents,
+    currentPaidCents: recipient.amountPaidCents
+  });
+
+  await Promise.resolve(updateTeamFeeRecipient(teamId, batchId, recipient.id, updates));
+  return updates;
+}
+
+export async function recordOfflineTeamFeeRefund({ teamId, batchId, recipient, refundType, amount, method, note, user }: {
+  teamId: string;
+  batchId: string;
+  recipient: TeamFeeRecipientSummary;
+  refundType: string;
+  amount?: string;
+  method: string;
+  note: string;
+  user: AuthUser | null;
+}) {
+  if (!teamId || !batchId || !recipient?.id) throw new Error('Missing fee recipient context.');
+  const team = await Promise.resolve(getTeam(teamId));
+  if (!hasFullTeamAccess(user, team)) throw new Error('You do not have access to record team fee refunds.');
+
+  const updates = buildOfflineTeamFeeRefundUpdate({
+    refundType,
+    amount,
+    method,
     note,
     actorId: user?.uid,
     currentBalanceCents: recipient.amountDueCents,
