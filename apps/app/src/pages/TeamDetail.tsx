@@ -22,11 +22,11 @@ import {
   UserRound,
   Users
 } from 'lucide-react';
-import { copyPublicText, openPublicUrl } from '../lib/publicActions';
+import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { loadStaffRsvpReminderPreview, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
+import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -349,6 +349,7 @@ function MoreTab({ model, onStaffInviteSuccess }: { model: TeamDetailModel; onSt
   return (
     <div className="space-y-4">
       {model.staffPermissions ? <StaffPermissionsCard model={model} onInviteSuccess={onStaffInviteSuccess} /> : null}
+      {canExposePublicFanFeed(model.team, [...model.upcomingEvents, ...model.recentResults]) ? <FanFeedCard model={model} /> : null}
       {model.canManageTeam ? <ScoreboardWidgetCard model={model} /> : null}
 
       <section className="app-card p-4">
@@ -404,6 +405,48 @@ function MoreTab({ model, onStaffInviteSuccess }: { model: TeamDetailModel; onSt
         </section>
       ) : null}
     </div>
+  );
+}
+
+function FanFeedCard({ model }: { model: TeamDetailModel }) {
+  const feedUrl = buildPublicTeamGamesIcsUrl(model.team.id);
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  async function shareFanFeed() {
+    const result = await sharePublicUrl({
+      title: `${model.team.name} fan feed`,
+      text: `${model.team.name} public games calendar feed`,
+      url: feedUrl,
+      clipboardText: feedUrl
+    });
+    if (result === 'shared') {
+      setStatus({ success: true, message: 'Fan feed share sheet opened.' });
+    } else if (result === 'copied') {
+      setStatus({ success: true, message: 'Fan feed link copied.' });
+    } else {
+      setStatus({ success: false, message: 'Unable to share the fan feed from this device.' });
+    }
+  }
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <CalendarDays className="h-5 w-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-gray-950">Fan Feed</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Share a public games-only calendar link for fans. Practices, private notes, RSVPs, and assignments stay out of this feed.</div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="primary-button !min-h-9 text-xs" onClick={shareFanFeed}>
+              <LinkIcon className="h-4 w-4" aria-hidden="true" />
+              Copy or Share Fan Feed
+            </button>
+          </div>
+          {status ? <div className={`mt-2 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{status.message}</div> : null}
+        </div>
+      </div>
+    </section>
   );
 }
 

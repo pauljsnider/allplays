@@ -8,11 +8,14 @@ const teamDetailMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn(),
     grantScorekeeperAccessForApp: vi.fn(),
     revokeScorekeeperAccessForApp: vi.fn(),
-    inviteTeamAdminForApp: vi.fn()
+    inviteTeamAdminForApp: vi.fn(),
+    buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
+    canExposePublicFanFeed: vi.fn(() => false)
 }));
 const publicActionMocks = vi.hoisted(() => ({
     copyPublicText: vi.fn(),
-    openPublicUrl: vi.fn()
+    openPublicUrl: vi.fn(),
+    sharePublicUrl: vi.fn()
 }));
 
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => teamDetailMocks);
@@ -49,6 +52,8 @@ function makeModel(staffPermissions) {
             photoUrl: null,
             description: '',
             zip: '',
+            isPublic: true,
+            active: true,
             leagueUrl: null,
             bracketUrl: null,
             streamUrl: null,
