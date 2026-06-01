@@ -58,6 +58,10 @@ export async function getAllUsers() {
     return [];
 }
 
+export async function getTeamAccessCodes() {
+    return [];
+}
+
 export async function inviteAdmin(teamId, email) {
     window.__lastAdminInvite = { teamId, email };
     return {
@@ -277,10 +281,11 @@ async function mockAcceptInviteDependencies(page) {
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SHARED_UTILS_STUB }));
 }
 
-test('team management exposes the existing-user admin redemption fallback', async ({ page, baseURL }) => {
+test('team management exposes the existing-user admin redemption fallback without granting access before redemption', async ({ page, baseURL }) => {
     await mockEditTeamDependencies(page);
 
     await page.goto(`${baseURL}/edit-team.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#admin-list')).toContainText('owner@example.com');
 
     await page.locator('#add-admin-btn').click();
     await page.locator('#admin-email-input').fill('Coach@Example.com');
@@ -289,16 +294,14 @@ test('team management exposes the existing-user admin redemption fallback', asyn
     await expect(page.locator('#admin-invite-status')).toContainText('already has an account');
     await expect(page.locator('#admin-code-text')).toHaveText('EXIST111');
     await expect(page.locator('#admin-invite-code')).toBeVisible();
-    await expect(page.locator('#admin-list')).toContainText('coach@example.com');
+    await expect(page.locator('#admin-list')).toContainText('owner@example.com');
+    await expect(page.locator('#admin-list')).not.toContainText('coach@example.com');
 
     expect(await page.evaluate(() => window.__lastAdminInvite)).toEqual({
         teamId: 'team-1',
         email: 'coach@example.com'
     });
-    expect(await page.evaluate(() => window.__lastPersistedAdmin)).toEqual({
-        teamId: 'team-1',
-        email: 'coach@example.com'
-    });
+    expect(await page.evaluate(() => window.__lastPersistedAdmin)).toBeUndefined();
 });
 
 test('accept-invite redeems an admin invite into dashboard access', async ({ page, baseURL }) => {

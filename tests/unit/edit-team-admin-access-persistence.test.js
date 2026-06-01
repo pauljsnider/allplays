@@ -341,8 +341,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers } from './js/db.js?v=33';",
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers } = deps.db;'
+            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes } from './js/db.js?v=33';",
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
@@ -369,8 +369,8 @@ function extractEditTeamModule() {
             'const { hasFullTeamAccess, normalizeAdminEmailList, normalizeStreamVolunteerEmailList, normalizeTeamPermissions } = deps.teamAccess;'
         )
         .replace(
-            "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } from './js/edit-team-admin-invites.js?v=4';",
-            'const { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin } = deps.editTeamAdminInvites;'
+            "import { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } from './js/edit-team-admin-invites.js?v=4';",
+            'const { processPendingAdminInvites, buildAdminInviteFollowUp, inviteExistingTeamAdmin, loadPendingAdminInviteEmails } = deps.editTeamAdminInvites;'
         )
         .replace(
             "import { buildRolloverAccessPreview, buildStaffAdminRolloverUpdate } from './js/rollover-access.js?v=1';",
@@ -451,6 +451,9 @@ async function bootEditTeam(initialState, overrides = {}) {
             async addTeamAdminEmail() {},
             async getAllUsers() {
                 return env.state.users || [];
+            },
+            async getTeamAccessCodes(teamId) {
+                return (env.state.teamAccessCodes || []).filter((code) => code.teamId === teamId);
             }
         },
         utils: {
@@ -497,6 +500,7 @@ async function bootEditTeam(initialState, overrides = {}) {
         rolloverAccess: await import('../../js/rollover-access.js'),
         rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
         editTeamAdminInvites: {
+            ...(await import('../../js/edit-team-admin-invites.js')),
             async processPendingAdminInvites() {
                 return { results: [], fallbackCodeCount: 0, failedCount: 0 };
             },
@@ -520,7 +524,7 @@ async function bootEditTeam(initialState, overrides = {}) {
     };
 
     await runEditTeamModule(deps);
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 20; i += 1) {
         await Promise.resolve();
     }
 
@@ -690,7 +694,7 @@ describe('edit team admin access persistence', () => {
         }
     });
 
-  it('adds a mixed-case admin once in lowercase and keeps next-load access aligned with the saved list', async () => {
+  it('normalizes an invited existing-team admin email without granting access before redemption', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -718,8 +722,7 @@ describe('edit team admin access persistence', () => {
 
             expect(env.state.updateCalls).toHaveLength(1);
             expect(env.state.updateCalls[0].teamData.adminEmails).toEqual([
-                'existing@example.com',
-                'newadmin@example.com'
+                'existing@example.com'
             ]);
         } finally {
             env.cleanup();
@@ -730,10 +733,78 @@ describe('edit team admin access persistence', () => {
             currentUser: { uid: 'user-new', email: 'newadmin@example.com' }
         });
         try {
-            expect(reloadEnv.elements.get('page-title').textContent).toBe('Edit Team');
-            expect(reloadEnv.elements.get('admin-list').textContent).toContain('existing@example.com');
-            expect(reloadEnv.elements.get('admin-list').textContent).toContain('newadmin@example.com');
-            expect(reloadEnv.elements.get('admin-list').querySelectorAll('.remove-admin-btn')).toHaveLength(2);
+            expect(reloadEnv.alerts).toContain("You don't have permission to edit this team.");
+            expect(reloadEnv.window.location.href).toBe('http://example.com/dashboard.html');
+        } finally {
+            reloadEnv.cleanup();
+        }
+    });
+
+    it('keeps invited existing-team admins out of the saved admin list until redemption', async () => {
+        const future = Date.now() + 60_000;
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: ['existing@example.com']
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            await env.elements.get('add-admin-btn').click();
+            env.elements.get('admin-email-input').value = 'pending@example.com';
+            await env.elements.get('save-admin-btn').click();
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.adminEmails).toEqual(['existing@example.com']);
+            expect(env.elements.get('admin-list').textContent).not.toContain('pending@example.com');
+        } finally {
+            env.cleanup();
+        }
+
+        const ownerReloadEnv = await bootEditTeam({
+            ...env.state,
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            teamAccessCodes: [
+                {
+                    id: 'invite-1',
+                    teamId: 'team-1',
+                    email: 'pending@example.com',
+                    type: 'admin_invite',
+                    used: false,
+                    expiresAt: { toMillis: () => future }
+                }
+            ]
+        });
+        try {
+            await ownerReloadEnv.elements.get('add-admin-btn').click();
+            ownerReloadEnv.elements.get('admin-email-input').value = 'pending@example.com';
+            await ownerReloadEnv.elements.get('save-admin-btn').click();
+
+            expect(ownerReloadEnv.elements.get('admin-invite-status').textContent).toBe('This email already has a pending invite.');
+        } finally {
+            ownerReloadEnv.cleanup();
+        }
+
+        const reloadEnv = await bootEditTeam({
+            ...env.state,
+            currentUser: { uid: 'user-pending', email: 'pending@example.com' }
+        });
+        try {
+            expect(reloadEnv.alerts).toContain("You don't have permission to edit this team.");
+            expect(reloadEnv.window.location.href).toBe('http://example.com/dashboard.html');
         } finally {
             reloadEnv.cleanup();
         }

@@ -23,7 +23,6 @@ export async function inviteExistingTeamAdmin({
     const code = parsedCode || null;
 
     if (parsedInviteResult?.existingUser) {
-        await addTeamAdminEmail(teamId, normalizedEmail);
         return {
             email: normalizedEmail,
             status: 'existing_user',
@@ -42,8 +41,6 @@ export async function inviteExistingTeamAdmin({
         };
     }
 
-    await addTeamAdminEmail(teamId, normalizedEmail);
-
     try {
         await sendInviteEmail(normalizedEmail, code, 'admin', { teamName: parsedInviteResult?.teamName || null });
         return {
@@ -60,6 +57,41 @@ export async function inviteExistingTeamAdmin({
             teamName: parsedInviteResult?.teamName || null
         };
     }
+}
+
+function getExpirationTime(expiresAt) {
+    if (expiresAt == null) return null;
+    if (typeof expiresAt?.toMillis === 'function') return expiresAt.toMillis();
+    if (expiresAt instanceof Date) return expiresAt.getTime();
+    const expiresAtMs = Number(expiresAt);
+    return Number.isFinite(expiresAtMs) ? expiresAtMs : null;
+}
+
+function isPendingAdminInvite(invite) {
+    if (!invite || invite.type !== 'admin_invite') return false;
+    if (invite.used === true || invite.revoked === true || invite.active === false) return false;
+    const status = String(invite.status || '').trim().toLowerCase();
+    if (status && !['active', 'pending'].includes(status)) return false;
+    const expiresAtMs = getExpirationTime(invite.expiresAt);
+    return expiresAtMs == null || Date.now() < expiresAtMs;
+}
+
+export async function loadPendingAdminInviteEmails({
+    teamId,
+    getTeamAccessCodes
+}) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId || typeof getTeamAccessCodes !== 'function') {
+        return [];
+    }
+
+    const invites = await getTeamAccessCodes(normalizedTeamId);
+    return Array.from(new Set(
+        (Array.isArray(invites) ? invites : [])
+            .filter(isPendingAdminInvite)
+            .map((invite) => String(invite.email || '').trim().toLowerCase())
+            .filter(Boolean)
+    ));
 }
 
 export async function processPendingAdminInvites({
