@@ -64,7 +64,29 @@ jobs:
 
       - name: Build Android debug APK
         working-directory: android
-        run: ./gradlew :app:assembleDebug --stacktrace
+        run: |
+          reset_gradle_dependency_cache() {
+            rm -rf "$HOME/.gradle/caches/modules-2"
+          }
+
+          run_with_retry() {
+            attempt=1
+            delay=20
+            until "$@"; do
+              if [ "$attempt" -ge 3 ]; then
+                return 1
+              fi
+              echo "Attempt $attempt failed. Retrying in ${delay}s..."
+              attempt=$((attempt + 1))
+              ./gradlew --stop || true
+              reset_gradle_dependency_cache
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
+          reset_gradle_dependency_cache
+          run_with_retry ./gradlew :app:assembleDebug --stacktrace --refresh-dependencies
 
       - name: Upload Android debug APK
         uses: actions/upload-artifact@v4
