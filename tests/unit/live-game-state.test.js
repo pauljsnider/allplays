@@ -74,10 +74,22 @@ describe('live game state helpers', () => {
     })).toBe('cfg-only');
   });
 
-  it('uses the goal-sport simple tracker only when no stat config is resolved by default', () => {
+  it('keeps goal-sport scoring enabled unless the game explicitly picks a stat config', () => {
     expect(resolveGoalSportTrackerProfile({
       game: { sport: 'Soccer' },
       team: { sport: 'Soccer' },
+      config: { id: 'cfg-soccer', baseType: 'Soccer', columns: ['GOALS', 'SHOTS'] }
+    })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
+
+    expect(resolveGoalSportTrackerProfile({
+      game: { sport: 'Soccer' },
+      team: { sport: 'Soccer' },
+      config: { id: 'cfg-basketball', baseType: 'Basketball', columns: ['PTS', 'REB'] }
+    })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
+
+    expect(resolveGoalSportTrackerProfile({
+      game: {},
+      team: { sport: 'Basketball' },
       config: { id: 'cfg-soccer', baseType: 'Soccer', columns: ['GOALS', 'SHOTS'] }
     })).toBeNull();
 
