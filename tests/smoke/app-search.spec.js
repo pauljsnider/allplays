@@ -215,18 +215,22 @@ test.describe('app global search', () => {
 test.describe('desktop app global search', () => {
     test.use({ viewport: { width: 1440, height: 900 }, hasTouch: false });
 
+    async function openDesktopSearch(page) {
+        await page.getByRole('button', { name: 'Search' }).click();
+        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+    }
+
     test('desktop search supports native navigation and website actions', async ({ page, baseURL }) => {
         await mockSearchModules(page);
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await page.getByRole('button', { name: 'Search' }).click();
-        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+        await openDesktopSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('rock');
         await expect(page.getByRole('button', { name: /Rockets/ })).toBeVisible();
         await page.getByRole('button', { name: /Rockets/ }).click();
         await expect(page).toHaveURL(/#\/teams\/team-2$/);
 
-        await page.getByRole('button', { name: 'Search' }).click();
+        await openDesktopSearch(page);
         await page.getByRole('button', { name: /Browse Teams/ }).click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual(['https://allplays.ai/teams.html']);
     });
@@ -235,7 +239,7 @@ test.describe('desktop app global search', () => {
         await mockSearchModules(page);
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await page.getByRole('button', { name: 'Search' }).click();
+        await openDesktopSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('live tracker');
         await expect(page.getByRole('button', { name: /Track Live Games with the Live Tracker/ })).toBeVisible();
         await expect(page.getByRole('button', { name: /Watch Live Games and Replays/ })).toBeVisible();
@@ -253,13 +257,13 @@ test.describe('desktop app global search', () => {
         await mockSearchModules(page);
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await page.getByRole('button', { name: 'Search' }).click();
+        await openDesktopSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('my');
         await expect(page.getByRole('button', { name: /My Teams/ })).toBeVisible();
         await page.keyboard.press('Enter');
         await expect(page).toHaveURL(/#\/teams$/);
 
-        await page.getByRole('button', { name: 'Search' }).click();
+        await openDesktopSearch(page);
         await page.keyboard.press('ArrowDown');
         await page.keyboard.press('ArrowDown');
         await page.keyboard.press('Enter');

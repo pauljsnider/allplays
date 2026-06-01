@@ -998,6 +998,7 @@ function ChatWindow({
     }
 
     setStatus(null);
+    const dictationLanguage = typeof navigator !== 'undefined' ? navigator.language || 'en-US' : 'en-US';
 
     if (voiceRecognition.isNativeRuntime()) {
       try {
@@ -1041,7 +1042,7 @@ function ChatWindow({
         });
         voiceListenerHandlesRef.current = [partialHandle, stateHandle, errorHandle];
         const result = await voiceRecognition.start({
-          language: 'en-US',
+          language: dictationLanguage,
           maxResults: 1,
           partialResults: true,
           addPunctuation: true,
@@ -1070,7 +1071,7 @@ function ChatWindow({
       return;
     }
     const recognition = new BrowserSpeechRecognition();
-    recognition.lang = 'en-US';
+    recognition.lang = dictationLanguage;
     recognition.interimResults = true;
     recognition.continuous = false;
     recognition.onresult = (speechEvent: any) => {
