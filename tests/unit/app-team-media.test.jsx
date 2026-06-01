@@ -60,6 +60,7 @@ const mediaModel = (overrides = {}) => ({
   team: { id: 'team-1', name: 'Bears' },
   canManage: false,
   canContribute: false,
+  canPostChat: false,
   folders: [{
     id: 'folder-1',
     name: 'Game media',
@@ -130,11 +131,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   parentToolsServiceMocks.updateTeamMediaItemForApp.mockResolvedValue(undefined);
   parentToolsServiceMocks.moveTeamMediaItemForApp.mockResolvedValue(undefined);
-  chatServiceMocks.sendTeamChatMessage.mockResolvedValue({
-    conversationId: 'team-main',
-    createdConversation: null,
-    wantsAi: false,
-  });
+  chatServiceMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
 });
 
 afterEach(() => {
@@ -300,10 +297,24 @@ describe('React app TeamMedia upload flow', () => {
   });
 });
 
-describe('React app TeamMedia post to team chat flow', () => {
-  it('shows the post action for any media item classified as a photo when managers can post to team chat', async () => {
-    const managerModel = mediaModel({
-      canManage: true,
+describe('React app TeamMedia team chat posting', () => {
+  const postableModel = (overrides = {}) => mediaModel({
+    canManage: true,
+    canContribute: true,
+    canPostChat: true,
+    ...overrides,
+  });
+
+  it('hides photo chat posting when the viewer can upload media but cannot access team chat', async () => {
+    const { container, root } = await renderTeamMedia(postableModel({ canPostChat: false }));
+
+    expect(container.querySelector('[aria-label="Post Tipoff to team chat"]')).toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  it('shows the post action only for photo media when contributors can post to team chat', async () => {
+    const managerModel = postableModel({
       folders: [{
         id: 'folder-1',
         name: 'Game media',
@@ -324,15 +335,14 @@ describe('React app TeamMedia post to team chat flow', () => {
 
     await act(async () => root.unmount());
 
-    const nonManagerModel = mediaModel({ canManage: false });
-    const rendered = await renderTeamMedia(nonManagerModel);
+    const rendered = await renderTeamMedia(postableModel({ canContribute: false }));
     expect(rendered.container.querySelector('[aria-label="Post Tipoff to team chat"]')).toBeNull();
 
     await act(async () => rendered.root.unmount());
   });
 
   it('sends the selected photo URL to the default team conversation with an optional caption', async () => {
-    const { container, root } = await renderTeamMedia(mediaModel({ canManage: true }));
+    const { container, root } = await renderTeamMedia(postableModel());
 
     click(container.querySelector('[aria-label="Post Tipoff to team chat"]'));
     inputValue(container.querySelector('[aria-label="Caption for team chat"]'), '  Great start  ');
@@ -347,13 +357,66 @@ describe('React app TeamMedia post to team chat flow', () => {
     expect(sendCall.selectedConversationId).toBe('team');
     expect(sendCall.selectedRecipientTarget).toBe('full_team');
     expect(sendCall.selectedRecipientIds).toEqual([]);
-    expect(sendCall.existingAttachments).toEqual([expect.objectContaining({
+    expect(sendCall.attachments).toEqual([expect.objectContaining({
       type: 'image',
       url: 'https://example.test/tipoff.jpg',
       name: 'Tipoff',
     })]);
     expect(container.textContent).toContain('Photo posted to team chat.');
     expect(container.querySelector('[aria-label="Caption for team chat"]')).toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  it('disables photo chat posting while the send is in flight and prevents duplicate submits', async () => {
+    let resolveSend;
+    chatServiceMocks.sendTeamChatMessage.mockImplementation(() => new Promise((resolve) => {
+      resolveSend = resolve;
+    }));
+
+    const { container, root } = await renderTeamMedia(postableModel());
+
+    click(container.querySelector('[aria-label="Post Tipoff to team chat"]'));
+    const sendButton = [...container.querySelectorAll('button')].find((button) => button.textContent.includes('Send to chat'));
+
+    await act(async () => {
+      sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1);
+    expect(sendButton.disabled).toBe(true);
+    expect(sendButton.textContent).toContain('Posting');
+    expect(container.textContent).toContain('Posting');
+
+    await act(async () => {
+      resolveSend({ conversationId: 'team', createdConversation: null, wantsAi: false });
+    });
+    await act(async () => {});
+
+    expect(container.textContent).toContain('Photo posted to team chat.');
+    expect(container.querySelector('[aria-label="Caption for team chat"]')).toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  it('shows a retryable error when chat posting fails without mutating the media item', async () => {
+    chatServiceMocks.sendTeamChatMessage.mockRejectedValue(new Error('Chat offline'));
+
+    const { container, root } = await renderTeamMedia(postableModel());
+
+    click(container.querySelector('[aria-label="Post Tipoff to team chat"]'));
+    await act(async () => {
+      const buttons = [...container.querySelectorAll('button')];
+      buttons.find((button) => button.textContent.includes('Send to chat')).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain('Chat offline');
+    expect(container.querySelector('[aria-label="Caption for team chat"]')).not.toBeNull();
+    expect(container.textContent).toContain('Tipoff');
+    expect(parentToolsServiceMocks.updateTeamMediaItemForApp).not.toHaveBeenCalled();
+    expect(parentToolsServiceMocks.moveTeamMediaItemForApp).not.toHaveBeenCalled();
+    expect(parentToolsServiceMocks.deleteTeamMediaItemForApp).not.toHaveBeenCalled();
 
     await act(async () => root.unmount());
   });

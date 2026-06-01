@@ -820,7 +820,7 @@ export async function sendTeamChatMessage({
   profile,
   text,
   files = [],
-  existingAttachments = [],
+  attachments: sharedAttachments = [],
   selectedConversation,
   selectedConversationId,
   selectedRecipientTarget,
@@ -833,7 +833,7 @@ export async function sendTeamChatMessage({
   profile: Record<string, any>;
   text: string;
   files?: File[];
-  existingAttachments?: ChatAttachment[];
+  attachments?: ChatAttachment[];
   selectedConversation?: ChatConversation | null;
   selectedConversationId: string;
   selectedRecipientTarget: ChatTargetType;
@@ -847,15 +847,14 @@ export async function sendTeamChatMessage({
   }
 
   const uploadedAttachments: ChatAttachment[] = [];
-  const attachments: ChatAttachment[] = [...existingAttachments];
   try {
     for (const file of files) {
       onProgress?.('uploading');
-      const uploadedAttachment = await uploadTeamChatAttachment(teamId, file);
-      uploadedAttachments.push(uploadedAttachment);
-      attachments.push(uploadedAttachment);
+      uploadedAttachments.push(await uploadTeamChatAttachment(teamId, file));
     }
     onProgress?.('posting');
+
+    const attachments = [...sharedAttachments, ...uploadedAttachments];
 
     const targetMetadata = buildChatAudienceMetadata({
       selectedConversation,

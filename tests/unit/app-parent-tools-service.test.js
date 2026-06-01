@@ -21,6 +21,7 @@ const dbMocks = vi.hoisted(() => ({
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItems: vi.fn(),
     getTeams: vi.fn(),
+    canAccessTeamChat: vi.fn(() => true),
     listCertificatesForPlayer: vi.fn(),
     listFamilyShareTokens: vi.fn(),
     listMyParentMembershipRequests: vi.fn(),
@@ -714,6 +715,7 @@ describe('React app parent tools service', () => {
             team: { id: 'team-1', name: 'Bears' },
             canManage: false,
             canContribute: true,
+            canPostChat: true,
             folders: [{
                 id: 'folder-1',
                 itemCount: 1,
@@ -725,6 +727,7 @@ describe('React app parent tools service', () => {
         await uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile);
         await uploadParentTeamMediaFile('team-1', 'folder-1', docFile);
         await addParentTeamMediaLink('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
+        expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), { id: 'team-1', name: 'Bears' });
         expect(dbMocks.createTeamMediaFolder).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'private' });
         expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile);
         expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile);
