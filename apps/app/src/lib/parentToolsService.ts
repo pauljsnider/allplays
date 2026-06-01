@@ -21,7 +21,8 @@ import {
   uploadTeamMediaPhoto,
   deleteTeamMediaItem,
   updateTeamMediaItem,
-  moveTeamMediaItems
+  moveTeamMediaItems,
+  bulkDeleteTeamMediaItems
 } from '../../../../js/db.js';
 import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
 import { db, doc, collection, getDoc, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
@@ -229,6 +230,13 @@ export async function updateTeamMediaItemForApp(teamId: string, itemId: string, 
 export async function moveTeamMediaItemForApp(teamId: string, itemId: string, targetFolderId: string) {
   if (!teamId || !itemId || !targetFolderId) throw new Error('Missing team, media item, or destination album ID.');
   return moveTeamMediaItems(teamId, [itemId], targetFolderId);
+}
+
+export async function bulkDeleteTeamMediaItemsForApp(teamId: string, itemIds: string[]) {
+  const ids = Array.isArray(itemIds) ? itemIds.map((itemId) => compactString(itemId)).filter(Boolean) : [];
+  if (!teamId) throw new Error('Missing team ID.');
+  if (!ids.length) throw new Error('Select at least one media item to delete.');
+  return bulkDeleteTeamMediaItems(teamId, ids);
 }
 
 export function getLegacyUrl(path: string, params: Record<string, string> = {}, hashParams: Record<string, string> = {}) {
