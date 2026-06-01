@@ -40,7 +40,9 @@ import {
   loadChatTeamContext,
   loadOlderTeamChatMessages,
   loadSentTeamEmails,
+  loadTeamEmailTemplates,
   markTeamChatRead,
+  saveTeamEmailTemplate,
   sendAllPlaysChatAnswer,
   sendTeamChatMessage,
   sendTeamEmailMessage,
@@ -49,6 +51,7 @@ import {
   type ChatConversation,
   type ChatMessage,
   type SentTeamEmail,
+  type TeamEmailTemplate,
   type ChatTeam
 } from '../lib/chatService';
 import {
@@ -376,10 +379,14 @@ function ChatWindow({
   const [showEmailSheet, setShowEmailSheet] = useState(false);
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
+  const [emailTemplateName, setEmailTemplateName] = useState('');
   const [emailSending, setEmailSending] = useState(false);
+  const [emailSavingTemplate, setEmailSavingTemplate] = useState(false);
   const [emailLoadingHistory, setEmailLoadingHistory] = useState(false);
+  const [emailLoadingTemplates, setEmailLoadingTemplates] = useState(false);
   const [emailStatus, setEmailStatus] = useState<ChatStatus | null>(null);
   const [emailHistoryStatus, setEmailHistoryStatus] = useState<ChatStatus | null>(null);
+  const [emailTemplates, setEmailTemplates] = useState<TeamEmailTemplate[]>([]);
   const [sentEmails, setSentEmails] = useState<SentTeamEmail[]>([]);
   const [linkDraft, setLinkDraft] = useState('');
   const [reactionMessageId, setReactionMessageId] = useState('');
@@ -892,12 +899,61 @@ function ChatWindow({
     }
   };
 
+  const reloadEmailTemplates = async ({ suppressErrorStatus = false } = {}) => {
+    if (!canModerate) return;
+    setEmailLoadingTemplates(true);
+    try {
+      setEmailTemplates(await loadTeamEmailTemplates(teamId));
+      if (!suppressErrorStatus) {
+        setEmailStatus(null);
+      }
+    } catch (templateError: any) {
+      if (!suppressErrorStatus) {
+        setEmailStatus({ tone: 'error', message: templateError?.message || 'Could not load team email templates.' });
+      }
+    } finally {
+      setEmailLoadingTemplates(false);
+    }
+  };
+
   const openEmailSheet = () => {
     if (!canModerate) return;
     setShowEmailSheet(true);
+    setEmailTemplateName('');
     setEmailStatus(null);
     setEmailHistoryStatus(null);
+    void reloadEmailTemplates();
     void reloadSentEmailHistory();
+  };
+
+  const handleApplyEmailTemplate = (templateId: string) => {
+    const template = emailTemplates.find((item) => item.id === templateId);
+    if (!template) return;
+    setEmailSubject(template.subject || '');
+    setEmailBody(template.body || '');
+    setEmailStatus({ tone: 'success', message: `Applied template “${template.name}”.` });
+  };
+
+  const handleSaveEmailTemplate = async () => {
+    if (!canModerate || emailSavingTemplate) return;
+    setEmailSavingTemplate(true);
+    setEmailStatus({ tone: 'neutral', message: 'Saving team email template...' });
+    try {
+      const savedTemplate = await saveTeamEmailTemplate({
+        teamId,
+        name: emailTemplateName,
+        subject: emailSubject,
+        body: emailBody
+      });
+      setEmailTemplateName('');
+      setEmailTemplates((current) => [savedTemplate, ...current.filter((item) => item.id !== savedTemplate.id)]);
+      setEmailStatus({ tone: 'success', message: `Saved template “${savedTemplate.name}”.` });
+      void reloadEmailTemplates({ suppressErrorStatus: true });
+    } catch (saveError: any) {
+      setEmailStatus({ tone: 'error', message: saveError?.message || 'Could not save team email template.' });
+    } finally {
+      setEmailSavingTemplate(false);
+    }
   };
 
   const handleSendEmail = async (event?: FormEvent) => {
@@ -1325,8 +1381,12 @@ function ChatWindow({
         <TeamEmailSheet
           subject={emailSubject}
           body={emailBody}
+          templateName={emailTemplateName}
+          templates={emailTemplates}
           sending={emailSending}
+          savingTemplate={emailSavingTemplate}
           loadingHistory={emailLoadingHistory}
+          loadingTemplates={emailLoadingTemplates}
           status={emailStatus}
           historyStatus={emailHistoryStatus}
           sentEmails={sentEmails}
@@ -1334,8 +1394,12 @@ function ChatWindow({
           audienceMetadata={emailAudienceMetadata}
           onSubjectChange={setEmailSubject}
           onBodyChange={setEmailBody}
+          onTemplateNameChange={setEmailTemplateName}
+          onApplyTemplate={handleApplyEmailTemplate}
+          onSaveTemplate={handleSaveEmailTemplate}
           onSubmit={handleSendEmail}
           onRefreshHistory={reloadSentEmailHistory}
+          onRefreshTemplates={reloadEmailTemplates}
           onStatusClose={() => setEmailStatus(null)}
           onHistoryStatusClose={() => setEmailHistoryStatus(null)}
           onClose={() => setShowEmailSheet(false)}
@@ -1395,8 +1459,12 @@ function StatusBanner({ status, onClose }: { status: ChatStatus; onClose: () => 
 function TeamEmailSheet({
   subject,
   body,
+  templateName,
+  templates,
   sending,
+  savingTemplate,
   loadingHistory,
+  loadingTemplates,
   status,
   historyStatus,
   sentEmails,
@@ -1404,16 +1472,24 @@ function TeamEmailSheet({
   audienceMetadata,
   onSubjectChange,
   onBodyChange,
+  onTemplateNameChange,
+  onApplyTemplate,
+  onSaveTemplate,
   onSubmit,
   onRefreshHistory,
+  onRefreshTemplates,
   onStatusClose,
   onHistoryStatusClose,
   onClose
 }: {
   subject: string;
   body: string;
+  templateName: string;
+  templates: TeamEmailTemplate[];
   sending: boolean;
+  savingTemplate: boolean;
   loadingHistory: boolean;
+  loadingTemplates: boolean;
   status: ChatStatus | null;
   historyStatus: ChatStatus | null;
   sentEmails: SentTeamEmail[];
@@ -1421,14 +1497,27 @@ function TeamEmailSheet({
   audienceMetadata: ChatAudienceMetadata;
   onSubjectChange: (value: string) => void;
   onBodyChange: (value: string) => void;
+  onTemplateNameChange: (value: string) => void;
+  onApplyTemplate: (templateId: string) => void;
+  onSaveTemplate: () => void;
   onSubmit: (event?: FormEvent) => void;
   onRefreshHistory: () => void;
+  onRefreshTemplates: () => void;
   onStatusClose: () => void;
   onHistoryStatusClose: () => void;
   onClose: () => void;
 }) {
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const missingSelectedRecipients = audienceMetadata.targetType === 'individuals' && audienceMetadata.recipientIds.length === 0;
   const canSendEmail = Boolean(subject.trim() && body.trim()) && !missingSelectedRecipients && !sending;
+  const canSaveTemplate = Boolean(templateName.trim() && subject.trim() && body.trim()) && !savingTemplate;
+
+  useEffect(() => {
+    if (!selectedTemplateId) return;
+    if (!templates.some((template) => template.id === selectedTemplateId)) {
+      setSelectedTemplateId('');
+    }
+  }, [selectedTemplateId, templates]);
 
   return (
     <Sheet title="Team Email" onClose={onClose}>
@@ -1439,11 +1528,62 @@ function TeamEmailSheet({
         <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-700">
           Audience: {audienceSummary}
         </div>
-        {missingSelectedRecipients ? (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
-            Choose at least one selected member before sending email.
+        <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-black text-gray-950">Reusable templates</div>
+              <div className="text-xs font-semibold leading-5 text-gray-500">Apply a saved subject and body without changing recipients.</div>
+            </div>
+            <button type="button" className="ghost-button !h-9 !min-h-9 text-xs" onClick={onRefreshTemplates} disabled={loadingTemplates}>
+              {loadingTemplates ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              Refresh
+            </button>
           </div>
-        ) : null}
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label className="min-w-0 flex-1">
+              <span className="app-label">Saved template</span>
+              <select
+                value={selectedTemplateId}
+                onChange={(event) => setSelectedTemplateId(event.target.value)}
+                className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+              >
+                <option value="">Select a template</option>
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>{template.name}</option>
+                ))}
+              </select>
+            </label>
+            <button type="button" className="secondary-button sm:mt-6" disabled={!selectedTemplateId} onClick={() => onApplyTemplate(selectedTemplateId)}>
+              Apply template
+            </button>
+          </div>
+          {!loadingTemplates && templates.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-500">
+              No saved team email templates yet.
+            </div>
+          ) : null}
+          {missingSelectedRecipients ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+              Choose at least one selected member before sending email.
+            </div>
+          ) : null}
+          <label className="block">
+            <span className="app-label">Save current email as template</span>
+            <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+              <input
+                value={templateName}
+                onChange={(event) => onTemplateNameChange(event.target.value)}
+                className="min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                placeholder="Weekly reminder"
+                maxLength={120}
+              />
+              <button type="button" className="secondary-button sm:min-w-[148px]" disabled={!canSaveTemplate} onClick={onSaveTemplate}>
+                {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+                Save template
+              </button>
+            </div>
+          </label>
+        </div>
         <label className="block">
           <span className="app-label">Subject</span>
           <input
