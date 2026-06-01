@@ -9,6 +9,7 @@ const AcceptInvite = lazy(() => import('./pages/AcceptInvite').then((module) => 
 const CapabilityPage = lazy(() => import('./pages/CapabilityPage').then((module) => ({ default: module.CapabilityPage })));
 const GameDetail = lazy(() => import('./pages/GameDetail').then((module) => ({ default: module.GameDetail })));
 const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({ default: module.HelpArticle })));
+const HelpPortal = lazy(() => import('./pages/HelpPortal').then((module) => ({ default: module.HelpPortal })));
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })));
 const Messages = lazy(() => import('./pages/Messages').then((module) => ({ default: module.Messages })));
 const ParentTools = lazy(() => import('./pages/ParentTools').then((module) => ({ default: module.ParentTools })));
@@ -58,6 +59,7 @@ export default function App() {
         <Route path="/players/:teamId/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
         <Route path="/players/:playerId" element={<Protected auth={auth}><PlayerDetail auth={auth} /></Protected>} />
         <Route path="/games/:gameId" element={<Protected auth={auth}><GameDetail auth={auth} /></Protected>} />
+        <Route path="/help" element={<Protected auth={auth}><HelpPortal /></Protected>} />
         <Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />
         <Route path="/profile" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
         <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />

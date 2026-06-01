@@ -66,7 +66,7 @@ export const capabilities: Capability[] = [
   capability('widget-scoreboard', 'Scoreboard widget', 'widget-scoreboard.html', 'Public', 'Public scoreboard widget, team games, team link, and read-only embed.', ['Scoreboard widget', 'Team games', 'Team link', 'Read-only embed']),
   capability('changelog', 'Changelog', 'changelog.html', 'Help', 'Release notes and product updates.', ['Release notes', 'Product updates']),
 
-  capability('help', 'Help portal', 'help.html', 'Help', 'Workflow search, role filters, and help routing.', ['Workflow search', 'Role filters', 'Help routing']),
+  capability('help', 'Help portal', 'help.html', 'Help', 'Workflow search, role filters, and help routing.', ['Workflow search', 'Role filters', 'Help routing'], '/help', 'native-shell'),
   capability('help-account', 'Account help', 'help-account.html', 'Help', 'Account help, access help, and role ownership.', ['Account help', 'Access help', 'Role ownership']),
   capability('help-team-operations', 'Team operations help', 'help-team-operations.html', 'Help', 'Team operations, roster, and schedule help.', ['Team operations', 'Roster help', 'Schedule help']),
   capability('help-game-operations', 'Game operations help', 'help-game-operations.html', 'Help', 'Game operations, tracking, and postgame help.', ['Game operations', 'Tracking help', 'Postgame help']),

@@ -85,4 +85,26 @@ describe('app help knowledge service', () => {
         expect(parentResults.length).toBeGreaterThan(0);
         expect(parentResults.every((result) => result.roles.includes('parent') || result.roles.includes('all'))).toBe(true);
     });
+
+    it('supports portal-sized result sets and role-filter narrowing for each portal role', async () => {
+        const { getHelpKnowledgeDocs, searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const docs = getHelpKnowledgeDocs();
+
+        expect(searchHelpKnowledge({
+            query: '',
+            roleFilter: 'all',
+            limit: docs.length
+        })).toHaveLength(docs.length);
+
+        ['all', 'parent', 'coach', 'admin', 'member'].forEach((roleFilter) => {
+            const results = searchHelpKnowledge({
+                query: 'schedule',
+                roleFilter,
+                limit: docs.length
+            });
+
+            expect(results.length).toBeGreaterThan(0);
+            expect(results.every((result) => roleFilter === 'all' || result.roles.includes('all') || result.roles.includes(roleFilter))).toBe(true);
+        });
+    });
 });

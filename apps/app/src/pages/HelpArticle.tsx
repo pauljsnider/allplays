@@ -1,16 +1,18 @@
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Home, Search } from 'lucide-react';
 import { getHelpKnowledgeDocs } from '../lib/helpKnowledgeService';
 
 export function HelpArticle() {
   const { helpId = '' } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const helpPortalState = normalizeHelpPortalState(location.state);
   const helpDoc = getHelpKnowledgeDocs().find((doc) => doc.id === helpId);
 
   if (!helpDoc) {
     return (
       <div className="space-y-4">
-        <BackButton />
+        <BackButton helpPortalState={helpPortalState} />
         <section className="app-card p-5 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
             <Search className="h-5 w-5" aria-hidden="true" />
@@ -20,9 +22,19 @@ export function HelpArticle() {
             This help article is not packaged in the app yet. Try another search result or head back home.
           </p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
-            <button type="button" className="primary-button justify-center" onClick={() => navigate(-1)}>
-              Back to search
-            </button>
+            {helpPortalState.fromHelpPortal ? (
+              <button
+                type="button"
+                className="primary-button justify-center"
+                onClick={() => navigate('/help', { state: helpPortalState })}
+              >
+                Back to Help Portal
+              </button>
+            ) : (
+              <button type="button" className="primary-button justify-center" onClick={() => navigate(-1)}>
+                Back to search
+              </button>
+            )}
             <Link to="/home" className="ghost-button justify-center">
               <Home className="h-4 w-4" aria-hidden="true" />
               Home
@@ -37,7 +49,7 @@ export function HelpArticle() {
 
   return (
     <div className="space-y-4">
-      <BackButton />
+      <BackButton helpPortalState={helpPortalState} />
 
       <article className="app-card overflow-hidden">
         <header className="border-b border-gray-200 bg-gradient-to-r from-primary-50 to-white p-5">
@@ -65,15 +77,33 @@ export function HelpArticle() {
   );
 }
 
-function BackButton() {
+function BackButton({ helpPortalState }: { helpPortalState: ReturnType<typeof normalizeHelpPortalState> }) {
   const navigate = useNavigate();
 
+  const handleBack = () => {
+    if (helpPortalState.fromHelpPortal) {
+      navigate('/help', { state: helpPortalState });
+      return;
+    }
+    navigate(-1);
+  };
+
   return (
-    <button type="button" className="ghost-button" onClick={() => navigate(-1)}>
+    <button type="button" className="ghost-button" onClick={handleBack}>
       <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-      Back
+      {helpPortalState.fromHelpPortal ? 'Back to Help Portal' : 'Back'}
     </button>
   );
+}
+
+function normalizeHelpPortalState(state: unknown) {
+  const candidate = state as { fromHelpPortal?: boolean; helpQuery?: string; helpRoleFilter?: string } | null;
+
+  return {
+    fromHelpPortal: candidate?.fromHelpPortal === true,
+    helpQuery: typeof candidate?.helpQuery === 'string' ? candidate.helpQuery : '',
+    helpRoleFilter: typeof candidate?.helpRoleFilter === 'string' ? candidate.helpRoleFilter : 'all'
+  };
 }
 
 function buildArticleParagraphs(text: string, title: string, summary: string) {
