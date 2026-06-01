@@ -24,7 +24,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
   const inviteCode = (searchParams.get('code') || '').trim().toUpperCase();
   const inviteType = (searchParams.get('type') || 'parent').trim().toLowerCase();
   const requestedMode = searchParams.get('mode');
-  const initialMode: AuthMode = requestedMode === 'signup' ? 'signup' : 'login';
+  const initialMode: AuthMode = requestedMode === 'login' ? 'login' : inviteCode ? 'signup' : 'login';
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

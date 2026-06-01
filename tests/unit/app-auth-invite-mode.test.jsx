@@ -107,6 +107,15 @@ afterEach(() => {
 });
 
 describe('AuthPage invite mode defaults', () => {
+    it('defaults bare invite links to sign up mode and prefills the code', async () => {
+        const { container } = await renderAuthPage('/auth?code=ABCDEFGH&type=parent');
+
+        expect(container.querySelector('h1')?.textContent).toBe('Create your account');
+        expect(findButton(container, 'Sign up')?.className).toContain('bg-white');
+        expect(findInputByLabel(container, 'Activation or invite code')?.value).toBe('ABCDEFGH');
+        expect(findButton(container, 'Create account')).toBeTruthy();
+    });
+
     it('defaults invite login links to sign in mode', async () => {
         const { container } = await renderAuthPage('/auth?code=ABCDEFGH&type=parent&mode=login');
 
