@@ -210,6 +210,14 @@ async function mockMessagesModules(page, options = {}) {
                     return [];
                 }
 
+                export async function loadTeamEmailTemplates() {
+                    return [];
+                }
+
+                export async function saveTeamEmailTemplate() {
+                    return { id: 'template-1', name: 'Template', subject: 'Subject', body: 'Body' };
+                }
+
                 export async function uploadTeamChatAttachment(teamId, file) {
                     return {
                         id: 'attachment-' + file.name,

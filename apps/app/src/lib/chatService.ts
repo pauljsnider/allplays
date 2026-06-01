@@ -13,12 +13,14 @@ import {
   getParentTeams,
   getPlayers,
   getSentTeamEmails,
+  getTeamEmailTemplates as getStoredTeamEmailTemplates,
   getTeam,
   getUnreadChatCounts,
   getUserByEmail,
   getUserProfile,
   getUserTeamsWithAccess,
   postChatMessage,
+  saveTeamEmailTemplate as saveStoredTeamEmailTemplate,
   sendTeamEmail,
   subscribeToChatMessages,
   toggleChatReaction,
@@ -134,6 +136,18 @@ export type SentTeamEmail = {
   } | null;
 };
 
+export type TeamEmailTemplate = {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
+  authorId?: string | null;
+  authorEmail?: string | null;
+  authorName?: string | null;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
+
 export type ChatInboxLoadResult = {
   teams: ChatTeam[];
 };
@@ -170,6 +184,21 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryD
   return Promise.race([promise, timeout]).finally(() => {
     if (timeoutId) window.clearTimeout(timeoutId);
   });
+}
+
+function normalizeTeamEmailTemplate(template: Record<string, any> | null | undefined): TeamEmailTemplate | null {
+  if (!template?.id) return null;
+  return {
+    id: String(template.id),
+    name: String(template.name || '').trim(),
+    subject: String(template.subject || '').trim(),
+    body: String(template.body || '').trim(),
+    authorId: template.authorId || null,
+    authorEmail: template.authorEmail || null,
+    authorName: template.authorName || null,
+    createdAt: template.createdAt,
+    updatedAt: template.updatedAt
+  };
 }
 
 function compactString(value: unknown) {
@@ -947,6 +976,44 @@ export async function sendTeamEmailMessage({
 
 export async function loadSentTeamEmails(teamId: string, { limit = 25 }: { limit?: number } = {}): Promise<SentTeamEmail[]> {
   return withTimeout(Promise.resolve(getSentTeamEmails(teamId, { limit })), 'Sent email history') as Promise<SentTeamEmail[]>;
+}
+
+export async function loadTeamEmailTemplates(teamId: string): Promise<TeamEmailTemplate[]> {
+  const templates = await withTimeout(Promise.resolve(getStoredTeamEmailTemplates(teamId)), 'Team email templates') as Record<string, any>[];
+  return templates
+    .map((template) => normalizeTeamEmailTemplate(template))
+    .filter((template): template is TeamEmailTemplate => Boolean(template));
+}
+
+export async function saveTeamEmailTemplate({
+  teamId,
+  name,
+  subject,
+  body
+}: {
+  teamId: string;
+  name: string;
+  subject: string;
+  body: string;
+}): Promise<TeamEmailTemplate> {
+  const trimmedName = String(name || '').trim();
+  const trimmedSubject = String(subject || '').trim();
+  const trimmedBody = String(body || '').trim();
+
+  if (!trimmedName) throw new Error('Enter a template name before saving.');
+  if (!trimmedSubject) throw new Error('Enter a subject before saving.');
+  if (!trimmedBody) throw new Error('Enter a body before saving.');
+
+  const saved = await withTimeout(Promise.resolve(saveStoredTeamEmailTemplate(teamId, {
+    name: trimmedName,
+    subject: trimmedSubject,
+    body: trimmedBody
+  })), 'Team email template save') as Record<string, any>;
+  const normalized = normalizeTeamEmailTemplate(saved);
+  if (!normalized) {
+    throw new Error('Saved template is missing required fields.');
+  }
+  return normalized;
 }
 
 export async function editTeamChatMessage(teamId: string, messageId: string, text: string, conversationId: string) {
