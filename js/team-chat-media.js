@@ -25,10 +25,15 @@ export function isSafeChatMediaUrl(href) {
 }
 
 export function getChatAttachmentKind(input) {
-    const mimeType = String(input?.mimeType || input?.type || '').toLowerCase();
+    const mimeType = String(input?.mimeType || '').toLowerCase();
+    const rawType = String(input?.type || input?.mediaType || '').toLowerCase();
     if (mimeType === 'image' || mimeType === 'video') return mimeType;
     if (mimeType.startsWith('image/')) return 'image';
     if (mimeType.startsWith('video/')) return 'video';
+    if (rawType === 'photo' || rawType === 'image') return 'image';
+    if (rawType === 'video' || rawType === 'video_link') return 'video';
+    if (rawType.startsWith('image/')) return 'image';
+    if (rawType.startsWith('video/')) return 'video';
     return null;
 }
 
@@ -55,8 +60,8 @@ function normalizeChatAttachment(input, { strict = true } = {}) {
         url,
         path: input?.path || null,
         thumbnailUrl: input?.thumbnailUrl || null,
-        name: input?.name || null,
-        mimeType: input?.mimeType || input?.type || null,
+        name: input?.name || input?.title || input?.fileName || null,
+        mimeType: input?.mimeType || input?.type || input?.mediaType || null,
         size,
         uploadedAt: toUploadedAt(input?.uploadedAt)
     };

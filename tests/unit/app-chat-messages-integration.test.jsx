@@ -736,6 +736,34 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Media link copied.');
     });
 
+    it('renders team media photo posts inline and includes them in the gallery', async () => {
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: 'msg-team-media',
+                    text: '',
+                    attachments: [
+                        {
+                            type: 'photo',
+                            url: 'https://media.example.test/tipoff.jpg',
+                            title: 'Tipoff'
+                        }
+                    ]
+                })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+        const { container } = await renderMessages('/messages/team-1');
+
+        const inlinePhoto = container.querySelector('img[alt="Tipoff"]');
+        expect(inlinePhoto).toBeTruthy();
+        expect(inlinePhoto.getAttribute('src')).toBe('https://media.example.test/tipoff.jpg');
+
+        await click(container, 'Open photos and videos');
+        expect(container.textContent).toContain('Photos & videos');
+        expect(container.textContent).toContain('Tipoff');
+    });
+
     it('routes ALL PLAYS mentions through the existing AI assistant send path', async () => {
         chatMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: true });
         const { container } = await renderMessages('/messages/team-1');

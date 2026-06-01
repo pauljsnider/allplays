@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
     MAX_CHAT_MEDIA_SIZE,
     normalizeChatAttachments,
+    getMessageAttachments,
     collectThreadMedia,
     buildChatMediaShareDetails,
     getChatMediaActionState,
@@ -69,6 +70,29 @@ describe('team chat media normalization', () => {
         expect(() => normalizeChatAttachments([
             { url: 'https://cdn.example.com/huge.mp4', type: 'video/mp4', size: MAX_CHAT_MEDIA_SIZE + 1 }
         ])).toThrow(/5MB or smaller/i);
+    });
+
+    it('normalizes team media photo-shaped attachments for message rendering', () => {
+        expect(getMessageAttachments({
+            attachments: [
+                {
+                    type: 'photo',
+                    url: 'https://cdn.example.com/team-photo.jpg',
+                    title: 'Tipoff'
+                }
+            ]
+        })).toEqual([
+            {
+                type: 'image',
+                url: 'https://cdn.example.com/team-photo.jpg',
+                path: null,
+                thumbnailUrl: null,
+                name: 'Tipoff',
+                mimeType: 'photo',
+                size: null,
+                uploadedAt: null
+            }
+        ]);
     });
 });
 
