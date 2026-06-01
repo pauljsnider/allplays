@@ -181,7 +181,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       aria-modal="true"
       aria-label="Search teams, players, actions, and help"
       onKeyDown={onKeyDown}
-      onMouseDown={(event) => {
+      onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
