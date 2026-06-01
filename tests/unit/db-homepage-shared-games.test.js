@@ -29,6 +29,9 @@ describe('homepage shared game discovery queries', () => {
         expect(upcomingSource).toContain('games.sort(compareGamesByDateAsc)');
         expect(upcomingSource).toContain('isExcludedHomepageUpcomingStatus(gameData.status)');
         expect(upcomingSource).toContain('isExcludedHomepageUpcomingStatus(game.status)');
+        expect(upcomingSource).not.toContain("where('type', '==', 'game')");
+        expect(upcomingSource).toContain("if (!gameData.type) {");
+        expect(upcomingSource).toContain("gameData.type = 'game';");
         expect(source).toContain("normalizedStatus === 'canceled'");
         expect(source).toContain("normalizedStatus === 'deleted'");
 
