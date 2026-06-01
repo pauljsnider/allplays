@@ -247,6 +247,13 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
             </label>
           ) : null}
 
+          {String(form.paymentNotice || '').trim() ? (
+            <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950" aria-label="Registration payment notice">
+              <h2 className="text-sm font-black text-sky-950">Payment</h2>
+              <p className="mt-1 whitespace-pre-line font-semibold leading-5 text-sky-900">{form.paymentNotice}</p>
+            </div>
+          ) : null}
+
           {form.waiverText ? (
             <div className="space-y-2">
               <h2 className="text-sm font-black text-gray-950">Waiver</h2>

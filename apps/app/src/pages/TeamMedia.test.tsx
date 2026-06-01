@@ -17,14 +17,16 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
   uploadParentTeamMediaPhoto: vi.fn()
 }));
 
+const chatServiceMocks = vi.hoisted(() => ({
+  sendTeamChatMessage: vi.fn()
+}));
+
 vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
 vi.mock('../lib/publicActions', () => ({
   openPublicUrl: vi.fn(),
   sharePublicUrl: vi.fn().mockResolvedValue('shared')
 }));
-vi.mock('../lib/chatService', () => ({
-  sendTeamChatMessage: vi.fn()
-}));
+vi.mock('../lib/chatService', () => chatServiceMocks);
 vi.mock('../lib/chatLogic', () => ({
   DEFAULT_TEAM_CONVERSATION_ID: 'team-chat'
 }));
@@ -94,6 +96,8 @@ describe('TeamMedia bulk delete', () => {
     parentToolsServiceMocks.updateTeamMediaItemForApp.mockReset();
     parentToolsServiceMocks.uploadParentTeamMediaFile.mockReset();
     parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockReset();
+    chatServiceMocks.sendTeamChatMessage.mockReset();
+    chatServiceMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team-chat', createdConversation: null, wantsAi: false });
     vi.stubGlobal('confirm', vi.fn(() => true));
     Object.assign(navigator, {
       clipboard: {
@@ -170,5 +174,33 @@ describe('TeamMedia bulk delete', () => {
     expect(await screen.findByText('Delete failed.')).toBeTruthy();
     expect(selectPhotoOne.checked).toBe(true);
     expect(screen.getByText('1 selected in this view')).toBeTruthy();
+  });
+
+  it('posts a photo to the default team conversation', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValueOnce(createModel({
+      canContribute: true,
+      canPostChat: true
+    }));
+
+    renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    fireEvent.click(screen.getByLabelText('Post Photo one to team chat'));
+    fireEvent.change(screen.getByLabelText('Caption for team chat'), { target: { value: '  Great start  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send to chat' }));
+
+    expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      text: 'Great start',
+      selectedConversationId: 'team-chat',
+      selectedRecipientTarget: 'full_team',
+      selectedRecipientIds: [],
+      attachments: [expect.objectContaining({
+        type: 'image',
+        url: 'https://example.com/photo-1.jpg',
+        name: 'Photo one'
+      })]
+    }));
+    expect(await screen.findByText('Photo posted to team chat.')).toBeTruthy();
   });
 });
