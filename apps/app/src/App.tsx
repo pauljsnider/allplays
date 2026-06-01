@@ -1,4 +1,4 @@
-import { lazy, ReactNode, Suspense } from 'react';
+import { lazy, ReactNode, Suspense, useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { useAuth } from './lib/useAuth';
@@ -24,6 +24,8 @@ const TeamFees = lazy(() => import('./pages/TeamFees').then((module) => ({ defau
 const TeamMedia = lazy(() => import('./pages/TeamMedia').then((module) => ({ default: module.TeamMedia })));
 const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
 const VerifyPending = lazy(() => import('./pages/VerifyPending').then((module) => ({ default: module.VerifyPending })));
+
+const protectedRouteBootstrapGraceMs = 1200;
 
 export default function App() {
   const auth = useAuth();
@@ -72,7 +74,21 @@ function isBrowserReload() {
 }
 
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {
+  const [bootstrapGraceExpired, setBootstrapGraceExpired] = useState(false);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setBootstrapGraceExpired(true);
+    }, protectedRouteBootstrapGraceMs);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
   if (auth.loading && !auth.user) {
+    return <LoadingScreen />;
+  }
+
+  if (!auth.user && !bootstrapGraceExpired) {
     return <LoadingScreen />;
   }
 
