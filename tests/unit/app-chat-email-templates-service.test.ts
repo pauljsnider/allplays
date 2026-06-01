@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
@@ -31,14 +32,14 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: () => false } }));
-vi.mock('../../../../js/db.js', () => dbMocks);
-vi.mock('../../../../js/vendor/firebase-app.js', () => ({ getApp: vi.fn() }));
-vi.mock('../../../../js/vendor/firebase-ai.js', () => ({ getAI: vi.fn(), getGenerativeModel: vi.fn(), GoogleAIBackend: {} }));
-vi.mock('../../../../js/firebase-runtime-config.js', () => ({ resolveImageFirebaseConfig: vi.fn() }));
-vi.mock('../../../../js/team-visibility.js', () => ({ isTeamActive: vi.fn(() => true) }));
-vi.mock('./authService', () => ({ firebaseAuth: {}, getNativeAuthIdToken: vi.fn() }));
+vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/vendor/firebase-app.js', () => ({ getApp: vi.fn() }));
+vi.mock('../../js/vendor/firebase-ai.js', () => ({ getAI: vi.fn(), getGenerativeModel: vi.fn(), GoogleAIBackend: {} }));
+vi.mock('../../js/firebase-runtime-config.js', () => ({ resolveImageFirebaseConfig: vi.fn() }));
+vi.mock('../../js/team-visibility.js', () => ({ isTeamActive: vi.fn(() => true) }));
+vi.mock('../../apps/app/src/lib/authService.ts', () => ({ firebaseAuth: {}, getNativeAuthIdToken: vi.fn() }));
 
-import { loadTeamEmailTemplates, saveTeamEmailTemplate } from './chatService';
+import { loadTeamEmailTemplates, saveTeamEmailTemplate } from '../../apps/app/src/lib/chatService.ts';
 
 describe('team email template helpers', () => {
     beforeEach(() => {

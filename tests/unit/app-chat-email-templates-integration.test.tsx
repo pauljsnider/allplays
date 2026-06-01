@@ -2,8 +2,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Messages } from './Messages';
-import type { AuthState } from '../lib/types';
+import type { AuthState } from '../../apps/app/src/lib/types';
+import { Messages } from '../../apps/app/src/pages/Messages.tsx';
 
 const chatServiceMocks = vi.hoisted(() => ({
   deleteTeamChatMessage: vi.fn(),
@@ -26,10 +26,10 @@ const chatServiceMocks = vi.hoisted(() => ({
   toggleTeamChatReaction: vi.fn()
 }));
 
-vi.mock('../lib/chatService', () => chatServiceMocks);
-vi.mock('../lib/useShellLayout', () => ({ useShellLayout: vi.fn(() => ({ isDesktopWeb: false })) }));
-vi.mock('../lib/publicActions', () => ({ sharePublicUrl: vi.fn() }));
-vi.mock('../lib/voiceService', () => ({
+vi.mock('../../apps/app/src/lib/chatService.ts', () => chatServiceMocks);
+vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({ useShellLayout: vi.fn(() => ({ isDesktopWeb: false })) }));
+vi.mock('../../apps/app/src/lib/publicActions.ts', () => ({ sharePublicUrl: vi.fn() }));
+vi.mock('../../apps/app/src/lib/voiceService.ts', () => ({
   voiceRecognition: {
     isNativeRuntime: vi.fn(() => false),
     hasBrowserSupport: vi.fn(() => false),
