@@ -23,7 +23,7 @@ import {
   Video
 } from 'lucide-react';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
-import { sendTeamChatMessage, type ChatAttachment } from '../lib/chatService';
+import type { ChatAttachment } from '../lib/chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from '../lib/chatLogic';
 import {
   addParentTeamMediaLink,
@@ -176,6 +176,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         path: null,
         thumbnailUrl: item.url
       };
+      const { sendTeamChatMessage } = await import('../lib/chatService');
       await sendTeamChatMessage({
         teamId,
         user: auth.user,
