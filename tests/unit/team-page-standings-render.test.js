@@ -85,6 +85,29 @@ describe('team page league standings rendering', () => {
         expect(html).toContain('Open league page');
     });
 
+    it('does not highlight a fallback row when no standings match is found', () => {
+        const { renderLeagueOverviewBody } = buildLeagueStandingsRenderers();
+        const rows = [
+            { team: 'Wilcox', w: 5, l: 0, t: 0, pct: '1.000', pf: 99, pa: 50, pd: 49 },
+            { team: 'Blue Valley A', w: 4, l: 1, t: 0, pct: '0.800', pf: 65, pa: 43, pd: 22 }
+        ];
+
+        const html = renderLeagueOverviewBody({
+            ok: true,
+            rows,
+            match: null
+        }, {
+            leagueUrl: 'https://example.com/standings'
+        });
+
+        expect(html).toContain('Wilcox');
+        expect(html).toContain('Blue Valley A');
+        expect(html).not.toContain('bg-primary-50/70');
+        expect(html).not.toContain('text-primary-800">Wilcox');
+        expect(html).not.toContain('text-primary-800">Blue Valley A');
+        expect(html).toContain('Open league page');
+    });
+
     it('preserves the fallback message and external link when standings fail to load', () => {
         const { renderLeagueOverviewBody } = buildLeagueStandingsRenderers();
 

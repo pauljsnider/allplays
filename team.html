@@ -1096,7 +1096,7 @@
 
             return `
                 <div class="space-y-3">
-                    ${renderStandingsTable(leagueSnapshot.rows, leagueSnapshot.match || row, [
+                    ${renderStandingsTable(leagueSnapshot.rows, leagueSnapshot.match || null, [
                         { key: 'team', label: 'Team' },
                         { key: 'w', label: 'W' },
                         { key: 'l', label: 'L' },
