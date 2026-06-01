@@ -12,6 +12,9 @@ vi.mock('../../js/db.js', () => ({
     getPublicTrackingItems: vi.fn(),
     getTeam: vi.fn(),
     updateTeam: vi.fn(),
+    getEvents: vi.fn(),
+    updateEvent: vi.fn(),
+    updateGame: vi.fn(),
     grantScorekeeperAccess: vi.fn(),
     inviteAdmin: vi.fn(),
     addTeamAdminEmail: vi.fn(),
@@ -37,7 +40,7 @@ vi.mock('../../apps/app/src/lib/authService', () => ({
 
 import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { getDocs } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, updateTeam } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 describe('React app team detail model', () => {
@@ -99,6 +102,12 @@ describe('React app team detail model', () => {
 
     it('normalizes and saves team schedule reminder defaults with the legacy payload', async () => {
         updateTeam.mockResolvedValue(undefined);
+        getEvents.mockResolvedValue([
+            { id: 'game-1', type: 'game', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled' },
+            { id: 'practice-1', type: 'practice', date: new Date('2100-06-02T18:00:00Z'), status: 'cancelled' }
+        ]);
+        updateGame.mockResolvedValue(undefined);
+        updateEvent.mockResolvedValue(undefined);
 
         const saved = await saveTeamScheduleNotificationsForApp(' team-1 ', { enabled: false, reminderHours: 99, delivery: 'email' });
 
@@ -108,6 +117,28 @@ describe('React app team detail model', () => {
                 reminderHours: 24,
                 delivery: 'team_chat'
             }
+        });
+        expect(getEvents).toHaveBeenCalledWith('team-1');
+        expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', {
+            scheduleNotifications: expect.objectContaining({
+                enabled: false,
+                reminderHours: 24,
+                delivery: 'team_chat',
+                reminderStatus: 'disabled',
+                nextReminderAt: null,
+                lastAction: 'updated'
+            })
+        });
+        expect(updateEvent).toHaveBeenCalledWith('team-1', 'practice-1', {
+            scheduleNotifications: expect.objectContaining({
+                enabled: false,
+                reminderHours: 24,
+                delivery: 'team_chat',
+                reminderStatus: 'canceled',
+                nextReminderAt: null,
+                reminderCanceled: true,
+                lastAction: 'cancelled'
+            })
         });
         expect(saved).toMatchObject({
             enabled: false,

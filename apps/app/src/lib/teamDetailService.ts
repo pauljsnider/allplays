@@ -9,6 +9,9 @@ import {
   getPublicTrackingItems,
   getTeam,
   updateTeam,
+  getEvents,
+  updateEvent,
+  updateGame,
   grantScorekeeperAccess,
   inviteAdmin,
   addTeamAdminEmail,
@@ -17,7 +20,7 @@ import {
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
 import { collection, db, getDocs, query, where } from '../../../../js/firebase.js';
-import { describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
+import { buildScheduleNotificationMetadata, describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
@@ -415,13 +418,38 @@ export async function saveTeamScheduleNotificationsForApp(teamId: string, settin
   const normalizedTeamId = cleanString(teamId);
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   const normalizedSettings = normalizeTeamScheduleNotifications(settings);
+  const teamScheduleNotifications = {
+    enabled: normalizedSettings.enabled,
+    reminderHours: normalizedSettings.reminderHours,
+    delivery: normalizedSettings.delivery
+  };
+
   await updateTeam(normalizedTeamId, {
-    scheduleNotifications: {
-      enabled: normalizedSettings.enabled,
-      reminderHours: normalizedSettings.reminderHours,
-      delivery: normalizedSettings.delivery
-    }
+    scheduleNotifications: teamScheduleNotifications
   });
+
+  const events = await Promise.resolve(getEvents(normalizedTeamId)).catch(() => []);
+  for (const event of Array.isArray(events) ? events : []) {
+    const eventId = cleanString(event?.id || event?.gameId);
+    if (!eventId) continue;
+    const eventType = cleanString(event?.type).toLowerCase() === 'practice' ? 'practice' : 'game';
+    const isCanceled = ['cancelled', 'canceled'].includes(cleanString(event?.status).toLowerCase()) || event?.deleted === true;
+    const payload = {
+      scheduleNotifications: buildScheduleNotificationMetadata({
+        settings: teamScheduleNotifications,
+        action: isCanceled ? 'cancelled' : 'updated',
+        eventDate: event?.date,
+        canceled: isCanceled
+      })
+    };
+
+    if (eventType === 'practice') {
+      await updateEvent(normalizedTeamId, eventId, payload);
+    } else {
+      await updateGame(normalizedTeamId, eventId, payload);
+    }
+  }
+
   return normalizedSettings;
 }
 
