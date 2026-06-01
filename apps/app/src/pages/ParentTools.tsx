@@ -11,6 +11,7 @@ import {
   DollarSign,
   Download,
   ExternalLink,
+  KeyRound,
   Loader2,
   RefreshCw,
   Share2,
@@ -19,6 +20,7 @@ import {
   Users
 } from 'lucide-react';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
+import { redeemSignedInInvite } from '../lib/inviteRedemption';
 import {
   buildParentScheduleIcs,
   createParentFamilyShare,
@@ -139,18 +141,24 @@ function AccessTool({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+
+  const loadAccessModel = async () => {
+    const model = await loadParentAccessModel(auth.user);
+    setTeams(model.teams);
+    setRequests(model.requests);
+    setSelectedTeamId((current) => current || model.teams[0]?.id || '');
+  };
 
   const refresh = async () => {
     setLoading(true);
     setError('');
     setMessage('');
     try {
-      const model = await loadParentAccessModel(auth.user);
-      setTeams(model.teams);
-      setRequests(model.requests);
-      setSelectedTeamId((current) => current || model.teams[0]?.id || '');
+      await loadAccessModel();
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load team access.');
     } finally {
@@ -188,6 +196,33 @@ function AccessTool({ auth }: { auth: AuthState }) {
     };
   }, [selectedTeamId]);
 
+  const redeem = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!auth.user?.uid) {
+      setError('Sign in to redeem an invite code.');
+      return;
+    }
+
+    setRedeeming(true);
+    setError('');
+    setMessage('');
+    try {
+      const result = await redeemSignedInInvite({
+        userId: auth.user.uid,
+        code: redeemCode,
+        email: auth.user.email,
+        refresh: auth.refresh
+      });
+      await loadAccessModel();
+      setRedeemCode('');
+      setMessage(result.message);
+    } catch (redeemError: any) {
+      setError(redeemError?.message || 'Unable to redeem this invite code.');
+    } finally {
+      setRedeeming(false);
+    }
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!selectedTeamId || !selectedPlayerId) {
@@ -200,8 +235,7 @@ function AccessTool({ auth }: { auth: AuthState }) {
     try {
       await submitParentAccessRequest(selectedTeamId, selectedPlayerId, relation);
       setMessage('Access request sent.');
-      const model = await loadParentAccessModel(auth.user);
-      setRequests(model.requests);
+      await loadAccessModel();
     } catch (submitError: any) {
       setError(submitError?.message || 'Unable to send access request.');
     } finally {
@@ -212,49 +246,71 @@ function AccessTool({ auth }: { auth: AuthState }) {
   return (
     <div className="space-y-3">
       <section className="app-card p-4">
-        <ToolHeader icon={Shield} title="Request player access" detail="Use this when you do not have an invite code." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
+        <ToolHeader icon={Shield} title="Request player access" detail="Use this when you do not have an invite code." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading || redeeming}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
         {error ? <Status tone="error" message={error} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
         {loading ? <LoadingBlock label="Loading teams" /> : (
-          <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
-            <label className="min-w-0">
-              <span className="app-label">Team</span>
-              <select className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
-                {teams.length ? teams.map((team) => (
-                  <option key={team.id} value={team.id}>{team.name}{team.sport ? ` - ${team.sport}` : ''}</option>
-                )) : <option value="">No public teams</option>}
-              </select>
-            </label>
-            <label className="min-w-0">
-              <span className="app-label">Player</span>
-              <select className="auth-input mt-1" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)} disabled={!selectedTeamId || loadingPlayers}>
-                {loadingPlayers ? <option value="">Loading players...</option> : players.length ? players.map((player) => (
-                  <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>
-                )) : <option value="">No players found</option>}
-              </select>
-            </label>
-            <label className="min-w-0">
-              <span className="app-label">Relationship</span>
-              <select className="auth-input mt-1" value={relation} onChange={(event) => setRelation(event.target.value)}>
-                <option value="Parent">Parent</option>
-                <option value="Guardian">Guardian</option>
-                <option value="Grandparent">Grandparent</option>
-                <option value="Family">Family</option>
-              </select>
-            </label>
-            <button type="submit" className="primary-button lg:col-span-3" disabled={saving || loadingPlayers || !selectedTeamId || !selectedPlayerId}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Shield className="h-4 w-4" aria-hidden="true" />}
-              Send request
-            </button>
-          </form>
+          <>
+            <form className="mt-3 rounded-2xl border border-primary-100 bg-primary-50/60 p-3" onSubmit={redeem}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <label className="min-w-0 flex-1">
+                  <span className="app-label">Invite code</span>
+                  <input
+                    className="auth-input mt-1 text-center font-mono uppercase tracking-[0.3em]"
+                    value={redeemCode}
+                    onChange={(event) => setRedeemCode(event.target.value.toUpperCase())}
+                    maxLength={8}
+                    placeholder="XXXXXXXX"
+                    disabled={redeeming || saving}
+                  />
+                </label>
+                <button type="submit" className="primary-button sm:min-w-[10rem]" disabled={redeeming || saving}>
+                  {redeeming ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
+                  {redeeming ? 'Redeeming...' : 'Redeem code'}
+                </button>
+              </div>
+              <p className="mt-2 text-xs font-semibold text-gray-600">Already have an 8-character player invite? Redeem it here and stay in Parent Tools.</p>
+            </form>
+            <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
+              <label className="min-w-0">
+                <span className="app-label">Team</span>
+                <select className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+                  {teams.length ? teams.map((team) => (
+                    <option key={team.id} value={team.id}>{team.name}{team.sport ? ` - ${team.sport}` : ''}</option>
+                  )) : <option value="">No public teams</option>}
+                </select>
+              </label>
+              <label className="min-w-0">
+                <span className="app-label">Player</span>
+                <select className="auth-input mt-1" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)} disabled={!selectedTeamId || loadingPlayers}>
+                  {loadingPlayers ? <option value="">Loading players...</option> : players.length ? players.map((player) => (
+                    <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>
+                  )) : <option value="">No players found</option>}
+                </select>
+              </label>
+              <label className="min-w-0">
+                <span className="app-label">Relationship</span>
+                <select className="auth-input mt-1" value={relation} onChange={(event) => setRelation(event.target.value)}>
+                  <option value="Parent">Parent</option>
+                  <option value="Guardian">Guardian</option>
+                  <option value="Grandparent">Grandparent</option>
+                  <option value="Family">Family</option>
+                </select>
+              </label>
+              <button type="submit" className="primary-button lg:col-span-3" disabled={saving || redeeming || loadingPlayers || !selectedTeamId || !selectedPlayerId}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Shield className="h-4 w-4" aria-hidden="true" />}
+                Send request
+              </button>
+            </form>
+          </>
         )}
       </section>
 
       <section className="app-card p-4">
-        <ToolHeader icon={Users} title="Access requests" detail="Pending and decided requests from your account." action={<Link to="/accept-invite" className="secondary-button !min-h-9 text-xs">Accept invite</Link>} />
+        <ToolHeader icon={Users} title="Access requests" detail="Pending and decided requests from your account." action={<Link to="/accept-invite" className="secondary-button !min-h-9 text-xs">Open full invite flow</Link>} />
         <div className="mt-3 grid gap-2 md:grid-cols-2">
           {requests.length ? requests.map((request) => <AccessRequestCard key={request.id || `${request.teamId}-${request.playerId}`} request={request} />) : (
-            <EmptyState icon={Shield} title="No requests yet" detail="Invite codes can still be redeemed from Accept invite." />
+            <EmptyState icon={Shield} title="No requests yet" detail="Invite codes can be redeemed here, or you can open the full invite flow." />
           )}
         </div>
       </section>

@@ -12,6 +12,7 @@ import {
   redeemInviteForUser,
   rememberPendingInvite
 } from '../lib/authService';
+import { getValidatedInviteCode, normalizeInviteCode, redeemSignedInInvite } from '../lib/inviteRedemption';
 import type { AuthState } from '../lib/types';
 
 export function AcceptInvite({ auth }: { auth: AuthState }) {
@@ -48,14 +49,13 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   }, []);
 
   async function redeem(codeToRedeem: string) {
+    const normalizedCode = normalizeInviteCode(codeToRedeem);
     if (!auth.user) {
-      const normalizedCode = codeToRedeem.trim().toUpperCase();
       rememberPendingInvite(normalizedCode, inviteType);
       navigate(`${buildInviteAuthUrl(normalizedCode, inviteType)}&mode=login`);
       return;
     }
 
-    const normalizedCode = codeToRedeem.trim().toUpperCase();
     const key = `${auth.user.uid}:${normalizedCode}`;
     if (processedKeyRef.current === key) {
       return;
@@ -66,12 +66,15 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
     setMessage('Processing invite...');
 
     try {
-      const result = await redeemInviteForUser(auth.user.uid, normalizedCode, auth.user.email);
-      await auth.refresh();
-      clearPendingInvite();
+      const result = await redeemSignedInInvite({
+        userId: auth.user.uid,
+        code: normalizedCode,
+        email: auth.user.email,
+        refresh: auth.refresh
+      });
       setState('success');
-      setMessage(result?.message || 'Invite accepted.');
-      scheduleRedirect(mapLegacyRedirectToAppRoute(result?.redirectUrl));
+      setMessage(result.message);
+      scheduleRedirect(result.redirectPath);
     } catch (error: any) {
       processedKeyRef.current = '';
       setState('error');
@@ -92,13 +95,12 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
 
   const handleManualSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    const normalizedCode = manualCode.trim().toUpperCase();
-    if (!normalizedCode || normalizedCode.length !== 8) {
+    try {
+      await redeem(getValidatedInviteCode(manualCode));
+    } catch (error: any) {
       setState('error');
-      setMessage('Please enter a valid 8-character invite code.');
-      return;
+      setMessage(error?.message || 'Please enter a valid 8-character invite code.');
     }
-    await redeem(normalizedCode);
   };
 
   const handleEmailLink = async (event: FormEvent) => {
