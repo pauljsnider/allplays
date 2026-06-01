@@ -11,6 +11,7 @@ import {
     setCertificateDefaults,
     listCertificateAssets,
     listCertificateBatches,
+    getCertificateBatch,
     listCertificates,
     listCertificatesForPlayer,
     createCertificateBatch,
@@ -20,7 +21,7 @@ import {
     getCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=32';
+} from '../db.js?v=33';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=8';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=4';
 import { TEMPLATES } from './templates.js?v=2';
@@ -1528,7 +1529,20 @@ async function loadCertificatesForSavedBatch(batch) {
 }
 
 async function openSavedBatch(batchId) {
-    const batch = state.savedBatches.find((item) => item.id === batchId);
+    let batch = state.savedBatches.find((item) => item.id === batchId);
+    if (!batch && !state.demoMode && !state.certificatePersistenceUnavailable) {
+        try {
+            batch = await getCertificateBatch(state.teamId, batchId);
+            if (batch) {
+                upsertSavedBatch(batch);
+            }
+        } catch (error) {
+            if (!isPermissionError(error)) throw error;
+            state.certificatePersistenceUnavailable = true;
+            showAlert('Saved certificate data could not be loaded. You can still create, edit, export, and print certificates.', 'warning');
+            return;
+        }
+    }
     if (!batch) {
         showAlert('Saved run could not be found.', 'warning');
         return;

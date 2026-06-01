@@ -4742,6 +4742,12 @@ export async function updateCertificateBatch(teamId, batchId, data = {}) {
     await writeCertificateBatchAudit(teamId, batchId, { action: data.status === 'published' ? 'published' : 'updated' });
 }
 
+export async function getCertificateBatch(teamId, batchId) {
+    if (!teamId || !batchId) return null;
+    const snap = await getDoc(doc(db, 'teams', teamId, 'certificateBatches', batchId));
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
 export async function listCertificateBatches(teamId, options = {}) {
     if (!teamId) return [];
     const batchesRef = collection(db, 'teams', teamId, 'certificateBatches');
