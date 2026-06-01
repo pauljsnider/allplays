@@ -1,0 +1,142 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ParentTools } from './ParentTools';
+import type { AuthState } from '../lib/types';
+
+const parentToolsServiceMocks = vi.hoisted(() => ({
+    buildParentScheduleIcs: vi.fn(),
+    createParentFamilyShare: vi.fn(),
+    createParentHouseholdMemberInvite: vi.fn(),
+    downloadIcs: vi.fn(),
+    getAppleCalendarFeedUrl: vi.fn(),
+    getCalendarEventShareText: vi.fn(),
+    getGoogleCalendarFeedUrl: vi.fn(),
+    getPrivateTeamCalendarFeedUrl: vi.fn(),
+    initiateParentTeamFeeCheckout: vi.fn(),
+    loadFamilyShareModel: vi.fn(),
+    loadParentAccessModel: vi.fn(),
+    loadParentAccessPlayers: vi.fn(),
+    loadParentCalendarTools: vi.fn(),
+    loadParentCertificates: vi.fn(),
+    loadParentFeesForApp: vi.fn(),
+    loadParentHouseholdInviteModel: vi.fn(),
+    loadParentRegistrations: vi.fn(),
+    revokeParentFamilyShare: vi.fn(),
+    submitParentAccessRequest: vi.fn(),
+    updateParentFamilyShareCalendars: vi.fn()
+}));
+
+const inviteRedemptionMocks = vi.hoisted(() => ({
+    redeemSignedInInvite: vi.fn()
+}));
+
+vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
+vi.mock('../lib/inviteRedemption', () => inviteRedemptionMocks);
+vi.mock('../lib/publicActions', () => ({
+    openPublicUrl: vi.fn(),
+    sharePublicUrl: vi.fn()
+}));
+
+const auth: AuthState = {
+    user: {
+        uid: 'parent-1',
+        email: 'parent@example.com',
+        displayName: 'Parent One',
+        roles: ['parent'],
+        parentOf: []
+    },
+    profile: null,
+    loading: false,
+    error: null,
+    roles: ['parent'],
+    isParent: true,
+    isCoach: false,
+    isAdmin: false,
+    isPlatformAdmin: false,
+    refresh: vi.fn().mockResolvedValue(null),
+    signOut: vi.fn().mockResolvedValue(undefined)
+};
+
+function renderParentTools() {
+    return render(
+        <MemoryRouter initialEntries={['/parent-tools/access']}>
+            <Routes>
+                <Route path="/parent-tools/:toolId" element={<ParentTools auth={auth} />} />
+                <Route path="/accept-invite" element={<div>Accept invite route</div>} />
+            </Routes>
+        </MemoryRouter>
+    );
+}
+
+describe('ParentTools access', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        parentToolsServiceMocks.loadParentAccessModel.mockResolvedValue({
+            teams: [{ id: 'team-1', name: 'Bears', sport: 'Soccer' }],
+            requests: []
+        });
+        parentToolsServiceMocks.loadParentAccessPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Sam Player', number: '12' }
+        ]);
+        parentToolsServiceMocks.submitParentAccessRequest.mockResolvedValue(undefined);
+        inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
+            code: 'AB12CD34',
+            redirectPath: '/home',
+            message: 'Invite accepted.'
+        });
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    it('redeems an invite inline and stays on parent tools', async () => {
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
+
+        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+        expect(inviteRedemptionMocks.redeemSignedInInvite).toHaveBeenCalledWith({
+            userId: 'parent-1',
+            code: 'AB12CD34',
+            email: 'parent@example.com',
+            refresh: auth.refresh
+        });
+        expect(screen.queryByText('Accept invite route')).toBeNull();
+        expect(screen.getByRole('button', { name: 'Redeem code' })).toBeTruthy();
+    });
+
+    it('shows inline redeem errors without breaking the request form', async () => {
+        inviteRedemptionMocks.redeemSignedInInvite.mockRejectedValue(new Error('Invite code expired.'));
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'expired1' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
+
+        expect(await screen.findByText('Invite code expired.')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Send request' })).toBeTruthy();
+    });
+
+    it('still submits request access after the redeem panel is added', async () => {
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        await screen.findByRole('option', { name: '#12 Sam Player' });
+        const submitButton = screen.getByRole('button', { name: 'Send request' });
+        expect(submitButton.hasAttribute('disabled')).toBe(false);
+        fireEvent.click(submitButton);
+
+        expect(await screen.findByText('Access request sent.')).toBeTruthy();
+        expect(parentToolsServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
+
+        const requestsSection = screen.getByText('Access requests').closest('section');
+        expect(requestsSection).toBeTruthy();
+        if (!requestsSection) throw new Error('Requests section not found');
+        expect(within(requestsSection).getByText('No requests yet')).toBeTruthy();
+    });
+});
