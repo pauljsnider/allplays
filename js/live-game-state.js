@@ -80,8 +80,7 @@ export function resolveGoalSportTrackerProfile({ trackerMode = '', game = null, 
   if (mode === 'simple') return goalSportProfile;
 
   const hasExplicitStatTrackerConfig = !!String(game?.statTrackerConfigId || '').trim();
-  const hasResolvedStatTrackerConfig = !!String(config?.id || '').trim();
-  return hasExplicitStatTrackerConfig || hasResolvedStatTrackerConfig ? null : goalSportProfile;
+  return hasExplicitStatTrackerConfig ? null : goalSportProfile;
 }
 
 export function resolveLiveStatColumns({ columns = [], configs = [], game = null, team = null } = {}) {
