@@ -386,6 +386,7 @@ describe('React app TeamMedia team chat posting', () => {
 
     expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1);
     expect(sendButton.disabled).toBe(true);
+    expect(sendButton.textContent).toContain('Posting');
     expect(container.textContent).toContain('Posting');
 
     await act(async () => {

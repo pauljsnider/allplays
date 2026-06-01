@@ -59,6 +59,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [renamingItemId, setRenamingItemId] = useState('');
   const [movingItemId, setMovingItemId] = useState('');
   const [postingItemId, setPostingItemId] = useState('');
+  const postingItemIdRef = useRef('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -156,8 +157,9 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   };
 
   const handlePostItemToChat = async (item: TeamMediaItem, caption = '') => {
-    if (!teamId || !auth.user || !item?.id || postingItemId) return false;
+    if (!teamId || !auth.user || !item?.id || postingItemIdRef.current) return false;
 
+    postingItemIdRef.current = item.id;
     setPostingItemId(item.id);
     setError('');
     setMessage('');
@@ -188,6 +190,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       setError(postError?.message || 'Unable to post photo to team chat. Try again.');
       return false;
     } finally {
+      postingItemIdRef.current = '';
       setPostingItemId('');
     }
   };
@@ -532,7 +535,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               item={item}
               onStatus={(tone, msg) => tone === 'error' ? setError(msg) : setMessage(msg)}
               canManage={model.canManage}
-              canPostToChat={model.canPostChat && Boolean(auth.user)}
+              canPostToChat={model.canPostChat && model.canContribute && Boolean(auth.user)}
               currentUserId={auth.user?.uid || ''}
               folders={model.folders}
               currentFolderId={activeFolder?.id || ''}
@@ -843,7 +846,7 @@ function TeamMediaItemCard({
             <div className="mt-2 flex gap-2">
               <button type="button" className="primary-button !h-8 !min-h-8 !px-2 !text-xs" onClick={postToTeamChat} disabled={posting}>
                 {posting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" />}
-                Send to chat
+                {posting ? 'Posting' : 'Send to chat'}
               </button>
               <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => setIsPosting(false)} disabled={posting}>Cancel</button>
             </div>
