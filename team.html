@@ -1035,6 +1035,44 @@
             `;
         }
 
+        function renderStandingsTable(rows, highlightedRow, columns, emptyMessage) {
+            const safeRows = Array.isArray(rows) ? rows : [];
+            const safeColumns = Array.isArray(columns) ? columns : [];
+
+            if (safeRows.length === 0 || safeColumns.length === 0) {
+                return `<p class="text-sm text-gray-500">${escapeHtml(emptyMessage || 'No standings available')}</p>`;
+            }
+
+            return `
+                <div class="overflow-x-auto rounded-xl border border-gray-200">
+                    <table class="min-w-full divide-y divide-gray-200 text-left">
+                        <thead class="bg-gray-50">
+                            <tr class="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                ${safeColumns.map((column) => `<th class="px-3 py-2.5">${escapeHtml(column.label)}</th>`).join('')}
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 bg-white">
+                            ${safeRows.map((row) => {
+                                const isHighlighted = row === highlightedRow;
+                                return `
+                                    <tr class="${isHighlighted ? 'bg-primary-50/70' : 'bg-white'}">
+                                        ${safeColumns.map((column) => {
+                                            const rawValue = typeof column.value === 'function' ? column.value(row) : row?.[column.key];
+                                            const value = rawValue == null || rawValue === '' ? '—' : rawValue;
+                                            const textClass = column.emphasize || (column.key === 'team' && isHighlighted)
+                                                ? 'font-semibold text-primary-800'
+                                                : (column.key === 'team' ? 'font-medium text-gray-900' : 'text-gray-700');
+                                            return `<td class="px-3 py-2.5 text-sm whitespace-nowrap ${textClass}">${escapeHtml(value)}</td>`;
+                                        }).join('')}
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
         function renderLeagueOverviewBody(leagueSnapshot, team) {
             const sourceUrl = team?.leagueUrl ? escapeHtml(team.leagueUrl) : '';
             if (!sourceUrl) {
@@ -1057,12 +1095,19 @@
             }
 
             return `
-                <div class="mb-2">
-                    <div class="text-2xl md:text-3xl font-bold text-gray-900">${escapeHtml(row.record)}</div>
-                    <div class="text-xs text-gray-600">${escapeHtml(row.team)} • PCT ${escapeHtml(row.pct || 'N/A')}</div>
+                <div class="space-y-3">
+                    ${renderStandingsTable(leagueSnapshot.rows, leagueSnapshot.match || null, [
+                        { key: 'team', label: 'Team' },
+                        { key: 'w', label: 'W' },
+                        { key: 'l', label: 'L' },
+                        { key: 't', label: 'T' },
+                        { key: 'pct', label: 'PCT' },
+                        { key: 'pf', label: 'PF' },
+                        { key: 'pa', label: 'PA' },
+                        { key: 'pd', label: 'PD' }
+                    ], 'No standings available')}
+                    <a class="text-xs text-primary-600 hover:underline inline-block" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
                 </div>
-                <div class="text-xs text-gray-500">PF ${row.pf} · PA ${row.pa} · PD ${row.pd}</div>
-                <a class="text-xs text-primary-600 hover:underline mt-2 inline-block" target="_blank" rel="noopener noreferrer" href="${sourceUrl}">Open league page</a>
             `;
         }
 
@@ -1103,19 +1148,29 @@
                 return '<p class="text-sm text-gray-500">No completed games yet for native standings</p>';
             }
 
-            const row = snapshot.match;
             const mode = snapshot.config?.rankingMode === 'win_pct' ? 'Win %' : 'Points';
-            const rankLabel = typeof row.rank === 'number' ? `#${row.rank}` : 'N/A';
 
             return `
-                <div class="mb-2">
-                    <div class="text-2xl md:text-3xl font-bold text-gray-900">${escapeHtml(row.record)}</div>
-                    <div class="text-xs text-gray-600">${escapeHtml(row.team)} • ${escapeHtml(rankLabel)} • ${escapeHtml(mode)}</div>
+                <div class="space-y-3">
+                    ${renderStandingsTable(snapshot.rows, snapshot.match, [
+                        { key: 'rank', label: 'Rank', value: (row) => typeof row?.rank === 'number' ? `#${row.rank}` : '—' },
+                        { key: 'team', label: 'Team' },
+                        { key: 'gp', label: 'GP' },
+                        { key: 'w', label: 'W' },
+                        { key: 'l', label: 'L' },
+                        { key: 't', label: 'T' },
+                        { key: 'points', label: mode === 'Win %' ? 'PCT' : 'PTS', value: (row) => mode === 'Win %' ? (Number(row?.winPct) || 0).toFixed(3) : (Number(row?.points) || 0) },
+                        { key: 'pf', label: 'PF' },
+                        { key: 'pa', label: 'PA' },
+                        { key: 'pd', label: 'PD' }
+                    ], 'No completed games yet for native standings')}
+                    <div class="text-xs text-gray-500">
+                        Highlighted row shows the current team.
+                    </div>
+                    <div class="text-xs text-gray-400">
+                        Computed from completed in-app games
+                    </div>
                 </div>
-                <div class="text-xs text-gray-500">
-                    PTS ${Number(row.points) || 0} · PCT ${(Number(row.winPct) || 0).toFixed(3)} · PF ${Number(row.pf) || 0} · PA ${Number(row.pa) || 0} · PD ${Number(row.pd) || 0}
-                </div>
-                <div class="text-xs text-gray-400 mt-2">Computed from completed in-app games</div>
             `;
         }
 
