@@ -14,8 +14,12 @@ const chatMocks = vi.hoisted(() => ({
     loadChatRecipientOptions: vi.fn(),
     loadChatTeamContext: vi.fn(),
     loadOlderTeamChatMessages: vi.fn(),
+    loadTeamEmailDrafts: vi.fn(),
     loadSentTeamEmails: vi.fn(),
+    loadTeamEmailTemplates: vi.fn(),
     markTeamChatRead: vi.fn(),
+    saveTeamEmailDraft: vi.fn(),
+    saveTeamEmailTemplate: vi.fn(),
     sendAllPlaysChatAnswer: vi.fn(),
     sendTeamChatMessage: vi.fn(),
     sendTeamEmailMessage: vi.fn(),
@@ -298,6 +302,7 @@ beforeEach(() => {
     });
     chatMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
     chatMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 12, status: 'queued' });
+    chatMocks.loadTeamEmailDrafts.mockResolvedValue([]);
     chatMocks.loadSentTeamEmails.mockResolvedValue([
         {
             id: 'email-1',
@@ -308,6 +313,9 @@ beforeEach(() => {
             status: 'queued'
         }
     ]);
+    chatMocks.loadTeamEmailTemplates.mockResolvedValue([]);
+    chatMocks.saveTeamEmailDraft.mockResolvedValue(undefined);
+    chatMocks.saveTeamEmailTemplate.mockResolvedValue(undefined);
     chatMocks.sendAllPlaysChatAnswer.mockResolvedValue(undefined);
     chatMocks.toggleTeamChatReaction.mockResolvedValue(true);
     chatMocks.editTeamChatMessage.mockResolvedValue(undefined);

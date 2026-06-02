@@ -47,6 +47,7 @@ export type ChatRecipientOption = {
   id: string;
   name: string;
   detail?: string;
+  email?: string;
 };
 
 export type ChatFormattedPart = {
