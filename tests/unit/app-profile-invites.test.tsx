@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import React from '../../apps/app/node_modules/react/index.js';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '../../apps/app/node_modules/@testing-library/react/dist/index.js';
+import { MemoryRouter } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from '../../apps/app/src/pages/Profile';
 import type { AuthState } from '../../apps/app/src/lib/types';
