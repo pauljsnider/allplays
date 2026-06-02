@@ -622,10 +622,15 @@ service cloud.firestore {
     // Chat access: team owner, team admins, global admins, or any parent linked to the team
     function isOfficialGameUpdate() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'homeScore',
+        'awayScore',
         'officiatingSlots',
         'officiatingCoverageStatus',
-        'officiatingUpdatedAt'
-      ]);
+        'officiatingUpdatedAt',
+        'scoreUpdatedAt',
+        'scoreUpdatedBy'
+      ]) &&
+      isScoreMetadataAttributionValid();
     }
 
     function isOfficialForGame() {

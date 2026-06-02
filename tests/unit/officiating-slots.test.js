@@ -103,9 +103,15 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain('Result submitted');
         expect(officialsSource).toContain("slot.status !== 'accepted' || !hasGameStarted(game) || isCancelled(game)");
         expect(officialsSource).toContain("document.getElementById('officials-status').textContent = 'Result saved.';");
-        expect(officialsSource).toContain("'./js/db.js?v=33'");
+        expect(officialsSource).toContain("'./js/db.js?v=34'");
         expect(dbSource).toContain('export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser)');
         expect(dbSource).toContain("throw new Error('Cancelled games cannot accept final results.');");
+        expect(dbSource).toContain('homeScore: Number.isFinite(officiatingResult.homeScore) ? officiatingResult.homeScore : 0');
+        expect(dbSource).toContain('awayScore: Number.isFinite(officiatingResult.awayScore) ? officiatingResult.awayScore : 0');
+        expect(dbSource).toContain("scoreUpdatedBy: String(official?.uid || '').trim()");
+        expect(readFirestoreRules()).toContain("'homeScore'");
+        expect(readFirestoreRules()).toContain("'awayScore'");
+        expect(readFirestoreRules()).toContain("'scoreUpdatedBy'");
     });
 
     it('limits open self-assignment slot claims to eligible team participants', () => {
