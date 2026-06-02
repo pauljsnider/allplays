@@ -13,7 +13,11 @@ const profileServiceMocks = vi.hoisted(() => ({
   loadNotificationTeams: vi.fn(),
   loadProfileAccessCodes: vi.fn(),
   loadProfileDocument: vi.fn(),
-  normalizeNotificationPreferences: vi.fn(),
+  normalizeNotificationPreferences: vi.fn((preferences?: any) => ({
+    liveChat: preferences?.liveChat !== false,
+    liveScore: preferences?.liveScore === true,
+    schedule: preferences?.schedule !== false
+  })),
   requestAccountMerge: vi.fn(),
   saveNotificationPreferences: vi.fn(),
   saveProfileDocument: vi.fn(),
@@ -24,11 +28,13 @@ const publicActionsMocks = vi.hoisted(() => ({
   sharePublicUrl: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/profileService', () => profileServiceMocks);
-vi.mock('../../apps/app/src/lib/publicActions', () => publicActionsMocks);
-vi.mock('../../apps/app/src/lib/pushService', () => ({
+const pushServiceMocks = vi.hoisted(() => ({
   enablePushNotificationsForUser: vi.fn()
 }));
+
+vi.mock('../../apps/app/src/lib/profileService', () => profileServiceMocks);
+vi.mock('../../apps/app/src/lib/publicActions', () => publicActionsMocks);
+vi.mock('../../apps/app/src/lib/pushService', () => pushServiceMocks);
 vi.mock('../../apps/app/src/lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktopWeb: false })
 }));
@@ -73,11 +79,7 @@ describe('Profile invites', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('scrollTo', vi.fn());
-    profileServiceMocks.normalizeNotificationPreferences.mockImplementation((preferences?: any) => ({
-      liveChat: preferences?.liveChat !== false,
-      liveScore: preferences?.liveScore === true,
-      schedule: preferences?.schedule !== false
-    }));
+    profileServiceMocks.normalizeNotificationPreferences.mockClear();
     profileServiceMocks.loadProfileDocument.mockResolvedValue({
       fullName: 'Pat Parent',
       phone: '555-0100',
@@ -87,6 +89,7 @@ describe('Profile invites', () => {
       updatedAt: { seconds: 1717200000 }
     });
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([]);
+    pushServiceMocks.enablePushNotificationsForUser.mockResolvedValue(undefined);
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadParentTeams.mockResolvedValue([]);
     profileServiceMocks.requestAccountMerge.mockResolvedValue(undefined);
@@ -153,5 +156,30 @@ describe('Profile invites', () => {
 
     fireEvent.click(within(activeCard).getByRole('button', { name: /Share saved invite link/ }));
     expect(await screen.findByText('Share cancelled.')).toBeTruthy();
+  });
+
+  it('reuses loaded alert preferences for game-day alerts without an extra fetch', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: false, liveScore: false, schedule: false });
+    profileServiceMocks.saveNotificationPreferences.mockImplementation(async (_userId, _teamId, preferences) => preferences);
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on game-day alerts' }));
+
+    await waitFor(() => expect(pushServiceMocks.enablePushNotificationsForUser).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledTimes(1));
+    expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1);
+    expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', {
+      liveChat: false,
+      liveScore: true,
+      schedule: true
+    });
+    expect(await screen.findByText('Game-day alerts are on for this team.')).toBeTruthy();
   });
 });

@@ -456,7 +456,9 @@ export function Profile({ auth }: { auth: AuthState }) {
     setNotificationStatus(null);
 
     try {
-      const currentPreferences = await loadNotificationPreferences(user.uid, teamId);
+      const currentPreferences = loadedNotificationTeamId === teamId
+        ? notificationPreferences
+        : await loadNotificationPreferences(user.uid, teamId);
       const nextPreferences = normalizeNotificationPreferences({
         ...currentPreferences,
         ...gameDayDefaultPreferences
@@ -465,6 +467,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       await enablePushNotificationsForUser(user.uid);
       const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
       setNotificationPreferences(saved);
+      setLoadedNotificationTeamId(teamId);
       setNotificationStatus({ message: 'Game-day alerts are on for this team.', tone: 'success' });
     } catch (error: any) {
       setNotificationStatus({ message: error?.message || 'Failed to turn on game-day alerts.', tone: 'error' });

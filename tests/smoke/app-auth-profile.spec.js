@@ -35,6 +35,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             uploads: [],
             saves: [],
             notificationSaves: [],
+            notificationLoads: [],
             push: 0,
             accessCodes: []
         };
@@ -233,7 +234,8 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     ];
                 }
 
-                export async function loadNotificationPreferences() {
+                export async function loadNotificationPreferences(userId, teamId) {
+                    window.__appProfileCalls.notificationLoads.push({ userId, teamId });
                     return { liveChat: true, liveScore: false, schedule: true };
                 }
 
@@ -553,6 +555,7 @@ test('profile exposes account, notification, invite, verification, password, upl
         uploads: window.__appProfileCalls.uploads,
         saves: window.__appProfileCalls.saves,
         push: window.__appProfileCalls.push,
+        notificationLoads: window.__appProfileCalls.notificationLoads,
         notificationSaves: window.__appProfileCalls.notificationSaves,
         accessCodes: window.__appProfileCalls.accessCodes,
         shares: window.__appShareCalls,
@@ -562,6 +565,9 @@ test('profile exposes account, notification, invite, verification, password, upl
     }))).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
         push: 1,
+        notificationLoads: [
+            { userId: 'user-1', teamId: 'team-1' }
+        ],
         notificationSaves: [
             { userId: 'user-1', teamId: 'team-1', preferences: { liveChat: true, liveScore: true, schedule: true } },
             { userId: 'user-1', teamId: 'team-1', preferences: { liveChat: false, liveScore: true, schedule: true } }
