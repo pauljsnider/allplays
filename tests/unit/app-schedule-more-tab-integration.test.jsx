@@ -10,8 +10,10 @@ const scheduleMocks = vi.hoisted(() => ({
     createParentScheduleRideOffer: vi.fn(),
     loadParentPracticePacket: vi.fn(),
     loadParentSchedule: vi.fn(),
+    loadParentScheduleEventDetail: vi.fn(),
     loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
     loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
+    loadHomeScoringPlayers: vi.fn().mockResolvedValue([]),
     loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
     markParentPracticePacketComplete: vi.fn(),
     publishGamePlanForApp: vi.fn(),
@@ -28,6 +30,7 @@ const scheduleMocks = vi.hoisted(() => ({
         isFull: false
     })),
     publishLiveScoreUpdateEvent: vi.fn(),
+    recordPlayerScoringStat: vi.fn(),
     saveScheduledGameLineupDraftForApp: vi.fn(),
     updateGameScore: vi.fn(),
     updateParentScheduleRideRequestStatus: vi.fn()
@@ -162,6 +165,7 @@ async function clickButton(container, text) {
 beforeEach(() => {
     vi.clearAllMocks();
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
+    scheduleMocks.loadParentScheduleEventDetail.mockImplementation(async () => scheduleMocks.loadParentSchedule());
     scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
     scheduleMocks.publishGamePlanForApp.mockResolvedValue({ gamePlan: {}, notificationError: null });
     scheduleMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
@@ -246,6 +250,26 @@ describe('React app ScheduleEventDetail More tab integration', () => {
                 })
             ]
         });
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            events: [
+                event({
+                    id: 'practice-1',
+                    type: 'practice',
+                    title: 'Practice',
+                    location: 'North Field',
+                    practiceSessionId: 'session-1',
+                    practiceHomePacket: {
+                        totalMinutes: 20,
+                        blocks: [
+                            { type: 'Drill', duration: 10, drillTitle: 'Ball Mastery', description: 'Touches at home.' },
+                            { type: 'Drill', duration: 10, drillTitle: 'Passing Wall', description: 'Two-touch passing.' }
+                        ]
+                    },
+                    practiceHomePacketSummary: '2 drills · 20 min',
+                    notes: 'Bring water'
+                })
+            ]
+        });
         scheduleMocks.loadParentPracticePacket.mockResolvedValue({
             sessionId: 'session-1',
             teamId: 'team-1',
@@ -300,7 +324,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
     });
 
     it('renders the completed game More tab with replay and report actions wired to public URLs', async () => {
-        scheduleMocks.loadParentSchedule.mockResolvedValue({
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
             events: [
                 event({
                     liveStatus: 'completed',
@@ -313,6 +337,8 @@ describe('React app ScheduleEventDetail More tab integration', () => {
 
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
+        expect(scheduleMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(auth.user, { teamId: 'team-1', eventId: 'game-1' });
+        expect(scheduleMocks.loadParentSchedule).not.toHaveBeenCalled();
         await clickButton(container, 'Game');
         await waitForText(container, 'Game hub');
 
