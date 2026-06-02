@@ -123,7 +123,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     onClose();
     setQuery('');
     if (item.route) {
-      await preloadSearchRoute(item.route);
+      void preloadSearchRoute(item.route);
       navigate(item.route);
       return;
     }

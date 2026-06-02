@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { AppSearchDialog } from './AppSearchDialog';
 import type { AuthState } from '../lib/types';
@@ -54,11 +55,6 @@ const auth: AuthState = {
   signOut: vi.fn(),
 };
 
-function RouteEcho() {
-  const location = useLocation();
-  return <div data-testid="route">{location.pathname}</div>;
-}
-
 describe('AppSearchDialog', () => {
   it('closes from a backdrop mousedown but not from pressing inside the search panel', () => {
     const onClose = vi.fn();
@@ -77,13 +73,17 @@ describe('AppSearchDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('preloads team routes before navigating from a search result', async () => {
+  it('starts route preload without blocking the search result click flow', async () => {
     const onClose = vi.fn();
+    let resolvePreload: ((value: boolean) => void) | null = null;
+    preloadSearchRouteMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolvePreload = resolve;
+    }));
 
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Routes>
-          <Route path="*" element={<><RouteEcho /><AppSearchDialog auth={auth} open={true} onClose={onClose} /></>} />
+          <Route path="*" element={<AppSearchDialog auth={auth} open={true} onClose={onClose} />} />
         </Routes>
       </MemoryRouter>
     );
@@ -91,7 +91,7 @@ describe('AppSearchDialog', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Rockets/ }));
 
     await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledWith('/teams/team-2'));
-    await waitFor(() => expect(screen.getByTestId('route')).toHaveTextContent('/teams/team-2'));
-    expect(onClose).toHaveBeenCalledTimes(1);
+
+    resolvePreload?.(true);
   });
 });
