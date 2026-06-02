@@ -7,16 +7,17 @@ export function validateCalendarImportUrl(url) {
         };
     }
 
-    if (!trimmedUrl.includes('.ics')) {
+    const isWebcalUrl = /^webcals?:\/\//i.test(trimmedUrl);
+    if (!isWebcalUrl && !trimmedUrl.toLowerCase().includes('.ics')) {
         return {
             isValid: false,
-            message: 'Please enter a valid .ics calendar URL (must include .ics)'
+            message: 'Please enter a valid .ics calendar URL or webcal subscription URL'
         };
     }
 
     return {
         isValid: true,
-        normalizedUrl: trimmedUrl
+        normalizedUrl: trimmedUrl.replace(/^webcals?:\/\//i, 'https://')
     };
 }
 
