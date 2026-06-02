@@ -999,18 +999,18 @@ function AccessCodeCard({ code, onCopy, onShare }: { code: AccessCodeRecord; onC
           <span className={`rounded-full px-2 py-1 text-[11px] font-black uppercase tracking-[0.04em] ${code.used ? 'bg-gray-200 text-gray-700' : 'bg-emerald-100 text-emerald-700'}`}>{code.used ? 'Used' : 'Active'}</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(code.code, 'Code copied.')} aria-label={`Copy invite code ${code.code}`}>
+          <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(code.code, 'Code copied.')} aria-label={`Copy saved invite code ${code.code}`}>
             <Copy className="h-4 w-4" aria-hidden="true" />
             <span className="text-xs font-black">Copy code</span>
           </button>
           {!code.used ? (
-            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onShare(code.code, { email: code.email, phone: code.phone })} aria-label={`Share invite link for ${code.code}`}>
+            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onShare(code.code, { email: code.email, phone: code.phone })} aria-label={`Share saved invite link for ${code.code}`}>
               <Share2 className="h-4 w-4" aria-hidden="true" />
               <span className="text-xs font-black">Share link</span>
             </button>
           ) : null}
           {!code.used ? (
-            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(signupLink, 'Link copied.')} aria-label={`Copy invite link for ${code.code}`}>
+            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(signupLink, 'Link copied.')} aria-label={`Copy saved invite link for ${code.code}`}>
               <Link2 className="h-4 w-4" aria-hidden="true" />
               <span className="text-xs font-black">Copy link</span>
             </button>

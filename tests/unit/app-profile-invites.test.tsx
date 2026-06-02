@@ -130,28 +130,28 @@ describe('Profile invites', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
 
-    const shareButtons = await screen.findAllByRole('button', { name: /Share invite link/ });
+    const shareButtons = await screen.findAllByRole('button', { name: /Share saved invite link/ });
     expect(shareButtons).toHaveLength(1);
-    const copyLinkButtons = screen.getAllByRole('button', { name: /Copy invite link/ });
+    const copyLinkButtons = screen.getAllByRole('button', { name: /Copy saved invite link/ });
     expect(copyLinkButtons).toHaveLength(1);
-    const copyCodeButtons = screen.getAllByRole('button', { name: /Copy invite code/ });
+    const copyCodeButtons = screen.getAllByRole('button', { name: /Copy saved invite code/ });
     expect(copyCodeButtons).toHaveLength(2);
 
     const activeCard = shareButtons[0].closest('div.rounded-xl') as HTMLElement | null;
-    const usedCard = screen.getByLabelText('Copy invite code USED1234').closest('div.rounded-xl') as HTMLElement | null;
+    const usedCard = screen.getByLabelText('Copy saved invite code USED1234').closest('div.rounded-xl') as HTMLElement | null;
     if (!activeCard || !usedCard) {
       throw new Error('Expected invite cards to render');
     }
 
-    expect(within(activeCard).getByRole('button', { name: /Share invite link/ })).toBeTruthy();
-    expect(within(activeCard).getByRole('button', { name: /Copy invite link/ })).toBeTruthy();
-    expect(within(usedCard).queryByRole('button', { name: /Share invite link/ })).toBeNull();
-    expect(within(usedCard).queryByRole('button', { name: /Copy invite link/ })).toBeNull();
+    expect(within(activeCard).getByRole('button', { name: /Share saved invite link/ })).toBeTruthy();
+    expect(within(activeCard).getByRole('button', { name: /Copy saved invite link/ })).toBeTruthy();
+    expect(within(usedCard).queryByRole('button', { name: /Share saved invite link/ })).toBeNull();
+    expect(within(usedCard).queryByRole('button', { name: /Copy saved invite link/ })).toBeNull();
 
-    fireEvent.click(within(activeCard).getByRole('button', { name: /Share invite link/ }));
+    fireEvent.click(within(activeCard).getByRole('button', { name: /Share saved invite link/ }));
     expect(await screen.findByText('Link copied.')).toBeTruthy();
 
-    fireEvent.click(within(activeCard).getByRole('button', { name: /Share invite link/ }));
+    fireEvent.click(within(activeCard).getByRole('button', { name: /Share saved invite link/ }));
     expect(await screen.findByText('Share cancelled.')).toBeTruthy();
   });
 });
