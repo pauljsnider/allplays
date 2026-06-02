@@ -82,10 +82,28 @@ describe('officiating slots', () => {
     it('loads assigned official games even when private team details are unavailable', () => {
         const officialsSource = readOfficialsPage();
 
+        expect(officialsSource).toContain('My Assignments');
         expect(officialsSource).not.toContain('[currentTeam, currentUserProfile] = await Promise.all');
         expect(officialsSource).toContain("console.warn('[officials] Team details are unavailable; continuing with assignment-only access.', error);");
         expect(officialsSource).toContain('canClaimOpenSlots = false;');
         expect(officialsSource).toContain('await refresh();');
+    });
+
+    it('adds quick final score submission and submitted-result state to accepted official assignments', () => {
+        const officialsSource = readOfficialsPage();
+        const dbSource = readDbSource();
+
+        expect(officialsSource).toContain('submitOfficiatingAssignmentResult');
+        expect(officialsSource).toContain('hasSubmittedOfficiatingResult');
+        expect(officialsSource).toContain('validateOfficiatingResultSubmission');
+        expect(officialsSource).toContain('official-result-form');
+        expect(officialsSource).toContain('Quick final score');
+        expect(officialsSource).toContain('Result submitted');
+        expect(officialsSource).toContain("slot.status !== 'accepted' || !hasGameStarted(game) || isCancelled(game)");
+        expect(officialsSource).toContain("document.getElementById('officials-status').textContent = 'Result saved.';");
+        expect(officialsSource).toContain("'./js/db.js?v=33'");
+        expect(dbSource).toContain('export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser)');
+        expect(dbSource).toContain("throw new Error('Cancelled games cannot accept final results.');");
     });
 
     it('limits open self-assignment slot claims to eligible team participants', () => {
@@ -99,7 +117,6 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain("container.innerHTML = '';");
         expect(officialsSource).toContain('find open officiating slots');
         expect(officialsSource).not.toContain('Open self-assignment slots are only available to team owners, admins, or parents.');
-        expect(officialsSource).toContain("'./js/db.js?v=32'");
         expect(dbSource).toContain('function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, user = {})');
         expect(dbSource).toContain("throw new Error('Only team owners, admins, or parents can claim open officiating slots.');");
         expect(dbSource).toContain('officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds)');

@@ -6,7 +6,10 @@ import {
   getAssignedOfficiatingSlots,
   getOfficiatingAssignmentConflictWarnings,
   getOpenOfficiatingSlots,
+  hasSubmittedOfficiatingResult,
   normalizeOfficiatingSlots,
+  updateOfficiatingSlotResult,
+  validateOfficiatingResultSubmission,
   updateOfficiatingSlotResponse
 } from '../../js/officiating-utils.js';
 
@@ -106,6 +109,47 @@ describe('officiating assignment helpers', () => {
     expect(() => claimOfficiatingSlot([
       { id: 'slot-1', position: 'Referee', officialEmail: 'taken@example.com', status: 'pending' }
     ], 'slot-1', { uid: 'user-1' })).toThrow('already filled');
+  });
+
+  it('validates and stores submitted officiating results for accepted assignments', () => {
+    expect(validateOfficiatingResultSubmission({ homeScore: '', awayScore: '2' })).toMatchObject({
+      valid: false,
+      errors: ['Enter a home score.']
+    });
+
+    const updated = updateOfficiatingSlotResult([
+      { id: 'slot-1', position: 'Referee', officialEmail: 'ref@example.com', status: 'accepted' }
+    ], 'slot-1', {
+      homeScore: '3',
+      awayScore: '1',
+      notes: 'Match ended after regulation.'
+    }, {
+      uid: 'official-1',
+      email: 'Ref@Example.com',
+      displayName: 'Jordan Ref'
+    }, {
+      submittedAt: '2026-06-02T08:50:00.000Z'
+    });
+
+    expect(updated[0].submittedResult).toMatchObject({
+      homeScore: 3,
+      awayScore: 1,
+      notes: 'Match ended after regulation.',
+      submittedAt: '2026-06-02T08:50:00.000Z',
+      submittedByUserId: 'official-1',
+      submittedByEmail: 'ref@example.com',
+      submittedByName: 'Jordan Ref'
+    });
+    expect(hasSubmittedOfficiatingResult(updated[0])).toBe(true);
+  });
+
+  it('rejects result submission for unaccepted assignments', () => {
+    expect(() => updateOfficiatingSlotResult([
+      { id: 'slot-1', position: 'Referee', officialEmail: 'ref@example.com', status: 'pending' }
+    ], 'slot-1', {
+      homeScore: 1,
+      awayScore: 0
+    })).toThrow('Only accepted assignments can submit final results.');
   });
 
   it('warns when the same official has overlapping or back-to-back assignments', () => {

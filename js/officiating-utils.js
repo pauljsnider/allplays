@@ -1,5 +1,60 @@
 export const OFFICIATING_ASSIGNMENT_STATUSES = ['pending', 'accepted', 'declined', 'cant_make', 'needs_review', 'open'];
 
+function toWholeNumber(value) {
+    if (value === '' || value === null || value === undefined) return null;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || numeric < 0) return null;
+    return numeric;
+}
+
+export function normalizeOfficiatingResult(result = null) {
+    if (!result || typeof result !== 'object') return null;
+
+    const homeScore = toWholeNumber(result.homeScore);
+    const awayScore = toWholeNumber(result.awayScore);
+    if (homeScore === null || awayScore === null) return null;
+
+    return {
+        homeScore,
+        awayScore,
+        notes: String(result.notes || '').trim(),
+        submittedAt: result.submittedAt || null,
+        submittedByUserId: String(result.submittedByUserId || '').trim(),
+        submittedByEmail: normalizeOfficialEmail(result.submittedByEmail || ''),
+        submittedByName: String(result.submittedByName || '').trim()
+    };
+}
+
+export function hasSubmittedOfficiatingResult(slot = {}) {
+    return !!normalizeOfficiatingResult(slot?.submittedResult || null);
+}
+
+export function validateOfficiatingResultSubmission(result = {}) {
+    const homeScoreProvided = result.homeScore !== '' && result.homeScore !== null && result.homeScore !== undefined;
+    const awayScoreProvided = result.awayScore !== '' && result.awayScore !== null && result.awayScore !== undefined;
+    const homeScore = toWholeNumber(result.homeScore);
+    const awayScore = toWholeNumber(result.awayScore);
+    const errors = [];
+
+    if (!homeScoreProvided) errors.push('Enter a home score.');
+    else if (homeScore === null) errors.push('Home score must be a whole number 0 or greater.');
+
+    if (!awayScoreProvided) errors.push('Enter an away score.');
+    else if (awayScore === null) errors.push('Away score must be a whole number 0 or greater.');
+
+    return {
+        valid: errors.length === 0,
+        errors,
+        value: errors.length === 0
+            ? {
+                homeScore,
+                awayScore,
+                notes: String(result.notes || '').trim()
+            }
+            : null
+    };
+}
+
 export function normalizeOfficialEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
@@ -38,7 +93,8 @@ export function normalizeOfficiatingSlots(slots = []) {
                 selfAssigned: slot?.selfAssigned === true,
                 scheduleReviewRequired,
                 scheduleReviewReason: scheduleReviewRequired ? String(slot?.scheduleReviewReason || 'Game schedule changed').trim() : '',
-                scheduleReviewMarkedAt: scheduleReviewRequired ? (slot?.scheduleReviewMarkedAt || null) : null
+                scheduleReviewMarkedAt: scheduleReviewRequired ? (slot?.scheduleReviewMarkedAt || null) : null,
+                submittedResult: normalizeOfficiatingResult(slot?.submittedResult || null)
             };
         })
         .filter(Boolean);
@@ -244,5 +300,35 @@ export function claimOfficiatingSlot(slots = [], slotId, official = {}) {
     });
 
     if (!claimed) throw new Error('Officiating slot not found');
+    return nextSlots;
+}
+
+export function updateOfficiatingSlotResult(slots = [], slotId, result = {}, official = {}, options = {}) {
+    const submission = validateOfficiatingResultSubmission(result);
+    if (!submission.valid) {
+        throw new Error(submission.errors[0] || 'Enter a valid final score.');
+    }
+
+    let updated = false;
+    const nextSlots = normalizeOfficiatingSlots(slots).map((slot) => {
+        if (slot.id !== slotId) return slot;
+        if (slot.status !== 'accepted') {
+            throw new Error('Only accepted assignments can submit final results.');
+        }
+
+        updated = true;
+        return {
+            ...slot,
+            submittedResult: {
+                ...submission.value,
+                submittedAt: options.submittedAt || new Date().toISOString(),
+                submittedByUserId: String(official?.uid || '').trim(),
+                submittedByEmail: normalizeOfficialEmail(official?.email || ''),
+                submittedByName: String(official?.displayName || official?.name || official?.email || 'Official').trim()
+            }
+        };
+    });
+
+    if (!updated) throw new Error('Officiating slot not found');
     return nextSlots;
 }
