@@ -254,7 +254,7 @@ describe('React app auth/profile capability parity', () => {
         expect(profilePage).toContain("disabled={busy === 'push-device' || !user}");
     });
 
-    it('reloads current team preferences before turning on game-day alerts', () => {
+    it('refreshes team preferences before turning on game-day alerts', () => {
         const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
         const turnOnStart = profilePage.indexOf('const turnOnGameDayAlerts = async () => {');
         const turnOnEnd = profilePage.indexOf('  const sendPasswordReset = async () => {');
@@ -267,6 +267,7 @@ describe('React app auth/profile capability parity', () => {
         expect(turnOnGameDayAlerts.indexOf('await enablePushNotificationsForUser(user.uid);')).toBeLessThan(
             turnOnGameDayAlerts.indexOf('saveNotificationPreferences(user.uid, teamId, nextPreferences)')
         );
+        expect(turnOnGameDayAlerts).toContain('setLoadedNotificationTeamId(teamId);');
         expect(turnOnGameDayAlerts).toContain('saveNotificationPreferences(user.uid, teamId, nextPreferences)');
     });
 
