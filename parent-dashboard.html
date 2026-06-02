@@ -2838,21 +2838,20 @@
                 .replace(/,/g, '\\,')
                 .replace(/\r?\n/g, '\\n');
 
-            // Dedupe events by id to avoid duplicates for multiple kids on same team
-            const seen = new Set();
-            events.forEach((event) => {
-                const eventKey = `${event.teamId}-${event.id}-${event.date.getTime()}`;
-                if (seen.has(eventKey)) return;
-                seen.add(eventKey);
-
+            getCalendarEntries(events).forEach((event) => {
                 const date = event.date instanceof Date ? event.date : new Date(event.date);
                 const start = formatIcsDate(date);
                 const endDate = new Date(date.getTime() + 60 * 60 * 1000); // default 1 hour
                 const end = formatIcsDate(endDate);
+                const childNames = Array.isArray(event.childNames) && event.childNames.length
+                    ? event.childNames
+                    : [event.childName].filter(Boolean);
+                const childLabel = childNames.length ? childNames.join(', ') : 'Player';
                 const summary = event.type === 'practice'
-                    ? `${event.childName} - Practice`
-                    : `${event.childName} vs ${event.opponent || 'TBD'}`;
-                const uid = `${event.id || eventKey}@allplays`;
+                    ? `${childLabel} - Practice`
+                    : `${childLabel} vs ${event.opponent || 'TBD'}`;
+                const uidKey = `${event.teamId || ''}-${event.id || ''}-${date.getTime()}`;
+                const uid = `${event.id || uidKey}@allplays`;
                 lines.push(
                     'BEGIN:VEVENT',
                     `UID:${uid}`,
@@ -2861,7 +2860,7 @@
                     `DTEND:${end}`,
                     `SUMMARY:${escapeIcsText(summary)}`,
                     `LOCATION:${escapeIcsText(event.location || 'TBD')}`,
-                    `DESCRIPTION:${escapeIcsText(`For ${event.childName}`)}`,
+                    `DESCRIPTION:${escapeIcsText(`For ${childLabel}`)}`,
                     'END:VEVENT'
                 );
             });
