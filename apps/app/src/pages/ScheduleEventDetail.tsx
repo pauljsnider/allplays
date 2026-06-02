@@ -7,7 +7,7 @@ import {
   claimParentScheduleAssignmentSlot,
   createParentScheduleRideOffer,
   loadParentPracticePacket,
-  loadParentSchedule,
+  loadParentScheduleEventDetail,
   loadParentScheduleAssignments,
   loadParentScheduleRideOffers,
   loadStaffRsvpReminderPreview,
@@ -198,11 +198,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     setError(null);
     setStatusMessage(null);
     try {
-      const result = await loadParentSchedule(auth.user);
-      const matching = result.events.filter((event) => event.teamId === decodedTeamId && event.id === decodedEventId);
-      setEvents(matching);
-      if (!selectedChildId && matching[0]?.childId) {
-        setSelectedChildId(matching[0].childId);
+      const result = await loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId });
+      setEvents(result.events);
+      if (!selectedChildId && result.events[0]?.childId) {
+        setSelectedChildId(result.events[0].childId);
       }
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load event details.');

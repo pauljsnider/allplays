@@ -112,6 +112,11 @@ export type ParentScheduleLoadOptions = {
   expandStaffPlayers?: boolean;
 };
 
+export type ParentScheduleEventDetailLoadOptions = ParentScheduleLoadOptions & {
+  teamId: string;
+  eventId: string;
+};
+
 type FirestoreDocument = Record<string, any> & { id: string };
 
 export type StaffRsvpReminderSendResult = StaffRsvpReminderPreview & {
@@ -1598,6 +1603,94 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
   return events;
 }
 
+async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
+  const expandStaffPlayers = options.expandStaffPlayers !== false;
+  const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+  const byTeam = new Map<string, ParentScheduleChild[]>();
+  children.forEach((child) => {
+    if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
+    byTeam.get(child.teamId)?.push(child);
+  });
+
+  const staffTeams = await loadStaffTeams(user).catch(() => []);
+  await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
+    const teamId = compactString(team?.id);
+    if (!teamId) return;
+    const teamName = compactString(team?.name) || teamId;
+    const existingPlayerIds = new Set((byTeam.get(teamId) || []).map((child) => child.playerId));
+    if (!expandStaffPlayers) {
+      if (!existingPlayerIds.size) {
+        byTeam.set(teamId, [{
+          teamId,
+          teamName,
+          playerId: `staff-team-${teamId}`,
+          playerName: 'Team schedule'
+        }]);
+      }
+      return;
+    }
+    const players = await loadPlayers(teamId).catch(() => []);
+    const staffChildren = (Array.isArray(players) ? players : [])
+      .filter((player: any) => player?.active !== false && compactString(player?.id) && !existingPlayerIds.has(compactString(player.id)))
+      .map((player: any) => ({
+        teamId,
+        teamName,
+        playerId: compactString(player.id),
+        playerName: compactString(player.name) || compactString(player.displayName) || 'Player'
+      }));
+    if (staffChildren.length) {
+      byTeam.set(teamId, [...(byTeam.get(teamId) || []), ...staffChildren]);
+    }
+  });
+
+  return { children, byTeam, staffTeams };
+}
+
+export async function loadParentScheduleEventDetail(user: AuthUser | null, options: ParentScheduleEventDetailLoadOptions): Promise<ParentScheduleLoadResult> {
+  const requestedTeamId = compactString(options?.teamId);
+  const requestedEventId = compactString(options?.eventId);
+
+  if (!user?.uid || !requestedTeamId || !requestedEventId) {
+    return { children: [], events: [] };
+  }
+
+  const timer = startUxTimer('parent schedule event detail load');
+  const hydrateDetails = options.hydrateDetails !== false;
+  const expandStaffPlayers = options.expandStaffPlayers !== false;
+
+  try {
+    const profile = await loadProfileDocument(user.uid);
+    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { expandStaffPlayers });
+    const teamChildren = byTeam.get(requestedTeamId) || [];
+
+    if (!teamChildren.length) {
+      timer.end({ hydrateDetails, expandStaffPlayers, teamId: requestedTeamId, eventId: requestedEventId, childLinks: children.length, teams: byTeam.size, staffTeams: staffTeams.length, eventRows: 0 });
+      return { children, events: [] };
+    }
+
+    const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user);
+    const events = teamEvents.filter((event) => event.id === requestedEventId);
+    if (hydrateDetails && events.length) {
+      await hydrateEventDetails(events, user);
+    }
+    timer.end({
+      hydrateDetails,
+      expandStaffPlayers,
+      teamId: requestedTeamId,
+      eventId: requestedEventId,
+      childLinks: children.length,
+      teams: byTeam.size,
+      staffTeams: staffTeams.length,
+      teamEventRows: teamEvents.length,
+      eventRows: events.length
+    });
+    return { children, events };
+  } catch (error: any) {
+    timer.end({ hydrateDetails, expandStaffPlayers, teamId: requestedTeamId, eventId: requestedEventId, error: error?.message || 'Unable to load schedule event detail.' });
+    throw error;
+  }
+}
+
 export async function loadParentSchedule(user: AuthUser | null, options: ParentScheduleLoadOptions = {}): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) {
     return { children: [], events: [] };
@@ -1608,43 +1701,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const children = normalizeChildLinks(user, profile as Record<string, unknown>);
-    const byTeam = new Map<string, ParentScheduleChild[]>();
-    children.forEach((child) => {
-      if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
-      byTeam.get(child.teamId)?.push(child);
-    });
-
-    const staffTeams = await loadStaffTeams(user).catch(() => []);
-    await mapWithConcurrency(staffTeams, parentScheduleTeamConcurrency, async (team: any) => {
-      const teamId = compactString(team?.id);
-      if (!teamId) return;
-      const teamName = compactString(team?.name) || teamId;
-      const existingPlayerIds = new Set((byTeam.get(teamId) || []).map((child) => child.playerId));
-      if (!expandStaffPlayers) {
-        if (!existingPlayerIds.size) {
-          byTeam.set(teamId, [{
-            teamId,
-            teamName,
-            playerId: `staff-team-${teamId}`,
-            playerName: 'Team schedule'
-          }]);
-        }
-        return;
-      }
-      const players = await loadPlayers(teamId).catch(() => []);
-      const staffChildren = (Array.isArray(players) ? players : [])
-        .filter((player: any) => player?.active !== false && compactString(player?.id) && !existingPlayerIds.has(compactString(player.id)))
-        .map((player: any) => ({
-          teamId,
-          teamName,
-          playerId: compactString(player.id),
-          playerName: compactString(player.name) || compactString(player.displayName) || 'Player'
-        }));
-      if (staffChildren.length) {
-        byTeam.set(teamId, [...(byTeam.get(teamId) || []), ...staffChildren]);
-      }
-    });
+    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { expandStaffPlayers });
 
     const teamEntries = [...byTeam.entries()];
     const eventBatches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
