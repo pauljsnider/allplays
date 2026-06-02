@@ -112,9 +112,13 @@ describe('officiating slots', () => {
         expect(dbSource).toContain("status: 'completed'");
         expect(dbSource).toContain("liveStatus: 'completed'");
         expect(dbSource).toContain("scoreUpdatedBy: submittedResult.submittedByUserId || String(official?.uid || '').trim() || null");
-        expect(readFirestoreRules()).toContain("'homeScore'");
-        expect(readFirestoreRules()).toContain("'awayScore'");
-        expect(readFirestoreRules()).toContain("'scoreUpdatedBy'");
+        const rules = readFirestoreRules();
+        expect(rules).toContain("'homeScore'");
+        expect(rules).toContain("'awayScore'");
+        expect(rules).toContain("'status'");
+        expect(rules).toContain("'liveStatus'");
+        expect(rules).toContain("'scoreUpdatedBy'");
+        expect(rules).toMatch(/function isOfficialGameUpdate\(\) \{[\s\S]*'homeScore',[\s\S]*'awayScore',[\s\S]*'status',[\s\S]*'liveStatus',[\s\S]*'officiatingSlots',[\s\S]*'officiatingCoverageStatus',[\s\S]*'officiatingUpdatedAt',[\s\S]*'scoreUpdatedAt',[\s\S]*'scoreUpdatedBy'[\s\S]*\}/);
     });
 
     it('limits open self-assignment slot claims to eligible team participants', () => {
