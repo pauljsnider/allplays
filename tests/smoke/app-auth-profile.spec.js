@@ -479,7 +479,9 @@ test('signed-in invite and account action routes process existing site flows', a
     await page.getByRole('button', { name: 'Need another option?' }).click();
     await expect(page.getByRole('link', { name: 'Continue without verifying' })).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: 'Resend verification email' }).click();
-    await page.getByRole('button', { name: "I've verified, continue" }).click();
+    const continueAfterVerifyButton = page.getByRole('button', { name: "I've verified, continue" });
+    await expect(continueAfterVerifyButton).toBeVisible({ timeout: 15000 });
+    await continueAfterVerifyButton.click();
     expect(await page.evaluate(() => ({
         resend: window.__appAuthCalls.resendVerificationEmail,
         refresh: window.__appAuthCalls.reloadCurrentUser
