@@ -26,6 +26,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   const [email, setEmail] = useState(window.localStorage.getItem('emailForSignIn') || '');
   const [state, setState] = useState<'idle' | 'processing' | 'email-link' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
+  const [pendingRedirectPath, setPendingRedirectPath] = useState('');
   const processedKeyRef = useRef('');
   const redirectTimerRef = useRef<number | null>(null);
 
@@ -33,20 +34,24 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
     return buildInviteAuthUrl(code, inviteType);
   }, [code, inviteType]);
 
-  const scheduleRedirect = (path: string) => {
+  useEffect(() => {
+    if (!pendingRedirectPath) {
+      return undefined;
+    }
+
     if (redirectTimerRef.current !== null) {
       window.clearTimeout(redirectTimerRef.current);
     }
-    redirectTimerRef.current = window.setTimeout(() => navigate(path, { replace: true }), 700);
-  };
 
-  useEffect(() => {
+    redirectTimerRef.current = window.setTimeout(() => navigate(pendingRedirectPath, { replace: true }), 700);
+
     return () => {
       if (redirectTimerRef.current !== null) {
         window.clearTimeout(redirectTimerRef.current);
+        redirectTimerRef.current = null;
       }
     };
-  }, []);
+  }, [navigate, pendingRedirectPath]);
 
   async function redeem(codeToRedeem: string) {
     const normalizedCode = normalizeInviteCode(codeToRedeem);
@@ -74,7 +79,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       });
       setState('success');
       setMessage(result.message);
-      scheduleRedirect(result.redirectPath);
+      setPendingRedirectPath(result.redirectPath);
     } catch (error: any) {
       processedKeyRef.current = '';
       setState('error');
@@ -117,11 +122,11 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
         clearPendingInvite();
         setState('success');
         setMessage(inviteResult?.message || 'Invite accepted.');
-        scheduleRedirect(mapLegacyRedirectToAppRoute(inviteResult?.redirectUrl));
+        setPendingRedirectPath(mapLegacyRedirectToAppRoute(inviteResult?.redirectUrl));
       } else {
         setState('success');
         setMessage('Signed in successfully.');
-        scheduleRedirect('/home');
+        setPendingRedirectPath('/home');
       }
     } catch (error: any) {
       setState('error');
