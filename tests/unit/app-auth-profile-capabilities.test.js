@@ -254,17 +254,16 @@ describe('React app auth/profile capability parity', () => {
         expect(profilePage).toContain("disabled={busy === 'push-device' || !user}");
     });
 
-    it('reuses loaded team preferences before falling back to a fetch for game-day alerts', () => {
+    it('refreshes team preferences before turning on game-day alerts', () => {
         const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
         const turnOnStart = profilePage.indexOf('const turnOnGameDayAlerts = async () => {');
         const turnOnEnd = profilePage.indexOf('  const sendPasswordReset = async () => {');
         const turnOnGameDayAlerts = profilePage.slice(turnOnStart, turnOnEnd);
 
         expect(turnOnGameDayAlerts).toContain('const teamId = selectedTeamId;');
-        expect(turnOnGameDayAlerts).toContain('const currentPreferences = loadedNotificationTeamId === teamId');
-        expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
-        expect(turnOnGameDayAlerts).toContain(': await loadNotificationPreferences(user.uid, teamId);');
+        expect(turnOnGameDayAlerts).toContain('const currentPreferences = await loadNotificationPreferences(user.uid, teamId);');
         expect(turnOnGameDayAlerts).toContain('...currentPreferences,');
+        expect(turnOnGameDayAlerts).not.toContain('...notificationPreferences,');
         expect(turnOnGameDayAlerts.indexOf('await enablePushNotificationsForUser(user.uid);')).toBeLessThan(
             turnOnGameDayAlerts.indexOf('saveNotificationPreferences(user.uid, teamId, nextPreferences)')
         );

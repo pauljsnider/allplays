@@ -566,6 +566,7 @@ test('profile exposes account, notification, invite, verification, password, upl
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
         push: 1,
         notificationLoads: [
+            { userId: 'user-1', teamId: 'team-1' },
             { userId: 'user-1', teamId: 'team-1' }
         ],
         notificationSaves: [

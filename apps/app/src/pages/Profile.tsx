@@ -456,9 +456,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     setNotificationStatus(null);
 
     try {
-      const currentPreferences = loadedNotificationTeamId === teamId
-        ? notificationPreferences
-        : await loadNotificationPreferences(user.uid, teamId);
+      const currentPreferences = await loadNotificationPreferences(user.uid, teamId);
       const nextPreferences = normalizeNotificationPreferences({
         ...currentPreferences,
         ...gameDayDefaultPreferences

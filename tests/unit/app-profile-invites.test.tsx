@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '../../apps/app/node_modules/@testing-library/react/dist/index.js';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from '../../apps/app/src/pages/Profile';
@@ -158,9 +158,11 @@ describe('Profile invites', () => {
     expect(await screen.findByText('Share cancelled.')).toBeTruthy();
   });
 
-  it('reuses loaded alert preferences for game-day alerts without an extra fetch', async () => {
+  it('refreshes alert preferences before saving game-day alerts', async () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
-    profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: false, liveScore: false, schedule: false });
+    profileServiceMocks.loadNotificationPreferences
+      .mockResolvedValueOnce({ liveChat: false, liveScore: false, schedule: false })
+      .mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false });
     profileServiceMocks.saveNotificationPreferences.mockImplementation(async (_userId, _teamId, preferences) => preferences);
 
     renderProfile();
@@ -174,9 +176,9 @@ describe('Profile invites', () => {
 
     await waitFor(() => expect(pushServiceMocks.enablePushNotificationsForUser).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledTimes(1));
-    expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1);
+    expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2);
     expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', {
-      liveChat: false,
+      liveChat: true,
       liveScore: true,
       schedule: true
     });
