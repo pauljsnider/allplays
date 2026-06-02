@@ -577,6 +577,7 @@
                 teamName: child.teamName || '',
                 id: getCalendarEventTrackingId(event) || null,
                 calendarEventUid: event.uid || null,
+                sourceCalendarUrl: calUrl,
                 isDbGame: false,
                 isShareExtraCalendar: true,
                 childId: child.playerId,
@@ -689,7 +690,17 @@
       const date = rawDate?.toDate ? rawDate.toDate() : new Date(rawDate);
       const isoDate = Number.isNaN(date?.getTime?.()) ? '' : date.toISOString();
       const teamId = event?.isShareExtraCalendar ? '' : (event?.teamId || '');
-      return `${teamId}::${event?.id || ''}::${isoDate}::${event?.type || ''}`;
+      const trackingId = event?.id || '';
+      const fallbackIdentity = trackingId
+        ? ''
+        : [
+            event?.calendarEventUid || '',
+            event?.sourceCalendarUrl || '',
+            event?.title || '',
+            event?.opponent || '',
+            event?.location || ''
+          ].join('::');
+      return `${teamId}::${trackingId || fallbackIdentity}::${isoDate}::${event?.type || ''}`;
     }
 
     function getCalendarEntries(events) {

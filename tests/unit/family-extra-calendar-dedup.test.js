@@ -133,10 +133,51 @@ describe('family page extra calendar deduplication', () => {
         expect(ics).toContain('DESCRIPTION:For Avery\\, Blake');
     });
 
+    it('keeps share-token extra calendar events from different sources distinct when tracking ids are missing', () => {
+        const { getCalendarEntries, buildIcs } = createFamilyHooks();
+        const sharedDate = new Date('2026-06-15T18:00:00Z');
+        const events = [
+            {
+                type: 'practice',
+                date: sharedDate,
+                location: 'North Field',
+                teamId: 'team-1',
+                teamName: 'Falcons',
+                id: null,
+                calendarEventUid: null,
+                sourceCalendarUrl: 'https://calendar.example.com/one.ics',
+                isDbGame: false,
+                isShareExtraCalendar: true,
+                childId: 'child-1',
+                childName: 'Avery',
+                title: 'Summer Practice'
+            },
+            {
+                type: 'practice',
+                date: new Date(sharedDate),
+                location: 'North Field',
+                teamId: 'team-2',
+                teamName: 'Falcons',
+                id: null,
+                calendarEventUid: null,
+                sourceCalendarUrl: 'https://calendar.example.com/two.ics',
+                isDbGame: false,
+                isShareExtraCalendar: true,
+                childId: 'child-2',
+                childName: 'Blake',
+                title: 'Summer Practice'
+            }
+        ];
+
+        expect(getCalendarEntries(events)).toHaveLength(2);
+        expect(buildIcs(events).match(/BEGIN:VEVENT/g)).toHaveLength(2);
+    });
+
     it('marks share-token extra calendar events and reuses the shared dedup helper in list rendering', () => {
         const source = readFamilyPageSource();
 
         expect(source).toContain('isShareExtraCalendar: true');
+        expect(source).toContain('sourceCalendarUrl: calUrl');
         expect(source).toContain('const key = getScheduleEventDedupKey(game, d);');
         expect(source).toContain('const key = getScheduleEventDedupKey(event, d);');
     });
