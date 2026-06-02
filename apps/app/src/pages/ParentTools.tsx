@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -74,6 +74,12 @@ export function ParentTools({ auth }: { auth: AuthState }) {
   const { toolId = 'access' } = useParams();
   const navigate = useNavigate();
   const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;
+  const [visitedTools, setVisitedTools] = useState<ParentToolId[]>(() => activeTool ? [activeTool] : ['access']);
+
+  useEffect(() => {
+    if (!activeTool) return;
+    setVisitedTools((current) => (current.includes(activeTool) ? current : [...current, activeTool]));
+  }, [activeTool]);
 
   if (!activeTool) return <Navigate to="/parent-tools/access" replace />;
 
@@ -120,15 +126,20 @@ export function ParentTools({ auth }: { auth: AuthState }) {
         </div>
       </div>
 
-      {activeTool === 'access' ? <AccessTool auth={auth} /> : null}
-      {activeTool === 'household' ? <HouseholdInviteTool auth={auth} /> : null}
-      {activeTool === 'fees' ? <FeesTool auth={auth} /> : null}
-      {activeTool === 'calendar' ? <CalendarTool auth={auth} /> : null}
-      {activeTool === 'share' ? <FamilyShareTool auth={auth} /> : null}
-      {activeTool === 'registrations' ? <RegistrationsTool auth={auth} /> : null}
-      {activeTool === 'certificates' ? <CertificatesTool auth={auth} /> : null}
+      <KeepAliveTool active={activeTool === 'access'} mounted={visitedTools.includes('access')}><AccessTool auth={auth} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'household'} mounted={visitedTools.includes('household')}><HouseholdInviteTool auth={auth} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'fees'} mounted={visitedTools.includes('fees')}><FeesTool auth={auth} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'calendar'} mounted={visitedTools.includes('calendar')}><CalendarTool auth={auth} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'share'} mounted={visitedTools.includes('share')}><FamilyShareTool auth={auth} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'registrations'} mounted={visitedTools.includes('registrations')}><RegistrationsTool auth={auth} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'certificates'} mounted={visitedTools.includes('certificates')}><CertificatesTool auth={auth} /></KeepAliveTool>
     </div>
   );
+}
+
+function KeepAliveTool({ active, mounted, children }: { active: boolean; mounted: boolean; children: ReactNode }) {
+  if (!mounted) return null;
+  return <div hidden={!active}>{children}</div>;
 }
 
 function AccessTool({ auth }: { auth: AuthState }) {
