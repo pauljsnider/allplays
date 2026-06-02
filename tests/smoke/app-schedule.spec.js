@@ -367,6 +367,15 @@ async function mockScheduleModules(page, options = {}) {
                     return { status: 'cancelled', isCancelled: true };
                 }
 
+                export async function cancelPracticeOccurrenceForApp(event, user) {
+                    window.__scheduleCalls.practiceCancellations = (window.__scheduleCalls.practiceCancellations || []).concat({
+                        teamId: event?.teamId || null,
+                        eventId: event?.id || null,
+                        userId: user?.uid || null
+                    });
+                    return { status: 'cancelled', isCancelled: true };
+                }
+
                 export async function loadAutoFilledLineupDraftPreviewForApp(event, user, formationId) {
                     return {
                         formationId,
