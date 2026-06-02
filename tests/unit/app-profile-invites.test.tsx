@@ -38,6 +38,33 @@ vi.mock('../../apps/app/src/lib/pushService', () => pushServiceMocks);
 vi.mock('../../apps/app/src/lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktopWeb: false })
 }));
+vi.mock('lucide-react', () => {
+  const createIcon = (name: string) => (props: Record<string, unknown>) => React.createElement('svg', { ...props, 'data-icon': name });
+  return {
+    Bell: createIcon('Bell'),
+    ChevronDown: createIcon('ChevronDown'),
+    ChevronUp: createIcon('ChevronUp'),
+    CheckCircle2: createIcon('CheckCircle2'),
+    Clipboard: createIcon('Clipboard'),
+    Copy: createIcon('Copy'),
+    ImagePlus: createIcon('ImagePlus'),
+    KeyRound: createIcon('KeyRound'),
+    Link2: createIcon('Link2'),
+    Loader2: createIcon('Loader2'),
+    LogOut: createIcon('LogOut'),
+    Mail: createIcon('Mail'),
+    RefreshCw: createIcon('RefreshCw'),
+    Save: createIcon('Save'),
+    Send: createIcon('Send'),
+    Share2: createIcon('Share2'),
+    ShieldCheck: createIcon('ShieldCheck'),
+    Trash2: createIcon('Trash2'),
+    Upload: createIcon('Upload'),
+    UserCircle: createIcon('UserCircle'),
+    XCircle: createIcon('XCircle')
+  };
+});
+
 vi.mock('../../apps/app/src/lib/authService', () => ({
   describeAuthError: (error: any) => error?.message || 'Authentication failed.',
   reloadCurrentUser: vi.fn(),
