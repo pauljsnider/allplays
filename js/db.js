@@ -6512,8 +6512,8 @@ export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, 
         }
 
         transaction.update(docRef, {
-            homeScore: officiatingResult.homeScore,
-            awayScore: officiatingResult.awayScore,
+            homeScore: Number.isFinite(officiatingResult.homeScore) ? officiatingResult.homeScore : 0,
+            awayScore: Number.isFinite(officiatingResult.awayScore) ? officiatingResult.awayScore : 0,
             officiatingSlots,
             officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
             officiatingUpdatedAt: Timestamp.now(),
