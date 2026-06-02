@@ -303,6 +303,15 @@ export function claimOfficiatingSlot(slots = [], slotId, official = {}) {
     return nextSlots;
 }
 
+function doesOfficialMatchAssignedSlot(slot = {}, official = {}) {
+    const officialUserId = String(official?.uid || '').trim();
+    const officialEmail = normalizeOfficialEmail(official?.email || '');
+    if (!officialUserId && !officialEmail) return false;
+    if (slot.officialUserId && slot.officialUserId === officialUserId) return true;
+    if (slot.officialEmail && slot.officialEmail === officialEmail) return true;
+    return false;
+}
+
 export function updateOfficiatingSlotResult(slots = [], slotId, result = {}, official = {}, options = {}) {
     const submission = validateOfficiatingResultSubmission(result);
     if (!submission.valid) {
@@ -314,6 +323,9 @@ export function updateOfficiatingSlotResult(slots = [], slotId, result = {}, off
         if (slot.id !== slotId) return slot;
         if (slot.status !== 'accepted') {
             throw new Error('Only accepted assignments can submit final results.');
+        }
+        if (!doesOfficialMatchAssignedSlot(slot, official)) {
+            throw new Error('You can only submit a result for your own accepted assignment.');
         }
 
         updated = true;

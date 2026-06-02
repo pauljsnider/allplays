@@ -3071,6 +3071,7 @@
             `;
             row.dataset.slotId = slot.id || generateOfficiatingSlotId();
             row.dataset.officialUserId = slot.officialUserId || '';
+            row.dataset.submittedResult = slot.submittedResult ? JSON.stringify(slot.submittedResult) : '';
             row.querySelector('.officiating-official').addEventListener('change', (event) => {
                 const selectedOfficial = getDirectoryOfficial(event.target.value);
                 if (selectedOfficial) {
@@ -3113,6 +3114,16 @@
             }
         }
 
+        function parseStoredOfficiatingResult(value) {
+            if (!value) return null;
+            try {
+                return JSON.parse(value);
+            } catch (error) {
+                console.warn('Could not parse stored officiating result from schedule form row:', error);
+                return null;
+            }
+        }
+
         function getOfficiatingSlotsFromForm() {
             const rows = document.querySelectorAll('#officiating-slot-rows .officiating-slot-row');
             const slots = Array.from(rows).map(row => {
@@ -3125,7 +3136,8 @@
                     officialName: row.querySelector('.officiating-name').value.trim() || official?.name || '',
                     officialEmail: (row.querySelector('.officiating-email').value.trim() || official?.email || '').toLowerCase(),
                     officialUserId: row.dataset.officialUserId || '',
-                    status: row.querySelector('.officiating-status').value
+                    status: row.querySelector('.officiating-status').value,
+                    submittedResult: parseStoredOfficiatingResult(row.dataset.submittedResult || '')
                 };
             }).filter(slot => slot.position);
             return normalizeAssignmentOfficiatingSlots(slots);

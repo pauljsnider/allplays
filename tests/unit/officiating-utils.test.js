@@ -152,6 +152,18 @@ describe('officiating assignment helpers', () => {
     })).toThrow('Only accepted assignments can submit final results.');
   });
 
+  it('rejects result submission when the caller does not match the accepted slot', () => {
+    expect(() => updateOfficiatingSlotResult([
+      { id: 'slot-1', position: 'Referee', officialEmail: 'ref@example.com', officialUserId: 'official-1', status: 'accepted' }
+    ], 'slot-1', {
+      homeScore: 1,
+      awayScore: 0
+    }, {
+      uid: 'official-2',
+      email: 'other@example.com'
+    })).toThrow('You can only submit a result for your own accepted assignment.');
+  });
+
   it('warns when the same official has overlapping or back-to-back assignments', () => {
     const warnings = getOfficiatingAssignmentConflictWarnings({
       id: 'game-new',
