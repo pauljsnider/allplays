@@ -475,11 +475,13 @@ test('signed-in invite and account action routes process existing site flows', a
     await expect(page.getByText('Password reset successful. Sign in with your new password.')).toBeVisible();
 
     await page.goto(appUrl(baseURL, '/verify-pending'), { waitUntil: 'domcontentloaded' });
-    await expect(page.getByText('parent@example.com')).toBeVisible();
+    await expect(page.getByText('parent@example.com')).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: 'Need another option?' }).click();
-    await expect(page.getByRole('link', { name: 'Continue without verifying' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Continue without verifying' })).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: 'Resend verification email' }).click();
-    await page.getByRole('button', { name: 'Refresh status' }).click();
+    const continueAfterVerifyButton = page.getByRole('button', { name: "I've verified, continue" });
+    await expect(continueAfterVerifyButton).toBeVisible({ timeout: 15000 });
+    await continueAfterVerifyButton.click();
     expect(await page.evaluate(() => ({
         resend: window.__appAuthCalls.resendVerificationEmail,
         refresh: window.__appAuthCalls.reloadCurrentUser

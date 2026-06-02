@@ -6502,23 +6502,25 @@ export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, 
             throw new Error('Cancelled games cannot accept final results.');
         }
 
+        const timestamp = Timestamp.now();
         const officiatingSlots = updateOfficiatingSlotResult(game.officiatingSlots || [], slotId, result, official, {
-            submittedAt: Timestamp.now()
+            submittedAt: timestamp
         });
-        const updatedSlot = officiatingSlots.find((slot) => slot.id === slotId) || null;
-        const officiatingResult = updatedSlot?.submittedResult || null;
-        if (!officiatingResult) {
+        const submittedResult = officiatingSlots.find((slot) => slot.id === slotId)?.submittedResult;
+        if (!submittedResult) {
             throw new Error('Final result submission could not be recorded.');
         }
 
         transaction.update(docRef, {
-            homeScore: Number.isFinite(officiatingResult.homeScore) ? officiatingResult.homeScore : 0,
-            awayScore: Number.isFinite(officiatingResult.awayScore) ? officiatingResult.awayScore : 0,
+            homeScore: submittedResult.homeScore,
+            awayScore: submittedResult.awayScore,
+            status: 'completed',
+            liveStatus: 'completed',
+            scoreUpdatedAt: timestamp,
+            scoreUpdatedBy: submittedResult.submittedByUserId || String(official?.uid || '').trim() || null,
             officiatingSlots,
             officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
-            officiatingUpdatedAt: Timestamp.now(),
-            scoreUpdatedAt: Timestamp.now(),
-            scoreUpdatedBy: String(official?.uid || '').trim()
+            officiatingUpdatedAt: timestamp
         });
     });
 }

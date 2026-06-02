@@ -624,6 +624,8 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
         'homeScore',
         'awayScore',
+        'status',
+        'liveStatus',
         'officiatingSlots',
         'officiatingCoverageStatus',
         'officiatingUpdatedAt',

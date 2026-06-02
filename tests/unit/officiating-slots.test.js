@@ -103,15 +103,22 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain('Result submitted');
         expect(officialsSource).toContain("slot.status !== 'accepted' || !hasGameStarted(game) || isCancelled(game)");
         expect(officialsSource).toContain("document.getElementById('officials-status').textContent = 'Result saved.';");
-        expect(officialsSource).toContain("'./js/db.js?v=34'");
+        expect(officialsSource).toContain("'./js/db.js?v=35'");
+        expect(officialsSource).not.toContain("'./js/db.js?v=34'");
         expect(dbSource).toContain('export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser)');
         expect(dbSource).toContain("throw new Error('Cancelled games cannot accept final results.');");
-        expect(dbSource).toContain('homeScore: Number.isFinite(officiatingResult.homeScore) ? officiatingResult.homeScore : 0');
-        expect(dbSource).toContain('awayScore: Number.isFinite(officiatingResult.awayScore) ? officiatingResult.awayScore : 0');
-        expect(dbSource).toContain("scoreUpdatedBy: String(official?.uid || '').trim()");
-        expect(readFirestoreRules()).toContain("'homeScore'");
-        expect(readFirestoreRules()).toContain("'awayScore'");
-        expect(readFirestoreRules()).toContain("'scoreUpdatedBy'");
+        expect(dbSource).toContain('homeScore: submittedResult.homeScore');
+        expect(dbSource).toContain('awayScore: submittedResult.awayScore');
+        expect(dbSource).toContain("status: 'completed'");
+        expect(dbSource).toContain("liveStatus: 'completed'");
+        expect(dbSource).toContain("scoreUpdatedBy: submittedResult.submittedByUserId || String(official?.uid || '').trim() || null");
+        const rules = readFirestoreRules();
+        expect(rules).toContain("'homeScore'");
+        expect(rules).toContain("'awayScore'");
+        expect(rules).toContain("'status'");
+        expect(rules).toContain("'liveStatus'");
+        expect(rules).toContain("'scoreUpdatedBy'");
+        expect(rules).toMatch(/function isOfficialGameUpdate\(\) \{[\s\S]*'homeScore',[\s\S]*'awayScore',[\s\S]*'status',[\s\S]*'liveStatus',[\s\S]*'officiatingSlots',[\s\S]*'officiatingCoverageStatus',[\s\S]*'officiatingUpdatedAt',[\s\S]*'scoreUpdatedAt',[\s\S]*'scoreUpdatedBy'[\s\S]*\}/);
     });
 
     it('limits open self-assignment slot claims to eligible team participants', () => {

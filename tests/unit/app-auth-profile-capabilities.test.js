@@ -179,8 +179,9 @@ describe('React app auth/profile capability parity', () => {
         ]);
         expectContains(verifyPending, [
             'Continue to dashboard',
+            "I've verified, continue",
             'Resend verification email',
-            'Refresh status',
+            'Continue without verifying',
             'Sign out',
             'emailVerified'
         ]);
