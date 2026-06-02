@@ -38,6 +38,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             push: 0,
             accessCodes: []
         };
+        window.__appShareCalls = [];
     }, { mockUser: user, mockEmailLink: emailLink });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
@@ -407,7 +408,8 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export async function copyPublicText() {
                     return 'copied';
                 }
-                export async function sharePublicUrl() {
+                export async function sharePublicUrl(input) {
+                    window.__appShareCalls.push(input);
                     return 'shared';
                 }
             `
@@ -524,9 +526,12 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByText('Advanced: add recipient label')).toBeVisible();
     await page.getByRole('button', { name: 'Generate invite link' }).click();
     await expect(page.getByText('Generated invite link')).toBeVisible();
-    const copyInviteLink = page.getByRole('button', { name: 'Copy invite link' });
-    await expect(copyInviteLink).toBeVisible();
-    await expect(copyInviteLink).toHaveClass(/primary-button/);
+    const shareInviteLink = page.getByRole('button', { name: 'Share invite link' });
+    await expect(shareInviteLink).toBeVisible();
+    await expect(shareInviteLink).toHaveClass(/primary-button/);
+    await expect(page.getByRole('button', { name: 'Copy invite link' })).toBeVisible();
+    await shareInviteLink.click();
+    await expect(page.getByText('Share sheet opened.')).toBeVisible();
     await expect(page.getByText('Fallback code')).toBeVisible();
     await expect(page.getByText('NEWMVP42', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Copy code' })).toBeVisible();
@@ -548,6 +553,7 @@ test('profile exposes account, notification, invite, verification, password, upl
         push: window.__appProfileCalls.push,
         notificationSaves: window.__appProfileCalls.notificationSaves,
         accessCodes: window.__appProfileCalls.accessCodes,
+        shares: window.__appShareCalls,
         password: window.__appAuthCalls.setCurrentUserPassword,
         reset: window.__appAuthCalls.sendResetEmail,
         signOut: window.__appAuthCalls.signOut
@@ -559,6 +565,12 @@ test('profile exposes account, notification, invite, verification, password, upl
             { userId: 'user-1', teamId: 'team-1', preferences: { liveChat: false, liveScore: true, schedule: true } }
         ],
         accessCodes: [{ userId: 'user-1', email: '', phone: '' }],
+        shares: [expect.objectContaining({
+            title: 'ALL PLAYS invite link',
+            text: 'Use this ALL PLAYS invite link to join ALL PLAYS.',
+            url: expect.stringContaining('/login.html?code=NEWMVP42'),
+            clipboardText: expect.stringContaining('/login.html?code=NEWMVP42')
+        })],
         password: ['new-password'],
         reset: ['parent@example.com'],
         signOut: 1

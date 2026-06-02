@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Save,
   Send,
+  Share2,
   ShieldCheck,
   Trash2,
   Upload,
@@ -37,6 +38,7 @@ import {
   uploadProfilePhoto
 } from '../lib/profileService';
 import { enablePushNotificationsForUser } from '../lib/pushService';
+import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AccessCodeRecord, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
 import type { AuthState } from '../lib/types';
@@ -94,13 +96,14 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [passwordStatus, setPasswordStatus] = useState<Status | null>(null);
   const [inviteStatus, setInviteStatus] = useState<Status | null>(null);
   const [accountMergeStatus, setAccountMergeStatus] = useState<Status | null>(null);
-  const [copyStatus, setCopyStatus] = useState('');
+  const [inviteActionStatus, setInviteActionStatus] = useState('');
   const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
   const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>('account');
   const [notificationTeamsLoaded, setNotificationTeamsLoaded] = useState(false);
   const [accessCodesLoaded, setAccessCodesLoaded] = useState(false);
   const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
   const [loadedNotificationTeamId, setLoadedNotificationTeamId] = useState('');
+  const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string }>({ email: '', phone: '' });
 
   const displayName = fullName || user?.displayName || profile.displayName || user?.email || 'ALL PLAYS User';
   const showPasswordSection = profile.signInMethod === 'emailLink' && !profile.hasPassword;
@@ -136,6 +139,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       setLoadedNotificationTeamId('');
       setSelectedTeamId('');
       setAccessCodes([]);
+      setInviteActionStatus('');
       setAccessCodesLoaded(false);
       setParentLinkedTeams([]);
       setParentLinkedTeamsLoaded(false);
@@ -526,10 +530,14 @@ export function Profile({ auth }: { auth: AuthState }) {
 
     setBusy('invite');
     setInviteStatus(null);
+    setInviteActionStatus('');
 
     try {
-      const code = await createProfileAccessCode(user.uid, inviteEmail.trim(), invitePhone.trim());
+      const nextInviteEmail = inviteEmail.trim();
+      const nextInvitePhone = invitePhone.trim();
+      const code = await createProfileAccessCode(user.uid, nextInviteEmail, nextInvitePhone);
       setGeneratedCode(code);
+      setGeneratedInviteMetadata({ email: nextInviteEmail, phone: nextInvitePhone });
       setInviteEmail('');
       setInvitePhone('');
       setAccessCodes(await loadProfileAccessCodes(user.uid));
@@ -583,12 +591,29 @@ export function Profile({ auth }: { auth: AuthState }) {
   const copyText = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopyStatus(label);
-      window.setTimeout(() => setCopyStatus(''), 1800);
+      setInviteActionStatus(label);
+      window.setTimeout(() => setInviteActionStatus(''), 1800);
     } catch {
-      setCopyStatus('Copy failed');
-      window.setTimeout(() => setCopyStatus(''), 1800);
+      setInviteActionStatus('Copy failed');
+      window.setTimeout(() => setInviteActionStatus(''), 1800);
     }
+  };
+
+  const shareInviteLink = async (code: string, metadata?: { email?: string | null; phone?: string | null }) => {
+    const result = await sharePublicUrl(buildInviteShareInput(code, metadata));
+    if (result === 'shared') {
+      setInviteActionStatus('Share sheet opened.');
+      return;
+    }
+    if (result === 'copied') {
+      setInviteActionStatus('Link copied.');
+      return;
+    }
+    if (result === 'cancelled') {
+      setInviteActionStatus('Share cancelled.');
+      return;
+    }
+    setInviteActionStatus('Unable to share invite link.');
   };
 
   const handleSignOut = async () => {
@@ -911,17 +936,21 @@ export function Profile({ auth }: { auth: AuthState }) {
           <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
             <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-emerald-700">Generated invite link</div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button type="button" className="primary-button" onClick={() => copyText(signupLink, 'Link copied')}>
+              <button type="button" className="primary-button" onClick={() => shareInviteLink(generatedCode, generatedInviteMetadata)}>
+                <Share2 className="h-4 w-4" aria-hidden="true" />
+                Share invite link
+              </button>
+              <button type="button" className="ghost-button" onClick={() => copyText(signupLink, 'Link copied.')}>
                 <Link2 className="h-4 w-4" aria-hidden="true" />
                 Copy invite link
               </button>
               <span className="break-all rounded-lg bg-white px-3 py-2 text-sm font-bold text-gray-700">{signupLink}</span>
-              {copyStatus ? <span className="text-sm font-black text-emerald-700">{copyStatus}</span> : null}
             </div>
+            {inviteActionStatus ? <div className="mt-2 text-sm font-black text-emerald-700">{inviteActionStatus}</div> : null}
             <div className="mt-3 flex flex-wrap items-center gap-2 text-sm font-bold text-gray-600">
               <span>Fallback code</span>
               <code className="rounded-lg bg-white px-3 py-1.5 text-lg font-black tracking-widest text-gray-950">{generatedCode}</code>
-              <button type="button" className="ghost-button" onClick={() => copyText(generatedCode, 'Code copied')}>
+              <button type="button" className="ghost-button" onClick={() => copyText(generatedCode, 'Code copied.')}>
                 <Copy className="h-4 w-4" aria-hidden="true" />
                 Copy code
               </button>
@@ -931,11 +960,13 @@ export function Profile({ auth }: { auth: AuthState }) {
 
         <div className="mt-4 space-y-2">
           {accessCodes.length ? visibleAccessCodes.map((code) => (
-            <AccessCodeCard key={code.id} code={code} onCopy={copyText} />
+            <AccessCodeCard key={code.id} code={code} onCopy={copyText} onShare={shareInviteLink} />
           )) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No codes generated yet.</div>
           )}
         </div>
+
+        {!generatedCode && inviteActionStatus ? <div className="mt-3 text-sm font-black text-emerald-700">{inviteActionStatus}</div> : null}
 
         {accessCodes.length > collapsedInviteCount ? (
           <button type="button" className="ghost-button mt-3 w-full justify-center" onClick={() => setInviteHistoryExpanded((current) => !current)}>
@@ -958,7 +989,7 @@ function PreferenceToggle({ label, checked, onChange }: { label: string; checked
   );
 }
 
-function AccessCodeCard({ code, onCopy }: { code: AccessCodeRecord; onCopy: (text: string, label: string) => void }) {
+function AccessCodeCard({ code, onCopy, onShare }: { code: AccessCodeRecord; onCopy: (text: string, label: string) => void; onShare: (code: string, metadata?: { email?: string | null; phone?: string | null }) => void }) {
   const signupLink = buildSignupLink(code.code);
   return (
     <div className={`rounded-xl border p-3 ${code.used ? 'border-gray-200 bg-gray-50' : 'border-primary-200 bg-white'}`}>
@@ -967,13 +998,21 @@ function AccessCodeCard({ code, onCopy }: { code: AccessCodeRecord; onCopy: (tex
           <code className="rounded-lg bg-primary-50 px-3 py-1.5 text-lg font-black tracking-widest text-primary-900">{code.code}</code>
           <span className={`rounded-full px-2 py-1 text-[11px] font-black uppercase tracking-[0.04em] ${code.used ? 'bg-gray-200 text-gray-700' : 'bg-emerald-100 text-emerald-700'}`}>{code.used ? 'Used' : 'Active'}</span>
         </div>
-        <div className="flex gap-2">
-          <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(code.code, 'Code copied')}>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(code.code, 'Code copied.')} aria-label={`Copy saved invite code ${code.code}`}>
             <Copy className="h-4 w-4" aria-hidden="true" />
+            <span className="text-xs font-black">Copy code</span>
           </button>
           {!code.used ? (
-            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(signupLink, 'Link copied')}>
+            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onShare(code.code, { email: code.email, phone: code.phone })} aria-label={`Share saved invite link for ${code.code}`}>
+              <Share2 className="h-4 w-4" aria-hidden="true" />
+              <span className="text-xs font-black">Share link</span>
+            </button>
+          ) : null}
+          {!code.used ? (
+            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onCopy(signupLink, 'Link copied.')} aria-label={`Copy saved invite link for ${code.code}`}>
               <Link2 className="h-4 w-4" aria-hidden="true" />
+              <span className="text-xs font-black">Copy link</span>
             </button>
           ) : null}
         </div>
@@ -1029,6 +1068,18 @@ function toDate(value: any): Date | null {
 function buildSignupLink(code: string) {
   const origin = window.location.protocol === 'capacitor:' ? 'https://allplays.ai' : window.location.origin;
   return `${origin}/login.html?code=${encodeURIComponent(code)}`;
+}
+
+function buildInviteShareInput(code: string, metadata?: { email?: string | null; phone?: string | null }) {
+  const recipientDetails = [metadata?.email, metadata?.phone].map((value) => String(value || '').trim()).filter(Boolean);
+  const recipientLabel = recipientDetails.join(' • ');
+  const signupLink = buildSignupLink(code);
+  return {
+    title: recipientLabel ? `ALL PLAYS invite for ${recipientLabel}` : 'ALL PLAYS invite link',
+    text: recipientLabel ? `Use this ALL PLAYS invite link for ${recipientLabel}.` : 'Use this ALL PLAYS invite link to join ALL PLAYS.',
+    url: signupLink,
+    clipboardText: signupLink
+  };
 }
 
 function normalizeEmail(value: string | null | undefined) {
