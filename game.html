@@ -1269,11 +1269,18 @@ Write the match report now:`;
             document.getElementById('back-link').href = `team.html#teamId=${teamId}`;
 
             try {
+                const playersPromise = getPlayers(teamId, { includeInactive: true }).catch((error) => {
+                    if (error?.code === 'permission-denied') {
+                        console.warn('Failed to load public roster for game report viewer:', error);
+                        return [];
+                    }
+                    throw error;
+                });
                 const [team, game, players] = await Promise.all([
                     // Reports are historical and must resolve soft-deleted teams.
                     getTeam(teamId, { includeInactive: true }),
                     getGame(teamId, gameId),
-                    getPlayers(teamId, { includeInactive: true })
+                    playersPromise
                 ]);
 
                 if (!game) {
