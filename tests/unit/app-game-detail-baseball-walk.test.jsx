@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import React, { act } from '../../apps/app/node_modules/react/index.js';
-import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
-import { RouterProvider, createMemoryRouter } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GameDetail } from '../../apps/app/src/pages/GameDetail.tsx';
 

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import React, { act } from '../../apps/app/node_modules/react/index.js';
+import React, { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
-import { MemoryRouter } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
+import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 
 const scheduleMocks = vi.hoisted(() => ({
     addTeamCalendarUrl: vi.fn(),

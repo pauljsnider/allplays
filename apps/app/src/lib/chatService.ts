@@ -13,6 +13,7 @@ import {
   getParentTeams,
   getPlayers,
   getSentTeamEmails,
+  getTeamEmailDrafts as getStoredTeamEmailDrafts,
   getTeamEmailTemplates as getStoredTeamEmailTemplates,
   getTeam,
   getUnreadChatCounts,
@@ -20,6 +21,7 @@ import {
   getUserProfile,
   getUserTeamsWithAccess,
   postChatMessage,
+  saveTeamEmailDraft as saveStoredTeamEmailDraft,
   saveTeamEmailTemplate as saveStoredTeamEmailTemplate,
   sendTeamEmail,
   subscribeToChatMessages,
@@ -148,6 +150,26 @@ export type TeamEmailTemplate = {
   updatedAt?: unknown;
 };
 
+export type TeamEmailDraftRecipient = {
+  key: string;
+  email: string;
+  name: string;
+  detail?: string | null;
+};
+
+export type TeamEmailDraft = {
+  id: string;
+  subject: string;
+  body: string;
+  recipientIds: string[];
+  recipients: TeamEmailDraftRecipient[];
+  authorId?: string | null;
+  authorEmail?: string | null;
+  authorName?: string | null;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
+
 export type ChatInboxLoadResult = {
   teams: ChatTeam[];
 };
@@ -198,6 +220,40 @@ function normalizeTeamEmailTemplate(template: Record<string, any> | null | undef
     authorName: template.authorName || null,
     createdAt: template.createdAt,
     updatedAt: template.updatedAt
+  };
+}
+
+function normalizeTeamEmailDraftRecipient(recipient: Record<string, any> | null | undefined): TeamEmailDraftRecipient | null {
+  const key = compactString(recipient?.key);
+  const email = compactString(recipient?.email).toLowerCase();
+  if (!key || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  return {
+    key,
+    email,
+    name: compactString(recipient?.name) || email,
+    detail: compactString(recipient?.detail) || null
+  };
+}
+
+function normalizeTeamEmailDraft(draft: Record<string, any> | null | undefined): TeamEmailDraft | null {
+  if (!draft?.id) return null;
+  const recipients = (Array.isArray(draft.recipients) ? draft.recipients : [])
+    .map((recipient) => normalizeTeamEmailDraftRecipient(recipient))
+    .filter((recipient): recipient is TeamEmailDraftRecipient => Boolean(recipient));
+  const storedRecipientIds = Array.isArray(draft.recipientIds)
+    ? draft.recipientIds.map((id: unknown) => compactString(id)).filter(Boolean)
+    : [];
+  return {
+    id: String(draft.id),
+    subject: compactString(draft.subject),
+    body: compactString(draft.body),
+    recipientIds: storedRecipientIds.length > 0 ? storedRecipientIds : recipients.map((recipient) => recipient.key),
+    recipients,
+    authorId: draft.authorId || null,
+    authorEmail: draft.authorEmail || null,
+    authorName: draft.authorName || null,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt
   };
 }
 
@@ -1006,11 +1062,80 @@ export async function loadSentTeamEmails(teamId: string, { limit = 25 }: { limit
   return withTimeout(Promise.resolve(getSentTeamEmails(teamId, { limit })), 'Sent email history') as Promise<SentTeamEmail[]>;
 }
 
+export async function loadTeamEmailDrafts(teamId: string): Promise<TeamEmailDraft[]> {
+  const drafts = await withTimeout(Promise.resolve(getStoredTeamEmailDrafts(teamId)), 'Team email drafts') as Record<string, any>[];
+  return drafts
+    .map((draft) => normalizeTeamEmailDraft(draft))
+    .filter((draft): draft is TeamEmailDraft => Boolean(draft))
+    .sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0));
+}
+
 export async function loadTeamEmailTemplates(teamId: string): Promise<TeamEmailTemplate[]> {
   const templates = await withTimeout(Promise.resolve(getStoredTeamEmailTemplates(teamId)), 'Team email templates') as Record<string, any>[];
   return templates
     .map((template) => normalizeTeamEmailTemplate(template))
     .filter((template): template is TeamEmailTemplate => Boolean(template));
+}
+
+export async function saveTeamEmailDraft({
+  teamId,
+  draftId,
+  subject,
+  body,
+  recipientIds,
+  recipientOptions,
+  authorId,
+  authorEmail,
+  authorName
+}: {
+  teamId: string;
+  draftId?: string | null;
+  subject: string;
+  body: string;
+  recipientIds: string[];
+  recipientOptions: ChatRecipientOption[];
+  authorId?: string | null;
+  authorEmail?: string | null;
+  authorName?: string | null;
+}): Promise<TeamEmailDraft> {
+  const trimmedSubject = compactString(subject);
+  const trimmedBody = compactString(body);
+  const normalizedRecipientIds = Array.from(new Set((Array.isArray(recipientIds) ? recipientIds : []).map((id) => compactString(id)).filter(Boolean)));
+
+  if (normalizedRecipientIds.length === 0) throw new Error('Choose at least one selected member before saving.');
+  if (!trimmedSubject) throw new Error('Enter a subject before saving.');
+  if (!trimmedBody) throw new Error('Enter a body before saving.');
+
+  const optionsById = new Map((Array.isArray(recipientOptions) ? recipientOptions : []).map((option) => [compactString(option.id), option]));
+  const recipients = normalizedRecipientIds.flatMap((recipientId) => {
+    const option = optionsById.get(recipientId);
+    const derivedEmail = compactString(option?.email || (recipientId.toLowerCase().startsWith('email:') ? recipientId.slice(6) : '')).toLowerCase();
+    if (!derivedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(derivedEmail)) {
+      return [];
+    }
+    return [{
+      key: recipientId,
+      email: derivedEmail,
+      name: compactString(option?.name) || derivedEmail,
+      detail: compactString(option?.detail) || null
+    }];
+  });
+
+  const saved = await withTimeout(Promise.resolve(saveStoredTeamEmailDraft(teamId, {
+    subject: trimmedSubject,
+    body: trimmedBody,
+    recipients,
+    recipientIds: normalizedRecipientIds,
+    authorId: authorId || null,
+    authorEmail: authorEmail || null,
+    authorName: authorName || null,
+    status: 'draft'
+  }, draftId ? { draftId } : {})), 'Team email draft save') as Record<string, any>;
+  const normalized = normalizeTeamEmailDraft(saved);
+  if (!normalized) {
+    throw new Error('Saved draft is missing required fields.');
+  }
+  return normalized;
 }
 
 export async function saveTeamEmailTemplate({
@@ -1133,20 +1258,21 @@ export async function loadChatRecipientOptions(teamId: string): Promise<ChatReci
       if (!parentKey) return;
       const parentId = getRecipientOptionId(parent.userId ? 'user' : 'email', parentKey);
       const profile = parentProfiles.get(parentId) || {};
-      options.push({
-        id: parentId,
-        name: getChatMemberDisplayName({
-          name: parent.name,
+    options.push({
+      id: parentId,
+      name: getChatMemberDisplayName({
+        name: parent.name,
           fullName: parent.fullName,
           displayName: parent.displayName,
           profileName: profile.name,
           profileFullName: profile.fullName,
-          profileDisplayName: profile.displayName,
-          email: parent.email || profile.email
-        }, 'Guardian'),
-        detail: player.name ? `Guardian for ${player.name}` : 'Guardian'
-      });
+        profileDisplayName: profile.displayName,
+        email: parent.email || profile.email
+      }, 'Guardian'),
+      detail: player.name ? `Guardian for ${player.name}` : 'Guardian',
+      email: compactString(parent.email || profile.email).toLowerCase() || undefined
     });
+  });
   });
 
   const byId = new Map<string, ChatRecipientOption>();

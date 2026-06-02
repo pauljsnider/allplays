@@ -210,8 +210,27 @@ async function mockMessagesModules(page, options = {}) {
                     return [];
                 }
 
+                export async function loadTeamEmailDrafts() {
+                    return [];
+                }
+
                 export async function loadTeamEmailTemplates() {
                     return [];
+                }
+
+                export async function saveTeamEmailDraft(input) {
+                    return {
+                        id: input.draftId || 'draft-1',
+                        subject: input.subject || 'Draft subject',
+                        body: input.body || 'Draft body',
+                        recipientIds: input.recipientIds || [],
+                        recipients: (input.recipientIds || []).map((id) => ({
+                            key: id,
+                            email: 'coach@example.com',
+                            name: 'Coach Jamie'
+                        })),
+                        updatedAt: new Date('2026-05-21T14:50:00Z')
+                    };
                 }
 
                 export async function saveTeamEmailTemplate() {

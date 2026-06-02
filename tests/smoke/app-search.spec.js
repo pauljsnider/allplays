@@ -14,6 +14,13 @@ async function openSearch(page) {
     await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
 }
 
+async function openDesktopSearch(page) {
+    const searchButton = page.getByRole('button', { name: 'Search' });
+    await expect(searchButton).toBeVisible();
+    await searchButton.click();
+    await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+}
+
 async function mockSearchModules(page) {
     await page.addInitScript(() => {
         window.__openedPublicUrls = [];
@@ -220,10 +227,6 @@ test.describe('app global search', () => {
 
 test.describe('desktop app global search', () => {
     test.use({ viewport: { width: 1440, height: 900 }, hasTouch: false });
-
-    async function openDesktopSearch(page) {
-        await openSearch(page);
-    }
 
     test('desktop search supports native navigation and website actions', async ({ page, baseURL }) => {
         await mockSearchModules(page);

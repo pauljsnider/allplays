@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import React, { act } from '../../apps/app/node_modules/react/index.js';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
-import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
+import { createRoot } from 'react-dom/client';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const chatMocks = vi.hoisted(() => ({
     deleteTeamChatMessage: vi.fn(),
@@ -14,8 +14,12 @@ const chatMocks = vi.hoisted(() => ({
     loadChatRecipientOptions: vi.fn(),
     loadChatTeamContext: vi.fn(),
     loadOlderTeamChatMessages: vi.fn(),
+    loadTeamEmailDrafts: vi.fn(),
     loadSentTeamEmails: vi.fn(),
+    loadTeamEmailTemplates: vi.fn(),
     markTeamChatRead: vi.fn(),
+    saveTeamEmailDraft: vi.fn(),
+    saveTeamEmailTemplate: vi.fn(),
     sendAllPlaysChatAnswer: vi.fn(),
     sendTeamChatMessage: vi.fn(),
     sendTeamEmailMessage: vi.fn(),
@@ -298,6 +302,7 @@ beforeEach(() => {
     });
     chatMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
     chatMocks.sendTeamEmailMessage.mockResolvedValue({ recipientCount: 12, status: 'queued' });
+    chatMocks.loadTeamEmailDrafts.mockResolvedValue([]);
     chatMocks.loadSentTeamEmails.mockResolvedValue([
         {
             id: 'email-1',
@@ -308,6 +313,9 @@ beforeEach(() => {
             status: 'queued'
         }
     ]);
+    chatMocks.loadTeamEmailTemplates.mockResolvedValue([]);
+    chatMocks.saveTeamEmailDraft.mockResolvedValue(undefined);
+    chatMocks.saveTeamEmailTemplate.mockResolvedValue(undefined);
     chatMocks.sendAllPlaysChatAnswer.mockResolvedValue(undefined);
     chatMocks.toggleTeamChatReaction.mockResolvedValue(true);
     chatMocks.editTeamChatMessage.mockResolvedValue(undefined);
@@ -687,6 +695,59 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Choose at least one selected member before sending.');
         expect(container.textContent).toContain('Message audience');
         expect(chatMocks.sendTeamChatMessage).not.toHaveBeenCalled();
+    });
+
+    it('allows player-only email drafts and disables draft saving for full-team or staff audiences', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Audience: Full team');
+        await click(container, 'Selected members');
+        const playerCheckbox = Array.from(container.querySelectorAll('label')).find((label) => label.textContent.includes('Pat'))?.querySelector('input[type="checkbox"]');
+        await act(async () => {
+            playerCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await flush();
+        await click(container, 'Done');
+        await click(container, 'Team Email');
+
+        let emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        let subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        let bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Roster update');
+        await setFieldValue(bodyInput, 'Please confirm availability.');
+        await click(container, 'Save draft');
+
+        expect(chatMocks.saveTeamEmailDraft).toHaveBeenCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            recipientIds: ['player:player-1']
+        }));
+        expect(container.textContent).toContain('Saved draft');
+
+        await click(container, 'Close');
+        await click(container, 'Audience: Pat (#9)');
+        await click(container, 'Full team');
+        await click(container, 'Team Email');
+
+        emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Schedule');
+        await setFieldValue(bodyInput, 'Game moved.');
+        expect(buttonByText(container, 'Save draft').disabled).toBe(true);
+        expect(container.textContent).toContain('Draft saving is available only for Selected members.');
+
+        await click(container, 'Close');
+        await click(container, 'Audience: Full team');
+        await click(container, 'Staff only');
+        await click(container, 'Team Email');
+
+        emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
+        bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
+        await setFieldValue(subjectInput, 'Staff schedule');
+        await setFieldValue(bodyInput, 'Film at 6.');
+        expect(buttonByText(container, 'Save draft').disabled).toBe(true);
+        expect(container.textContent).toContain('Draft saving is available only for Selected members.');
     });
 
     it('opens photo, video, and link actions from the attachment button', async () => {
