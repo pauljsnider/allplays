@@ -327,6 +327,14 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
+                export async function loadParentScheduleEventDetail(user, { teamId, eventId }) {
+                    const result = await loadParentSchedule(user);
+                    return {
+                        ...result,
+                        events: result.events.filter((event) => event.teamId === teamId && event.id === eventId)
+                    };
+                }
+
                 export async function submitParentScheduleRsvp(event, user, response, note = '') {
                     window.__scheduleCalls.rsvps.push({ eventKey: event.eventKey, childId: event.childId, userId: user.uid, response, note });
                     return { going: 2, maybe: 0, notGoing: 0, notResponded: 0 };

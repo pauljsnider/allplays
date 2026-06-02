@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
     getAssignmentClaims: vi.fn(),
+    getGame: vi.fn(),
     getGames: vi.fn(),
     getPracticePacketCompletions: vi.fn(),
+    getPracticeSessionByEvent: vi.fn(),
     getPracticeSessions: vi.fn(),
     getRsvps: vi.fn(),
     getRsvpSummaries: vi.fn(),
@@ -118,7 +120,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, loadParentScheduleEventDetail, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
@@ -158,6 +160,7 @@ beforeEach(() => {
         calendarUrls: ['mock://team-calendar'],
         availabilityPreferences: { noteVisibility: 'team' }
     });
+    dbMocks.getGame.mockResolvedValue(null);
     dbMocks.getTeams.mockResolvedValue([]);
     dbMocks.getGames.mockResolvedValue([
         {
@@ -230,6 +233,7 @@ beforeEach(() => {
             }
         }
     ]);
+    dbMocks.getPracticeSessionByEvent.mockResolvedValue(null);
     dbMocks.getTrackedCalendarEventUids.mockResolvedValue([]);
     utilsMocks.fetchAndParseCalendar.mockResolvedValue([
         {
@@ -380,6 +384,34 @@ describe('React app schedule service contract integration', () => {
             sourceLabel: 'Imported calendar',
             opponent: 'Eagles',
             location: 'Imported Field'
+        });
+    });
+
+    it('loads schedule event detail without hydrating unrelated events', async () => {
+        const result = await loadParentScheduleEventDetail(user(), { teamId: 'team-1', eventId: 'game-1' });
+
+        expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1');
+        expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
+        expect(dbMocks.getRsvpSummaries).toHaveBeenCalledWith('team-1', ['game-1']);
+        expect(dbMocks.getRsvps).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledTimes(1);
+        expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
+        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
+
+        expect(result.events).toHaveLength(2);
+        expect(result.events.every((event) => event.id === 'game-1')).toBe(true);
+        expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            myRsvp: 'going',
+            myRsvpNote: 'Needs a ride home',
+            rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+        });
+        expect(result.events.find((event) => event.childId === 'player-2')).toMatchObject({
+            myRsvp: 'maybe',
+            myRsvpNote: 'Late arrival'
         });
     });
 
