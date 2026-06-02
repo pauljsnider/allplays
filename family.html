@@ -577,7 +577,9 @@
                 teamName: child.teamName || '',
                 id: getCalendarEventTrackingId(event) || null,
                 calendarEventUid: event.uid || null,
+                sourceCalendarUrl: calUrl,
                 isDbGame: false,
+                isShareExtraCalendar: true,
                 childId: child.playerId,
                 childName: child.playerName,
                 title: isPractice ? (cleanSummary || 'Practice') : null,
@@ -684,18 +686,37 @@
       if (scheduleViewMode === 'calendar') renderScheduleFromControls();
     }
 
+    function getScheduleEventDedupKey(event, rawDate = event?.date) {
+      const date = rawDate?.toDate ? rawDate.toDate() : new Date(rawDate);
+      const isoDate = Number.isNaN(date?.getTime?.()) ? '' : date.toISOString();
+      const teamId = event?.isShareExtraCalendar ? '' : (event?.teamId || '');
+      const trackingId = event?.id || '';
+      const fallbackIdentity = trackingId
+        ? ''
+        : [
+            event?.calendarEventUid || '',
+            event?.sourceCalendarUrl || '',
+            event?.title || '',
+            event?.opponent || '',
+            event?.location || ''
+          ].join('::');
+      return `${teamId}::${trackingId || fallbackIdentity}::${isoDate}::${event?.type || ''}`;
+    }
+
     function getCalendarEntries(events) {
       const byKey = new Map();
       (events || []).forEach(event => {
         const d = event.date?.toDate ? event.date.toDate() : new Date(event.date);
         if (!d || Number.isNaN(d.getTime())) return;
-        const key = `${event.teamId || ''}::${event.id || ''}::${d.toISOString()}::${event.type || ''}`;
+        const key = getScheduleEventDedupKey(event, d);
         if (!byKey.has(key)) {
           byKey.set(key, { ...event, date: d, childNames: [], childIds: [] });
         }
         const item = byKey.get(key);
-        if (event.childName) item.childNames.push(event.childName);
-        if (event.childId) item.childIds.push(event.childId);
+        const childNames = Array.isArray(event.childNames) ? event.childNames : (event.childName ? [event.childName] : []);
+        const childIds = Array.isArray(event.childIds) ? event.childIds : (event.childId ? [event.childId] : []);
+        item.childNames.push(...childNames);
+        item.childIds.push(...childIds);
       });
       return Array.from(byKey.values()).map(item => ({
         ...item,
@@ -846,13 +867,19 @@
       const byKey = new Map();
       games.forEach(game => {
         const d = game.date instanceof Date ? game.date : new Date(game.date);
-        const key = `${game.teamId || ''}::${game.id || ''}::${d.toISOString()}::${game.type || ''}`;
+        const key = getScheduleEventDedupKey(game, d);
         if (!byKey.has(key)) {
           byKey.set(key, { ...game, date: d, childNames: [], childIds: [] });
         }
         const item = byKey.get(key);
-        if (game.childName && !item.childNames.includes(game.childName)) item.childNames.push(game.childName);
-        if (game.childId && !item.childIds.includes(game.childId)) item.childIds.push(game.childId);
+        const childNames = Array.isArray(game.childNames) ? game.childNames : (game.childName ? [game.childName] : []);
+        const childIds = Array.isArray(game.childIds) ? game.childIds : (game.childId ? [game.childId] : []);
+        childNames.forEach(childName => {
+          if (childName && !item.childNames.includes(childName)) item.childNames.push(childName);
+        });
+        childIds.forEach(childId => {
+          if (childId && !item.childIds.includes(childId)) item.childIds.push(childId);
+        });
       });
 
       container.innerHTML = Array.from(byKey.values()).map(game => {
@@ -917,24 +944,35 @@
     function buildIcs(events) {
       const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
       const escapeIcs = value => String(value || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
-      const seen = new Set();
+      const byKey = new Map();
       events.forEach(event => {
-        const eventKey = `${event.teamId}-${event.id}-${new Date(event.date).getTime()}`;
-        if (seen.has(eventKey)) return;
-        seen.add(eventKey);
+        const date = event.date instanceof Date ? event.date : new Date(event.date);
+        const eventKey = getScheduleEventDedupKey(event, date);
+        if (!byKey.has(eventKey)) {
+          byKey.set(eventKey, { ...event, date, childNames: [], childIds: [] });
+        }
+        const item = byKey.get(eventKey);
+        const childNames = Array.isArray(event.childNames) ? event.childNames : (event.childName ? [event.childName] : []);
+        const childIds = Array.isArray(event.childIds) ? event.childIds : (event.childId ? [event.childId] : []);
+        item.childNames.push(...childNames);
+        item.childIds.push(...childIds);
+      });
+      Array.from(byKey.values()).forEach(event => {
         const date = event.date instanceof Date ? event.date : new Date(event.date);
         const start = formatIcsDate(date);
         const end = formatIcsDate(new Date(date.getTime() + 60 * 60 * 1000));
-        const summary = event.type === 'practice' ? `${event.childName} - Practice` : `${event.childName} vs ${event.opponent || 'TBD'}`;
+        const childLabel = [...new Set(event.childNames || [])].join(', ') || event.childName || 'Family';
+        const summary = event.type === 'practice' ? `${childLabel} - Practice` : `${childLabel} vs ${event.opponent || 'TBD'}`;
+        const eventKey = getScheduleEventDedupKey(event, date);
         lines.push(
           'BEGIN:VEVENT',
-          `UID:${event.id || eventKey}@allplays`,
+          `UID:${event.id || `${eventKey}@allplays`}`,
           `DTSTAMP:${formatIcsDate(new Date())}`,
           `DTSTART:${start}`,
           `DTEND:${end}`,
           `SUMMARY:${escapeIcs(summary)}`,
           `LOCATION:${escapeIcs(event.location || 'TBD')}`,
-          `DESCRIPTION:${escapeIcs(`For ${event.childName}`)}`,
+          `DESCRIPTION:${escapeIcs(`For ${childLabel}`)}`,
           'END:VEVENT'
         );
       });
