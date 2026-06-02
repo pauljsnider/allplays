@@ -87,6 +87,9 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       const nextConversations = await loadPrivateAiConversations(auth.user);
       setConversations(nextConversations);
       setActiveConversationId((current) => {
+        if (isDraftConversationId(current)) {
+          return current;
+        }
         const hasCurrent = nextConversations.some((conversation) => conversation.id === current);
         return hasCurrent ? current : nextConversations[0]?.id || DEFAULT_PRIVATE_AI_CONVERSATION_ID;
       });

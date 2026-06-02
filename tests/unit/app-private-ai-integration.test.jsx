@@ -225,6 +225,15 @@ describe('private AI chat page', () => {
             ])
             .mockResolvedValueOnce([
                 {
+                    id: 'conversation-1',
+                    title: 'Saved chat',
+                    createdAt: new Date('2026-05-21T12:00:00Z'),
+                    updatedAt: new Date('2026-05-21T12:00:00Z'),
+                    lastMessagePreview: 'Saved preview'
+                }
+            ])
+            .mockResolvedValueOnce([
+                {
                     id: 'conversation-2',
                     title: 'First draft question',
                     createdAt: new Date('2026-05-21T12:02:00Z'),
@@ -262,6 +271,7 @@ describe('private AI chat page', () => {
         const messageLoadCountBeforeDraft = privateAiMocks.loadPrivateAiMessages.mock.calls.length;
 
         await click(container.querySelector('button[aria-label="New AI chat"]'));
+        await click(container.querySelector('button[aria-label="Refresh AI chat"]'));
 
         expect(privateAiMocks.createPrivateAiConversation).not.toHaveBeenCalled();
         expect(privateAiMocks.loadPrivateAiMessages.mock.calls.length).toBe(messageLoadCountBeforeDraft);
@@ -274,7 +284,7 @@ describe('private AI chat page', () => {
 
         expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'First draft question', '__draft__');
         expect(container.textContent).toContain('First draft question');
-        expect(privateAiMocks.loadPrivateAiConversations).toHaveBeenCalledTimes(2);
+        expect(privateAiMocks.loadPrivateAiConversations).toHaveBeenCalledTimes(3);
     });
 
     it('shows service errors without losing the typed message', async () => {
