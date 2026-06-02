@@ -4,6 +4,7 @@ const dbMocks = vi.hoisted(() => ({
     getAssignmentClaims: vi.fn(),
     getGame: vi.fn(),
     getGames: vi.fn(),
+    getPlayers: vi.fn(),
     getPracticePacketCompletions: vi.fn(),
     getPracticeSessionByEvent: vi.fn(),
     getPracticeSessions: vi.fn(),
@@ -169,6 +170,7 @@ beforeEach(() => {
     });
     dbMocks.getGame.mockResolvedValue(null);
     dbMocks.getTeams.mockResolvedValue([]);
+    dbMocks.getPlayers.mockResolvedValue([]);
     dbMocks.getGames.mockResolvedValue([
         {
             id: 'game-1',
@@ -394,13 +396,33 @@ describe('React app schedule service contract integration', () => {
         });
     });
 
-    it('loads schedule event detail without hydrating unrelated events', async () => {
+    it('loads schedule event detail without expanding the full team schedule', async () => {
+        dbMocks.getGame.mockResolvedValue({
+            id: 'game-1',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            endDate: new Date('2026-05-21T19:30:00Z'),
+            location: 'Main Gym',
+            opponent: 'Falcons',
+            opponentTeamId: 'team-2',
+            sharedScheduleOpponentTeamId: 'team-2',
+            status: 'scheduled',
+            seasonLabel: 'Spring 2026',
+            competitionType: 'league',
+            assignments: [
+                { role: 'Snacks', value: '', claimable: true },
+                { role: 'Scorebook', value: 'Jamie', claimable: false }
+            ]
+        });
+
         const result = await loadParentScheduleEventDetail(user(), { teamId: 'team-1', eventId: 'game-1' });
 
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
-        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1');
-        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1');
-        expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
+        expect(dbMocks.getGame).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(dbMocks.getGames).not.toHaveBeenCalled();
+        expect(dbMocks.getPracticeSessions).not.toHaveBeenCalled();
+        expect(utilsMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
+        expect(dbMocks.getPracticeSessionByEvent).not.toHaveBeenCalled();
         expect(dbMocks.getRsvpSummaries).toHaveBeenCalledWith('team-1', ['game-1']);
         expect(dbMocks.getRsvps).toHaveBeenCalledTimes(1);
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'game-1');
@@ -419,6 +441,33 @@ describe('React app schedule service contract integration', () => {
         expect(result.events.find((event) => event.childId === 'player-2')).toMatchObject({
             myRsvp: 'maybe',
             myRsvpNote: 'Late arrival'
+        });
+    });
+
+    it('keeps staff event detail on the lightweight team child by default', async () => {
+        profileMocks.loadProfileDocument.mockResolvedValue({ parentOf: [] });
+        dbMocks.getGame.mockResolvedValue({
+            id: 'game-1',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            location: 'Main Gym',
+            opponent: 'Falcons',
+            status: 'scheduled'
+        });
+
+        const result = await loadParentScheduleEventDetail({
+            ...user(),
+            parentOf: [],
+            coachOf: ['team-1']
+        }, { teamId: 'team-1', eventId: 'game-1' });
+
+        expect(dbMocks.getPlayers).not.toHaveBeenCalled();
+        expect(dbMocks.getGames).not.toHaveBeenCalled();
+        expect(result.events).toHaveLength(1);
+        expect(result.events[0]).toMatchObject({
+            id: 'game-1',
+            childId: 'staff-team-team-1',
+            childName: 'Team schedule'
         });
     });
 
