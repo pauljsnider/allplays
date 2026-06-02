@@ -128,7 +128,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, loadParentScheduleEventDetail, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentSchedule, loadParentScheduleEventDetail, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
@@ -612,6 +612,49 @@ describe('React app schedule service contract integration', () => {
                 })
             })
         );
+    });
+
+    it('reuses the team roster across staff RSVP reminder preview loads', async () => {
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat', active: true, parents: [{ email: 'pat@example.com' }] },
+            { id: 'player-2', name: 'Sam', active: true, parents: [{ email: 'sam@example.com' }] }
+        ]);
+        dbMocks.getRsvps
+            .mockResolvedValueOnce([{ playerId: 'player-1', response: 'going' }])
+            .mockResolvedValueOnce([{ playerId: 'player-2', response: 'going' }]);
+
+        const loader = createStaffRsvpReminderPreviewLoader();
+        const manager = { uid: 'coach-1', email: 'coach@example.com' };
+        const eventBase = {
+            teamId: 'team-1',
+            teamName: 'Bears',
+            type: 'game',
+            date: new Date('2026-05-21T18:00:00Z'),
+            location: 'Main Gym',
+            opponent: 'Falcons',
+            title: 'vs. Falcons',
+            childId: '',
+            childName: '',
+            isDbGame: true,
+            isCancelled: false,
+            status: 'scheduled',
+            homeScore: null,
+            awayScore: null,
+            assignments: [],
+            isTeamStaff: true,
+            isTeamRsvpReminderManager: true
+        };
+
+        const [firstPreview, secondPreview] = await Promise.all([
+            loader.loadPreview({ ...eventBase, id: 'game-1', eventKey: 'team-1:game-1' }, manager),
+            loader.loadPreview({ ...eventBase, id: 'game-2', eventKey: 'team-1:game-2', opponent: 'Tigers', title: 'vs. Tigers' }, manager)
+        ]);
+
+        expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getPlayers).toHaveBeenCalledWith('team-1', { includeInactive: true });
+        expect(dbMocks.getRsvps).toHaveBeenCalledTimes(2);
+        expect(firstPreview.missingPlayerCount).toBe(1);
+        expect(secondPreview.missingPlayerCount).toBe(1);
     });
 
     it('fails closed when adding a calendar URL without team staff access', async () => {
