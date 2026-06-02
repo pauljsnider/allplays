@@ -2126,6 +2126,44 @@ export async function loadStaffRsvpReminderPreview(event: ParentScheduleEvent, u
   return buildStaffRsvpReminderPreview(players, rsvps);
 }
 
+export function createStaffRsvpReminderPreviewLoader() {
+  const playersByTeamId = new Map<string, Promise<any[]>>();
+  const previewByEventKey = new Map<string, Promise<StaffRsvpReminderPreview>>();
+
+  const getPlayersForTeam = (teamId: string) => {
+    const normalizedTeamId = compactString(teamId);
+    if (!normalizedTeamId) return Promise.resolve([]);
+    const existing = playersByTeamId.get(normalizedTeamId);
+    if (existing) return existing;
+    const nextLoad = loadPlayers(normalizedTeamId).catch((error) => {
+      playersByTeamId.delete(normalizedTeamId);
+      throw error;
+    });
+    playersByTeamId.set(normalizedTeamId, nextLoad);
+    return nextLoad;
+  };
+
+  return {
+    async loadPreview(event: ParentScheduleEvent, user: AuthUser | null): Promise<StaffRsvpReminderPreview> {
+      assertStaffRsvpReminderEvent(event, user);
+      const previewKey = `${compactString(event.teamId)}:${compactString(event.id)}`;
+      const existing = previewByEventKey.get(previewKey);
+      if (existing) return existing;
+      const nextLoad = Promise.all([
+        getPlayersForTeam(event.teamId),
+        loadRsvps(event.teamId, event.id)
+      ])
+        .then(([players, rsvps]) => buildStaffRsvpReminderPreview(players, rsvps))
+        .catch((error) => {
+          previewByEventKey.delete(previewKey);
+          throw error;
+        });
+      previewByEventKey.set(previewKey, nextLoad);
+      return nextLoad;
+    }
+  };
+}
+
 async function sendPublicRsvpReminderEmailsNativeSafe(event: ParentScheduleEvent) {
   if (!isNativeRuntime()) {
     return sendPublicRsvpReminderEmails({

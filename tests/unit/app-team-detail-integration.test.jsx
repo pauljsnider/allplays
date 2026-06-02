@@ -16,7 +16,8 @@ const publicActionMocks = vi.hoisted(() => ({
     sharePublicUrl: vi.fn()
 }));
 const scheduleServiceMocks = vi.hoisted(() => ({
-    loadStaffRsvpReminderPreview: vi.fn(),
+    createStaffRsvpReminderPreviewLoader: vi.fn(),
+    loadPreview: vi.fn(),
     sendStaffRsvpReminder: vi.fn()
 }));
 
@@ -27,7 +28,10 @@ vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
     canExposePublicFanFeed: teamDetailMocks.canExposePublicFanFeed
 }));
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
-vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleServiceMocks);
+vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
+    createStaffRsvpReminderPreviewLoader: scheduleServiceMocks.createStaffRsvpReminderPreviewLoader,
+    sendStaffRsvpReminder: scheduleServiceMocks.sendStaffRsvpReminder
+}));
 
 import { buildScoreboardWidgetEmbedCode, buildScoreboardWidgetUrl, TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
 
@@ -195,11 +199,14 @@ beforeEach(() => {
     };
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
-    scheduleServiceMocks.loadStaffRsvpReminderPreview.mockResolvedValue({
+    scheduleServiceMocks.loadPreview.mockResolvedValue({
         missingPlayerCount: 0,
         eligibleEmailCount: 0,
         eligibleEmails: [],
         players: []
+    });
+    scheduleServiceMocks.createStaffRsvpReminderPreviewLoader.mockReturnValue({
+        loadPreview: scheduleServiceMocks.loadPreview
     });
     scheduleServiceMocks.sendStaffRsvpReminder.mockResolvedValue({
         missingPlayerCount: 0,
@@ -398,7 +405,7 @@ describe('React app TeamDetail page', () => {
         expect(hrefs(container)).toContain('/schedule/team-1/game-final');
     });
 
-    it('lets team managers send an inline RSVP reminder from schedule rows', async () => {
+    it('loads RSVP reminder previews only when a manager opens a specific schedule row action', async () => {
         const managerAuth = {
             ...auth,
             user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
@@ -408,8 +415,13 @@ describe('React app TeamDetail page', () => {
         };
         const managerModel = model();
         managerModel.canManageTeam = true;
+        managerModel.upcomingEvents = [
+            managerModel.upcomingEvents[0],
+            { id: 'game-2', type: 'game', title: 'at Tigers', date: new Date('2100-06-03T18:00:00Z'), location: 'North Gym', opponent: 'Tigers', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false }
+        ];
+        managerModel.nextEvent = managerModel.upcomingEvents[0];
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
-        scheduleServiceMocks.loadStaffRsvpReminderPreview.mockResolvedValueOnce({
+        scheduleServiceMocks.loadPreview.mockResolvedValueOnce({
             missingPlayerCount: 3,
             eligibleEmailCount: 4,
             eligibleEmails: ['one@example.test', 'two@example.test', 'three@example.test', 'four@example.test'],
@@ -428,10 +440,16 @@ describe('React app TeamDetail page', () => {
         await clickButton(container, 'Schedule');
         await flush();
 
+        expect(scheduleServiceMocks.loadPreview).not.toHaveBeenCalled();
+        expect(Array.from(container.querySelectorAll('button')).filter((candidate) => candidate.textContent.includes('Review reminder')).length).toBe(2);
+
+        await clickButton(container, 'Review reminder');
+
         expect(container.textContent).toContain('Staff RSVP reminder');
         expect(container.textContent).toContain('3 no-response players');
         expect(container.textContent).toContain('Send reminder (3)');
-        expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).toHaveBeenCalledWith(expect.objectContaining({
+        expect(scheduleServiceMocks.loadPreview).toHaveBeenCalledTimes(1);
+        expect(scheduleServiceMocks.loadPreview).toHaveBeenCalledWith(expect.objectContaining({
             id: 'game-1',
             teamId: 'team-1',
             type: 'game',
@@ -457,7 +475,7 @@ describe('React app TeamDetail page', () => {
         await flush();
 
         expect(container.textContent).not.toContain('Staff RSVP reminder');
-        expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).not.toHaveBeenCalled();
+        expect(scheduleServiceMocks.loadPreview).not.toHaveBeenCalled();
     });
 
     it('renders empty tab states without trapping users in a spinner', async () => {
