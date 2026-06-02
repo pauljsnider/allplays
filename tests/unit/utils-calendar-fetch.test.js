@@ -130,4 +130,35 @@ describe('fetchAndParseCalendar', () => {
     expect(fetchMock.mock.calls.some(([url]) =>
       String(url).includes('cachebust=1700000000000'))).toBe(true);
   });
+
+  it('normalizes webcal subscription URLs before proxy fallback attempts', async () => {
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+    const fetchMock = vi.fn(async (url) => {
+      if (String(url).includes('example.com/fetchCalendarIcs')) {
+        throw new TypeError('function failed');
+      }
+      if (String(url) === 'https://example.com/team-calendar') {
+        throw new TypeError('direct failed');
+      }
+      if (String(url).startsWith('https://corsproxy.io/?')) {
+        expect(String(url)).toContain(encodeURIComponent('https://example.com/team-calendar'));
+        return makeTextResponse('', { ok: false, status: 403, statusText: 'Forbidden' });
+      }
+      if (String(url) === 'https://r.jina.ai/https://example.com/team-calendar?cachebust=1700000000000') {
+        return makeTextResponse(sampleIcs('from-webcal-proxy'));
+      }
+      return makeTextResponse('', { ok: false, status: 404, statusText: 'Not Found' });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events = await fetchAndParseCalendar('webcal://example.com/team-calendar');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].uid).toBe('from-webcal-proxy');
+    expect(dateNowSpy).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('webcal://'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes('https://r.jina.ai/https://example.com/team-calendar?cachebust=1700000000000'))).toBe(true);
+  });
 });

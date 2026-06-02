@@ -345,7 +345,9 @@ export async function fetchAndParseCalendar(url) {
   }
 
   function buildProxyUrls(targetUrl) {
-    const httpsUrl = targetUrl.trim().replace(/^http:\/\//i, 'https://');
+    const httpsUrl = targetUrl.trim()
+      .replace(/^webcals?:\/\//i, 'https://')
+      .replace(/^http:\/\//i, 'https://');
     const cacheBustUrl = httpsUrl.includes('?')
       ? `${httpsUrl}&cachebust=${Date.now()}`
       : `${httpsUrl}?cachebust=${Date.now()}`;
@@ -380,7 +382,7 @@ export async function fetchAndParseCalendar(url) {
                            error.message.includes('fetch') ||
                            error.message.includes('CORS');
     if (shouldTryProxy) {
-      const proxyUrls = buildProxyUrls(url);
+      const proxyUrls = buildProxyUrls(normalizedUrl);
       for (const proxyUrl of proxyUrls) {
         try {
           console.log('Calendar fetch failed, trying proxy:', proxyUrl);
