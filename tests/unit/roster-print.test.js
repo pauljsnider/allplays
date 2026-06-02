@@ -53,4 +53,30 @@ describe('roster print helpers', () => {
         expect(html).not.toContain('Private allergy');
         expect(html).not.toContain('Medical Note');
     });
+
+    it('includes optional staff entries without changing player sorting', () => {
+        const { html, model } = buildRosterPrintHtml({
+            team: { name: 'Falcons' },
+            includeStaff: true,
+            staff: [
+                { name: 'Coach Jamie', roleLabel: 'Admin', detail: 'coach@example.com' },
+                { name: 'Alex Smith', roleLabel: 'Scorekeeper · Videographer', detail: 'alex@example.com' }
+            ],
+            players: [
+                { id: 'p2', name: 'Avery Lee', number: '2', active: true },
+                { id: 'p1', name: 'Sam Jones', number: '11', active: true }
+            ],
+            generatedAt: new Date('2026-05-26T20:00:00Z')
+        });
+
+        expect(model.players.map((player) => player.name)).toEqual(['Avery Lee', 'Sam Jones']);
+        expect(model.staffCount).toBe(2);
+        expect(model.staff).toEqual([
+            { name: 'Alex Smith', role: 'Scorekeeper · Videographer', detail: 'alex@example.com' },
+            { name: 'Coach Jamie', role: 'Admin', detail: 'coach@example.com' }
+        ]);
+        expect(html).toContain('<h2>Staff</h2>');
+        expect(html).toContain('Coach Jamie');
+        expect(html).toContain('Scorekeeper · Videographer');
+    });
 });

@@ -80,4 +80,16 @@ describe('workflow manifest', () => {
         expect(adminStepByStep).toContain('Record offline payments from the manage view');
         expect(adminStepByStep).not.toContain('Generate Payment Link');
     });
+
+    it('documents roster staff visibility across workflow and capability metadata', () => {
+        const rosterWorkflow = readRepoFile('workflow-roster.html');
+        const capabilities = readRepoFile('apps/app/src/data/capabilities.ts');
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+
+        expect(rosterWorkflow).toContain('review staff access');
+        expect(rosterWorkflow).toContain('Review the <strong>Staff</strong> section');
+        expect(capabilities).toContain('Staff visibility');
+        expect(appHelpIndex).toContain('review staff access');
+        expect(appHelpIndex).toContain('Review the **Staff** section');
+    });
 });

@@ -48,6 +48,14 @@ const TEAM_ACCESS_STUB = `
 export function hasFullTeamAccess() {
     return true;
 }
+export function normalizeTeamPermissions(teamPermissions = {}) {
+    return {
+        scorekeeping: { mode: 'all_confirmed', memberIds: [] },
+        streaming: { mode: 'all_confirmed', memberIds: [] },
+        videography: { mode: 'selected', memberIds: [] },
+        ...teamPermissions
+    };
+}
 `;
 
 const FIREBASE_APP_STUB = `

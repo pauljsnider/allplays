@@ -83,6 +83,12 @@ const TEAM_ACCESS_STUB = `
 export function hasFullTeamAccess() {
     return true;
 }
+export function normalizeTeamPermissions() {
+    return {
+        scorekeeping: { mode: 'all', memberIds: [] },
+        streaming: { mode: 'all', memberIds: [] }
+    };
+}
 `;
 
 const TEAM_ADMIN_BANNER_STUB = `
