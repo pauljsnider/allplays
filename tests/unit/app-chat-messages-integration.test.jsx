@@ -328,6 +328,63 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Coach Jamie: Practice packet posted.');
     });
 
+    it('refreshes the inbox and keeps the latest preview copy visible', async () => {
+        chatMocks.loadChatInbox
+            .mockResolvedValueOnce({
+                teams: [
+                    {
+                        id: 'team-1',
+                        name: 'Bears',
+                        sport: 'Basketball',
+                        role: 'Admin',
+                        canModerate: true,
+                        unreadCount: 0,
+                        lastMessage: chatMessage({ id: 'last-1', text: 'Older team update.' })
+                    },
+                    {
+                        id: 'team-2',
+                        name: 'Thunder',
+                        sport: 'Soccer',
+                        role: 'Parent',
+                        canModerate: false,
+                        unreadCount: 1,
+                        lastMessage: chatMessage({ id: 'last-2', senderName: 'Morgan', text: 'Direct ride plan.' })
+                    }
+                ]
+            })
+            .mockResolvedValueOnce({
+                teams: [
+                    {
+                        id: 'team-1',
+                        name: 'Bears',
+                        sport: 'Basketball',
+                        role: 'Admin',
+                        canModerate: true,
+                        unreadCount: 0,
+                        lastMessage: chatMessage({ id: 'last-3', text: 'Newest schedule confirmation.', createdAt: new Date('2026-05-21T15:00:00Z') })
+                    },
+                    {
+                        id: 'team-2',
+                        name: 'Thunder',
+                        sport: 'Soccer',
+                        role: 'Parent',
+                        canModerate: false,
+                        unreadCount: 1,
+                        lastMessage: chatMessage({ id: 'last-2', senderName: 'Morgan', text: 'Direct ride plan.' })
+                    }
+                ]
+            });
+
+        const { container } = await renderMessages('/messages');
+        expect(container.textContent).toContain('Coach Jamie: Older team update.');
+
+        await click(container, 'Refresh messages');
+
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Coach Jamie: Newest schedule confirmation.');
+        expect(container.textContent).toContain('Morgan: Direct ride plan.');
+    });
+
     it('filters inbox rows by team, sport, or latest message preview', async () => {
         chatMocks.loadChatInbox.mockResolvedValueOnce({
             teams: [

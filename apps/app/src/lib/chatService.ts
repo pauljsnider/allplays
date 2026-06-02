@@ -433,6 +433,11 @@ function getNewestChatMessage(messages: Array<ChatMessage | null>) {
   ), null);
 }
 
+function getConversationActivityTime(conversation: ChatConversation | null | undefined) {
+  const conversationTime = toDate(conversation?.lastMessageAt || conversation?.updatedAt);
+  return conversationTime ? conversationTime.getTime() : null;
+}
+
 async function getLatestConversationMessage(teamId: string, conversationId: string): Promise<ChatMessage | null> {
   try {
     const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
@@ -469,15 +474,28 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
     }
   }
 
-  const recentConversations = conversations
+  const rankedConversations = conversations
     .filter((conversation) => conversation?.id)
-    .sort((a, b) => {
-      const aTime = toDate(a.lastMessageAt || a.updatedAt)?.getTime() || 0;
-      const bTime = toDate(b.lastMessageAt || b.updatedAt)?.getTime() || 0;
-      return bTime - aTime;
-    })
-    .slice(0, 8);
-  const messages = await Promise.all(recentConversations.map((conversation) => (
+    .map((conversation) => ({
+      conversation,
+      activityTime: getConversationActivityTime(conversation)
+    }))
+    .sort((a, b) => (b.activityTime || 0) - (a.activityTime || 0));
+
+  const metadataCandidate = rankedConversations.find(({ activityTime }) => activityTime !== null)?.conversation || null;
+  const missingMetadataConversations = rankedConversations
+    .filter(({ activityTime }) => activityTime === null)
+    .map(({ conversation }) => conversation);
+
+  const previewCandidates = metadataCandidate && missingMetadataConversations.length === 0
+    ? [metadataCandidate]
+    : Array.from(new Map(
+      [metadataCandidate, ...missingMetadataConversations]
+        .filter((conversation): conversation is ChatConversation => Boolean(conversation?.id))
+        .map((conversation) => [conversation.id, conversation])
+    ).values());
+
+  const messages = await Promise.all(previewCandidates.map((conversation) => (
     getLatestConversationMessage(teamId, conversation.id)
   )));
   return getNewestChatMessage(messages);

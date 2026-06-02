@@ -189,7 +189,7 @@ describe('React app chat recipient service', () => {
         }));
     });
 
-    it('uses the newest accessible conversation message for inbox previews', async () => {
+    it('uses only the newest conversation lookup per team when timestamps are usable', async () => {
         dbMocks.getUserProfile.mockResolvedValue({
             email: 'parent@example.com',
             parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }]
@@ -200,7 +200,8 @@ describe('React app chat recipient service', () => {
         ]);
         dbMocks.getChatConversations.mockResolvedValue([
             { id: 'team', type: 'team', name: 'Zebras Team Chat', updatedAt: new Date('2026-05-21T12:00:00Z') },
-            { id: 'direct_user-1__coach-1', type: 'direct', name: 'Coach Morgan', participantIds: ['user-1', 'coach-1'], updatedAt: new Date('2026-05-21T13:00:00Z') }
+            { id: 'group_family', type: 'group', name: 'Carpool', lastMessageAt: new Date('2026-05-21T13:00:00Z') },
+            { id: 'direct_user-1__coach-1', type: 'direct', name: 'Coach Morgan', participantIds: ['user-1', 'coach-1'], updatedAt: new Date('2026-05-21T14:00:00Z') }
         ]);
         dbMocks.getChatMessages.mockImplementation(async (teamId, options = {}) => {
             if (options.conversationId === 'direct_user-1__coach-1') {
@@ -208,6 +209,14 @@ describe('React app chat recipient service', () => {
                     id: 'direct-last',
                     text: 'Uniform pickup moved to 6.',
                     senderName: 'Coach Morgan',
+                    createdAt: new Date('2026-05-21T14:00:00Z')
+                }];
+            }
+            if (options.conversationId === 'group_family') {
+                return [{
+                    id: 'group-last',
+                    text: 'Van leaves at 5:30.',
+                    senderName: 'Sam Parent',
                     createdAt: new Date('2026-05-21T13:00:00Z')
                 }];
             }
@@ -227,7 +236,64 @@ describe('React app chat recipient service', () => {
             roles: ['parent']
         });
 
+        expect(dbMocks.getChatMessages).toHaveBeenCalledTimes(1);
         expect(dbMocks.getChatMessages).toHaveBeenCalledWith('team-parent', { limit: 1, conversationId: 'direct_user-1__coach-1' });
+        expect(inbox.teams[0].lastMessage).toEqual(expect.objectContaining({
+            id: 'direct-last',
+            text: 'Uniform pickup moved to 6.'
+        }));
+    });
+
+    it('falls back to missing conversation timestamps without restoring the full fan-out', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }]
+        });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([]);
+        dbMocks.getParentTeams.mockResolvedValue([
+            { id: 'team-parent', name: 'Zebras', sport: 'Soccer' }
+        ]);
+        dbMocks.getChatConversations.mockResolvedValue([
+            { id: 'team', type: 'team', name: 'Zebras Team Chat' },
+            { id: 'direct_user-1__coach-1', type: 'direct', name: 'Coach Morgan', participantIds: ['user-1', 'coach-1'], updatedAt: new Date('2026-05-21T13:00:00Z') },
+            { id: 'group_family', type: 'group', name: 'Carpool', lastMessageAt: new Date('2026-05-21T12:00:00Z') }
+        ]);
+        dbMocks.getChatMessages.mockImplementation(async (teamId, options = {}) => {
+            if (options.conversationId === 'direct_user-1__coach-1') {
+                return [{
+                    id: 'direct-last',
+                    text: 'Uniform pickup moved to 6.',
+                    senderName: 'Coach Morgan',
+                    createdAt: new Date('2026-05-21T13:00:00Z')
+                }];
+            }
+            if (options.conversationId === 'group_family') {
+                return [{
+                    id: 'group-last',
+                    text: 'Van leaves at 5:30.',
+                    senderName: 'Sam Parent',
+                    createdAt: new Date('2026-05-21T12:00:00Z')
+                }];
+            }
+            return [{
+                id: 'team-last',
+                text: 'Older team announcement.',
+                senderName: 'Coach Jamie',
+                createdAt: new Date('2026-05-21T11:00:00Z')
+            }];
+        });
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'parent@example.com',
+            displayName: 'Pat Parent',
+            roles: ['parent']
+        });
+
+        expect(dbMocks.getChatMessages).toHaveBeenCalledTimes(2);
+        expect(dbMocks.getChatMessages).toHaveBeenNthCalledWith(1, 'team-parent', { limit: 1, conversationId: 'direct_user-1__coach-1' });
+        expect(dbMocks.getChatMessages).toHaveBeenNthCalledWith(2, 'team-parent', { limit: 1, conversationId: 'team' });
         expect(inbox.teams[0].lastMessage).toEqual(expect.objectContaining({
             id: 'direct-last',
             text: 'Uniform pickup moved to 6.'
