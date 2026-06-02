@@ -75,9 +75,9 @@ describe('AppSearchDialog', () => {
 
   it('starts route preload without blocking the search result click flow', async () => {
     const onClose = vi.fn();
-    let resolvePreload: ((value: boolean) => void) | null = null;
-    preloadSearchRouteMock.mockImplementationOnce(() => new Promise((resolve) => {
-      resolvePreload = resolve;
+    let releasePreload!: () => void;
+    preloadSearchRouteMock.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
+      releasePreload = () => resolve(true);
     }));
 
     render(
@@ -92,6 +92,6 @@ describe('AppSearchDialog', () => {
 
     await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledWith('/teams/team-2'));
 
-    resolvePreload?.(true);
+    releasePreload();
   });
 });
