@@ -1,7 +1,9 @@
 import {
   getAssignmentClaims,
+  getGame,
   getGames,
   getPracticePacketCompletions,
+  getPracticeSessionByEvent,
   getPracticeSessions,
   getPlayers,
   getRsvps,
@@ -1019,6 +1021,14 @@ async function loadGames(teamId: string) {
   );
 }
 
+async function loadGameById(teamId: string, gameId: string) {
+  return readWithNativeFallback(
+    `game ${teamId}/${gameId}`,
+    () => Promise.resolve(getGame(teamId, gameId)),
+    () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)
+  );
+}
+
 async function loadPracticeSessions(teamId: string) {
   return readWithNativeFallback(
     `practice sessions ${teamId}`,
@@ -1026,6 +1036,17 @@ async function loadPracticeSessions(teamId: string) {
     async () => {
       const docs = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
       return docs.sort((a, b) => toEventDate(b.date).getTime() - toEventDate(a.date).getTime());
+    }
+  );
+}
+
+async function loadPracticeSessionByEventId(teamId: string, eventId: string) {
+  return readWithNativeFallback(
+    `practice session ${teamId}/${eventId}`,
+    () => Promise.resolve(getPracticeSessionByEvent(teamId, eventId)),
+    async () => {
+      const sessions = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
+      return sessions.find((session) => compactString(session?.eventId) === eventId) || null;
     }
   );
 }
@@ -1526,6 +1547,82 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
   return events;
 }
 
+async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
+  const [team, game] = await Promise.all([
+    loadTeam(teamId),
+    loadGameById(teamId, eventId)
+  ]);
+  if (!team || !game) return [];
+  if (game.type === 'practice' && game.isSeriesMaster && game.recurrence) return [];
+
+  const teamName = compactString(team.name) || teamId;
+  const teamWithId = { ...team, id: team.id || teamId };
+  const isPractice = game.type === 'practice';
+  const type = isPractice ? 'practice' : 'game';
+  const availabilityPreferences = normalizeAvailabilityPreferences(team.availabilityPreferences);
+  const isStaff = isTeamStaff(teamWithId, user);
+  const isRsvpReminderManager = isPublicRsvpReminderManager(teamWithId, user);
+  const session = isPractice ? await loadPracticeSessionByEventId(teamId, eventId).catch(() => null) : null;
+  const date = toEventDate(game.date);
+  const normalizedId = compactString(game.id || game.gameId || eventId);
+  const isCancelled = game.status === 'cancelled';
+  if (!normalizedId) return [];
+
+  teamChildren.forEach((child) => {
+    child.teamName = child.teamName || teamName;
+  });
+
+  return teamChildren.map((child) => createScheduleEvent({
+    teamId,
+    teamName,
+    child,
+    id: normalizedId,
+    type,
+    date,
+    endDate: game.endDate || game.end || game.endTime || null,
+    location: game.location || 'TBD',
+    opponent: game.opponent || 'TBD',
+    opponentTeamId: game.opponentTeamId || null,
+    opponentTeamName: game.opponentTeamName || game.awayTeamName || null,
+    opponentTeamPhoto: game.opponentTeamPhoto || null,
+    sharedScheduleOpponentTeamId: game.sharedScheduleOpponentTeamId || null,
+    counterpartTitle: teamName ? `vs. ${teamName}` : null,
+    title: game.title || null,
+    isDbGame: true,
+    isCancelled,
+    status: game.status || null,
+    liveStatus: game.liveStatus || null,
+    liveClockMs: game.liveClockMs ?? null,
+    liveClockRunning: game.liveClockRunning ?? null,
+    liveClockPeriod: game.liveClockPeriod || null,
+    liveClockUpdatedAt: game.liveClockUpdatedAt || null,
+    homeScore: game.homeScore ?? null,
+    awayScore: game.awayScore ?? null,
+    canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),
+    isHome: game.isHome ?? null,
+    kitColor: game.kitColor || null,
+    arrivalTime: game.arrivalTime || null,
+    notes: game.notes || null,
+    seasonLabel: game.seasonLabel || null,
+    competitionType: game.competitionType || null,
+    countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+    sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
+    sourceLabel: getScheduleSourceLabel(game),
+    isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
+    visibility: game.visibility || null,
+    assignments: Array.isArray(game.assignments) ? game.assignments : [],
+    rsvpSummary: game.rsvpSummary || null,
+    practiceAttendance: isPractice && hasRecordedAttendance(session?.attendance) ? session.attendance : null,
+    practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
+    practiceSessionId: isPractice ? compactString(session?.id) || null : null,
+    availabilityPreferences,
+    isTeamAdmin: isRsvpReminderManager,
+    isTeamStaff: isStaff,
+    isTeamRsvpReminderManager: isRsvpReminderManager,
+    gamePlan: game.gamePlan || null
+  }));
+}
+
 function getRsvpPlayerIds(rsvp: any) {
   const directIds = Array.isArray(rsvp?.playerIds) ? rsvp.playerIds : [];
   const ids = [
@@ -1676,7 +1773,7 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
 
   const timer = startUxTimer('parent schedule event detail load');
   const hydrateDetails = options.hydrateDetails !== false;
-  const expandStaffPlayers = options.expandStaffPlayers !== false;
+  const expandStaffPlayers = options.expandStaffPlayers === true;
 
   try {
     const profile = await loadProfileDocument(user.uid);
@@ -1688,8 +1785,15 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       return { children, events: [] };
     }
 
-    const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user);
-    const events = teamEvents.filter((event) => event.id === requestedEventId);
+    let fallback = false;
+    let teamEventRows: number | undefined;
+    let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);
+    if (!events.length) {
+      fallback = true;
+      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user);
+      teamEventRows = teamEvents.length;
+      events = teamEvents.filter((event) => event.id === requestedEventId);
+    }
     if (hydrateDetails && events.length) {
       await hydrateEventDetails(events, user);
     }
@@ -1701,8 +1805,9 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
       childLinks: children.length,
       teams: byTeam.size,
       staffTeams: staffTeams.length,
-      teamEventRows: teamEvents.length,
-      eventRows: events.length
+      teamEventRows,
+      eventRows: events.length,
+      fallback
     });
     return { children, events };
   } catch (error: any) {
