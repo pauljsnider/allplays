@@ -17,7 +17,7 @@ export async function getPublicTeamsByLocation(locationFilter?: string): Promise
         photoUrl: team.photoUrl ?? null,
         location: teamLocation(team),
         appAccess: team.appAccess ?? false,
-        webAccess: team.webAccess ?? false,
+        webAccess: team.webAccess ?? true,
         isPublic: true,
         players: [],
         nextEvent: null,
