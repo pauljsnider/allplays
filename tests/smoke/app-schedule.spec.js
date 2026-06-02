@@ -757,7 +757,8 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     });
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible();
+    const eventSummaryCard = page.locator('.event-summary-card');
+    await expect(eventSummaryCard.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('Pat · Bears')).toBeVisible();
     await expect(page.getByText('Availability needed')).toBeVisible();
     await expect(page.getByText('Is Pat going?')).toBeVisible();
