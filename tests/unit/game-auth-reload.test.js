@@ -36,4 +36,14 @@ describe('game auth reload', () => {
         expect(opponentHeaderReset).toBeGreaterThan(opponentStatsStart);
         expect(opponentHeaderReset).toBeLessThan(opponentHeaderAppend);
     });
+
+    it('keeps public game reports loading when legacy player docs are denied', () => {
+        const source = readGameHtml();
+
+        expect(source).toContain("const playersPromise = getPlayers(teamId, { includeInactive: true }).catch((error) => {");
+        expect(source).toContain("if (error?.code === 'permission-denied') {");
+        expect(source).toContain("console.warn('Failed to load public roster for game report viewer:', error);");
+        expect(source).toContain('return [];');
+        expect(source).toContain('playersPromise');
+    });
 });
