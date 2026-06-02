@@ -23,6 +23,8 @@ vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+const mountedRoots = [];
+
 const auth = {
     user: {
         uid: 'user-1',
@@ -53,6 +55,7 @@ async function renderPrivateAi() {
     });
 
     await flush();
+    mountedRoots.push(root);
     return { container, root };
 }
 
@@ -127,7 +130,12 @@ beforeEach(() => {
     delete window.__privateAiRecognition;
 });
 
-afterEach(() => {
+afterEach(async () => {
+    await act(async () => {
+        while (mountedRoots.length) {
+            mountedRoots.pop().unmount();
+        }
+    });
     document.body.innerHTML = '';
     delete window.SpeechRecognition;
     delete window.webkitSpeechRecognition;
@@ -271,15 +279,16 @@ describe('private AI chat page', () => {
         const messageLoadCountBeforeDraft = privateAiMocks.loadPrivateAiMessages.mock.calls.length;
 
         await click(container.querySelector('button[aria-label="New AI chat"]'));
+
+        const textarea = container.querySelector('textarea');
+        await setFieldValue(textarea, 'First draft question');
         await click(container.querySelector('button[aria-label="Refresh AI chat"]'));
 
         expect(privateAiMocks.createPrivateAiConversation).not.toHaveBeenCalled();
         expect(privateAiMocks.loadPrivateAiMessages.mock.calls.length).toBe(messageLoadCountBeforeDraft);
         expect(container.textContent).toContain('What do you need from ALL PLAYS?');
-        expect(container.textContent).not.toContain('First draft question');
+        expect(textarea.value).toBe('First draft question');
 
-        const textarea = container.querySelector('textarea');
-        await setFieldValue(textarea, 'First draft question');
         await click(container.querySelector('button[aria-label="Send AI message"]'));
 
         expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'First draft question', '__draft__');
