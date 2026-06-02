@@ -904,6 +904,10 @@ Write the match report now:`;
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
         }
 
+        function hasRecordedStatValue(stats, key) {
+            return Object.prototype.hasOwnProperty.call(stats || {}, key);
+        }
+
         function renderPlayerStatsTable({ teamId, gameId, players, statsMap, didNotPlayMap, timeMap, statKeys, hasPlayingTime }) {
             const tbody = document.getElementById('stats-body');
             if (!tbody) return;
@@ -918,7 +922,7 @@ Write the match report now:`;
                 const pTime = timeMap[p.id] || 0;
                 const didNotPlay = didNotPlayMap[p.id] === true;
                 const statCells = statKeys.map((key) => `
-                    <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : (pStats[key] || 0)}</td>
+                    <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : (hasRecordedStatValue(pStats, key) ? pStats[key] : '&mdash;')}</td>
                 `).join('');
                 const minutesCell = hasPlayingTime ? `
                     <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${didNotPlay ? '&mdash;' : formatMMSS(pTime)}</td>
@@ -1725,7 +1729,7 @@ Write the match report now:`;
 
                     opponentTbody.innerHTML = opponentPlayers.map(p => {
                         const statCells = oppKeys.map(key => `
-                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${p.stats[key] || 0}</td>
+                            <td class="px-4 py-4 text-center font-mono text-gray-700 font-semibold">${hasRecordedStatValue(p.stats, key) ? p.stats[key] : '&mdash;'}</td>
                         `).join('');
                         return `
                             <tr class="bg-white hover:bg-gray-50 transition">

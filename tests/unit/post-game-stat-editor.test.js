@@ -168,4 +168,12 @@ describe('post-game stat editor helpers', () => {
         expect(setupSource).not.toContain('editorStatsMap[player.id]');
         expect(pageSource).toContain('tableStatsMap: statsMap');
     });
+
+    it('renders missing configured stats as blank cells instead of forced zeros', () => {
+        const pageSource = readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
+
+        expect(pageSource).toContain("function hasRecordedStatValue(stats, key)");
+        expect(pageSource).toContain("hasRecordedStatValue(pStats, key) ? pStats[key] : '&mdash;'");
+        expect(pageSource).toContain("hasRecordedStatValue(p.stats, key) ? p.stats[key] : '&mdash;'");
+    });
 });
