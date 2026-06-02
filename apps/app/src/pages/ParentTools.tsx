@@ -75,6 +75,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;
   const [visitedTools, setVisitedTools] = useState<ParentToolId[]>(() => activeTool ? [activeTool] : ['access']);
+  const [accessRefreshVersion, setAccessRefreshVersion] = useState(0);
 
   useEffect(() => {
     if (!activeTool) return;
@@ -88,6 +89,10 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
+  };
+
+  const handleAccessChanged = () => {
+    setAccessRefreshVersion((current) => current + 1);
   };
 
   return (
@@ -126,13 +131,13 @@ export function ParentTools({ auth }: { auth: AuthState }) {
         </div>
       </div>
 
-      <KeepAliveTool active={activeTool === 'access'} mounted={visitedTools.includes('access')}><AccessTool auth={auth} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'household'} mounted={visitedTools.includes('household')}><HouseholdInviteTool auth={auth} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'fees'} mounted={visitedTools.includes('fees')}><FeesTool auth={auth} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'calendar'} mounted={visitedTools.includes('calendar')}><CalendarTool auth={auth} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'share'} mounted={visitedTools.includes('share')}><FamilyShareTool auth={auth} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'registrations'} mounted={visitedTools.includes('registrations')}><RegistrationsTool auth={auth} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'certificates'} mounted={visitedTools.includes('certificates')}><CertificatesTool auth={auth} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'access'} mounted={visitedTools.includes('access')}><AccessTool auth={auth} onAccessChanged={handleAccessChanged} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'household'} mounted={visitedTools.includes('household')}><HouseholdInviteTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'fees'} mounted={visitedTools.includes('fees')}><FeesTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'calendar'} mounted={visitedTools.includes('calendar')}><CalendarTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'share'} mounted={visitedTools.includes('share')}><FamilyShareTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'registrations'} mounted={visitedTools.includes('registrations')}><RegistrationsTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'certificates'} mounted={visitedTools.includes('certificates')}><CertificatesTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
     </div>
   );
 }
@@ -142,7 +147,7 @@ function KeepAliveTool({ active, mounted, children }: { active: boolean; mounted
   return <div hidden={!active}>{children}</div>;
 }
 
-function AccessTool({ auth }: { auth: AuthState }) {
+function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChanged: () => void }) {
   const [teams, setTeams] = useState<ParentAccessTeam[]>([]);
   const [requests, setRequests] = useState<ParentAccessRequest[]>([]);
   const [players, setPlayers] = useState<ParentAccessPlayer[]>([]);
@@ -225,6 +230,7 @@ function AccessTool({ auth }: { auth: AuthState }) {
         refresh: auth.refresh
       });
       await loadAccessModel();
+      onAccessChanged();
       setRedeemCode('');
       setMessage(result.message);
     } catch (redeemError: any) {
@@ -247,6 +253,7 @@ function AccessTool({ auth }: { auth: AuthState }) {
       await submitParentAccessRequest(selectedTeamId, selectedPlayerId, relation);
       setMessage('Access request sent.');
       await loadAccessModel();
+      onAccessChanged();
     } catch (submitError: any) {
       setError(submitError?.message || 'Unable to send access request.');
     } finally {
@@ -329,7 +336,7 @@ function AccessTool({ auth }: { auth: AuthState }) {
   );
 }
 
-function FeesTool({ auth }: { auth: AuthState }) {
+function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [fees, setFees] = useState<ParentFeeAppRecord[]>([]);
   const [filter, setFilter] = useState<'open' | 'all' | 'paid'>('open');
   const [loading, setLoading] = useState(true);
@@ -352,7 +359,7 @@ function FeesTool({ auth }: { auth: AuthState }) {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, refreshVersion]);
 
   const visibleFees = useMemo(() => fees.filter((fee) => {
     if (filter === 'all') return true;
@@ -417,7 +424,7 @@ function getFeeCardKey(fee: ParentFeeAppRecord) {
   return `${fee.teamId || 'team'}-${fee.batchId || 'batch'}-${fee.recipientId || fee.id || fee.title || 'fee'}`;
 }
 
-function CalendarTool({ auth }: { auth: AuthState }) {
+function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [teams, setTeams] = useState<ParentCalendarTeam[]>([]);
   const [loading, setLoading] = useState(true);
@@ -443,7 +450,7 @@ function CalendarTool({ auth }: { auth: AuthState }) {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, refreshVersion]);
 
   const download = () => {
     if (!events.length) {
@@ -526,7 +533,7 @@ function CalendarTool({ auth }: { auth: AuthState }) {
 }
 
 
-function HouseholdInviteTool({ auth }: { auth: AuthState }) {
+function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [linkedPlayers, setLinkedPlayers] = useState<ParentHouseholdLinkedPlayer[]>([]);
   const [members, setMembers] = useState<ParentHouseholdFamilyMember[]>([]);
   const [playerKey, setPlayerKey] = useState('');
@@ -559,7 +566,7 @@ function HouseholdInviteTool({ auth }: { auth: AuthState }) {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, refreshVersion]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -654,7 +661,7 @@ function HouseholdInviteTool({ auth }: { auth: AuthState }) {
   );
 }
 
-function FamilyShareTool({ auth }: { auth: AuthState }) {
+function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [tokens, setTokens] = useState<FamilyShareTokenCard[]>([]);
   const [children, setChildren] = useState<any[]>([]);
   const [label, setLabel] = useState('');
@@ -683,7 +690,7 @@ function FamilyShareTool({ auth }: { auth: AuthState }) {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, refreshVersion]);
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
@@ -797,7 +804,7 @@ function FamilyShareTool({ auth }: { auth: AuthState }) {
   );
 }
 
-function RegistrationsTool({ auth }: { auth: AuthState }) {
+function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [cards, setCards] = useState<ParentRegistrationCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -817,7 +824,7 @@ function RegistrationsTool({ auth }: { auth: AuthState }) {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, refreshVersion]);
 
   return (
     <div className="space-y-3">
@@ -836,7 +843,7 @@ function RegistrationsTool({ auth }: { auth: AuthState }) {
   );
 }
 
-function CertificatesTool({ auth }: { auth: AuthState }) {
+function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [cards, setCards] = useState<ParentCertificateCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -856,7 +863,7 @@ function CertificatesTool({ auth }: { auth: AuthState }) {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, refreshVersion]);
 
   return (
     <div className="space-y-3">
