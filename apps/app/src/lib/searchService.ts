@@ -673,12 +673,23 @@ function findReusablePlayerSearchCacheEntry(scopeKey: string, normalizedQuery: s
   for (const entry of playerSearchCache.values()) {
     if (entry.scopeKey !== scopeKey || entry.isNumeric || !entry.players || !entry.sourceDocs || !entry.exhaustiveForNarrowerQueries) continue;
     if (!normalizedQuery.startsWith(entry.normalizedQuery) || normalizedQuery === entry.normalizedQuery) continue;
+    if (!canReusePlayerSearchPrefixes(entry.normalizedQuery, normalizedQuery)) continue;
     if (!bestMatch || entry.normalizedQuery.length > bestMatch.normalizedQuery.length) {
       bestMatch = entry;
     }
   }
 
   return bestMatch;
+}
+
+function canReusePlayerSearchPrefixes(cachedQuery: string, nextQuery: string) {
+  const cachedTokens = splitSearchTokens(cachedQuery).slice(0, 2);
+  const nextTokens = splitSearchTokens(nextQuery).slice(0, 2);
+
+  if (!cachedTokens.length || nextTokens.length < cachedTokens.length) return false;
+  if (nextTokens.length > cachedTokens.length) return false;
+
+  return cachedTokens.every((token, index) => nextTokens[index]?.startsWith(token));
 }
 
 async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean) {

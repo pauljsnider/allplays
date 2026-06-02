@@ -723,6 +723,15 @@ describe('React app search service', () => {
                     ]
                 };
             }
+            if (lowerBound === 's' || lowerBound === 'S') {
+                return {
+                    docs: [
+                        firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '9' }),
+                        firestorePlayer('teams/team-1/players/player-2', { name: 'Pat Stone', number: '10' }),
+                        firestorePlayer('teams/team-1/players/player-4', { name: 'Sam Patton', number: '12' })
+                    ]
+                };
+            }
 
             throw new Error(`Unexpected player query: ${lowerBound}`);
         });
@@ -742,11 +751,12 @@ describe('React app search service', () => {
             '#10 Pat Stone'
         ]);
 
-        const multiTokenPlayers = await searchAppPlayers('pat st', visibleTeams, auth.user);
-        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        const multiTokenPlayers = await searchAppPlayers('pat s', visibleTeams, auth.user);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(6);
         expect(multiTokenPlayers.map((player) => player.title)).toEqual([
             '#9 Pat Star',
-            '#10 Pat Stone'
+            '#10 Pat Stone',
+            '#12 Sam Patton'
         ]);
     });
 
