@@ -75,7 +75,7 @@ describe('AppShell', () => {
     );
 
     const event = new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true, cancelable: true });
-    document.dispatchEvent(event);
+    window.dispatchEvent(event);
 
     expect(event.defaultPrevented).toBe(true);
     expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeInTheDocument();

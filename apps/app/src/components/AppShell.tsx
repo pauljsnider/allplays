@@ -85,8 +85,8 @@ export function AppShell({ auth, children }: AppShellProps) {
       setSearchOpen(true);
     };
 
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
   const addWorkflows = buildAddWorkflows();
