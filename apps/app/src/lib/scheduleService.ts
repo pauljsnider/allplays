@@ -24,7 +24,8 @@ import {
   updateGame,
   updateTeam,
   upsertPracticePacketCompletion,
-  postSharedGameCancellationNotification
+  postSharedGameCancellationNotification,
+  cancelOccurrence
 } from '../../../../js/db.js';
 import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
 import { db, doc, collection, getDocs, runTransaction, increment, serverTimestamp } from '../../../../js/firebase.js';
@@ -179,6 +180,12 @@ export type PlayerScoringStatResult = GameScoreSnapshot & {
 export type CancelScheduledGameResult = {
   cancelled: true;
   notificationError: string | null;
+};
+
+export type CancelPracticeOccurrenceResult = {
+  cancelled: true;
+  masterId: string;
+  instanceDate: string;
 };
 
 export type PublishGamePlanResult = {
@@ -573,6 +580,14 @@ async function readWithNativeFallback<T>(label: string, primary: () => Promise<T
 
 function compactString(value: unknown) {
   return String(value || '').trim();
+}
+
+export function parseRecurringPracticeOccurrenceId(eventId: string) {
+  const normalizedEventId = compactString(eventId);
+  if (!normalizedEventId || !normalizedEventId.includes('__')) return null;
+  const [masterId, instanceDate] = normalizedEventId.split(/__(.+)/).filter(Boolean);
+  if (!masterId || !instanceDate || !/^\d{4}-\d{2}-\d{2}$/.test(instanceDate)) return null;
+  return { masterId, instanceDate };
 }
 
 async function mapWithConcurrency<T, R>(
@@ -2171,6 +2186,47 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   return {
     cancelled: true,
     notificationError
+  };
+}
+
+export async function cancelPracticeOccurrenceForApp(event: ParentScheduleEvent, user: AuthUser | null): Promise<CancelPracticeOccurrenceResult> {
+  if (!event?.teamId || !event?.id || !event.isDbGame || event.type !== 'practice') {
+    throw new Error('A recurring practice occurrence is required before cancelling.');
+  }
+  if (event.isCancelled) {
+    throw new Error('This practice occurrence is already cancelled.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before cancelling this practice occurrence.');
+  }
+  if (!event.isTeamStaff) {
+    throw new Error('Coach or admin access is required to cancel this practice occurrence.');
+  }
+
+  const occurrence = parseRecurringPracticeOccurrenceId(event.id);
+  if (!occurrence) {
+    throw new Error('Only recurring practice occurrences can be cancelled here.');
+  }
+
+  try {
+    await withTimeout(Promise.resolve(cancelOccurrence(event.teamId, occurrence.masterId, occurrence.instanceDate)), 'Practice occurrence cancellation');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST practice occurrence cancellation:', error);
+    const path = `teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(occurrence.masterId)}`;
+    const existing = await nativeGetDocument(path);
+    const nextExDates = uniqueNonEmptyStrings([...(Array.isArray(existing?.exDates) ? existing.exDates : []), occurrence.instanceDate]);
+    await nativePatchDocument(path, {
+      exDates: nextExDates,
+      updatedAt: new Date(),
+      updatedBy: user.uid
+    });
+  }
+
+  return {
+    cancelled: true,
+    masterId: occurrence.masterId,
+    instanceDate: occurrence.instanceDate
   };
 }
 

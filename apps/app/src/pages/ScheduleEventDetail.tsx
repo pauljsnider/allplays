@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, Clock, ExternalLink, FileText, MapPin, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelParentScheduleRideRequest,
+  cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
   claimParentScheduleAssignmentSlot,
   createParentScheduleRideOffer,
@@ -258,6 +259,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
+  const handlePracticeOccurrenceCancelled = useCallback(() => {
+    setEvents((current) => current.map((event) => (
+      event.teamId === decodedTeamId && event.id === decodedEventId
+        ? { ...event, status: 'cancelled', isCancelled: true, availabilityLocked: true }
+        : event
+    )));
+  }, [decodedEventId, decodedTeamId]);
+
   const handleGamePlanPublished = useCallback((gamePlan: Record<string, any>) => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
@@ -429,7 +438,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onGameCancelled={handleGameCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
     </div>
   );
@@ -1461,7 +1470,7 @@ function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease
   );
 }
 
-function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onGameCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
+function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -1472,6 +1481,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
   const isPractice = event.type === 'practice';
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
+  const canCancelPracticeOccurrence = Boolean(isPractice && event.isDbGame && !event.isCancelled && event.isTeamStaff && auth.user && event.id.includes('__'));
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
@@ -1499,6 +1509,25 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
         : { tone: 'success', message: notifiesCounterpartTeam ? 'Game cancelled and both team chats notified.' : 'Game cancelled and team chat notified.' });
     } catch (error: any) {
       setCancelStatus({ tone: 'error', message: error?.message || 'Unable to cancel game.' });
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const cancelPracticeOccurrence = async () => {
+    if (!auth.user) return;
+    const practiceLabel = event.title || 'this practice';
+    const confirmed = window.confirm(`Cancel only ${practiceLabel} on ${formatEventDateLabel(event.date)}? This cancels just this occurrence, not the full recurring series.`);
+    if (!confirmed) return;
+
+    setCancelling(true);
+    setCancelStatus(null);
+    try {
+      await cancelPracticeOccurrenceForApp(event, auth.user);
+      onPracticeOccurrenceCancelled();
+      setCancelStatus({ tone: 'success', message: 'Practice occurrence cancelled for this date only.' });
+    } catch (error: any) {
+      setCancelStatus({ tone: 'error', message: error?.message || 'Unable to cancel practice occurrence.' });
     } finally {
       setCancelling(false);
     }
@@ -1580,6 +1609,25 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
                   disabled={cancelling}
                 >
                   {cancelling ? 'Cancelling game' : 'Cancel game'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {canCancelPracticeOccurrence ? (
+            <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-xs font-black uppercase tracking-[0.04em] text-rose-700">Schedule management</div>
+                  <div className="mt-1 text-sm font-semibold text-rose-900">Cancel only this recurring practice occurrence.</div>
+                </div>
+                <button
+                  type="button"
+                  className="min-h-11 rounded-full bg-rose-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-rose-700 disabled:opacity-60"
+                  onClick={cancelPracticeOccurrence}
+                  disabled={cancelling}
+                >
+                  {cancelling ? 'Cancelling occurrence' : 'Cancel this occurrence'}
                 </button>
               </div>
             </div>

@@ -14,6 +14,7 @@ const dbMocks = vi.hoisted(() => ({
     updateTeam: vi.fn(),
     addGame: vi.fn(),
     addPractice: vi.fn(),
+    cancelOccurrence: vi.fn(),
     getTrackedCalendarEventUids: vi.fn(),
     createRideOffer: vi.fn(),
     claimAssignmentSlot: vi.fn(),
@@ -120,7 +121,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, loadParentScheduleEventDetail, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, loadParentScheduleEventDetail, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
@@ -645,6 +646,57 @@ describe('React app schedule service contract integration', () => {
         await expect(removeTeamCalendarUrl('team-1', 'https://example.com/team.ics', user()))
             .rejects.toThrow('You do not have permission to manage this team schedule.');
         expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+    });
+
+    it('parses recurring practice occurrence ids and rejects non-occurrence ids', () => {
+        expect(parseRecurringPracticeOccurrenceId('practice-master__2026-06-05')).toEqual({
+            masterId: 'practice-master',
+            instanceDate: '2026-06-05'
+        });
+        expect(parseRecurringPracticeOccurrenceId('practice-master')).toBeNull();
+        expect(parseRecurringPracticeOccurrenceId('practice-master__bad-date')).toBeNull();
+    });
+
+    it('cancels a recurring practice occurrence through the legacy recurrence override path', async () => {
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+        const event = {
+            teamId: 'team-1',
+            id: 'practice-master__2026-06-05',
+            isDbGame: true,
+            type: 'practice',
+            isCancelled: false,
+            isTeamStaff: true
+        };
+
+        await expect(cancelPracticeOccurrenceForApp(event, coach)).resolves.toEqual({
+            cancelled: true,
+            masterId: 'practice-master',
+            instanceDate: '2026-06-05'
+        });
+
+        expect(dbMocks.cancelOccurrence).toHaveBeenCalledWith('team-1', 'practice-master', '2026-06-05');
+    });
+
+    it('rejects recurring practice occurrence cancellation without staff access or occurrence ids', async () => {
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+
+        await expect(cancelPracticeOccurrenceForApp({
+            teamId: 'team-1',
+            id: 'practice-master__2026-06-05',
+            isDbGame: true,
+            type: 'practice',
+            isCancelled: false,
+            isTeamStaff: false
+        }, coach)).rejects.toThrow('Coach or admin access is required to cancel this practice occurrence.');
+
+        await expect(cancelPracticeOccurrenceForApp({
+            teamId: 'team-1',
+            id: 'practice-master',
+            isDbGame: true,
+            type: 'practice',
+            isCancelled: false,
+            isTeamStaff: true
+        }, coach)).rejects.toThrow('Only recurring practice occurrences can be cancelled here.');
     });
 });
 
