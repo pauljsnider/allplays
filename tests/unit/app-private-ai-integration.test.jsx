@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import React, { act } from '../../apps/app/node_modules/react/index.js';
+import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRoot } from '../../apps/app/node_modules/react-dom/client.js';
+import { createRoot } from 'react-dom/client';
 
 const privateAiMocks = vi.hoisted(() => ({
     DEFAULT_PRIVATE_AI_CONVERSATION_ID: 'default',

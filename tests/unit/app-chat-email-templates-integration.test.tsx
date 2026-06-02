@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // Keep Messages app coverage in tests/unit so the root npm test script runs it in CI.
-import React from '../../apps/app/node_modules/react/index.js';
+import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '../../apps/app/node_modules/@testing-library/react/dist/index.js';
-import { MemoryRouter, Route, Routes } from '../../apps/app/node_modules/react-router-dom/dist/index.mjs';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthState } from '../../apps/app/src/lib/types';
 import { Messages } from '../../apps/app/src/pages/Messages.tsx';
