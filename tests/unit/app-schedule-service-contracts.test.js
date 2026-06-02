@@ -61,6 +61,12 @@ const rsvpMocks = vi.hoisted(() => ({
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
+vi.mock('../../apps/app/src/lib/chatService.ts', () => ({
+    sendTeamChatMessage: vi.fn()
+}));
+vi.mock('../../apps/app/src/lib/chatLogic.ts', () => ({
+    DEFAULT_TEAM_CONVERSATION_ID: 'team'
+}));
 vi.mock('../../js/utils.js', () => utilsMocks);
 vi.mock('../../js/parent-dashboard-practice-sessions.js', () => ({
     filterVisiblePracticeSessions: vi.fn((sessions) => sessions || [])
@@ -665,6 +671,7 @@ describe('React app schedule service contract integration', () => {
             isDbGame: true,
             type: 'practice',
             isCancelled: false,
+            isTeamAdmin: true,
             isTeamStaff: true
         };
 
@@ -686,8 +693,19 @@ describe('React app schedule service contract integration', () => {
             isDbGame: true,
             type: 'practice',
             isCancelled: false,
+            isTeamAdmin: false,
             isTeamStaff: false
-        }, coach)).rejects.toThrow('Coach or admin access is required to cancel this practice occurrence.');
+        }, coach)).rejects.toThrow('Team owner or admin access is required to cancel this practice occurrence.');
+
+        await expect(cancelPracticeOccurrenceForApp({
+            teamId: 'team-1',
+            id: 'practice-master__2026-06-05',
+            isDbGame: true,
+            type: 'practice',
+            isCancelled: false,
+            isTeamAdmin: false,
+            isTeamStaff: true
+        }, coach)).rejects.toThrow('Team owner or admin access is required to cancel this practice occurrence.');
 
         await expect(cancelPracticeOccurrenceForApp({
             teamId: 'team-1',
@@ -695,6 +713,7 @@ describe('React app schedule service contract integration', () => {
             isDbGame: true,
             type: 'practice',
             isCancelled: false,
+            isTeamAdmin: true,
             isTeamStaff: true
         }, coach)).rejects.toThrow('Only recurring practice occurrences can be cancelled here.');
     });

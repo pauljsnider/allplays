@@ -1290,6 +1290,7 @@ function createScheduleEvent(input: {
     practiceSessionId: input.practiceSessionId || null,
     practiceHomePacket: packetSummary ? input.practiceHomePacket : null,
     practicePacketCompletions: [],
+    isTeamAdmin: input.isTeamAdmin === true,
     isTeamStaff: input.isTeamStaff === true,
     isTeamRsvpReminderManager: input.isTeamRsvpReminderManager === true,
     gamePlan: input.gamePlan || null
@@ -1372,6 +1373,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null,
             practiceSessionId: compactString(session?.id) || null,
             availabilityPreferences,
+            isTeamAdmin: isRsvpReminderManager,
             isTeamStaff: isStaff,
             isTeamRsvpReminderManager: isRsvpReminderManager,
             gamePlan: game.gamePlan || null
@@ -1428,6 +1430,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
           practiceSessionId: isPractice ? compactString(session?.id) || null : null,
           availabilityPreferences,
+          isTeamAdmin: isRsvpReminderManager,
           isTeamStaff: isStaff,
           isTeamRsvpReminderManager: isRsvpReminderManager,
           gamePlan: game.gamePlan || null
@@ -1478,6 +1481,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           practiceHomePacket: isPractice && hasHomePacket(session) ? session.homePacketContent : null,
           practiceSessionId: isPractice ? compactString(session?.id) || null : null,
           availabilityPreferences,
+          isTeamAdmin: isRsvpReminderManager,
           isTeamStaff: isStaff,
           isTeamRsvpReminderManager: isRsvpReminderManager
         }));
@@ -1508,6 +1512,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           practiceHomePacket: hasHomePacket(session) ? session.homePacketContent : null,
           practiceSessionId: compactString(session?.id) || null,
           availabilityPreferences,
+          isTeamAdmin: isRsvpReminderManager,
           isTeamStaff: isStaff,
           isTeamRsvpReminderManager: isRsvpReminderManager
         }));
@@ -2199,8 +2204,8 @@ export async function cancelPracticeOccurrenceForApp(event: ParentScheduleEvent,
   if (!user?.uid) {
     throw new Error('Sign in before cancelling this practice occurrence.');
   }
-  if (!event.isTeamStaff) {
-    throw new Error('Coach or admin access is required to cancel this practice occurrence.');
+  if (!event.isTeamAdmin) {
+    throw new Error('Team owner or admin access is required to cancel this practice occurrence.');
   }
 
   const occurrence = parseRecurringPracticeOccurrenceId(event.id);

@@ -159,6 +159,7 @@ export type ParentScheduleEvent = {
   practiceSessionId?: string | null;
   practiceHomePacket?: PracticeHomePacket | null;
   practicePacketCompletions?: PracticePacketCompletion[];
+  isTeamAdmin?: boolean;
   isTeamStaff?: boolean;
   isTeamRsvpReminderManager?: boolean;
   calendarUrls?: string[];

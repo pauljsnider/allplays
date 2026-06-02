@@ -1481,7 +1481,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
   const isPractice = event.type === 'practice';
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
-  const canCancelPracticeOccurrence = Boolean(isPractice && event.isDbGame && !event.isCancelled && event.isTeamStaff && auth.user && event.id.includes('__'));
+  const canCancelPracticeOccurrence = Boolean(isPractice && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user && event.id.includes('__'));
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
