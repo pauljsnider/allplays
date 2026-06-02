@@ -58,6 +58,14 @@ describe('workflow manifest', () => {
         expect(appHelpIndex).not.toContain('In the Game Day pre-game rail, use Plan →');
     });
 
+    it('documents official final score submission in game operations help metadata', () => {
+        const helpGameOperations = readRepoFile('help-game-operations.html');
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+
+        expect(helpGameOperations).toContain('submit final score and notes after the game');
+        expect(appHelpIndex).toContain('submit final score and notes after the game');
+    });
+
     it('documents offline/manual fee creation as the default fees workflow', () => {
         const html = readRepoFile('workflow-fees-payments.html');
         const chooseYourPath = html.slice(html.indexOf('<h2 id="choose-your-path">'), html.indexOf('<h2 id="step-by-step">'));

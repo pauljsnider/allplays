@@ -106,9 +106,11 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain("'./js/db.js?v=34'");
         expect(dbSource).toContain('export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser)');
         expect(dbSource).toContain("throw new Error('Cancelled games cannot accept final results.');");
-        expect(dbSource).toContain('homeScore: Number.isFinite(officiatingResult.homeScore) ? officiatingResult.homeScore : 0');
-        expect(dbSource).toContain('awayScore: Number.isFinite(officiatingResult.awayScore) ? officiatingResult.awayScore : 0');
-        expect(dbSource).toContain("scoreUpdatedBy: String(official?.uid || '').trim()");
+        expect(dbSource).toContain('homeScore: submittedResult.homeScore');
+        expect(dbSource).toContain('awayScore: submittedResult.awayScore');
+        expect(dbSource).toContain("status: 'completed'");
+        expect(dbSource).toContain("liveStatus: 'completed'");
+        expect(dbSource).toContain("scoreUpdatedBy: submittedResult.submittedByUserId || String(official?.uid || '').trim() || null");
         expect(readFirestoreRules()).toContain("'homeScore'");
         expect(readFirestoreRules()).toContain("'awayScore'");
         expect(readFirestoreRules()).toContain("'scoreUpdatedBy'");
