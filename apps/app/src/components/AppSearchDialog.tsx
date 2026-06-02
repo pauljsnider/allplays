@@ -181,7 +181,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       className="app-search-overlay fixed inset-0 z-50 bg-gray-950/40 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
-      aria-label="Search teams, players, actions, and help"
+      aria-labelledby="app-search-dialog-title"
       onKeyDown={onKeyDown}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -189,6 +189,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     >
       <div className="app-search-panel mx-auto flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-app-lg" data-testid="app-search-panel">
         <div className="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white p-3 md:p-4">
+          <h2 id="app-search-dialog-title" className="sr-only">Search teams, players, actions, and help</h2>
           <div className="flex items-center gap-2 md:gap-3">
             <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-700">
               <Search className="h-5 w-5" aria-hidden="true" />
