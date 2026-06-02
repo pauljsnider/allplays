@@ -21,11 +21,12 @@ import {
   Ticket,
   Trophy,
   UserRound,
-  Users
+  Users,
+  Zap
 } from 'lucide-react';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
-import { loadStaffRsvpReminderPreview, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
+import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
 import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
@@ -244,6 +245,7 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
 
 function ScheduleTab({ model, auth }: { model: TeamDetailModel; auth: AuthState }) {
   const events = [...model.upcomingEvents.slice(0, 8), ...model.recentResults.slice(0, 3)];
+  const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), [model.team.id]);
   return (
     <section className="app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -254,7 +256,7 @@ function ScheduleTab({ model, auth }: { model: TeamDetailModel; auth: AuthState 
         <Link to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} className="secondary-button !min-h-9 text-xs">Open</Link>
       </div>
       <div className="mt-3 space-y-2">
-        {events.length ? events.map((event) => <TeamEventRow key={`${event.id}-${event.date.toISOString()}`} event={event} model={model} auth={auth} />) : (
+        {events.length ? events.map((event) => <TeamEventRow key={`${event.id}-${event.date.toISOString()}`} event={event} model={model} auth={auth} reminderPreviewLoader={reminderPreviewLoader} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team events found.</div>
         )}
       </div>
@@ -890,7 +892,7 @@ function SummaryStat({ icon: Icon, label, value }: { icon: LucideIcon; label: st
   );
 }
 
-function TeamEventRow({ event, model, auth }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState }) {
+function TeamEventRow({ event, model, auth, reminderPreviewLoader }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState; reminderPreviewLoader: ReturnType<typeof createStaffRsvpReminderPreviewLoader> }) {
   const childId = '';
   const teamId = model.team.id;
   const eventPath = getEventDetailPath({ teamId, id: event.id, childId });
@@ -916,45 +918,87 @@ function TeamEventRow({ event, model, auth }: { event: TeamDetailEvent; model: T
           <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
         </Link>
       </div>
-      <TeamEventReminderAction event={event} model={model} auth={auth} />
+      <TeamEventReminderAction event={event} model={model} auth={auth} reminderPreviewLoader={reminderPreviewLoader} />
     </div>
   );
 }
 
-function TeamEventReminderAction({ event, model, auth }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState }) {
+function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState; reminderPreviewLoader: ReturnType<typeof createStaffRsvpReminderPreviewLoader> }) {
   const [preview, setPreview] = useState<StaffRsvpReminderPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(false);
   const scheduleEvent = useMemo(() => buildTeamReminderScheduleEvent(event, model), [event, model]);
   const canLoad = Boolean(auth.user && scheduleEvent && model.canManageTeam && event.date.getTime() >= Date.now() && event.status.toLowerCase() !== 'completed');
 
   useEffect(() => {
-    let cancelled = false;
     setPreview(null);
+    setLoading(false);
+    setSending(false);
     setStatus(null);
     setError(null);
-    if (!canLoad || !scheduleEvent || !auth.user) return;
-    setLoading(true);
-    loadStaffRsvpReminderPreview(scheduleEvent, auth.user)
-      .then((nextPreview) => {
-        if (!cancelled) setPreview(nextPreview);
-      })
-      .catch((loadError: any) => {
-        if (!cancelled) setError(loadError?.message || 'Unable to load RSVP reminder preview.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [auth.user, canLoad, scheduleEvent]);
+    setRevealed(false);
+  }, [auth.user?.uid, canLoad, scheduleEvent?.eventKey]);
 
   if (!scheduleEvent || !canLoad) return null;
-  if (loading && !preview) return null;
-  if (!preview || preview.missingPlayerCount <= 0) return null;
+
+  const loadPreview = async () => {
+    if (!auth.user || loading || sending) return;
+    setRevealed(true);
+    setLoading(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const nextPreview = await reminderPreviewLoader.loadPreview(scheduleEvent, auth.user);
+      setPreview(nextPreview);
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load RSVP reminder preview.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!revealed) {
+    return (
+      <div className="mt-3 flex justify-start">
+        <button type="button" className="secondary-button !min-h-9 px-3 text-xs" onClick={loadPreview}>
+          <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+          Review reminder
+        </button>
+      </div>
+    );
+  }
+
+  if (loading && !preview) {
+    return (
+      <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50 p-3 text-xs font-semibold text-gray-600">
+        Loading RSVP reminder preview…
+      </div>
+    );
+  }
+
+  if (error && !preview) {
+    return (
+      <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
+        <div className="text-xs font-bold text-rose-700">{error}</div>
+        <button type="button" className="secondary-button mt-2 !min-h-9 px-3 text-xs" onClick={loadPreview}>
+          Retry reminder preview
+        </button>
+      </div>
+    );
+  }
+
+  if (!preview) return null;
+
+  if (preview.missingPlayerCount <= 0) {
+    return (
+      <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs font-semibold text-emerald-700">
+        All player RSVPs are in.
+      </div>
+    );
+  }
 
   const sendReminder = async () => {
     if (!auth.user || sending) return;
