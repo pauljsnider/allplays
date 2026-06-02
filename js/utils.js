@@ -293,7 +293,9 @@ export function renderFooter(container) {
 export async function fetchAndParseCalendar(url) {
   const timeoutMs = 5000;
   const cleanedUrl = url.trim();
-  const normalizedUrl = cleanedUrl.replace(/^http:\/\//i, 'https://');
+  const normalizedUrl = cleanedUrl
+    .replace(/^webcals?:\/\//i, 'https://')
+    .replace(/^http:\/\//i, 'https://');
 
   function resolveCalendarFunctionUrl() {
     const globalConfig = window.__ALLPLAYS_CONFIG__;

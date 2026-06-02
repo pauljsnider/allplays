@@ -392,7 +392,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: buildDbStub(scenario)
     }));
-    await page.route('**/js/utils.js?v=10', (route) => route.fulfill({
+    await page.route('**/js/utils.js?v=11', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: buildUtilsStub(scenario)

@@ -14,7 +14,7 @@ function readSmokeSpec(name) {
 }
 
 describe('edit schedule calendar import helpers', () => {
-    it('accepts valid .ics urls and rejects missing or non-ics values', () => {
+    it('accepts valid .ics urls and webcal subscriptions while rejecting unrelated values', () => {
         expect(validateCalendarImportUrl('')).toEqual({
             isValid: false,
             message: 'Please enter a calendar URL'
@@ -22,12 +22,17 @@ describe('edit schedule calendar import helpers', () => {
 
         expect(validateCalendarImportUrl('https://example.com/calendar')).toEqual({
             isValid: false,
-            message: 'Please enter a valid .ics calendar URL (must include .ics)'
+            message: 'Please enter a valid .ics calendar URL or webcal subscription URL'
         });
 
         expect(validateCalendarImportUrl('  https://example.com/team.ics?token=abc  ')).toEqual({
             isValid: true,
             normalizedUrl: 'https://example.com/team.ics?token=abc'
+        });
+
+        expect(validateCalendarImportUrl(' webcal://example.com/team-calendar ')).toEqual({
+            isValid: true,
+            normalizedUrl: 'https://example.com/team-calendar'
         });
     });
 

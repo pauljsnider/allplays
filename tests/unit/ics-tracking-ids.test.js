@@ -74,9 +74,9 @@ describe('ICS recurring tracking ids', () => {
     });
 
     it('bumps utils cache tokens anywhere the new tracking exports are imported', () => {
-        expect(readEditSchedule()).toContain("./js/utils.js?v=10");
-        expect(readParentDashboard()).toContain("./js/utils.js?v=10");
-        expect(readGamePlan()).toContain("./js/utils.js?v=10");
-        expect(readTeamPage()).toContain("./js/utils.js?v=10");
+        expect(readEditSchedule()).toContain("./js/utils.js?v=11");
+        expect(readParentDashboard()).toContain("./js/utils.js?v=11");
+        expect(readGamePlan()).toContain("./js/utils.js?v=11");
+        expect(readTeamPage()).toContain("./js/utils.js?v=11");
     });
 });

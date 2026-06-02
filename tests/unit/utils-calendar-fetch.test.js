@@ -85,6 +85,23 @@ describe('fetchAndParseCalendar', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('https://ical-cdn.teamsnap.com/team_schedule/test.ics');
   });
 
+  it('normalizes webcal subscription URLs before function and direct fetch attempts', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makeJsonResponse({ ok: false, error: 'fail' }, { status: 500, statusText: 'Server Error' }))
+      .mockResolvedValueOnce(makeTextResponse(sampleIcs('from-webcal')));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events = await fetchAndParseCalendar('webcal://example.com/team-calendar');
+
+    expect(events).toHaveLength(1);
+    expect(events[0].uid).toBe('from-webcal');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain(encodeURIComponent('https://example.com/team-calendar'));
+    expect(fetchMock.mock.calls[1][0]).toBe('https://example.com/team-calendar');
+  });
+
   it('uses cache-busted r.jina proxy when function and direct fetch fail', async () => {
     const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
     const fetchMock = vi.fn(async (url) => {
