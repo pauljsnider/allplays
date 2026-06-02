@@ -3,6 +3,7 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { openPublicUrl } from '../lib/publicActions';
+import { preloadSearchRoute } from '../lib/searchRoutePreload';
 import {
   computeAppSearchResults,
   loadAppSearchTeams,
@@ -117,11 +118,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   if (!open) return null;
 
-  const openResult = (item: AppSearchItem | undefined) => {
+  const openResult = async (item: AppSearchItem | undefined) => {
     if (!item) return;
     onClose();
     setQuery('');
     if (item.route) {
+      await preloadSearchRoute(item.route);
       navigate(item.route);
       return;
     }
