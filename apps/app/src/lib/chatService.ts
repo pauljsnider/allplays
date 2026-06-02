@@ -1107,18 +1107,18 @@ export async function saveTeamEmailDraft({
   if (!trimmedBody) throw new Error('Enter a body before saving.');
 
   const optionsById = new Map((Array.isArray(recipientOptions) ? recipientOptions : []).map((option) => [compactString(option.id), option]));
-  const recipients = normalizedRecipientIds.map((recipientId) => {
+  const recipients = normalizedRecipientIds.flatMap((recipientId) => {
     const option = optionsById.get(recipientId);
     const derivedEmail = compactString(option?.email || (recipientId.toLowerCase().startsWith('email:') ? recipientId.slice(6) : '')).toLowerCase();
     if (!derivedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(derivedEmail)) {
-      throw new Error('Selected recipients must have an email address before saving.');
+      return [];
     }
-    return {
+    return [{
       key: recipientId,
       email: derivedEmail,
       name: compactString(option?.name) || derivedEmail,
       detail: compactString(option?.detail) || null
-    };
+    }];
   });
 
   const saved = await withTimeout(Promise.resolve(saveStoredTeamEmailDraft(teamId, {

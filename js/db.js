@@ -4916,14 +4916,20 @@ function normalizeTeamEmailDraftPayload(draft = {}) {
             recipient.key && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email)
         ))
         : [];
+    const recipientIds = Array.from(new Set(
+        (Array.isArray(draft.recipientIds) ? draft.recipientIds : recipients.map((recipient) => recipient.key))
+            .map((recipientId) => String(recipientId || '').trim())
+            .filter(Boolean)
+    ));
 
-    if (recipients.length === 0) throw new Error('Choose at least one recipient before saving.');
+    if (recipientIds.length === 0) throw new Error('Choose at least one recipient before saving.');
     if (!subject) throw new Error('Enter a subject before saving.');
     if (!body) throw new Error('Enter a body before saving.');
 
     return {
         subject,
         body,
+        recipientIds,
         recipients,
         recipientEmails: recipients.map((recipient) => recipient.email),
         authorId: draft.authorId || auth.currentUser?.uid || null,

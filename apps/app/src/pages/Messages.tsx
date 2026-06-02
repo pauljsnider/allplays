@@ -1597,9 +1597,10 @@ function TeamEmailSheet({
   onClose: () => void;
 }) {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const draftAudienceSupported = audienceMetadata.targetType === 'individuals';
   const missingSelectedRecipients = audienceMetadata.targetType === 'individuals' && audienceMetadata.recipientIds.length === 0;
   const canSendEmail = Boolean(subject.trim() && body.trim()) && !missingSelectedRecipients && !sending;
-  const canSaveDraft = Boolean(subject.trim() && body.trim()) && !missingSelectedRecipients && !savingDraft;
+  const canSaveDraft = draftAudienceSupported && Boolean(subject.trim() && body.trim()) && !missingSelectedRecipients && !savingDraft;
   const canSaveTemplate = Boolean(templateName.trim() && subject.trim() && body.trim()) && !savingTemplate;
 
   useEffect(() => {
@@ -1655,7 +1656,7 @@ function TeamEmailSheet({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-black">{draft.subject || '(No subject)'}</div>
-                        <div className="mt-0.5 text-xs font-semibold text-gray-500">{draft.recipients.length} recipient{draft.recipients.length === 1 ? '' : 's'} · {formatEmailSentTime(draft.updatedAt)}</div>
+                        <div className="mt-0.5 text-xs font-semibold text-gray-500">{Math.max(draft.recipientIds.length, draft.recipients.length)} recipient{Math.max(draft.recipientIds.length, draft.recipients.length) === 1 ? '' : 's'} · {formatEmailSentTime(draft.updatedAt)}</div>
                       </div>
                       {isSelected ? <span className="text-[11px] font-black uppercase">Current</span> : null}
                     </div>
@@ -1664,7 +1665,11 @@ function TeamEmailSheet({
               })}
             </div>
           )}
-          {missingSelectedRecipients ? (
+          {!draftAudienceSupported ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800">
+              Draft saving is available only for Selected members.
+            </div>
+          ) : missingSelectedRecipients ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
               Choose at least one selected member before saving or sending email.
             </div>

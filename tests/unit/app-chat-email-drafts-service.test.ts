@@ -135,6 +135,44 @@ describe('team email draft helpers', () => {
         }, {});
     });
 
+    it('preserves selector recipient ids even when some options do not expose email addresses', async () => {
+        dbMocks.saveTeamEmailDraft.mockResolvedValue({
+            id: 'draft-2',
+            subject: 'Roster update',
+            body: 'Please confirm availability.',
+            recipientIds: ['player:player-1', 'user:coach-1', 'email:parent@example.com'],
+            recipients: [{ key: 'email:parent@example.com', email: 'parent@example.com', name: 'Pat Parent', detail: 'Guardian for Avery' }],
+            createdAt: { seconds: 4 },
+            updatedAt: { seconds: 5 }
+        });
+
+        await expect(saveTeamEmailDraft({
+            teamId: 'team-1',
+            subject: 'Roster update',
+            body: 'Please confirm availability.',
+            recipientIds: ['player:player-1', 'user:coach-1', 'email:parent@example.com'],
+            recipientOptions: [
+                { id: 'player:player-1', name: 'Avery Smith', detail: '#9' },
+                { id: 'user:coach-1', name: 'Coach Jamie', detail: 'Staff' },
+                { id: 'email:parent@example.com', name: 'Pat Parent', detail: 'Guardian for Avery', email: 'parent@example.com' }
+            ]
+        })).resolves.toMatchObject({
+            id: 'draft-2',
+            recipientIds: ['player:player-1', 'user:coach-1', 'email:parent@example.com']
+        });
+
+        expect(dbMocks.saveTeamEmailDraft).toHaveBeenCalledWith('team-1', {
+            subject: 'Roster update',
+            body: 'Please confirm availability.',
+            recipients: [{ key: 'email:parent@example.com', email: 'parent@example.com', name: 'Pat Parent', detail: 'Guardian for Avery' }],
+            recipientIds: ['player:player-1', 'user:coach-1', 'email:parent@example.com'],
+            authorId: null,
+            authorEmail: null,
+            authorName: null,
+            status: 'draft'
+        }, {});
+    });
+
     it('rejects missing recipients, subject, or body before saving', async () => {
         const recipientOptions = [{ id: 'email:parent@example.com', name: 'Pat Parent', email: 'parent@example.com' }];
 
