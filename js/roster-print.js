@@ -57,7 +57,20 @@ function getContactSummary(player = {}, contactsByPlayerId = {}) {
     return [...new Set(combined)].join('; ');
 }
 
-export function buildRosterPrintViewModel({ team = {}, players = [], fields = [], contactsByPlayerId = {}, generatedAt = new Date() } = {}) {
+function normalizeStaffEntries(staff = []) {
+    return (Array.isArray(staff) ? staff : [])
+        .map((entry) => {
+            const name = String(entry?.name || entry?.label || entry?.email || '').trim();
+            const role = String(entry?.roleLabel || entry?.role || '').trim();
+            const detail = String(entry?.detail || entry?.email || '').trim();
+            if (!name) return null;
+            return { name, role, detail };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.name.localeCompare(b.name) || a.role.localeCompare(b.role));
+}
+
+export function buildRosterPrintViewModel({ team = {}, players = [], staff = [], includeStaff = false, fields = [], contactsByPlayerId = {}, generatedAt = new Date() } = {}) {
     const printableFields = (fields || []).filter(isPrintableRosterField);
     const activePlayers = (players || [])
         .filter((player) => player && player.active !== false)
@@ -80,13 +93,16 @@ export function buildRosterPrintViewModel({ team = {}, players = [], fields = []
         .sort((a, b) => parseJerseyNumber(a.number) - parseJerseyNumber(b.number)
             || a.name.localeCompare(b.name)
             || String(a.number).localeCompare(String(b.number)));
+    const staffEntries = includeStaff ? normalizeStaffEntries(staff) : [];
 
     return {
         teamName: team.name || team.teamName || 'Team roster',
         generatedDate: generatedAt instanceof Date ? generatedAt.toLocaleString() : String(generatedAt || ''),
         activeCount: activePlayers.length,
+        staffCount: staffEntries.length,
         fields: printableFields.map((field) => ({ key: field.key, label: field.label })),
-        players: activePlayers
+        players: activePlayers,
+        staff: staffEntries
     };
 }
 
@@ -105,6 +121,27 @@ export function buildRosterPrintHtml(options = {}) {
             ${fieldCells}
         </tr>`;
     }).join('');
+    const staffRows = model.staff.map((entry) => `<tr>
+            <td>${escapeHtml(entry.name)}</td>
+            <td>${escapeHtml(entry.role || 'Staff')}</td>
+            <td>${escapeHtml(entry.detail || '')}</td>
+        </tr>`).join('');
+    const staffSection = model.staffCount > 0 ? `
+                <section class="roster-print-staff">
+                    <h2>Staff</h2>
+                    <p class="roster-print-meta">${model.staffCount} staff entr${model.staffCount === 1 ? 'y' : 'ies'}</p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Role</th>
+                                <th>Contact</th>
+                            </tr>
+                        </thead>
+                        <tbody>${staffRows}</tbody>
+                    </table>
+                </section>
+            ` : '';
 
     return {
         model,
@@ -118,6 +155,8 @@ export function buildRosterPrintHtml(options = {}) {
                     #roster-print-root th, #roster-print-root td { border: 1px solid #d1d5db; padding: 8px; text-align: left; vertical-align: top; }
                     #roster-print-root th { background: #f3f4f6; font-size: 12px; text-transform: uppercase; }
                     #roster-print-root .roster-print-meta { color: #4b5563; font-size: 13px; margin-top: 4px; }
+                    #roster-print-root .roster-print-staff { margin-top: 24px; }
+                    #roster-print-root .roster-print-staff h2 { font-size: 18px; margin: 0; }
                 }
             </style>
             <section aria-label="Printable roster">
@@ -134,6 +173,7 @@ export function buildRosterPrintHtml(options = {}) {
                     </thead>
                     <tbody>${rows}</tbody>
                 </table>
+                ${staffSection}
             </section>
         `
     };

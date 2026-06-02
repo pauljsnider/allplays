@@ -318,8 +318,21 @@
                             <h2 class="text-xl font-bold">Current Roster</h2>
                             <span id="team-name-display" class="text-gray-500"></span>
                             <p id="roster-print-message" class="mt-1 hidden text-sm text-amber-700"></p>
+                            <label class="mt-3 inline-flex items-center gap-2 text-sm text-gray-600">
+                                <input id="print-roster-include-staff" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" checked>
+                                <span>Include staff from team access in printable roster</span>
+                            </label>
                         </div>
                         <button id="print-roster-btn" type="button" class="rounded-md border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Print Roster</button>
+                    </div>
+                    <div id="roster-staff-section" class="hidden border-b border-gray-200 bg-slate-50 px-6 py-4">
+                        <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                                <h3 class="text-sm font-bold uppercase tracking-wide text-slate-900">Staff</h3>
+                                <p class="text-sm text-slate-600">Read-through from current team owner, admin, and scoped helper access.</p>
+                            </div>
+                        </div>
+                        <div id="roster-staff-list" class="mt-3 grid gap-2 sm:grid-cols-2"></div>
                     </div>
                     <div class="px-6 py-3 bg-amber-50 border-b border-amber-100 text-sm text-amber-900">
                         Delete = deactivate from active roster, history preserved.
@@ -539,10 +552,10 @@
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=15';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
-        import { hasFullTeamAccess } from './js/team-access.js';
+        import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';
         import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions, matchesRegistrationReviewScreeningStatus, summarizeRegistrationReviewScreening } from './js/registration-review.js?v=5';
-        import { buildRosterPrintHtml } from './js/roster-print.js?v=1';
+        import { buildRosterPrintHtml } from './js/roster-print.js?v=2';
         import { getApp } from './js/vendor/firebase-app.js';
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
 
@@ -564,11 +577,107 @@
         let trackingItems = [];
         let selectedTrackingItemId = '';
         let latestRosterPlayers = [];
+        let latestRosterStaffEntries = [];
         let latestRosterPrintContactsByPlayerId = new Map();
         let trackingStatusRenderToken = 0;
         function hasAccess(team, user) {
             if (!team || !user) return false;
             return hasFullTeamAccess(user, { ...team, id: team.id || currentTeamId });
+        }
+
+        function normalizeEmail(value) {
+            return String(value || '').trim().toLowerCase();
+        }
+
+        function getUserDisplayName(user = {}, fallback = '') {
+            return String(user?.fullName || user?.displayName || user?.email || fallback || '').trim();
+        }
+
+        function buildRosterStaffEntries(team = {}, users = []) {
+            const userByEmail = new Map();
+            const userById = new Map();
+            (Array.isArray(users) ? users : []).forEach((user) => {
+                const email = normalizeEmail(user?.email);
+                if (email && !userByEmail.has(email)) userByEmail.set(email, user);
+                const ids = [user?.id, user?.uid].map((value) => String(value || '').trim()).filter(Boolean);
+                ids.forEach((id) => {
+                    if (!userById.has(id)) userById.set(id, user);
+                });
+            });
+
+            const entries = new Map();
+            function addEntry(identifier, role) {
+                const raw = String(identifier || '').trim();
+                if (!raw) return;
+                const normalizedEmail = normalizeEmail(raw);
+                const user = userById.get(raw) || (normalizedEmail ? userByEmail.get(normalizedEmail) : null) || null;
+                const resolvedEmail = normalizeEmail(user?.email || raw);
+                const key = resolvedEmail || String(user?.id || user?.uid || raw).trim();
+                if (!key) return;
+                const existing = entries.get(key) || {
+                    name: getUserDisplayName(user, raw),
+                    email: user?.email || (raw.includes('@') ? raw : ''),
+                    detail: user?.email || raw,
+                    roles: new Set()
+                };
+                existing.name = getUserDisplayName(user, existing.name || raw);
+                existing.email = user?.email || existing.email || (raw.includes('@') ? raw : '');
+                existing.detail = existing.email || raw;
+                existing.roles.add(role);
+                entries.set(key, existing);
+            }
+
+            if (team?.ownerId) addEntry(team.ownerId, 'Owner');
+            if (team?.ownerEmail) addEntry(team.ownerEmail, 'Owner');
+            (Array.isArray(team?.adminEmails) ? team.adminEmails : []).forEach((email) => addEntry(email, 'Admin'));
+
+            const permissions = normalizeTeamPermissions(team?.teamPermissions || {});
+            const scorekeeperIds = new Set(permissions.scorekeeping.mode === 'selected' ? permissions.scorekeeping.memberIds : []);
+            const streamingIds = new Set(permissions.streaming.mode === 'selected' ? permissions.streaming.memberIds : []);
+
+            scorekeeperIds.forEach((memberId) => {
+                if (streamingIds.has(memberId)) {
+                    addEntry(memberId, 'Stream & Score');
+                    streamingIds.delete(memberId);
+                    return;
+                }
+                addEntry(memberId, 'Scorekeeper');
+            });
+
+            streamingIds.forEach((memberId) => addEntry(memberId, 'Videographer'));
+            (permissions.videography?.memberIds || []).forEach((memberId) => addEntry(memberId, 'Videographer'));
+            (Array.isArray(team?.streamVolunteerEmails) ? team.streamVolunteerEmails : []).forEach((email) => addEntry(email, 'Videographer'));
+            (Array.isArray(team?.mediaContributorEmails) ? team.mediaContributorEmails : []).forEach((email) => addEntry(email, 'Videographer'));
+            (Array.isArray(team?.mediaContributorUids) ? team.mediaContributorUids : []).forEach((memberId) => addEntry(memberId, 'Videographer'));
+            (team?.teamPermissions?.volunteer?.memberIds || team?.teamPermissions?.volunteering?.memberIds || []).forEach((memberId) => addEntry(memberId, 'Volunteer'));
+
+            return Array.from(entries.values())
+                .map((entry) => ({
+                    name: entry.name || entry.email || 'Team staff',
+                    detail: entry.detail || '',
+                    roleLabel: Array.from(entry.roles).join(' · ')
+                }))
+                .sort((a, b) => a.name.localeCompare(b.name) || a.roleLabel.localeCompare(b.roleLabel));
+        }
+
+        function renderRosterStaffSection(staffEntries = []) {
+            const section = document.getElementById('roster-staff-section');
+            const list = document.getElementById('roster-staff-list');
+            if (!section || !list) return;
+            if (!staffEntries.length) {
+                section.classList.add('hidden');
+                list.innerHTML = '';
+                return;
+            }
+
+            section.classList.remove('hidden');
+            list.innerHTML = staffEntries.map((entry) => `
+                <div class="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                    <div class="font-semibold text-slate-900">${escapeHtml(entry.name || 'Team staff')}</div>
+                    <div class="mt-1 text-xs font-semibold uppercase tracking-wide text-indigo-700">${escapeHtml(entry.roleLabel || 'Staff')}</div>
+                    <div class="mt-1 text-sm text-slate-500">${escapeHtml(entry.detail || '')}</div>
+                </div>
+            `).join('');
         }
 
         checkAuth((user) => {
@@ -1371,6 +1480,8 @@
                 loadOptionalRosterData('parent membership requests for roster', () => listTeamParentMembershipRequests(currentTeamId), []),
                 loadOptionalRosterData('registration forms for roster', () => listTeamRegistrationForms(currentTeamId), [])
             ]);
+            latestRosterStaffEntries = buildRosterStaffEntries(currentTeam, [...(allUsers || []), currentUser].filter(Boolean));
+            renderRosterStaffSection(latestRosterStaffEntries);
             latestRosterPlayers = players;
             registrationForms = forms || [];
             if (selectedRegistrationFormId && !registrationForms.some((form) => form.id === selectedRegistrationFormId)) {
@@ -1620,6 +1731,8 @@
             const { html, model } = buildRosterPrintHtml({
                 team: currentTeam,
                 players: latestRosterPlayers,
+                staff: latestRosterStaffEntries,
+                includeStaff: document.getElementById('print-roster-include-staff')?.checked === true,
                 fields: rosterFieldDefinitions,
                 contactsByPlayerId: latestRosterPrintContactsByPlayerId,
                 generatedAt: new Date()
