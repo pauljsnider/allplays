@@ -708,6 +708,58 @@ describe('React app search service', () => {
         }]);
     });
 
+    it('reuses cached broader player prefixes for narrower refinements when local filtering is sufficient', async () => {
+        const visibleTeams = new Map([
+            ['team-1', { id: 'team-1', name: 'Bears', sport: 'Basketball', fromAppAccess: true }]
+        ]);
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const lowerBound = request.parts.find((part) => part?.type === 'where' && part.field === 'name' && part.op === '>=')?.value;
+            if (lowerBound === 'pa' || lowerBound === 'Pa') {
+                return {
+                    docs: [
+                        firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '9' }),
+                        firestorePlayer('teams/team-1/players/player-2', { name: 'Pat Stone', number: '10' }),
+                        firestorePlayer('teams/team-1/players/player-3', { name: 'Paige Forward', number: '11' })
+                    ]
+                };
+            }
+            if (lowerBound === 's' || lowerBound === 'S') {
+                return {
+                    docs: [
+                        firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '9' }),
+                        firestorePlayer('teams/team-1/players/player-2', { name: 'Pat Stone', number: '10' }),
+                        firestorePlayer('teams/team-1/players/player-4', { name: 'Sam Patton', number: '12' })
+                    ]
+                };
+            }
+
+            throw new Error(`Unexpected player query: ${lowerBound}`);
+        });
+
+        const broaderPlayers = await searchAppPlayers('pa', visibleTeams, auth.user);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(broaderPlayers.map((player) => player.title)).toEqual([
+            '#9 Pat Star',
+            '#10 Pat Stone',
+            '#11 Paige Forward'
+        ]);
+
+        const narrowerPlayers = await searchAppPlayers('pat', visibleTeams, auth.user);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(narrowerPlayers.map((player) => player.title)).toEqual([
+            '#9 Pat Star',
+            '#10 Pat Stone'
+        ]);
+
+        const multiTokenPlayers = await searchAppPlayers('pat s', visibleTeams, auth.user);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(6);
+        expect(multiTokenPlayers.map((player) => player.title)).toEqual([
+            '#9 Pat Star',
+            '#10 Pat Stone',
+            '#12 Sam Patton'
+        ]);
+    });
+
     it('returns players from private selected-stream teams for eligible users only', async () => {
         const streamTeam = {
             id: 'team-stream',
@@ -750,14 +802,35 @@ describe('React app search service', () => {
         const visibleTeams = new Map([
             ['team odd', { id: 'team odd', name: 'Odd Bears', sport: 'Basketball', fromAppAccess: true }]
         ]);
-        firebaseMocks.getDocs.mockResolvedValue({
-            docs: [
-                firestorePlayer('teams/team odd/players/player one', { name: 'Jordan Twelve', number: '12' })
-            ]
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const nameLowerBound = request.parts.find((part) => part?.type === 'where' && part.field === 'name' && part.op === '>=')?.value;
+            const numberLowerBound = request.parts.find((part) => part?.type === 'where' && part.field === 'number' && part.op === '>=')?.value;
+
+            if (nameLowerBound === 'pa' || nameLowerBound === 'Pa') {
+                return {
+                    docs: [
+                        firestorePlayer('teams/team odd/players/player one', { name: 'Pat Eleven', number: '11' })
+                    ]
+                };
+            }
+
+            if (numberLowerBound === '12') {
+                return {
+                    docs: [
+                        firestorePlayer('teams/team odd/players/player one', { name: 'Jordan Twelve', number: '12' })
+                    ]
+                };
+            }
+
+            return { docs: [] };
         });
+
+        await searchAppPlayers('pa', visibleTeams, auth.user);
+        const callCountAfterNameSearch = firebaseMocks.getDocs.mock.calls.length;
 
         const players = await searchAppPlayers('12', visibleTeams, auth.user);
 
+        expect(firebaseMocks.getDocs.mock.calls.length).toBeGreaterThan(callCountAfterNameSearch);
         const numberQueryCall = firebaseMocks.where.mock.calls.find(([field, op, value]) => field === 'number' && op === '>=' && value === '12');
         expect(numberQueryCall).toBeTruthy();
         expect(players).toEqual([{
