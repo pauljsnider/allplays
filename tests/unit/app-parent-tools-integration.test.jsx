@@ -325,6 +325,45 @@ describe('React app parent tools integration', () => {
         }));
     });
 
+    it('keeps previously opened parent tool tabs warm until a tab refresh is requested', async () => {
+        const { container } = await renderParentTools('/parent-tools/access');
+        await waitForText(container, 'Request player access');
+        expect(serviceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(serviceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Fees');
+        await waitForText(container, 'Team dues');
+        expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Access');
+        await waitForText(container, 'Request player access');
+        expect(serviceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(serviceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Register');
+        await waitForText(container, 'Summer Camp');
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Awards');
+        await waitForText(container, 'Hustle Award');
+        expect(serviceMocks.loadParentCertificates).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Register');
+        await waitForText(container, 'Summer Camp');
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+        expect(container.textContent).not.toContain('Loading registrations');
+
+        const refreshButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.trim().includes('Refresh') && !button.closest('[hidden]'));
+        if (!refreshButton) throw new Error('Visible refresh button not found');
+        await act(async () => {
+            refreshButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+        await flush();
+        await waitForText(container, 'Summer Camp');
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+        expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
+    });
+
     it('requires confirmation before revoking a family share link', async () => {
         const { container } = await renderParentTools('/parent-tools/share');
         await waitForText(container, 'Grandma');

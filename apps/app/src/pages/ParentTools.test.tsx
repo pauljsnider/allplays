@@ -139,4 +139,119 @@ describe('ParentTools access', () => {
         if (!requestsSection) throw new Error('Requests section not found');
         expect(within(requestsSection).getByText('No requests yet')).toBeTruthy();
     });
+
+    it('reuses loaded tab data on revisit and only refreshes when requested', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-1',
+                title: 'Team dues',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                statusLabel: 'Open',
+                balanceDueCents: 10000,
+                canPay: false,
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+        parentToolsServiceMocks.loadParentRegistrations.mockResolvedValue([
+            {
+                id: 'form-1',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                programName: 'Summer Camp',
+                description: 'Skills week',
+                season: 'Summer',
+                feeLabel: '$75.00',
+                paymentNotice: '',
+                onlineCheckout: true,
+                options: [],
+                url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+            }
+        ]);
+        parentToolsServiceMocks.loadParentCertificates.mockResolvedValue([
+            {
+                id: 'cert-1',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Sam Player',
+                title: 'Hustle Award',
+                narrative: 'Great effort.',
+                url: 'https://allplays.ai/certificates.html#cert-1'
+            }
+        ]);
+
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        await screen.findByText('Team dues');
+        expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        await screen.findByText('Request player access');
+        expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        await screen.findByText('Summer Camp');
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Awards' }));
+        await screen.findByText('Hustle Award');
+        expect(parentToolsServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        await screen.findByText('Summer Camp');
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+        expect(await screen.findByText('Summer Camp')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+    });
+
+    it('refreshes cached tool data after access changes update parent links', async () => {
+        parentToolsServiceMocks.loadParentRegistrations
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+                {
+                    id: 'form-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    programName: 'Summer Camp',
+                    description: 'Skills week',
+                    season: 'Summer',
+                    feeLabel: '$75.00',
+                    paymentNotice: '',
+                    onlineCheckout: true,
+                    options: [],
+                    url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+                }
+            ]);
+
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        await screen.findByText('No open registrations');
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        await screen.findByText('Request player access');
+        fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
+        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        expect(await screen.findByText('Summer Camp')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+    });
 });
