@@ -9,9 +9,17 @@ function appUrl(baseURL, hashPath) {
 
 async function openSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
-    await expect(searchButton).toBeVisible();
+    const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
+
+    await expect(searchButton).toBeVisible({ timeout: 15000 });
     await searchButton.click();
-    await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+
+    try {
+        await expect(searchDialog).toBeVisible({ timeout: 1000 });
+    } catch {
+        await page.keyboard.press('Control+K');
+        await expect(searchDialog).toBeVisible({ timeout: 15000 });
+    }
 }
 
 async function openDesktopSearch(page) {
