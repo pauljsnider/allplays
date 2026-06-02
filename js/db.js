@@ -107,8 +107,9 @@ import { getApp } from './vendor/firebase-app.js';
 import {
     claimOfficiatingSlot,
     computeOfficiatingCoverageStatus,
-    updateOfficiatingSlotResponse
-} from './officiating-utils.js?v=3';
+    updateOfficiatingSlotResponse,
+    updateOfficiatingSlotResult
+} from './officiating-utils.js?v=4';
 import { buildOfficiatingNotificationRecord } from './officiating-notifications.js?v=2';
 import {
     getTeamEmailAttachmentTotalBytes,
@@ -6488,6 +6489,29 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
     });
 
     await tryCreateOfficiatingAssignmentNotificationRecords(teamId, notificationRecord ? [notificationRecord] : []);
+}
+
+export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser) {
+    const docRef = getGameDocRef(teamId, gameId);
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(docRef);
+        if (!snap.exists()) throw new Error('Game not found');
+
+        const game = snap.data() || {};
+        if (String(game.status || '').trim().toLowerCase() === 'cancelled') {
+            throw new Error('Cancelled games cannot accept final results.');
+        }
+
+        const officiatingSlots = updateOfficiatingSlotResult(game.officiatingSlots || [], slotId, result, official, {
+            submittedAt: Timestamp.now()
+        });
+
+        transaction.update(docRef, {
+            officiatingSlots,
+            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
+            officiatingUpdatedAt: Timestamp.now()
+        });
+    });
 }
 
 // ============================================

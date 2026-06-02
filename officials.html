@@ -24,7 +24,7 @@
         <section class="space-y-6">
             <div class="bg-white rounded-lg shadow border border-gray-200">
                 <div class="p-4 border-b border-gray-200">
-                    <h2 class="text-xl font-semibold text-gray-900">My Upcoming Assignments</h2>
+                    <h2 class="text-xl font-semibold text-gray-900">My Assignments</h2>
                 </div>
                 <div id="assigned-games" class="divide-y divide-gray-100"></div>
             </div>
@@ -43,9 +43,9 @@
 
     <script type="module">
         import { checkAuth } from './js/auth.js?v=14';
-        import { getGames, getTeam, getUserProfile, claimOpenOfficiatingSlot, respondToOfficiatingAssignment } from './js/db.js?v=32';
+        import { getGames, getTeam, getUserProfile, claimOpenOfficiatingSlot, respondToOfficiatingAssignment, submitOfficiatingAssignmentResult } from './js/db.js?v=33';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, escapeHtml } from './js/utils.js?v=10';
-        import { getAssignedOfficiatingSlots, getOpenOfficiatingSlots } from './js/officiating-utils.js?v=3';
+        import { getAssignedOfficiatingSlots, getOpenOfficiatingSlots, hasSubmittedOfficiatingResult, validateOfficiatingResultSubmission } from './js/officiating-utils.js?v=4';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -67,6 +67,78 @@
             return date && !Number.isNaN(date.getTime()) && date >= new Date() && game.status !== 'cancelled';
         }
 
+        function hasGameStarted(game) {
+            const date = toDate(game.date);
+            return !!(date && !Number.isNaN(date.getTime()) && date < new Date());
+        }
+
+        function isCancelled(game) {
+            return String(game?.status || '').trim().toLowerCase() === 'cancelled';
+        }
+
+        function formatSubmittedAt(value) {
+            const date = toDate(value);
+            if (!date || Number.isNaN(date.getTime())) return 'just now';
+            return `${formatDate(date)} at ${formatTime(date)}`;
+        }
+
+        function renderSubmittedResult(slot) {
+            if (!hasSubmittedOfficiatingResult(slot)) return '';
+            const result = slot.submittedResult;
+            const notes = result.notes ? `<div class="mt-2 text-sm text-gray-700"><span class="font-semibold">Notes:</span> ${escapeHtml(result.notes)}</div>` : '';
+            const submittedBy = result.submittedByName ? ` by ${escapeHtml(result.submittedByName)}` : '';
+            return `
+                <div class="mt-4 rounded-lg border border-green-200 bg-green-50 p-3" data-result-state="submitted">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="inline-flex rounded-full bg-green-600 px-2 py-1 text-xs font-semibold text-white">Result submitted</span>
+                        <span class="text-sm text-green-800">Saved ${escapeHtml(formatSubmittedAt(result.submittedAt))}${submittedBy}.</span>
+                    </div>
+                    <div class="mt-2 text-sm text-gray-900"><span class="font-semibold">Final score:</span> Home ${escapeHtml(String(result.homeScore))} • Away ${escapeHtml(String(result.awayScore))}</div>
+                    ${notes}
+                </div>
+            `;
+        }
+
+        function renderResultForm(game, slot) {
+            if (hasSubmittedOfficiatingResult(slot)) return renderSubmittedResult(slot);
+            if (slot.status !== 'accepted' || !hasGameStarted(game) || isCancelled(game)) return '';
+
+            return `
+                <form class="official-result-form mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4" data-result-form>
+                    <div class="text-sm font-semibold text-gray-900">Quick final score</div>
+                    <p class="mt-1 text-sm text-gray-600">Submit the final score and any post-game notes without leaving this assignment.</p>
+                    <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                        <label class="text-sm font-medium text-gray-700">Home score
+                            <input name="homeScore" type="number" min="0" step="1" inputmode="numeric" class="mt-1 w-full rounded border border-gray-300 px-3 py-2" required>
+                        </label>
+                        <label class="text-sm font-medium text-gray-700">Away score
+                            <input name="awayScore" type="number" min="0" step="1" inputmode="numeric" class="mt-1 w-full rounded border border-gray-300 px-3 py-2" required>
+                        </label>
+                    </div>
+                    <label class="mt-3 block text-sm font-medium text-gray-700">Notes (optional)
+                        <textarea name="notes" rows="3" class="mt-1 w-full rounded border border-gray-300 px-3 py-2" placeholder="Add any post-game notes for the assigner."></textarea>
+                    </label>
+                    <div class="mt-3 hidden rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" data-result-error></div>
+                    <div class="mt-3 flex flex-wrap items-center gap-3">
+                        <button type="submit" class="official-result-submit rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Submit result</button>
+                        <span class="text-xs text-gray-500">Accepted officials only. Scores must be whole numbers 0 or greater.</span>
+                    </div>
+                </form>
+            `;
+        }
+
+        function renderResponseActions(game, slot) {
+            const hasResultForm = slot.status === 'accepted' && hasGameStarted(game) && !isCancelled(game);
+            if (hasResultForm) return '';
+            if (['pending', 'needs_review'].includes(slot.status)) {
+                return '<button data-action="accepted" class="official-response px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Accept</button><button data-action="declined" class="official-response px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200">Decline</button>';
+            }
+            if (slot.status === 'accepted' && !hasSubmittedOfficiatingResult(slot)) {
+                return '<button data-action="cant_make" class="official-response px-3 py-1 bg-amber-100 text-amber-700 rounded text-sm hover:bg-amber-200">Can\'t make it</button>';
+            }
+            return '';
+        }
+
         function renderGameMeta(game, slot) {
             return `
                 <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide">${formatDate(game.date)} • ${formatTime(game.date)}</div>
@@ -80,12 +152,18 @@
         function renderAssignedGames() {
             const container = document.getElementById('assigned-games');
             const assigned = [];
-            games.filter(isUpcoming).forEach((game) => {
+            games.forEach((game) => {
                 getAssignedOfficiatingSlots(game, currentUser).forEach((slot) => assigned.push({ game, slot }));
             });
 
+            assigned.sort((a, b) => {
+                const aTime = toDate(a.game.date)?.getTime() || 0;
+                const bTime = toDate(b.game.date)?.getTime() || 0;
+                return bTime - aTime;
+            });
+
             if (!assigned.length) {
-                container.innerHTML = '<div class="p-4 text-sm text-gray-500">No upcoming assignments found for your account.</div>';
+                container.innerHTML = '<div class="p-4 text-sm text-gray-500">No assignments found for your account.</div>';
                 return;
             }
 
@@ -93,10 +171,8 @@
                 <div class="p-4" data-game-id="${game.id}" data-slot-id="${slot.id}">
                     ${renderGameMeta(game, slot)}
                     <div class="mt-2 text-sm"><span class="font-semibold">Status:</span> ${escapeHtml(slot.status.replace(/_/g, ' '))}</div>
-                    <div class="mt-3 flex flex-wrap gap-2">
-                        ${['pending', 'needs_review'].includes(slot.status) ? '<button data-action="accepted" class="official-response px-3 py-1 bg-green-100 text-green-700 rounded text-sm hover:bg-green-200">Accept</button><button data-action="declined" class="official-response px-3 py-1 bg-red-100 text-red-700 rounded text-sm hover:bg-red-200">Decline</button>' : ''}
-                        ${slot.status === 'accepted' ? '<button data-action="cant_make" class="official-response px-3 py-1 bg-amber-100 text-amber-700 rounded text-sm hover:bg-amber-200">Can\'t make it</button>' : ''}
-                    </div>
+                    <div class="mt-3 flex flex-wrap gap-2">${renderResponseActions(game, slot)}</div>
+                    ${renderResultForm(game, slot)}
                 </div>
             `).join('');
         }
@@ -175,6 +251,49 @@
                 await refresh();
             } catch (error) {
                 document.getElementById('officials-status').textContent = error.message || 'Could not save officiating response.';
+            }
+        });
+
+        document.addEventListener('submit', async (event) => {
+            const form = event.target.closest('[data-result-form]');
+            if (!form) return;
+
+            event.preventDefault();
+            const row = form.closest('[data-game-id][data-slot-id]');
+            if (!row) return;
+
+            const errorBox = form.querySelector('[data-result-error]');
+            const submitButton = form.querySelector('.official-result-submit');
+            const formData = new FormData(form);
+            const validation = validateOfficiatingResultSubmission({
+                homeScore: formData.get('homeScore'),
+                awayScore: formData.get('awayScore'),
+                notes: formData.get('notes')
+            });
+
+            if (!validation.valid) {
+                errorBox.textContent = validation.errors[0] || 'Enter a valid final score.';
+                errorBox.classList.remove('hidden');
+                return;
+            }
+
+            errorBox.textContent = '';
+            errorBox.classList.add('hidden');
+
+            try {
+                submitButton.disabled = true;
+                submitButton.textContent = 'Saving...';
+                document.getElementById('officials-status').textContent = 'Saving result...';
+                await submitOfficiatingAssignmentResult(teamId, row.dataset.gameId, row.dataset.slotId, validation.value, currentUser);
+                await refresh();
+                document.getElementById('officials-status').textContent = 'Result saved.';
+            } catch (error) {
+                errorBox.textContent = error.message || 'Could not save the final score. Please try again.';
+                errorBox.classList.remove('hidden');
+                document.getElementById('officials-status').textContent = error.message || 'Could not save the final score. Please try again.';
+            } finally {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Submit result';
             }
         });
 
