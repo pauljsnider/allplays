@@ -208,6 +208,37 @@ describe('React app shell search', () => {
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-1/player-1');
     });
 
+    it('avoids repeated Firestore player lookups for narrower mobile search refinements', async () => {
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const lowerBound = request.parts.find((part) => part?.type === 'where' && part.field === 'name' && part.op === '>=')?.value;
+            if (lowerBound === 'pa' || lowerBound === 'Pa') {
+                return {
+                    docs: [
+                        firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '9' }),
+                        firestorePlayer('teams/team-1/players/player-2', { name: 'Pat Stone', number: '10' }),
+                        firestorePlayer('teams/team-1/players/player-3', { name: 'Paige Forward', number: '11' })
+                    ]
+                };
+            }
+
+            throw new Error(`Unexpected player query: ${lowerBound}`);
+        });
+
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'pa');
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('#9 Pat Star');
+        expect(container.textContent).toContain('#10 Pat Stone');
+
+        await fillSearch(container, 'pat');
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('#9 Pat Star');
+        expect(container.textContent).toContain('#10 Pat Stone');
+        expect(container.textContent).not.toContain('Paige Forward');
+    });
+
     it('filters help matches by selected role and opens the filtered help result with Enter', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([
             {
