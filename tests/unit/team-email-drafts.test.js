@@ -6,6 +6,12 @@ function readRepoFile(relativePath) {
 }
 
 describe('team email draft composer', () => {
+    it('pins the fresh db cache-busting version for team chat draft helpers', () => {
+        const html = readRepoFile('team-chat.html');
+
+        expect(html).toContain("from './js/db.js?v=37';");
+    });
+
     it('wires coach/admin email drafts into team chat', () => {
         const html = readRepoFile('team-chat.html');
 
@@ -42,7 +48,7 @@ describe('team email draft composer', () => {
 
         expect(html).toContain('Choose at least one recipient, a subject, and a body before saving.');
         expect(html).toContain('saveBtn.disabled = selectedEmailRecipientKeys.size === 0 || !hasSubject || !hasBody;');
-        expect(db).toContain("if (recipients.length === 0) throw new Error('Choose at least one recipient before saving.');");
+        expect(db).toContain("if (recipientIds.length === 0) throw new Error('Choose at least one recipient before saving.');");
         expect(db).toContain("if (!subject) throw new Error('Enter a subject before saving.');");
         expect(db).toContain("if (!body) throw new Error('Enter a body before saving.');");
     });
