@@ -7,6 +7,13 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+async function openSearch(page) {
+    const searchButton = page.getByRole('button', { name: 'Search' });
+    await expect(searchButton).toBeVisible();
+    await searchButton.click();
+    await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+}
+
 async function mockSearchModules(page) {
     await page.addInitScript(() => {
         window.__openedPublicUrls = [];
@@ -162,8 +169,7 @@ test.describe('app global search', () => {
         await mockSearchModules(page);
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await page.getByRole('button', { name: 'Search' }).click();
-        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+        await openSearch(page);
         await expect.poll(async () => {
             const box = await page.getByTestId('app-search-panel').boundingBox();
             return Math.round(box?.y || 0);
@@ -188,7 +194,7 @@ test.describe('app global search', () => {
         await mockSearchModules(page);
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await page.getByRole('button', { name: 'Search' }).click();
+        await openSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('p');
         await expect(page.getByText('Type at least 2 characters to search players')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual([]);
@@ -206,7 +212,7 @@ test.describe('app global search', () => {
         await page.keyboard.press('Escape');
         await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeHidden();
 
-        await page.getByRole('button', { name: 'Search' }).click();
+        await openSearch(page);
         await page.getByRole('button', { name: 'Close search' }).click();
         await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeHidden();
     });
@@ -216,8 +222,7 @@ test.describe('desktop app global search', () => {
     test.use({ viewport: { width: 1440, height: 900 }, hasTouch: false });
 
     async function openDesktopSearch(page) {
-        await page.getByRole('button', { name: 'Search' }).click();
-        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+        await openSearch(page);
     }
 
     test('desktop search supports native navigation and website actions', async ({ page, baseURL }) => {
