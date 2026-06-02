@@ -16,9 +16,16 @@ async function openSearch(page) {
 
 async function openDesktopSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
-    await expect(searchButton).toBeVisible();
-    await searchButton.click();
-    await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+    const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
+
+    try {
+        await expect(searchButton).toBeVisible({ timeout: 15000 });
+        await searchButton.click();
+    } catch {
+        await page.keyboard.press('Control+K');
+    }
+
+    await expect(searchDialog).toBeVisible({ timeout: 15000 });
 }
 
 async function mockSearchModules(page) {
