@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client';
 
 const privateAiMocks = vi.hoisted(() => ({
     DEFAULT_PRIVATE_AI_CONVERSATION_ID: 'default',
+    DRAFT_PRIVATE_AI_CONVERSATION_ID: '__draft__',
     createPrivateAiConversation: vi.fn(),
     loadPrivateAiConversations: vi.fn(),
     loadPrivateAiMessages: vi.fn(),
@@ -90,13 +91,6 @@ beforeEach(() => {
             lastMessagePreview: 'I can look up your ALL PLAYS data.'
         }
     ]);
-    privateAiMocks.createPrivateAiConversation.mockResolvedValue({
-        id: 'conversation-2',
-        title: 'New chat',
-        createdAt: new Date('2026-05-21T12:02:00Z'),
-        updatedAt: new Date('2026-05-21T12:02:00Z'),
-        lastMessagePreview: ''
-    });
     privateAiMocks.loadPrivateAiMessages.mockResolvedValue([
         {
             id: 'msg-1',
@@ -111,14 +105,14 @@ beforeEach(() => {
             id: 'msg-2',
             role: 'user',
             text: 'What is next?',
-            conversationId: 'default',
+            conversationId: 'conversation-1',
             createdAt: new Date('2026-05-21T12:01:00Z')
         },
         assistantMessage: {
             id: 'msg-3',
             role: 'assistant',
             text: '**Bears** play Monday at 6:00 PM.',
-            conversationId: 'default',
+            conversationId: 'conversation-1',
             createdAt: new Date('2026-05-21T12:01:02Z'),
             toolNames: ['get_schedule']
         },
@@ -199,14 +193,88 @@ describe('private AI chat page', () => {
         expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'What do I need to handle today?', 'default');
     });
 
-    it('starts a new conversation and loads that thread', async () => {
+    it('starts a blank draft and only saves after the first send', async () => {
+        privateAiMocks.loadPrivateAiMessages
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+                {
+                    id: 'msg-2',
+                    role: 'user',
+                    text: 'First draft question',
+                    conversationId: 'conversation-2',
+                    createdAt: new Date('2026-05-21T12:01:00Z')
+                },
+                {
+                    id: 'msg-3',
+                    role: 'assistant',
+                    text: 'Draft answer',
+                    conversationId: 'conversation-2',
+                    createdAt: new Date('2026-05-21T12:01:02Z'),
+                    toolNames: []
+                }
+            ]);
+        privateAiMocks.loadPrivateAiConversations
+            .mockResolvedValueOnce([
+                {
+                    id: 'conversation-1',
+                    title: 'Saved chat',
+                    createdAt: new Date('2026-05-21T12:00:00Z'),
+                    updatedAt: new Date('2026-05-21T12:00:00Z'),
+                    lastMessagePreview: 'Saved preview'
+                }
+            ])
+            .mockResolvedValueOnce([
+                {
+                    id: 'conversation-2',
+                    title: 'First draft question',
+                    createdAt: new Date('2026-05-21T12:02:00Z'),
+                    updatedAt: new Date('2026-05-21T12:02:00Z'),
+                    lastMessagePreview: 'Draft answer'
+                },
+                {
+                    id: 'conversation-1',
+                    title: 'Saved chat',
+                    createdAt: new Date('2026-05-21T12:00:00Z'),
+                    updatedAt: new Date('2026-05-21T12:00:00Z'),
+                    lastMessagePreview: 'Saved preview'
+                }
+            ]);
+        privateAiMocks.sendPrivateAiMessage.mockResolvedValueOnce({
+            userMessage: {
+                id: 'msg-2',
+                role: 'user',
+                text: 'First draft question',
+                conversationId: 'conversation-2',
+                createdAt: new Date('2026-05-21T12:01:00Z')
+            },
+            assistantMessage: {
+                id: 'msg-3',
+                role: 'assistant',
+                text: 'Draft answer',
+                conversationId: 'conversation-2',
+                createdAt: new Date('2026-05-21T12:01:02Z'),
+                toolNames: []
+            },
+            toolResults: []
+        });
+
         const { container } = await renderPrivateAi();
+        const messageLoadCountBeforeDraft = privateAiMocks.loadPrivateAiMessages.mock.calls.length;
 
         await click(container.querySelector('button[aria-label="New AI chat"]'));
 
-        expect(privateAiMocks.createPrivateAiConversation).toHaveBeenCalledWith(auth.user);
-        expect(privateAiMocks.loadPrivateAiMessages).toHaveBeenLastCalledWith(auth.user, undefined, 'conversation-2');
-        expect(container.textContent).toContain('New chat');
+        expect(privateAiMocks.createPrivateAiConversation).not.toHaveBeenCalled();
+        expect(privateAiMocks.loadPrivateAiMessages.mock.calls.length).toBe(messageLoadCountBeforeDraft);
+        expect(container.textContent).toContain('What do you need from ALL PLAYS?');
+        expect(container.textContent).not.toContain('First draft question');
+
+        const textarea = container.querySelector('textarea');
+        await setFieldValue(textarea, 'First draft question');
+        await click(container.querySelector('button[aria-label="Send AI message"]'));
+
+        expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'First draft question', '__draft__');
+        expect(container.textContent).toContain('First draft question');
+        expect(privateAiMocks.loadPrivateAiConversations).toHaveBeenCalledTimes(2);
     });
 
     it('shows service errors without losing the typed message', async () => {
@@ -216,7 +284,10 @@ describe('private AI chat page', () => {
         const textarea = container.querySelector('textarea');
         await setFieldValue(textarea, 'Can you help?');
         await click(container.querySelector('button[aria-label="Send AI message"]'));
+        await flush();
+        await flush();
 
+        expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'Can you help?', 'default');
         expect(container.textContent).toContain('AI down');
         expect(container.querySelector('textarea').value).toBe('Can you help?');
     });

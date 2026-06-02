@@ -12,8 +12,8 @@ import {
   Sparkles
 } from 'lucide-react';
 import {
-  createPrivateAiConversation,
   DEFAULT_PRIVATE_AI_CONVERSATION_ID,
+  DRAFT_PRIVATE_AI_CONVERSATION_ID,
   loadPrivateAiConversations,
   loadPrivateAiMessages,
   sendPrivateAiMessage,
@@ -58,6 +58,8 @@ const starterPrompts = [
   'Who still needs an RSVP?'
 ];
 
+const isDraftConversationId = (conversationId: string) => conversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID;
+
 export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
   const [messages, setMessages] = useState<PrivateAiMessage[]>([]);
@@ -101,6 +103,12 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
 
   const refreshMessages = async () => {
     if (!auth.user) {
+      setLoading(false);
+      setMessages([]);
+      return;
+    }
+
+    if (isDraftConversationId(activeConversationId)) {
       setLoading(false);
       setMessages([]);
       return;
@@ -265,11 +273,15 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
 
     try {
       const result = await sendPrivateAiMessage(auth.user, trimmedText, activeConversationId);
+      const nextConversationId = result.userMessage.conversationId || activeConversationId;
       setMessages((current) => [
         ...current.filter((message) => message.id !== optimisticUser.id),
         result.userMessage,
         result.assistantMessage
       ]);
+      if (nextConversationId !== activeConversationId) {
+        setActiveConversationId(nextConversationId);
+      }
       await refreshConversations(false);
     } catch (error: any) {
       setMessages((current) => current.filter((message) => message.id !== optimisticUser.id));
@@ -292,24 +304,12 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     void sendPrompt(prompt);
   };
 
-  const startNewConversation = async () => {
+  const startNewConversation = () => {
     if (!auth.user || conversationLoading) return;
-    setConversationLoading(true);
     setStatus(null);
-    try {
-      const conversation = await createPrivateAiConversation(auth.user);
-      setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
-      setActiveConversationId(conversation.id);
-      setMessages([]);
-      setDraft('');
-    } catch (error: any) {
-      setStatus({
-        tone: 'error',
-        message: error?.message || 'Unable to start a new AI chat.'
-      });
-    } finally {
-      setConversationLoading(false);
-    }
+    setActiveConversationId(DRAFT_PRIVATE_AI_CONVERSATION_ID);
+    setMessages([]);
+    setDraft('');
   };
 
   const selectConversation = (conversationId: string) => {

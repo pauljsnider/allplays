@@ -75,6 +75,7 @@ export type PrivateAiSendResult = {
 const privateAiCollectionName = 'privateAiMessages';
 const privateAiConversationCollectionName = 'privateAiConversations';
 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
+export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
 const maxLoadedMessages = 80;
 const maxHistoryMessages = 12;
 const maxToolRounds = 2;
@@ -169,8 +170,14 @@ export async function sendPrivateAiMessage(
     throw new Error('Type a message first.');
   }
 
-  const activeConversationId = normalizeConversationId(conversationId);
-  const priorMessages = await loadPrivateAiMessages(user, maxHistoryMessages, activeConversationId).catch(() => []);
+  const requestedConversationId = normalizeConversationId(conversationId);
+  const isDraftConversation = requestedConversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID;
+  const activeConversationId = isDraftConversation
+    ? await createPrivateAiConversation(user, buildConversationTitle(question)).then((conversation) => conversation.id)
+    : requestedConversationId;
+  const priorMessages = isDraftConversation
+    ? []
+    : await loadPrivateAiMessages(user, maxHistoryMessages, activeConversationId).catch(() => []);
   const userMessage = await savePrivateAiMessage(user, {
     role: 'user',
     text: question,
