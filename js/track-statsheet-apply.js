@@ -52,7 +52,6 @@ export function buildTrackStatsheetApplyPlan({
     awayScore = 0,
     statSheetPhotoUrl = null
 } = {}) {
-    const configColumns = (columns || []).map((col) => String(col || '').toLowerCase());
     const pointsKey = getTrackStatsheetPointsKey(columns);
 
     const aggregatedStatsWrites = includedHome.reduce((writes, row) => {
@@ -61,12 +60,10 @@ export function buildTrackStatsheetApplyPlan({
             return writes;
         }
 
-        const stats = {};
-        configColumns.forEach((col) => {
-            stats[col] = 0;
-        });
-        stats[pointsKey] = Number(row.totalPoints || 0) || 0;
-        stats.fouls = Number(row.fouls || 0) || 0;
+        const stats = {
+            [pointsKey]: Number(row.totalPoints || 0) || 0,
+            fouls: Number(row.fouls || 0) || 0
+        };
 
         writes.push({
             playerId: player.id,
@@ -88,14 +85,9 @@ export function buildTrackStatsheetApplyPlan({
         opponentStats[opponentId] = {
             name: row.name || '',
             number: row.number || '',
+            [pointsKey]: Number(row.totalPoints || 0) || 0,
             fouls: Number(row.fouls || 0) || 0
         };
-        opponentStats[opponentId][pointsKey] = Number(row.totalPoints || 0) || 0;
-        configColumns.forEach((col) => {
-            if (opponentStats[opponentId][col] === undefined) {
-                opponentStats[opponentId][col] = 0;
-            }
-        });
     });
 
     return {

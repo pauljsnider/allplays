@@ -69,6 +69,7 @@ describe('AppSearchDialog', () => {
     expect(onClose).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
+    expect(screen.getByRole('heading', { name: 'Search teams, players, actions, and help' }).className).toContain('sr-only');
     fireEvent.mouseDown(dialog);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

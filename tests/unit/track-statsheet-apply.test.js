@@ -56,7 +56,6 @@ describe('track statsheet apply helpers', () => {
                         participationSource: 'statsheet-import',
                         stats: {
                             goals: 4,
-                            shots: 0,
                             fouls: 2
                         }
                     }
@@ -70,12 +69,57 @@ describe('track statsheet apply helpers', () => {
                         name: 'Opp One',
                         number: '10',
                         goals: 3,
-                        shots: 0,
                         fouls: 1
                     }
                 },
                 status: 'completed',
                 statSheetPhotoUrl: 'https://img.test/statsheet.png'
+            }
+        });
+    });
+
+    it('does not fabricate unsupported configured stats during statsheet replacement', () => {
+        expect(buildTrackStatsheetApplyPlan({
+            includedHome: [
+                { mappedPlayerId: 'p1', totalPoints: 12, fouls: 2 }
+            ],
+            includedVisitor: [
+                { name: 'Opp One', number: '10', totalPoints: 3, fouls: 1 }
+            ],
+            roster: [
+                { id: 'p1', name: 'Ava Cole', number: '3' }
+            ],
+            columns: ['PTS', 'REB', 'AST']
+        })).toEqual({
+            aggregatedStatsWrites: [
+                {
+                    playerId: 'p1',
+                    data: {
+                        playerName: 'Ava Cole',
+                        playerNumber: '3',
+                        participated: true,
+                        participationStatus: 'appeared',
+                        participationSource: 'statsheet-import',
+                        stats: {
+                            pts: 12,
+                            fouls: 2
+                        }
+                    }
+                }
+            ],
+            gameUpdate: {
+                homeScore: 0,
+                awayScore: 0,
+                opponentStats: {
+                    statsheet_1: {
+                        name: 'Opp One',
+                        number: '10',
+                        pts: 3,
+                        fouls: 1
+                    }
+                },
+                status: 'completed',
+                statSheetPhotoUrl: null
             }
         });
     });

@@ -64,4 +64,20 @@ describe('AppShell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeInTheDocument();
   });
+
+  it('opens the search dialog from the Ctrl+K shortcut before browser chrome can consume it', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={auth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const event = new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true, cancelable: true });
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeInTheDocument();
+  });
 });

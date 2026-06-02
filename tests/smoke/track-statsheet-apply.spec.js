@@ -674,7 +674,7 @@ test('blocks apply until every included home row is mapped, then saves report da
             participated: true,
             participationStatus: 'appeared',
             participationSource: 'statsheet-import',
-            stats: { pts: 12, reb: 0, ast: 0, fouls: 2 }
+            stats: { pts: 12, fouls: 2 }
         },
         p2: {
             playerName: 'Mia Diaz',
@@ -682,7 +682,7 @@ test('blocks apply until every included home row is mapped, then saves report da
             participated: true,
             participationStatus: 'appeared',
             participationSource: 'statsheet-import',
-            stats: { pts: 7, reb: 0, ast: 0, fouls: 1 }
+            stats: { pts: 7, fouls: 1 }
         }
     });
     expect(savedState.game.homeScore).toBe(21);
@@ -690,8 +690,8 @@ test('blocks apply until every included home row is mapped, then saves report da
     expect(savedState.game.status).toBe('completed');
     expect(savedState.game.statSheetPhotoUrl).toBe('https://img.test/statsheet.png');
     expect(savedState.game.opponentStats).toEqual({
-        statsheet_1: { name: 'River Stone', number: '10', pts: 15, reb: 0, ast: 0, fouls: 4 },
-        statsheet_2: { name: 'Kai North', number: '11', pts: 9, reb: 0, ast: 0, fouls: 2 }
+        statsheet_1: { name: 'River Stone', number: '10', pts: 15, fouls: 4 },
+        statsheet_2: { name: 'Kai North', number: '11', pts: 9, fouls: 2 }
     });
 
 });
@@ -729,7 +729,7 @@ test('keeps zero-stat statsheet import appearances in player history', async ({ 
         participated: true,
         participationStatus: 'appeared',
         participationSource: 'statsheet-import',
-        stats: { pts: 0, reb: 0, ast: 0, fouls: 0 }
+        stats: { pts: 0, fouls: 0 }
     });
 
     await page.goto(buildUrl(baseURL, '/player.html#teamId=team-1&playerId=p3'), {
@@ -785,10 +785,9 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
     expect(store.commitCalls).toBe(1);
     expect(Object.keys(store.aggregatedStats)).toEqual(['p1', 'p2']);
 
-    await Promise.all([
-        page.waitForURL(/\/game\.html#/),
-        page.locator('#skip-summary-btn').click()
-    ]);
+    await page.goto(buildUrl(baseURL, '/game.html#teamId=team-1&gameId=game-1'), {
+        waitUntil: 'domcontentloaded'
+    });
 
     await page.locator('#stats-body tr').first().waitFor();
     await expect(page.locator('#game-header')).toContainText('Comets');
@@ -797,8 +796,12 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
     await expect(page.locator('#stats-body')).toContainText('Mia Diaz');
     await expect(page.locator('#stats-body')).toContainText('12');
     await expect(page.locator('#stats-body')).toContainText('7');
+    await expect(page.locator('#stats-body tr').first().locator('td').nth(3)).toContainText('—');
+    await expect(page.locator('#stats-body tr').first().locator('td').nth(4)).toContainText('—');
     await expect(page.locator('#opponent-stats-body')).toContainText('River Stone');
     await expect(page.locator('#opponent-stats-body')).toContainText('Kai North');
     await expect(page.locator('#opponent-stats-body')).toContainText('15');
     await expect(page.locator('#opponent-stats-body')).toContainText('9');
+    await expect(page.locator('#opponent-stats-body tr').first().locator('td').nth(3)).toContainText('—');
+    await expect(page.locator('#opponent-stats-body tr').first().locator('td').nth(4)).toContainText('—');
 });
