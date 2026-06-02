@@ -498,7 +498,17 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
   const messages = await Promise.all(previewCandidates.map((conversation) => (
     getLatestConversationMessage(teamId, conversation.id)
   )));
-  return getNewestChatMessage(messages);
+  const previewMessage = getNewestChatMessage(messages);
+  if (previewMessage) return previewMessage;
+
+  const attemptedConversationIds = new Set(previewCandidates.map((conversation) => conversation.id));
+  for (const { conversation } of rankedConversations) {
+    if (!conversation?.id || attemptedConversationIds.has(conversation.id)) continue;
+    const fallbackMessage = await getLatestConversationMessage(teamId, conversation.id);
+    if (fallbackMessage) return fallbackMessage;
+  }
+
+  return null;
 }
 
 export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {

@@ -300,6 +300,57 @@ describe('React app chat recipient service', () => {
         }));
     });
 
+    it('checks older timestamped conversations when the newest conversation has no messages yet', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }]
+        });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([]);
+        dbMocks.getParentTeams.mockResolvedValue([
+            { id: 'team-parent', name: 'Zebras', sport: 'Soccer' }
+        ]);
+        dbMocks.getChatConversations.mockResolvedValue([
+            { id: 'direct_user-1__coach-1', type: 'direct', name: 'Coach Morgan', participantIds: ['user-1', 'coach-1'], updatedAt: new Date('2026-05-21T14:00:00Z') },
+            { id: 'group_family', type: 'group', name: 'Carpool', lastMessageAt: new Date('2026-05-21T13:00:00Z') },
+            { id: 'team', type: 'team', name: 'Zebras Team Chat', updatedAt: new Date('2026-05-21T12:00:00Z') }
+        ]);
+        dbMocks.getChatMessages.mockImplementation(async (teamId, options = {}) => {
+            if (options.conversationId === 'direct_user-1__coach-1') {
+                return [];
+            }
+            if (options.conversationId === 'group_family') {
+                return [{
+                    id: 'group-last',
+                    text: 'Van leaves at 5:30.',
+                    senderName: 'Sam Parent',
+                    createdAt: new Date('2026-05-21T13:00:00Z')
+                }];
+            }
+            return [{
+                id: 'team-last',
+                text: 'Older team announcement.',
+                senderName: 'Coach Jamie',
+                createdAt: new Date('2026-05-21T12:00:00Z')
+            }];
+        });
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'parent@example.com',
+            displayName: 'Pat Parent',
+            roles: ['parent']
+        });
+
+        expect(dbMocks.getChatMessages).toHaveBeenCalledTimes(2);
+        expect(dbMocks.getChatMessages).toHaveBeenNthCalledWith(1, 'team-parent', { limit: 1, conversationId: 'direct_user-1__coach-1' });
+        expect(dbMocks.getChatMessages).toHaveBeenNthCalledWith(2, 'team-parent', { limit: 1, conversationId: 'group_family' });
+        expect(inbox.teams[0].lastMessage).toEqual(expect.objectContaining({
+            id: 'group-last',
+            text: 'Van leaves at 5:30.'
+        }));
+    });
+
     it('returns no inbox teams for signed-out users', async () => {
         const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
 
