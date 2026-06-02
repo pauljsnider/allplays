@@ -26,16 +26,13 @@ async function openDesktopSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
-    if (await searchButton.count()) {
+    try {
         await expect(searchButton).toBeVisible({ timeout: 15000 });
         await searchButton.click();
-
-        try {
-            await expect(searchDialog).toBeVisible({ timeout: 1000 });
-            return;
-        } catch {
-            // Fall back to the desktop keyboard shortcut when the header control does not open the dialog.
-        }
+        await expect(searchDialog).toBeVisible({ timeout: 1000 });
+        return;
+    } catch {
+        // Fall back to the desktop keyboard shortcut when the header control is not ready yet or does not open the dialog.
     }
 
     await page.keyboard.press('Control+K');
