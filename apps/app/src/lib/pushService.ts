@@ -1,6 +1,8 @@
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging } from '@capacitor-firebase/messaging';
+import type { NotificationActionPerformedEvent } from '@capacitor-firebase/messaging';
 import { saveNotificationDeviceToken } from './profileService';
+import { rememberPendingPushRoute, resolvePushNotificationRoute } from './pushNotificationRouting';
 
 type PushRegistrationResult = {
   token: string;
@@ -8,6 +10,25 @@ type PushRegistrationResult = {
 };
 
 const nativePushTimeoutMs = 15000;
+
+export async function addPushNotificationOpenListener(onRouteOpen: (route: string) => void) {
+  if (!Capacitor.isNativePlatform()) {
+    return async () => {};
+  }
+
+  const listener = await FirebaseMessaging.addListener('notificationActionPerformed', (event: NotificationActionPerformedEvent) => {
+    const route = resolvePushNotificationRoute(event.notification?.data);
+    if (!route) {
+      return;
+    }
+    rememberPendingPushRoute(route);
+    onRouteOpen(route);
+  });
+
+  return async () => {
+    await listener.remove();
+  };
+}
 
 export async function enablePushNotificationsForUser(userId: string): Promise<PushRegistrationResult> {
   if (!userId) {

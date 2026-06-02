@@ -1,6 +1,8 @@
-import { lazy, ReactNode, Suspense, useEffect, useState } from 'react';
-import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
+import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
+import { addPushNotificationOpenListener } from './lib/pushService';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
 
@@ -31,7 +33,47 @@ const protectedRouteBootstrapGraceMs = 1200;
 export default function App() {
   const auth = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
+  const authUserRef = useRef(auth.user);
   const shouldDefaultReloadToHome = auth.user && location.pathname === '/teams' && isBrowserReload();
+
+  useEffect(() => {
+    authUserRef.current = auth.user;
+  }, [auth.user]);
+
+  useEffect(() => {
+    let removeListener = async () => {};
+
+    async function registerPushListener() {
+      removeListener = await addPushNotificationOpenListener((route) => {
+        if (authUserRef.current) {
+          navigate(route, { replace: true });
+        }
+      });
+    }
+
+    registerPushListener();
+    return () => {
+      removeListener();
+    };
+  }, [navigate]);
+
+  useEffect(() => {
+    if (auth.loading || !auth.user) {
+      return;
+    }
+
+    const pendingRoute = readPendingPushRoute();
+    if (!pendingRoute) {
+      return;
+    }
+
+    const currentRoute = `${location.pathname}${location.search}`;
+    clearPendingPushRoute();
+    if (pendingRoute !== currentRoute) {
+      navigate(pendingRoute, { replace: true });
+    }
+  }, [auth.loading, auth.user, location.pathname, location.search, navigate]);
 
   return (
     <Suspense fallback={<LoadingScreen />}>
