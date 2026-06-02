@@ -77,14 +77,16 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const isModK = (event.key || '').toLowerCase() === 'k' && (event.metaKey || event.ctrlKey);
+      const key = (event.key || '').toLowerCase();
+      const isModK = (key === 'k' || event.code === 'KeyK') && (event.metaKey || event.ctrlKey);
       if (!isModK || isTypingTarget(event.target)) return;
       event.preventDefault();
+      event.stopPropagation();
       setSearchOpen(true);
     };
 
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
   const addWorkflows = buildAddWorkflows();
