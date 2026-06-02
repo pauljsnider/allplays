@@ -16,11 +16,8 @@ async function openSearch(page) {
 
 async function openDesktopSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
-    if (await searchButton.isVisible().catch(() => false)) {
-        await searchButton.click();
-    } else {
-        await page.keyboard.press('Control+K');
-    }
+    await expect(searchButton).toBeVisible();
+    await searchButton.click();
     await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
 }
 
