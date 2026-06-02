@@ -12,8 +12,8 @@ import {
   Sparkles
 } from 'lucide-react';
 import {
-  createPrivateAiConversation,
   DEFAULT_PRIVATE_AI_CONVERSATION_ID,
+  DRAFT_PRIVATE_AI_CONVERSATION_ID,
   loadPrivateAiConversations,
   loadPrivateAiMessages,
   sendPrivateAiMessage,
@@ -58,6 +58,19 @@ const starterPrompts = [
   'Who still needs an RSVP?'
 ];
 
+const isDraftConversationId = (conversationId: string) => conversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID;
+
+const resolveActiveConversationId = (
+  currentConversationId: string,
+  nextConversations: PrivateAiConversation[]
+) => {
+  if (isDraftConversationId(currentConversationId)) {
+    return currentConversationId;
+  }
+  const hasCurrent = nextConversations.some((conversation) => conversation.id === currentConversationId);
+  return hasCurrent ? currentConversationId : nextConversations[0]?.id || DEFAULT_PRIVATE_AI_CONVERSATION_ID;
+};
+
 export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
   const [messages, setMessages] = useState<PrivateAiMessage[]>([]);
@@ -73,34 +86,40 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const stopNativeDictationRef = useRef<(() => Promise<void>) | null>(null);
 
-  const refreshConversations = async (showLoading = true) => {
+  const refreshConversations = async (showLoading = true, currentConversationId = activeConversationId) => {
     if (!auth.user) {
       setConversations([]);
       setConversationLoading(false);
-      return;
+      return DEFAULT_PRIVATE_AI_CONVERSATION_ID;
     }
 
     if (showLoading) setConversationLoading(true);
     try {
       const nextConversations = await loadPrivateAiConversations(auth.user);
+      const nextActiveConversationId = resolveActiveConversationId(currentConversationId, nextConversations);
       setConversations(nextConversations);
-      setActiveConversationId((current) => {
-        const hasCurrent = nextConversations.some((conversation) => conversation.id === current);
-        return hasCurrent ? current : nextConversations[0]?.id || DEFAULT_PRIVATE_AI_CONVERSATION_ID;
-      });
+      setActiveConversationId(nextActiveConversationId);
+      return nextActiveConversationId;
     } catch (error: any) {
       setStatus({
         tone: 'error',
         message: error?.message || 'Unable to load AI conversations.'
       });
       setConversations([]);
+      return currentConversationId;
     } finally {
       if (showLoading) setConversationLoading(false);
     }
   };
 
-  const refreshMessages = async () => {
+  const refreshMessages = async (conversationId = activeConversationId) => {
     if (!auth.user) {
+      setLoading(false);
+      setMessages([]);
+      return;
+    }
+
+    if (isDraftConversationId(conversationId)) {
       setLoading(false);
       setMessages([]);
       return;
@@ -109,7 +128,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     setLoading(true);
     setStatus(null);
     try {
-      setMessages(await loadPrivateAiMessages(auth.user, undefined, activeConversationId));
+      setMessages(await loadPrivateAiMessages(auth.user, undefined, conversationId));
     } catch (error: any) {
       setStatus({
         tone: 'error',
@@ -265,11 +284,15 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
 
     try {
       const result = await sendPrivateAiMessage(auth.user, trimmedText, activeConversationId);
+      const nextConversationId = result.userMessage.conversationId || activeConversationId;
       setMessages((current) => [
         ...current.filter((message) => message.id !== optimisticUser.id),
         result.userMessage,
         result.assistantMessage
       ]);
+      if (nextConversationId !== activeConversationId) {
+        setActiveConversationId(nextConversationId);
+      }
       await refreshConversations(false);
     } catch (error: any) {
       setMessages((current) => current.filter((message) => message.id !== optimisticUser.id));
@@ -292,24 +315,12 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     void sendPrompt(prompt);
   };
 
-  const startNewConversation = async () => {
+  const startNewConversation = () => {
     if (!auth.user || conversationLoading) return;
-    setConversationLoading(true);
     setStatus(null);
-    try {
-      const conversation = await createPrivateAiConversation(auth.user);
-      setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
-      setActiveConversationId(conversation.id);
-      setMessages([]);
-      setDraft('');
-    } catch (error: any) {
-      setStatus({
-        tone: 'error',
-        message: error?.message || 'Unable to start a new AI chat.'
-      });
-    } finally {
-      setConversationLoading(false);
-    }
+    setActiveConversationId(DRAFT_PRIVATE_AI_CONVERSATION_ID);
+    setMessages([]);
+    setDraft('');
   };
 
   const selectConversation = (conversationId: string) => {
@@ -324,8 +335,10 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   }), [conversations.length, messages]);
 
   const refreshAiView = () => {
-    void refreshConversations(false);
-    void refreshMessages();
+    void (async () => {
+      const nextConversationId = await refreshConversations(false);
+      await refreshMessages(nextConversationId);
+    })();
   };
 
   const thread = (

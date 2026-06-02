@@ -292,6 +292,43 @@ describe('private AI service', () => {
         expect(result.toolResults[0]).toMatchObject({ name: 'get_schedule', ok: true });
     });
 
+    it('creates a saved conversation only when the first draft message is sent', async () => {
+        aiMocks.model.generateContent.mockResolvedValueOnce(modelText(JSON.stringify({
+            answer: 'Draft answer.'
+        })));
+
+        const { DRAFT_PRIVATE_AI_CONVERSATION_ID, loadPrivateAiConversations, sendPrivateAiMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        const beforeSend = await loadPrivateAiConversations(authUser);
+        expect(beforeSend).toEqual([]);
+
+        const result = await sendPrivateAiMessage(authUser, 'First draft question', DRAFT_PRIVATE_AI_CONVERSATION_ID);
+
+        expect(firebaseMocks.addDoc).toHaveBeenCalledTimes(3);
+        expect(firebaseMocks.addDoc.mock.calls[0][0]).toMatchObject({ path: ['users', 'user-1', 'privateAiConversations'] });
+        expect(firebaseMocks.addDoc.mock.calls[0][1]).toMatchObject({
+            title: 'First draft question',
+            lastMessagePreview: ''
+        });
+        expect(firebaseMocks.addDoc.mock.calls[1][1]).toMatchObject({
+            role: 'user',
+            text: 'First draft question',
+            conversationId: 'ai-message-1'
+        });
+        expect(firebaseMocks.addDoc.mock.calls[2][1]).toMatchObject({
+            role: 'assistant',
+            text: 'Draft answer.',
+            conversationId: 'ai-message-1'
+        });
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'users', 'user-1', 'privateAiConversations', 'ai-message-1');
+        expect(result.userMessage).toMatchObject({
+            conversationId: 'ai-message-1'
+        });
+        expect(result.assistantMessage).toMatchObject({
+            conversationId: 'ai-message-1'
+        });
+    });
+
     it('parses fenced JSON planner responses and rejects unsupported tools', async () => {
         const { parsePrivateAiPlannerResponse, runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
 

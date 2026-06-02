@@ -81,7 +81,8 @@ async function mockPrivateAiModules(page) {
             contentType: 'application/javascript',
             body: `
                 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
-
+                export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
+ 
                 let conversations = [
                     {
                         id: 'default',
