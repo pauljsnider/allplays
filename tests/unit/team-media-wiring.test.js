@@ -14,11 +14,11 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=5"');
+        expect(page).toContain('src="js/team-media.js?v=6"');
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=33'");
+        expect(source).toContain("from './db.js?v=34'");
         expect(source).toContain("import { checkAuth } from './auth.js?v=15';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
@@ -34,12 +34,16 @@ describe('team media page wiring', () => {
         const rules = fs.readFileSync(path.join(repoRoot, 'firestore.rules'), 'utf8');
         expect(rules).toContain('match /mediaFolders/{folderId}');
         expect(rules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
+        expect(rules).toContain('allow create, delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCounterUpdate(teamId);');
         expect(rules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
         expect(rules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
         expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
         expect(rules).toContain("folderData.get('visibility', 'team') == 'team'");
         expect(rules).toContain("get(folderPath).data.get('visibility', 'team') == 'team'");
         expect(rules).toContain("teamId in get(userPath).data.get('teamMediaUploadTeamIds', [])");
+        expect(rules).toContain('function isTeamMediaUploadCounterUpdate(teamId) {');
+        expect(rules).toContain("request.resource.data.get('nextMediaOrder', 0) == resource.data.get('nextMediaOrder', 0) + 1");
         expect(rules).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
     });
 

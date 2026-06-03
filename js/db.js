@@ -614,10 +614,31 @@ export async function createTeamMediaFolder(teamId, draft = {}) {
         name: folder.name,
         visibility: folder.visibility,
         order: existingFolders.length,
+        nextMediaOrder: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
     });
     return docRef.id;
+}
+
+async function reserveNextTeamMediaOrder(teamId, folderId) {
+    const folderRef = doc(db, `teams/${teamId}/mediaFolders`, folderId);
+    return runTransaction(db, async (transaction) => {
+        const folderSnapshot = await transaction.get(folderRef);
+        if (!folderSnapshot.exists()) {
+            throw new Error('Choose a folder for this media item.');
+        }
+
+        const folderData = folderSnapshot.data() || {};
+        const nextMediaOrder = Number(folderData.nextMediaOrder || 0);
+
+        transaction.update(folderRef, {
+            nextMediaOrder: nextMediaOrder + 1,
+            updatedAt: serverTimestamp()
+        });
+
+        return nextMediaOrder;
+    });
 }
 
 export async function updateTeamMediaFolder(teamId, folderId, draft = {}) {
@@ -652,13 +673,13 @@ export async function createTeamMediaLink(teamId, folderId, media = {}) {
     if (!teamId || !cleanFolderId) throw new Error('Choose a folder for this media link.');
     if (!title || !url) throw new Error('Media title and URL are required.');
     if (!isSafeTeamMediaUrl(url)) throw new Error('Use a valid http or https media link.');
-    const existingItems = await getTeamMediaItems(teamId, cleanFolderId);
+    const order = await reserveNextTeamMediaOrder(teamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(teamId), {
         folderId: cleanFolderId,
         title,
         url,
         type: 'video-link',
-        order: existingItems.length,
+        order,
         deleted: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -716,7 +737,7 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     });
 
     const url = await getDownloadURL(snapshot.ref);
-    const existingItems = await getTeamMediaItems(cleanTeamId, cleanFolderId);
+    const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
@@ -726,7 +747,7 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type || 'image/jpeg',
-        order: existingItems.length,
+        order,
         deleted: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -762,7 +783,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
     });
 
     const url = await getDownloadURL(snapshot.ref);
-    const existingItems = await getTeamMediaItems(cleanTeamId, cleanFolderId);
+    const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
@@ -773,7 +794,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type,
-        order: existingItems.length,
+        order,
         deleted: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
