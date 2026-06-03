@@ -39,7 +39,7 @@ vi.mock('../../apps/app/src/lib/authService', () => ({
 }));
 
 import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
-import { getDocs } from '../../js/firebase.js';
+import { collection, getDocs, query, where } from '../../js/firebase.js';
 import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
@@ -404,6 +404,9 @@ describe('React app team detail model', () => {
         const adminModel = await loadParentTeamDetail('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
         expect(adminModel.staffPermissions.pendingInvites).toEqual(['pending@example.com']);
         expect(getDocs).toHaveBeenCalledTimes(1);
+        expect(collection).toHaveBeenCalledWith({}, 'accessCodes');
+        expect(where).toHaveBeenCalledWith('teamId', '==', 'team-1');
+        expect(query).toHaveBeenCalledWith({ db: {}, name: 'accessCodes' }, { field: 'teamId', op: '==', value: 'team-1' });
 
         getDocs.mockClear();
         const parentModel = await loadParentTeamDetail('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] });

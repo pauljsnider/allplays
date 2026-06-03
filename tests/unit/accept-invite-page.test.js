@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createInviteProcessor } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=34';";
 
 class MockClassList {
     constructor(initial = []) {
@@ -107,7 +108,7 @@ const setTimeout = deps.setTimeout;
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
-            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=33';",
+            ACCEPT_INVITE_DB_IMPORT,
             'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
         )
         .replace(
@@ -280,6 +281,14 @@ async function bootAcceptInvite({
 
     return { ...env, auth, db };
 }
+
+describe('accept-invite page module wiring', () => {
+    it('pins the accept invite db import to the latest cache-busted module version', () => {
+        const html = readFileSync(new URL('../../accept-invite.html', import.meta.url), 'utf8');
+
+        expect(html).toContain(ACCEPT_INVITE_DB_IMPORT);
+    });
+});
 
 describe('accept-invite page parent flow', () => {
     it('processes an authenticated parent invite once, shows success, and redirects to the parent dashboard', async () => {
