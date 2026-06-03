@@ -364,6 +364,35 @@ describe('React app parent tools integration', () => {
         expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
     });
 
+    it('defers hidden parent tool refreshes after access changes until each tab is reopened', async () => {
+        const { container } = await renderParentTools('/parent-tools/access');
+        await waitForText(container, 'Request player access');
+
+        await clickButton(container, 'Fees');
+        await waitForText(container, 'Team dues');
+        await clickButton(container, 'Register');
+        await waitForText(container, 'Summer Camp');
+        expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Access');
+        await waitForText(container, 'Request player access');
+        await submitForm(container, 'Send request');
+        await waitForText(container, 'Access request sent.');
+        expect(serviceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2);
+        expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Register');
+        await waitForText(container, 'Summer Camp');
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+        expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Fees');
+        await waitForText(container, 'Team dues');
+        expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(2);
+    });
+
     it('requires confirmation before revoking a family share link', async () => {
         const { container } = await renderParentTools('/parent-tools/share');
         await waitForText(container, 'Grandma');
