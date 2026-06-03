@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
@@ -91,6 +91,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   });
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [desktopAdvancedControlsOpen, setDesktopAdvancedControlsOpen] = useState(false);
+  const [mobileStaffToolsOpen, setMobileStaffToolsOpen] = useState(false);
   const [calendarUrl, setCalendarUrl] = useState('');
   const [calendarUrlError, setCalendarUrlError] = useState<string | null>(null);
   const [savingCalendarUrl, setSavingCalendarUrl] = useState(false);
@@ -656,55 +657,45 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           ) : null}
 
-          {selectedCalendarTeam ? (
-            <>
-            <CalendarSourcePanel
+          {selectedCalendarTeam && isDesktopWeb ? (
+            <StaffScheduleToolsPanels
               teamName={selectedCalendarTeam.teamName}
-              calendarUrl={calendarUrl}
               calendarUrls={selectedCalendarTeam.calendarUrls || []}
-              error={calendarUrlError}
-              saving={savingCalendarUrl}
-              removingUrl={removingCalendarUrl}
+              calendarUrl={calendarUrl}
+              calendarUrlError={calendarUrlError}
+              savingCalendarUrl={savingCalendarUrl}
+              removingCalendarUrl={removingCalendarUrl}
               onCalendarUrlChange={(value) => {
                 setCalendarUrl(value);
                 if (calendarUrlError) setCalendarUrlError(null);
               }}
-              onSubmit={handleAddCalendarUrl}
-              onRemove={handleRemoveCalendarUrl}
-            />
-            <ScheduleAiImportPanel
-              teamName={selectedCalendarTeam.teamName}
-              text={aiScheduleText}
-              imageName={aiScheduleImageName}
-              previewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
-              errors={aiImportErrors}
-              processing={processingAiImport}
-              importing={importingCsv}
-              onTextChange={(value) => {
+              onAddCalendarUrl={handleAddCalendarUrl}
+              onRemoveCalendarUrl={handleRemoveCalendarUrl}
+              aiScheduleText={aiScheduleText}
+              aiScheduleImageName={aiScheduleImageName}
+              aiPreviewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
+              aiImportErrors={aiImportErrors}
+              processingAiImport={processingAiImport}
+              importingCsv={importingCsv}
+              onAiTextChange={(value) => {
                 setAiScheduleText(value);
                 clearAiPreview();
                 if (aiImportErrors.length) setAiImportErrors([]);
               }}
-              onImageChange={handleAiImageChange}
-              onGeneratePreview={handleAiGeneratePreview}
-              onImport={handleCsvImport}
-              onClear={handleAiClear}
+              onAiImageChange={handleAiImageChange}
+              onGenerateAiPreview={handleAiGeneratePreview}
+              onImportPreviewRows={handleCsvImport}
+              onClearAi={handleAiClear}
+              csvHeaders={csvHeaders}
+              csvMapping={csvMapping}
+              csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
+              csvImportErrors={csvImportErrors}
+              csvFileName={csvFileName}
+              onCsvFileChange={handleCsvFileChange}
+              onCsvMappingChange={(field, value) => setCsvMapping((current) => ({ ...current, [field]: value || undefined }))}
+              onPreviewCsv={handleCsvPreview}
+              onClearCsv={handleCsvClear}
             />
-            <ScheduleCsvImportPanel
-              teamName={selectedCalendarTeam.teamName}
-              headers={csvHeaders}
-              mapping={csvMapping}
-              previewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
-              errors={csvImportErrors}
-              fileName={csvFileName}
-              importing={importingCsv}
-              onFileChange={handleCsvFileChange}
-              onMappingChange={(field, value) => setCsvMapping((current) => ({ ...current, [field]: value || undefined }))}
-              onPreview={handleCsvPreview}
-              onImport={handleCsvImport}
-              onClear={handleCsvClear}
-            />
-            </>
           ) : null}
 
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
@@ -739,9 +730,186 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length))}
             />
           )}
+
+          {selectedCalendarTeam && !isDesktopWeb ? (
+            <MobileStaffScheduleToolsDisclosure
+              open={mobileStaffToolsOpen}
+              onToggle={() => setMobileStaffToolsOpen((current) => !current)}
+            >
+              <StaffScheduleToolsPanels
+                teamName={selectedCalendarTeam.teamName}
+                calendarUrls={selectedCalendarTeam.calendarUrls || []}
+                calendarUrl={calendarUrl}
+                calendarUrlError={calendarUrlError}
+                savingCalendarUrl={savingCalendarUrl}
+                removingCalendarUrl={removingCalendarUrl}
+                onCalendarUrlChange={(value) => {
+                  setCalendarUrl(value);
+                  if (calendarUrlError) setCalendarUrlError(null);
+                }}
+                onAddCalendarUrl={handleAddCalendarUrl}
+                onRemoveCalendarUrl={handleRemoveCalendarUrl}
+                aiScheduleText={aiScheduleText}
+                aiScheduleImageName={aiScheduleImageName}
+                aiPreviewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
+                aiImportErrors={aiImportErrors}
+                processingAiImport={processingAiImport}
+                importingCsv={importingCsv}
+                onAiTextChange={(value) => {
+                  setAiScheduleText(value);
+                  clearAiPreview();
+                  if (aiImportErrors.length) setAiImportErrors([]);
+                }}
+                onAiImageChange={handleAiImageChange}
+                onGenerateAiPreview={handleAiGeneratePreview}
+                onImportPreviewRows={handleCsvImport}
+                onClearAi={handleAiClear}
+                csvHeaders={csvHeaders}
+                csvMapping={csvMapping}
+                csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
+                csvImportErrors={csvImportErrors}
+                csvFileName={csvFileName}
+                onCsvFileChange={handleCsvFileChange}
+                onCsvMappingChange={(field, value) => setCsvMapping((current) => ({ ...current, [field]: value || undefined }))}
+                onPreviewCsv={handleCsvPreview}
+                onClearCsv={handleCsvClear}
+              />
+            </MobileStaffScheduleToolsDisclosure>
+          ) : null}
         </div>
       </div>
     </div>
+  );
+}
+
+function MobileStaffScheduleToolsDisclosure({ open, onToggle, children }: {
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="app-card overflow-hidden" aria-label="Staff schedule tools disclosure">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+        onClick={onToggle}
+        aria-expanded={open}
+      >
+        <div>
+          <div className="app-label">Staff only</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Staff schedule tools</h2>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Calendar links, AI drafting, and CSV import stay one tap away.</p>
+        </div>
+        <ChevronRight className={`h-5 w-5 flex-none text-gray-400 transition ${open ? 'rotate-90' : ''}`} aria-hidden="true" />
+      </button>
+      {open ? <div className="space-y-3 border-t border-gray-100 p-3">{children}</div> : null}
+    </section>
+  );
+}
+
+function StaffScheduleToolsPanels({
+  teamName,
+  calendarUrls,
+  calendarUrl,
+  calendarUrlError,
+  savingCalendarUrl,
+  removingCalendarUrl,
+  onCalendarUrlChange,
+  onAddCalendarUrl,
+  onRemoveCalendarUrl,
+  aiScheduleText,
+  aiScheduleImageName,
+  aiPreviewRows,
+  aiImportErrors,
+  processingAiImport,
+  importingCsv,
+  onAiTextChange,
+  onAiImageChange,
+  onGenerateAiPreview,
+  onImportPreviewRows,
+  onClearAi,
+  csvHeaders,
+  csvMapping,
+  csvPreviewRows,
+  csvImportErrors,
+  csvFileName,
+  onCsvFileChange,
+  onCsvMappingChange,
+  onPreviewCsv,
+  onClearCsv
+}: {
+  teamName: string;
+  calendarUrls: string[];
+  calendarUrl: string;
+  calendarUrlError: string | null;
+  savingCalendarUrl: boolean;
+  removingCalendarUrl: string | null;
+  onCalendarUrlChange: (value: string) => void;
+  onAddCalendarUrl: (event: FormEvent<HTMLFormElement>) => void;
+  onRemoveCalendarUrl: (url: string) => void;
+  aiScheduleText: string;
+  aiScheduleImageName: string;
+  aiPreviewRows: ScheduleCsvImportPreviewRow[];
+  aiImportErrors: string[];
+  processingAiImport: boolean;
+  importingCsv: boolean;
+  onAiTextChange: (value: string) => void;
+  onAiImageChange: (file: File | null) => void;
+  onGenerateAiPreview: () => void;
+  onImportPreviewRows: () => void;
+  onClearAi: () => void;
+  csvHeaders: string[];
+  csvMapping: ScheduleCsvImportMapping;
+  csvPreviewRows: ScheduleCsvImportPreviewRow[];
+  csvImportErrors: string[];
+  csvFileName: string;
+  onCsvFileChange: (file: File | null) => void;
+  onCsvMappingChange: (field: keyof ScheduleCsvImportMapping, value: string) => void;
+  onPreviewCsv: () => void;
+  onClearCsv: () => void;
+}) {
+  return (
+    <>
+      <CalendarSourcePanel
+        teamName={teamName}
+        calendarUrl={calendarUrl}
+        calendarUrls={calendarUrls}
+        error={calendarUrlError}
+        saving={savingCalendarUrl}
+        removingUrl={removingCalendarUrl}
+        onCalendarUrlChange={onCalendarUrlChange}
+        onSubmit={onAddCalendarUrl}
+        onRemove={onRemoveCalendarUrl}
+      />
+      <ScheduleAiImportPanel
+        teamName={teamName}
+        text={aiScheduleText}
+        imageName={aiScheduleImageName}
+        previewRows={aiPreviewRows}
+        errors={aiImportErrors}
+        processing={processingAiImport}
+        importing={importingCsv}
+        onTextChange={onAiTextChange}
+        onImageChange={onAiImageChange}
+        onGeneratePreview={onGenerateAiPreview}
+        onImport={onImportPreviewRows}
+        onClear={onClearAi}
+      />
+      <ScheduleCsvImportPanel
+        teamName={teamName}
+        headers={csvHeaders}
+        mapping={csvMapping}
+        previewRows={csvPreviewRows}
+        errors={csvImportErrors}
+        fileName={csvFileName}
+        importing={importingCsv}
+        onFileChange={onCsvFileChange}
+        onMappingChange={onCsvMappingChange}
+        onPreview={onPreviewCsv}
+        onImport={onImportPreviewRows}
+        onClear={onClearCsv}
+      />
+    </>
   );
 }
 
