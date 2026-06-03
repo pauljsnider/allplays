@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -29,7 +29,8 @@ import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
-import { AppSearchDialog } from './AppSearchDialog';
+
+const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -273,7 +274,9 @@ export function AppShell({ auth, children }: AppShellProps) {
       )}
 
       {searchOpen ? (
-        <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
+        <Suspense fallback={<AppSearchDialogLoading onClose={() => setSearchOpen(false)} />}>
+          <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
+        </Suspense>
       ) : null}
 
       {addTeamOpen ? (
@@ -498,6 +501,42 @@ function buildAddWorkflows(): AddWorkflow[] {
       badge: 'Coach/Admin'
     }
   ];
+}
+
+function AppSearchDialogLoading({ onClose }: { onClose: () => void }) {
+  return (
+    <div
+      className="app-search-overlay fixed inset-0 z-50 bg-gray-950/40 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="app-search-loading-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div className="app-search-panel mx-auto flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-app-lg" data-testid="app-search-loading-panel">
+        <div className="border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white p-3 md:p-4">
+          <div className="flex items-center gap-2 md:gap-3">
+            <span className="flex h-10 w-10 flex-none items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-700">
+              <Search className="h-5 w-5" aria-hidden="true" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 id="app-search-loading-title" className="text-sm font-black text-gray-950">Loading search…</h2>
+              <p className="mt-1 text-sm font-semibold text-gray-500">Preparing teams, players, actions, and help results.</p>
+            </div>
+            <button
+              type="button"
+              className="ghost-button !h-11 !min-h-11 !w-11 !p-0"
+              onClick={onClose}
+              aria-label="Close search"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function legacyUrl(path: string) {
