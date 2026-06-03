@@ -7,7 +7,9 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const teamDetailMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn(),
     grantScorekeeperAccessForApp: vi.fn(),
+    grantVideographerAccessForApp: vi.fn(),
     revokeScorekeeperAccessForApp: vi.fn(),
+    revokeVideographerAccessForApp: vi.fn(),
     inviteTeamAdminForApp: vi.fn(),
     saveTeamScheduleNotificationsForApp: vi.fn(),
     buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
@@ -142,7 +144,9 @@ beforeEach(() => {
     window.scrollTo = vi.fn();
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     teamDetailMocks.grantScorekeeperAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.grantVideographerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.revokeScorekeeperAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.revokeVideographerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.inviteTeamAdminForApp.mockResolvedValue({
         email: 'newcoach@example.com',
         status: 'sent',
@@ -170,6 +174,8 @@ describe('React app TeamDetail staff permissions overview', () => {
                 { key: 'videographer', title: 'Videographer', grants: ['video@example.com'], emptyText: 'No videographer helpers are assigned yet.' },
                 { key: 'volunteer', title: 'Volunteer', grants: [], emptyText: 'No general volunteer permissions are assigned yet.' }
             ],
+            scorekeeperGrantTargets: [],
+            videographerGrantTargets: [],
             hasAnyStaff: true
         });
 
@@ -193,6 +199,8 @@ describe('React app TeamDetail staff permissions overview', () => {
             staff: [{ label: 'owner@example.com', role: 'Owner' }, { label: 'coach@example.com', role: 'Admin' }],
             pendingInvites: ['pending@example.com'],
             helperPermissions: [],
+            scorekeeperGrantTargets: [],
+            videographerGrantTargets: [],
             hasAnyStaff: true
         });
 
@@ -216,6 +224,8 @@ describe('React app TeamDetail staff permissions overview', () => {
             staff: [{ label: 'owner@example.com', role: 'Owner' }],
             pendingInvites: [],
             helperPermissions: [],
+            scorekeeperGrantTargets: [],
+            videographerGrantTargets: [],
             hasAnyStaff: true
         });
 
@@ -240,6 +250,7 @@ describe('React app TeamDetail staff permissions overview', () => {
             scorekeeperGrantTargets: [
                 { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false }
             ],
+            videographerGrantTargets: [],
             hasAnyStaff: true
         });
 
@@ -262,6 +273,7 @@ describe('React app TeamDetail staff permissions overview', () => {
             scorekeeperGrantTargets: [
                 { userId: 'scorekeeper-1', name: 'Score Keeper', email: '', playerNames: ['Pat Star'], isGranted: true }
             ],
+            videographerGrantTargets: [],
             hasAnyStaff: true
         });
 
@@ -284,6 +296,7 @@ describe('React app TeamDetail staff permissions overview', () => {
             scorekeeperGrantTargets: [
                 { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false }
             ],
+            videographerGrantTargets: [],
             hasAnyStaff: true
         });
 
@@ -301,5 +314,50 @@ describe('React app TeamDetail staff permissions overview', () => {
 
         expect(container.textContent).not.toContain('Team Staff & Permissions');
         expect(container.textContent).not.toContain('owner@example.com');
+    });
+
+    it('grants videographer access to an existing linked team member and refreshes staff state', async () => {
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }],
+            pendingInvites: [],
+            helperPermissions: [],
+            scorekeeperGrantTargets: [],
+            videographerGrantTargets: [
+                { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false }
+            ],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+
+        expect(container.textContent).toContain('Videographer access');
+        expect(container.textContent).toContain('No videographer helper grant. Linked to Sam Wing.');
+        await clickButton(container, 'Grant videographer');
+
+        expect(teamDetailMocks.grantVideographerAccessForApp).toHaveBeenCalledWith('team-1', 'parent-1');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Videographer access granted.');
+    });
+
+    it('revokes videographer access from an existing linked team member and refreshes staff state', async () => {
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }],
+            pendingInvites: [],
+            helperPermissions: [],
+            scorekeeperGrantTargets: [],
+            videographerGrantTargets: [
+                { userId: 'video-1', name: 'Video Helper', email: '', playerNames: ['Pat Star'], isGranted: true }
+            ],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+
+        expect(container.textContent).toContain('Can capture live-game camera and media. Linked to Pat Star.');
+        await clickButton(container, 'Revoke videographer');
+
+        expect(teamDetailMocks.revokeVideographerAccessForApp).toHaveBeenCalledWith('team-1', 'video-1');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Videographer access revoked.');
     });
 });

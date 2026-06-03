@@ -16,9 +16,11 @@ vi.mock('../../js/db.js', () => ({
     updateEvent: vi.fn(),
     updateGame: vi.fn(),
     grantScorekeeperAccess: vi.fn(),
+    grantVideographerAccess: vi.fn(),
     inviteAdmin: vi.fn(),
     addTeamAdminEmail: vi.fn(),
-    revokeScorekeeperAccess: vi.fn()
+    revokeScorekeeperAccess: vi.fn(),
+    revokeVideographerAccess: vi.fn()
 }));
 
 vi.mock('../../js/firebase.js', () => ({
@@ -38,9 +40,9 @@ vi.mock('../../apps/app/src/lib/authService', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 describe('React app team detail model', () => {
@@ -87,17 +89,27 @@ describe('React app team detail model', () => {
     it('wraps scorekeeper grant mutations with app validation', async () => {
         grantScorekeeperAccess.mockResolvedValue(undefined);
         revokeScorekeeperAccess.mockResolvedValue(undefined);
+        grantVideographerAccess.mockResolvedValue(undefined);
+        revokeVideographerAccess.mockResolvedValue(undefined);
 
         await grantScorekeeperAccessForApp(' team-1 ', ' member-1 ');
         await revokeScorekeeperAccessForApp('team-1', 'member-1');
+        await grantVideographerAccessForApp(' team-1 ', ' member-2 ');
+        await revokeVideographerAccessForApp('team-1', 'member-2');
 
         expect(grantScorekeeperAccess).toHaveBeenCalledWith('team-1', 'member-1');
         expect(revokeScorekeeperAccess).toHaveBeenCalledWith('team-1', 'member-1');
+        expect(grantVideographerAccess).toHaveBeenCalledWith('team-1', 'member-2');
+        expect(revokeVideographerAccess).toHaveBeenCalledWith('team-1', 'member-2');
 
         grantScorekeeperAccess.mockClear();
+        grantVideographerAccess.mockClear();
         await expect(grantScorekeeperAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
         await expect(grantScorekeeperAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
+        await expect(grantVideographerAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
+        await expect(grantVideographerAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
         expect(grantScorekeeperAccess).not.toHaveBeenCalled();
+        expect(grantVideographerAccess).not.toHaveBeenCalled();
     });
 
     it('normalizes and saves team schedule reminder defaults with the legacy payload', async () => {
@@ -326,6 +338,7 @@ describe('React app team detail model', () => {
             teamPermissions: {
                 scorekeeping: { mode: 'selected', memberIds: ['scorekeeper-1', 'scorekeeper-1'] },
                 streaming: { mode: 'selected', memberIds: ['scorekeeper-1', 'video-1'] },
+                videography: { mode: 'selected', memberIds: ['video-1', 'video-1'] },
                 volunteer: { mode: 'selected', memberIds: ['snacks-1'] }
             },
             streamVolunteerEmails: ['video@example.com']
@@ -351,7 +364,7 @@ describe('React app team detail model', () => {
         expect(adminModel.staffPermissions.helperPermissions).toEqual([
             expect.objectContaining({ key: 'scorekeeper', grants: ['scorekeeper-1'] }),
             expect.objectContaining({ key: 'stream-score', grants: ['scorekeeper-1'] }),
-            expect.objectContaining({ key: 'videographer', grants: ['scorekeeper-1', 'video-1', 'video@example.com'] }),
+            expect.objectContaining({ key: 'videographer', grants: ['video-1', 'video@example.com'] }),
             expect.objectContaining({ key: 'volunteer', grants: ['snacks-1'] })
         ]);
 
@@ -368,6 +381,10 @@ describe('React app team detail model', () => {
         expect(targetedModel.staffPermissions.scorekeeperGrantTargets).toEqual([
             { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false },
             { userId: 'scorekeeper-1', name: 'Pat Star', email: '', playerNames: ['Pat Star'], isGranted: true }
+        ]);
+        expect(targetedModel.staffPermissions.videographerGrantTargets).toEqual([
+            { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false },
+            { userId: 'scorekeeper-1', name: 'Pat Star', email: '', playerNames: ['Pat Star'], isGranted: false }
         ]);
 
         const parentModel = buildTeamDetailModel({

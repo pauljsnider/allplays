@@ -1297,6 +1297,33 @@ export async function revokeScorekeeperAccess(teamId, memberUserId) {
     });
 }
 
+export async function grantVideographerAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for videographer access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: normalizedUserId });
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.videography.mode': 'selected',
+        'teamPermissions.videography.memberIds': arrayUnion(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
+export async function revokeVideographerAccess(teamId, memberUserId) {
+    const normalizedUserId = String(memberUserId || '').trim();
+    if (!teamId) throw new Error('Missing team for videographer access');
+    if (!normalizedUserId) throw new Error('Team member user ID is required');
+
+    const docRef = doc(db, "teams", teamId);
+    await updateDoc(docRef, {
+        'teamPermissions.videography.memberIds': arrayRemove(normalizedUserId),
+        updatedAt: Timestamp.now()
+    });
+}
+
 export async function grantStreamScoreAccess(teamId, memberUserId) {
     const normalizedUserId = String(memberUserId || '').trim();
     if (!teamId) throw new Error('Missing team for Stream & Score access');

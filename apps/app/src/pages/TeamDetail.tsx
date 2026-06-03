@@ -28,7 +28,7 @@ import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActi
 import { getEventDetailPath } from '../lib/homeLogic';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer } from '../lib/teamDetailService';
+import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -631,6 +631,7 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
     ...summary.pendingInvites.map((inviteEmail) => `${inviteEmail} · Pending admin invite`)
   ];
   const scorekeeperGrantTargets = summary.scorekeeperGrantTargets || [];
+  const videographerGrantTargets = summary.videographerGrantTargets || [];
   const isAllConfirmedScorekeeping = summary.scorekeepingMode === 'all_confirmed';
   const existingEmails = getStaffPermissionEmails(summary);
 
@@ -688,6 +689,27 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
       await onInviteSuccess();
     } catch (grantError: any) {
       setGrantStatus({ success: false, message: grantError?.message || 'Unable to update scorekeeper access.' });
+    } finally {
+      setGrantingUserId(null);
+    }
+  }
+
+  async function toggleVideographerGrant(memberUserId: string, isGranted: boolean) {
+    if (!memberUserId || grantingUserId) return;
+    setGrantingUserId(memberUserId);
+    setGrantStatus(null);
+    setResult(null);
+    setCopyStatus(null);
+    try {
+      if (isGranted) {
+        await revokeVideographerAccessForApp(model.team.id, memberUserId);
+      } else {
+        await grantVideographerAccessForApp(model.team.id, memberUserId);
+      }
+      setGrantStatus({ success: true, message: isGranted ? 'Videographer access revoked.' : 'Videographer access granted.' });
+      await onInviteSuccess();
+    } catch (grantError: any) {
+      setGrantStatus({ success: false, message: grantError?.message || 'Unable to update videographer access.' });
     } finally {
       setGrantingUserId(null);
     }
@@ -751,30 +773,34 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
           <p className="mt-2 text-xs font-semibold leading-5 text-gray-600">All confirmed team members can score games, so individual scorekeeper grants are disabled to preserve that team-wide access.</p>
         </div>
       ) : scorekeeperGrantTargets.length ? (
-        <div className="mt-4 rounded-xl border border-primary-100 bg-white p-3">
-          <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Scorekeeper helper access</div>
-          <p className="mt-2 text-xs font-semibold leading-5 text-gray-600">Grant an existing linked team member scorekeeping duty without making them a full admin or giving roster, schedule, settings, or broader team access.</p>
-          <div className="mt-3 divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-100">
-            {scorekeeperGrantTargets.map((target) => {
-              const busy = grantingUserId === target.userId;
-              const detail = target.playerNames.length ? `Linked to ${target.playerNames.join(', ')}.` : 'Linked team member account.';
-              return (
-                <div key={target.userId} className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-black text-gray-950">{target.name || target.email || 'Team member'}</div>
-                    <div className="text-xs font-semibold leading-5 text-gray-500">{target.isGranted ? `Can score games. ${detail}` : `No scorekeeper helper grant. ${detail}`}</div>
-                  </div>
-                  <button type="button" className={`secondary-button !min-h-9 flex-none text-xs ${target.isGranted ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`} disabled={Boolean(grantingUserId)} onClick={() => toggleScorekeeperGrant(target.userId, target.isGranted)}>
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-                    {target.isGranted ? 'Revoke scorekeeper' : 'Grant scorekeeper'}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-          {grantStatus ? <div className={`mt-2 text-xs font-black ${grantStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{grantStatus.message}</div> : null}
-        </div>
+        <PermissionGrantPanel
+          title="Scorekeeper helper access"
+          description="Grant an existing linked team member scorekeeping duty without making them a full admin or giving roster, schedule, settings, or broader team access."
+          targets={scorekeeperGrantTargets}
+          grantingUserId={grantingUserId}
+          onToggle={toggleScorekeeperGrant}
+          grantedText="Can score games."
+          emptyText="No scorekeeper helper grant."
+          grantLabel="Grant scorekeeper"
+          revokeLabel="Revoke scorekeeper"
+        />
       ) : null}
+
+      {videographerGrantTargets.length ? (
+        <PermissionGrantPanel
+          title="Videographer access"
+          description="Grant an existing linked team member live-game camera and media capture access only. This does not grant roster, schedule, RSVP, or full team admin rights."
+          targets={videographerGrantTargets}
+          grantingUserId={grantingUserId}
+          onToggle={toggleVideographerGrant}
+          grantedText="Can capture live-game camera and media."
+          emptyText="No videographer helper grant."
+          grantLabel="Grant videographer"
+          revokeLabel="Revoke videographer"
+        />
+      ) : null}
+
+      {grantStatus ? <div className={`mt-2 text-xs font-black ${grantStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{grantStatus.message}</div> : null}
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
@@ -796,6 +822,53 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
         ))}
       </div>
     </section>
+  );
+}
+
+function PermissionGrantPanel({
+  title,
+  description,
+  targets,
+  grantingUserId,
+  onToggle,
+  grantedText,
+  emptyText,
+  grantLabel,
+  revokeLabel
+}: {
+  title: string;
+  description: string;
+  targets: TeamScorekeeperGrantTarget[];
+  grantingUserId: string | null;
+  onToggle: (memberUserId: string, isGranted: boolean) => Promise<void>;
+  grantedText: string;
+  emptyText: string;
+  grantLabel: string;
+  revokeLabel: string;
+}) {
+  return (
+    <div className="mt-4 rounded-xl border border-primary-100 bg-white p-3">
+      <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">{title}</div>
+      <p className="mt-2 text-xs font-semibold leading-5 text-gray-600">{description}</p>
+      <div className="mt-3 divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-100">
+        {targets.map((target) => {
+          const busy = grantingUserId === target.userId;
+          const detail = target.playerNames.length ? `Linked to ${target.playerNames.join(', ')}.` : 'Linked team member account.';
+          return (
+            <div key={target.userId} className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-black text-gray-950">{target.name || target.email || 'Team member'}</div>
+                <div className="text-xs font-semibold leading-5 text-gray-500">{target.isGranted ? `${grantedText} ${detail}` : `${emptyText} ${detail}`}</div>
+              </div>
+              <button type="button" className={`secondary-button !min-h-9 flex-none text-xs ${target.isGranted ? '!border-rose-200 !bg-rose-50 !text-rose-700' : ''}`} disabled={Boolean(grantingUserId)} onClick={() => onToggle(target.userId, target.isGranted)}>
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+                {target.isGranted ? revokeLabel : grantLabel}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

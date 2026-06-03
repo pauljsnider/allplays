@@ -13,9 +13,11 @@ import {
   updateEvent,
   updateGame,
   grantScorekeeperAccess,
+  grantVideographerAccess,
   inviteAdmin,
   addTeamAdminEmail,
-  revokeScorekeeperAccess
+  revokeScorekeeperAccess,
+  revokeVideographerAccess
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
@@ -112,6 +114,7 @@ export type TeamStaffPermissionsSummary = {
   }>;
   scorekeepingMode: string;
   scorekeeperGrantTargets: TeamScorekeeperGrantTarget[];
+  videographerGrantTargets: TeamScorekeeperGrantTarget[];
   hasAnyStaff: boolean;
 };
 
@@ -414,6 +417,22 @@ export async function revokeScorekeeperAccessForApp(teamId: string, memberUserId
   await revokeScorekeeperAccess(normalizedTeamId, normalizedUserId);
 }
 
+export async function grantVideographerAccessForApp(teamId: string, memberUserId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedUserId = cleanString(memberUserId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedUserId) throw new Error('Team member user ID is required.');
+  await grantVideographerAccess(normalizedTeamId, normalizedUserId);
+}
+
+export async function revokeVideographerAccessForApp(teamId: string, memberUserId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedUserId = cleanString(memberUserId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedUserId) throw new Error('Team member user ID is required.');
+  await revokeVideographerAccess(normalizedTeamId, normalizedUserId);
+}
+
 export async function saveTeamScheduleNotificationsForApp(teamId: string, settings: Partial<TeamScheduleNotificationSettings>) {
   const normalizedTeamId = cleanString(teamId);
   if (!normalizedTeamId) throw new Error('Team ID is required.');
@@ -590,7 +609,8 @@ export function buildTeamDetailModel({
     ? {
       ...buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites),
       scorekeepingMode: cleanString(team?.teamPermissions?.scorekeeping?.mode),
-      scorekeeperGrantTargets: buildScorekeeperGrantTargets(team, players)
+      scorekeeperGrantTargets: buildPermissionGrantTargets(team, players, 'scorekeeping'),
+      videographerGrantTargets: buildPermissionGrantTargets(team, players, 'videography')
     }
     : null;
 
@@ -669,8 +689,8 @@ function normalizePlayers(players: any[], linkedPlayerIds: string[]): TeamDetail
     .sort((a, b) => sortByNumberThenName(a, b));
 }
 
-function buildScorekeeperGrantTargets(team: Record<string, any>, players: any[]): TeamScorekeeperGrantTarget[] {
-  const selectedScorekeeperIds = getSelectedPermissionIds(team, 'scorekeeping');
+function buildPermissionGrantTargets(team: Record<string, any>, players: any[], permissionKey: string): TeamScorekeeperGrantTarget[] {
+  const selectedPermissionIds = getSelectedPermissionIds(team, permissionKey);
   const targetsByUserId = new Map<string, Omit<TeamScorekeeperGrantTarget, 'isGranted'>>();
 
   const addTarget = (userId: any, player: any, source: Record<string, any> = {}) => {
@@ -701,7 +721,7 @@ function buildScorekeeperGrantTargets(team: Record<string, any>, players: any[])
     });
 
   return Array.from(targetsByUserId.values())
-    .map((target) => ({ ...target, isGranted: selectedScorekeeperIds.has(target.userId) }))
+    .map((target) => ({ ...target, isGranted: selectedPermissionIds.has(target.userId) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 

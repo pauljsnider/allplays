@@ -74,7 +74,7 @@ export function buildTeamStaffPermissionsViewModel(team = {}, pendingAdminInvite
             {
                 key: 'videographer',
                 title: 'Videographer',
-                grants: getUniqueLabels([...getPermissionGrantLabels(permissions.streaming), ...legacyVideoGrants]),
+                grants: getUniqueLabels([...getPermissionGrantLabels(permissions.videography), ...legacyVideoGrants]),
                 emptyText: 'No videographer helpers are assigned yet.'
             },
             {
