@@ -300,8 +300,8 @@ describe('ParentTools access', () => {
     });
 
     it('refreshes the currently viewed dependent tab when access changes finish after navigation', async () => {
-        let resolveRedeem: ((value: { code: string; redirectPath: string; message: string }) => void) | null = null;
-        inviteRedemptionMocks.redeemSignedInInvite.mockImplementationOnce(() => new Promise((resolve) => {
+        let resolveRedeem: ((value: { code: string; redirectPath: string; message: string }) => void) | undefined;
+        inviteRedemptionMocks.redeemSignedInInvite.mockImplementationOnce(() => new Promise<{ code: string; redirectPath: string; message: string }>((resolve) => {
             resolveRedeem = resolve;
         }));
         parentToolsServiceMocks.loadParentRegistrations
