@@ -220,7 +220,10 @@ describe('React app TeamMedia upload flow', () => {
   });
 
   it('uploads every selected photo and renders per-file status rows', async () => {
-    parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockResolvedValue(undefined);
+    const pendingResolvers = [];
+    parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockImplementation(() => new Promise((resolve) => {
+      pendingResolvers.push(resolve);
+    }));
 
     const { container, root } = await renderTeamMedia(uploadableModel());
     const photoInput = container.querySelector('input[accept="image/*"]');
@@ -235,6 +238,12 @@ describe('React app TeamMedia upload flow', () => {
     expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(2);
     expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', files[0]);
     expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', files[1]);
+    expect(pendingResolvers).toHaveLength(2);
+
+    await act(async () => {
+      pendingResolvers.splice(0).forEach((resolve) => resolve());
+    });
+
     expect(container.textContent).toContain('Upload progress');
     expect(container.textContent).toContain('tipoff.jpg');
     expect(container.textContent).toContain('bench.png');
