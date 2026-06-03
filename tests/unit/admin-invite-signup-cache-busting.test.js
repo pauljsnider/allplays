@@ -23,20 +23,20 @@ describe('admin invite signup cache busting', () => {
     });
 
     it('bumps auth module consumers after signup flow changes', () => {
-        const authConsumers = [
-            'login.html',
-            'accept-invite.html',
-            'edit-team.html',
-            'js/admin.js',
-            'js/live-game.js',
-            'js/live-tracker.js',
-            'js/track-basketball.js',
-            'js/utils.js'
-        ];
+        const authConsumers = {
+            'login.html': 'auth.js?v=17',
+            'accept-invite.html': 'auth.js?v=16',
+            'edit-team.html': 'auth.js?v=16',
+            'js/admin.js': 'auth.js?v=16',
+            'js/live-game.js': 'auth.js?v=16',
+            'js/live-tracker.js': 'auth.js?v=16',
+            'js/track-basketball.js': 'auth.js?v=16',
+            'js/utils.js': 'auth.js?v=16'
+        };
 
-        for (const relativePath of authConsumers) {
+        for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            expect(source).toContain('auth.js?v=16');
+            expect(source).toContain(expectedVersion);
         }
     });
 });

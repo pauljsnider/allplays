@@ -134,10 +134,9 @@ export async function loginWithGoogle(activationCode = null) {
     } catch (error) {
         console.log('[Google Auth] Popup error:', error.code, error.message);
 
-        // Fall back to redirect for specific popup-related errors
+        // Fall back to redirect only when the popup cannot be used at all.
+        // User-cancelled or duplicate popup requests should stay on the page.
         if (error.code === 'auth/popup-blocked' ||
-            error.code === 'auth/popup-closed-by-user' ||
-            error.code === 'auth/cancelled-popup-request' ||
             error.code === 'auth/operation-not-supported-in-this-environment') {
 
             console.log('[Google Auth] Falling back to redirect flow...');
