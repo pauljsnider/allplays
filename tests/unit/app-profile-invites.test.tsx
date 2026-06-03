@@ -7,6 +7,7 @@ import { Profile } from '../../apps/app/src/pages/Profile';
 import type { AuthState } from '../../apps/app/src/lib/types';
 
 const profileServiceMocks = vi.hoisted(() => ({
+  acquireProfilePhoto: vi.fn(),
   createProfileAccessCode: vi.fn(),
   loadParentTeams: vi.fn(),
   loadNotificationPreferences: vi.fn(),
@@ -32,11 +33,16 @@ const pushServiceMocks = vi.hoisted(() => ({
   enablePushNotificationsForUser: vi.fn()
 }));
 
+const shellLayoutState = vi.hoisted(() => ({
+  isDesktopWeb: false,
+  isNative: false
+}));
+
 vi.mock('../../apps/app/src/lib/profileService', () => profileServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions', () => publicActionsMocks);
 vi.mock('../../apps/app/src/lib/pushService', () => pushServiceMocks);
 vi.mock('../../apps/app/src/lib/useShellLayout', () => ({
-  useShellLayout: () => ({ isDesktopWeb: false })
+  useShellLayout: () => shellLayoutState
 }));
 vi.mock('lucide-react', () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) => React.createElement('svg', { ...props, 'data-icon': name });
@@ -102,10 +108,32 @@ function renderProfile() {
   );
 }
 
+function getPhotoInput(container: HTMLElement) {
+  const input = container.querySelector('input[type="file"][accept="image/*"]') as HTMLInputElement | null;
+  if (!input) {
+    throw new Error('Profile photo input not found');
+  }
+  return input;
+}
+
+async function selectPhoto(container: HTMLElement, fileName: string) {
+  const input = getPhotoInput(container);
+  const file = new File(['image-bytes'], fileName, { type: 'image/png' });
+  Object.defineProperty(input, 'files', {
+    configurable: true,
+    value: [file]
+  });
+  fireEvent.change(input);
+  await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledWith(file));
+  return file;
+}
+
 describe('Profile invites', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('scrollTo', vi.fn());
+    window.URL.createObjectURL = vi.fn((file: File) => `blob:${file.name}`);
+    window.URL.revokeObjectURL = vi.fn();
     profileServiceMocks.normalizeNotificationPreferences.mockClear();
     profileServiceMocks.loadProfileDocument.mockResolvedValue({
       fullName: 'Pat Parent',
@@ -116,6 +144,7 @@ describe('Profile invites', () => {
       updatedAt: { seconds: 1717200000 }
     });
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([]);
+    profileServiceMocks.acquireProfilePhoto.mockResolvedValue(new File(['native-photo'], 'native-camera.jpg', { type: 'image/jpeg' }));
     pushServiceMocks.enablePushNotificationsForUser.mockResolvedValue(undefined);
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadParentTeams.mockResolvedValue([]);
@@ -128,6 +157,8 @@ describe('Profile invites', () => {
       { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
       { id: 'code-2', code: 'USED1234', email: 'used@example.com', phone: '', used: true, createdAt: { seconds: 1717113600 }, usedAt: { seconds: 1717200000 } }
     ]);
+    shellLayoutState.isDesktopWeb = false;
+    shellLayoutState.isNative = false;
   });
 
   afterEach(() => {
@@ -185,6 +216,57 @@ describe('Profile invites', () => {
     expect(await screen.findByText('Share cancelled.')).toBeTruthy();
   });
 
+  it('revokes replaced and removed profile photo blob previews', async () => {
+    const { container } = renderProfile();
+
+    await screen.findByText('Choose photo');
+    await selectPhoto(container, 'first.png');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+    await selectPhoto(container, 'second.png');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first.png');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second.png');
+  });
+
+  it('revokes temporary blob previews after save and on unmount without touching remote urls', async () => {
+    profileServiceMocks.loadProfileDocument
+      .mockResolvedValueOnce({
+        fullName: 'Pat Parent',
+        phone: '555-0100',
+        photoUrl: 'https://example.test/original.png',
+        signInMethod: 'emailLink',
+        hasPassword: false,
+        updatedAt: { seconds: 1717200000 }
+      })
+      .mockResolvedValueOnce({
+        fullName: 'Pat Parent',
+        phone: '555-0100',
+        photoUrl: 'https://example.test/persisted.png',
+        signInMethod: 'emailLink',
+        hasPassword: false,
+        updatedAt: { seconds: 1717203600 }
+      });
+
+    const { container, unmount } = renderProfile();
+
+    await screen.findByText('Choose photo');
+    await selectPhoto(container, 'saved.png');
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:saved.png');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/original.png');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/persisted.png');
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/persisted.png');
+
+    unmount();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/persisted.png');
+  });
+
   it('refreshes alert preferences before saving game-day alerts', async () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
     profileServiceMocks.loadNotificationPreferences
@@ -210,5 +292,50 @@ describe('Profile invites', () => {
       schedule: true
     });
     expect(await screen.findByText('Game-day alerts are on for this team.')).toBeTruthy();
+  });
+
+  it('uses the native chooser to capture a profile photo before saving', async () => {
+    shellLayoutState.isNative = true;
+    const { container } = renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose photo' }));
+    expect(screen.getByRole('button', { name: 'Take photo' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Choose existing photo' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Take photo' }));
+
+    await waitFor(() => expect(profileServiceMocks.acquireProfilePhoto).toHaveBeenCalledWith('camera'));
+    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:native-camera.jpg');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/avatar.png');
+  });
+
+  it('shows an inline error and preserves the current photo when native camera permission is denied', async () => {
+    shellLayoutState.isNative = true;
+    profileServiceMocks.loadProfileDocument.mockResolvedValue({
+      fullName: 'Pat Parent',
+      phone: '555-0100',
+      photoUrl: 'https://example.test/original.png',
+      signInMethod: 'emailLink',
+      hasPassword: false,
+      updatedAt: { seconds: 1717200000 }
+    });
+    profileServiceMocks.acquireProfilePhoto.mockRejectedValue({ code: 'permission-denied', message: 'Denied' });
+
+    const { container } = renderProfile();
+
+    await screen.findByRole('button', { name: 'Choose photo' });
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/original.png');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose photo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Take photo' }));
+
+    expect(await screen.findByText('Camera permission was denied. Allow camera access to take a new profile photo.')).toBeTruthy();
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/original.png');
+    expect(profileServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
   });
 });

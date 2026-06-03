@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { describeAuthError, reloadCurrentUser, resendVerificationEmail, sendResetEmail, setCurrentUserPassword } from '../lib/authService';
 import {
+  acquireProfilePhoto,
   createProfileAccessCode,
   loadParentTeams,
   loadNotificationPreferences,
@@ -41,6 +42,7 @@ import { enablePushNotificationsForUser } from '../lib/pushService';
 import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AccessCodeRecord, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
+import type { ProfilePhotoSource } from '../lib/profileService';
 import type { AuthState } from '../lib/types';
 
 type Tone = 'neutral' | 'success' | 'error';
@@ -67,7 +69,7 @@ const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
 
 export function Profile({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
-  const { isDesktopWeb } = useShellLayout();
+  const { isDesktopWeb, isNative } = useShellLayout();
   const user = auth.user;
   const [profile, setProfile] = useState<ProfileDocument>({});
   const [fullName, setFullName] = useState('');
@@ -76,6 +78,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [photoPreview, setPhotoPreview] = useState('');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoChanged, setPhotoChanged] = useState(false);
+  const [photoChooserOpen, setPhotoChooserOpen] = useState(false);
   const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
@@ -104,6 +107,16 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
   const [loadedNotificationTeamId, setLoadedNotificationTeamId] = useState('');
   const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string }>({ email: '', phone: '' });
+  const ownedPhotoPreviewUrlRef = useRef<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+
+  const revokeOwnedPhotoPreviewUrl = () => {
+    const activePreviewUrl = ownedPhotoPreviewUrlRef.current;
+    if (activePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(activePreviewUrl);
+    }
+    ownedPhotoPreviewUrlRef.current = null;
+  };
 
   const displayName = fullName || user?.displayName || profile.displayName || user?.email || 'ALL PLAYS User';
   const showPasswordSection = profile.signInMethod === 'emailLink' && !profile.hasPassword;
@@ -119,6 +132,12 @@ export function Profile({ auth }: { auth: AuthState }) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   };
+
+  useEffect(() => {
+    return () => {
+      revokeOwnedPhotoPreviewUrl();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +176,7 @@ export function Profile({ auth }: { auth: AuthState }) {
           return;
         }
 
+        revokeOwnedPhotoPreviewUrl();
         setProfile(loadedProfile);
         setFullName(loadedProfile.fullName || user.displayName || '');
         setPhone(loadedProfile.phone || '');
@@ -313,29 +333,70 @@ export function Profile({ auth }: { auth: AuthState }) {
     };
   }, [accountMergeExpanded, parentLinkedTeamsLoaded, user]);
 
-  const handlePhotoChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const applySelectedPhoto = (file: File) => {
     if (!file) {
       return;
     }
 
     if (!file.type.startsWith('image/')) {
       setProfileStatus({ message: 'Choose an image file.', tone: 'error' });
-      event.target.value = '';
       return;
     }
 
+    const nextPhotoPreviewUrl = URL.createObjectURL(file);
+    revokeOwnedPhotoPreviewUrl();
+    ownedPhotoPreviewUrlRef.current = nextPhotoPreviewUrl;
     setPhotoFile(file);
-    setPhotoPreview(URL.createObjectURL(file));
+    setPhotoPreview(nextPhotoPreviewUrl);
     setPhotoChanged(true);
     setProfileStatus(null);
   };
 
+  const handlePhotoChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      applySelectedPhoto(file);
+    }
+    event.target.value = '';
+  };
+
+  const handleNativePhotoChoice = async (source: ProfilePhotoSource) => {
+    setBusy('photo-acquire');
+    setProfileStatus(null);
+
+    try {
+      const file = await acquireProfilePhoto(source);
+      applySelectedPhoto(file);
+      setPhotoChooserOpen(false);
+    } catch (error: any) {
+      if (error?.code === 'cancelled') {
+        setPhotoChooserOpen(false);
+        return;
+      }
+      if (error?.code === 'unavailable' && source === 'photos') {
+        photoInputRef.current?.click();
+        setPhotoChooserOpen(false);
+        return;
+      }
+      const message = error?.code === 'permission-denied'
+        ? source === 'camera'
+          ? 'Camera permission was denied. Allow camera access to take a new profile photo.'
+          : 'Photo permission was denied. Allow photo library access to choose a profile photo.'
+        : error?.message || 'Profile photo could not be updated right now.';
+      setProfileStatus({ message, tone: 'error' });
+      setPhotoChooserOpen(false);
+    } finally {
+      setBusy('');
+    }
+  };
+
   const removePhoto = () => {
+    revokeOwnedPhotoPreviewUrl();
     setPhotoFile(null);
     setPhotoUrl('');
     setPhotoPreview('');
     setPhotoChanged(true);
+    setProfileStatus(null);
   };
 
   const saveProfile = async (event: FormEvent) => {
@@ -362,6 +423,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       });
 
       const nextProfile = await loadProfileDocument(user.uid);
+      revokeOwnedPhotoPreviewUrl();
       setProfile(nextProfile);
       setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');
       setPhotoPreview(nextProfile.photoUrl || nextPhotoUrl || '');
@@ -681,11 +743,21 @@ export function Profile({ auth }: { auth: AuthState }) {
 
         <form className="mt-4 space-y-4" onSubmit={saveProfile}>
           <div className="flex flex-wrap items-center gap-3">
-            <label className="secondary-button cursor-pointer">
-              <ImagePlus className="h-4 w-4" aria-hidden="true" />
-              Choose photo
-              <input type="file" accept="image/*" className="sr-only" onChange={handlePhotoChange} />
-            </label>
+            {isNative ? (
+              <>
+                <button type="button" className="secondary-button" onClick={() => setPhotoChooserOpen(true)} disabled={busy === 'photo-acquire'}>
+                  {busy === 'photo-acquire' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ImagePlus className="h-4 w-4" aria-hidden="true" />}
+                  Choose photo
+                </button>
+                <input ref={photoInputRef} type="file" accept="image/*" className="sr-only" onChange={handlePhotoChange} tabIndex={-1} aria-hidden="true" />
+              </>
+            ) : (
+              <label className="secondary-button cursor-pointer">
+                <ImagePlus className="h-4 w-4" aria-hidden="true" />
+                Choose photo
+                <input ref={photoInputRef} type="file" accept="image/*" className="sr-only" onChange={handlePhotoChange} />
+              </label>
+            )}
             {photoPreview ? (
               <button type="button" className="ghost-button" onClick={removePhoto}>
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -976,6 +1048,27 @@ export function Profile({ auth }: { auth: AuthState }) {
           </button>
         ) : null}
       </section>
+      ) : null}
+
+      {photoChooserOpen ? (
+        <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-0 sm:items-center sm:justify-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="profile-photo-chooser-title">
+          <button type="button" className="absolute inset-0 h-full w-full cursor-default" onClick={() => setPhotoChooserOpen(false)} aria-label="Close photo options" />
+          <section className="relative w-full rounded-t-3xl bg-white p-4 shadow-2xl sm:max-w-sm sm:rounded-2xl">
+            <div className="app-label">Profile photo</div>
+            <h2 id="profile-photo-chooser-title" className="mt-1 text-lg font-black text-gray-950">Choose how to update your photo</h2>
+            <div className="mt-4 space-y-2">
+              <button type="button" className="primary-button w-full justify-center" onClick={() => handleNativePhotoChoice('camera')} disabled={busy === 'photo-acquire'}>
+                Take photo
+              </button>
+              <button type="button" className="secondary-button w-full justify-center" onClick={() => handleNativePhotoChoice('photos')} disabled={busy === 'photo-acquire'}>
+                Choose existing photo
+              </button>
+              <button type="button" className="ghost-button w-full justify-center" onClick={() => setPhotoChooserOpen(false)} disabled={busy === 'photo-acquire'}>
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
     </div>
   );

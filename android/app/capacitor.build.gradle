@@ -12,6 +12,7 @@ dependencies {
     implementation project(':capacitor-firebase-authentication')
     implementation project(':capacitor-firebase-messaging')
     implementation project(':capacitor-browser')
+    implementation project(':capacitor-camera')
     implementation project(':capacitor-share')
     implementation project(':capgo-capacitor-speech-recognition')
 

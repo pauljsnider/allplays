@@ -218,6 +218,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     };
                 }
 
+                export async function acquireProfilePhoto() {
+                    return new File(['native-photo'], 'native-camera.jpg', { type: 'image/jpeg' });
+                }
+
                 export async function saveProfileDocument(userId, profile) {
                     window.__appProfileCalls.saves.push({ userId, profile });
                 }
