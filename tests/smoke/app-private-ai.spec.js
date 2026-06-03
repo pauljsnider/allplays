@@ -51,6 +51,11 @@ async function mockPrivateAiModules(page) {
                     return loadParentHome(...args);
                 }
 
+                export async function loadParentHomeSummaryBootstrap(...args) {
+                    const home = await loadParentHome(...args);
+                    return { home, schedule: [] };
+                }
+
                 export async function loadParentHomeWithSecondaryData(...args) {
                     return loadParentHome(...args);
                 }
