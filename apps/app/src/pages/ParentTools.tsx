@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -79,21 +79,39 @@ export function ParentTools({ auth }: { auth: AuthState }) {
   const [visitedTools, setVisitedTools] = useState<ParentToolId[]>(() => activeTool ? [activeTool] : ['access']);
   const [toolRefreshVersions, setToolRefreshVersions] = useState<Record<ParentToolId, number>>(initialToolRefreshVersions);
   const [staleTools, setStaleTools] = useState<Set<ParentToolId>>(() => new Set());
+  const activeToolRef = useRef<ParentToolId | null>(activeTool);
+  const visitedToolsRef = useRef<ParentToolId[]>(visitedTools);
+  const staleToolsRef = useRef(staleTools);
+
+  useEffect(() => {
+    activeToolRef.current = activeTool;
+  }, [activeTool]);
+
+  useEffect(() => {
+    visitedToolsRef.current = visitedTools;
+  }, [visitedTools]);
+
+  useEffect(() => {
+    staleToolsRef.current = staleTools;
+  }, [staleTools]);
 
   useEffect(() => {
     if (!activeTool) return;
     setVisitedTools((current) => (current.includes(activeTool) ? current : [...current, activeTool]));
+
+    if (!staleToolsRef.current.has(activeTool)) return;
+
     setStaleTools((current) => {
       if (!current.has(activeTool)) return current;
       const next = new Set(current);
       next.delete(activeTool);
       return next;
     });
-    setToolRefreshVersions((current) => staleTools.has(activeTool) ? {
+    setToolRefreshVersions((current) => ({
       ...current,
       [activeTool]: current[activeTool] + 1
-    } : current);
-  }, [activeTool, staleTools]);
+    }));
+  }, [activeTool]);
 
   if (!activeTool) return <Navigate to="/parent-tools/access" replace />;
 
@@ -105,11 +123,14 @@ export function ParentTools({ auth }: { auth: AuthState }) {
   };
 
   const handleAccessChanged = () => {
-    setToolRefreshVersions((current) => activeTool && activeTool !== 'access' && accessDependentToolIds.includes(activeTool) ? {
+    const currentActiveTool = activeToolRef.current;
+    const currentVisitedTools = visitedToolsRef.current;
+
+    setToolRefreshVersions((current) => currentActiveTool && currentActiveTool !== 'access' && accessDependentToolIds.includes(currentActiveTool) ? {
       ...current,
-      [activeTool]: current[activeTool] + 1
+      [currentActiveTool]: current[currentActiveTool] + 1
     } : current);
-    setStaleTools(() => new Set(accessDependentToolIds.filter((id) => id !== activeTool && visitedTools.includes(id))));
+    setStaleTools(() => new Set(accessDependentToolIds.filter((id) => id !== currentActiveTool && currentVisitedTools.includes(id))));
   };
 
   return (

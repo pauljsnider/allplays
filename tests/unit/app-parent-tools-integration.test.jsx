@@ -393,6 +393,50 @@ describe('React app parent tools integration', () => {
         expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(2);
     });
 
+    it('refreshes the active dependent tab when access changes finish after navigation', async () => {
+        let resolveRequest;
+        const pendingRequest = new Promise((resolve) => {
+            resolveRequest = resolve;
+        });
+        serviceMocks.submitParentAccessRequest.mockImplementationOnce(() => pendingRequest);
+        serviceMocks.loadParentRegistrations
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{
+                id: 'form-1',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                programName: 'Summer Camp',
+                description: 'Skills week',
+                season: 'Summer',
+                feeLabel: '$75.00',
+                paymentNotice: 'Online checkout available.',
+                onlineCheckout: true,
+                options: [{ id: 'opt-1' }],
+                url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+            }]);
+
+        const { container } = await renderParentTools('/parent-tools/access');
+        await waitForText(container, 'Request player access');
+
+        await clickButton(container, 'Register');
+        await waitForText(container, 'No open registrations');
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        await clickButton(container, 'Access');
+        await waitForText(container, 'Request player access');
+        await submitForm(container, 'Send request');
+
+        await clickButton(container, 'Register');
+        await waitForText(container, 'No open registrations');
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            resolveRequest({ success: true });
+        });
+        await waitForText(container, 'Summer Camp');
+        expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+    });
+
     it('requires confirmation before revoking a family share link', async () => {
         const { container } = await renderParentTools('/parent-tools/share');
         await waitForText(container, 'Grandma');

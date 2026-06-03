@@ -298,4 +298,53 @@ describe('ParentTools access', () => {
         expect(await screen.findByText('Team dues')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(2);
     });
+
+    it('refreshes the currently viewed dependent tab when access changes finish after navigation', async () => {
+        let resolveRedeem: ((value: { code: string; redirectPath: string; message: string }) => void) | null = null;
+        inviteRedemptionMocks.redeemSignedInInvite.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveRedeem = resolve;
+        }));
+        parentToolsServiceMocks.loadParentRegistrations
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([
+                {
+                    id: 'form-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    programName: 'Summer Camp',
+                    description: 'Skills week',
+                    season: 'Summer',
+                    feeLabel: '$75.00',
+                    paymentNotice: '',
+                    onlineCheckout: true,
+                    options: [],
+                    url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+                }
+            ]);
+
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        await screen.findByText('No open registrations');
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        await screen.findByText('Request player access');
+        fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        await screen.findByText('No open registrations');
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+
+        resolveRedeem?.({
+            code: 'AB12CD34',
+            redirectPath: '/home',
+            message: 'Invite accepted.'
+        });
+
+        expect(await screen.findByText('Summer Camp')).toBeTruthy();
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2));
+    });
 });
