@@ -4,8 +4,15 @@ import { promises as dns } from 'node:dns';
 import * as https from 'node:https';
 import * as http from 'node:http';
 import * as net from 'node:net';
+import { EventEmitter } from 'node:events';
 import * as securityUtils from '../utils/security-utils.js';
 const { fetchWithTimeout, normalizeTargetUrl, assertPublicHost, isPrivateIpAddress, _setClientModulesForTesting } = securityUtils;
+
+function createMockRequest() {
+  const mockRequest = new EventEmitter();
+  mockRequest.end = () => {};
+  return mockRequest;
+}
 
 test('isPrivateIpAddress correctly identifies private IPs', () => {
   assert.strictEqual(isPrivateIpAddress('10.0.0.1'), true, '10.0.0.1 should be private');
@@ -48,29 +55,30 @@ test('assertPublicHost prevents blocked hosts and private IPs', async () => {
   assert.deepStrictEqual(publicIp, ['8.8.8.8'], 'public IP should be allowed');
 });
 
-test('SSRF vulnerability via DNS Rebinding prevention in fetchWithTimeout', async (t) => {
+test('fetchWithTimeout uses validated IPs and falls back across failures', async () => {
   const originalDnsLookup = dns.lookup;
   const originalSetClientModules = _setClientModulesForTesting;
 
   try {
     const publicIp = '203.0.113.1';
+    const fallbackPublicIp = '198.51.100.2';
     const privateIp = '192.168.1.1';
     const maliciousHost = 'attacker.com';
     const maliciousUrl = `https://${maliciousHost}/evil_feed.ics`;
 
-    let requestOptionsUsed = null;
+    const requestOptionsUsed = [];
 
     // Mock http and https modules to capture request options
     const mockHttp = {
       request: (options, callback) => {
-        requestOptionsUsed = options;
-        assert.strictEqual(options.host, publicIp, 'HTTP request should connect to the pre-validated public IP');
+        requestOptionsUsed.push(options);
+        assert.ok([publicIp, fallbackPublicIp].includes(options.host), 'HTTP request should connect only to validated public IPs');
         assert.strictEqual(options.headers['Host'], maliciousHost, 'HTTP request should use original hostname in Host header');
         const mockResponse = new http.IncomingMessage(new net.Socket());
         mockResponse.statusCode = 200;
         mockResponse.statusMessage = 'OK';
         mockResponse.headers = { 'content-type': 'text/calendar' };
-        const mockRequest = new http.ClientRequest(options);
+        const mockRequest = createMockRequest();
         setImmediate(() => {
           callback(mockResponse);
           mockResponse.emit('data', 'BEGIN:VCALENDAR\nSUMMARY:Test Event\nEND:VCALENDAR');
@@ -81,15 +89,23 @@ test('SSRF vulnerability via DNS Rebinding prevention in fetchWithTimeout', asyn
     };
     const mockHttps = {
       request: (options, callback) => {
-        requestOptionsUsed = options;
-        assert.strictEqual(options.host, publicIp, 'HTTPS request should connect to the pre-validated public IP');
+        requestOptionsUsed.push(options);
+        assert.ok([publicIp, fallbackPublicIp].includes(options.host), 'HTTPS request should connect only to validated public IPs');
         assert.strictEqual(options.servername, maliciousHost, 'HTTPS request should use original hostname for SNI');
         assert.strictEqual(options.headers['Host'], maliciousHost, 'HTTPS request should use original hostname in Host header');
+        const mockRequest = createMockRequest();
+
+        if (options.host === publicIp) {
+          setImmediate(() => {
+            mockRequest.emit('error', new Error('connect ECONNREFUSED'));
+          });
+          return mockRequest;
+        }
+
         const mockResponse = new http.IncomingMessage(new net.Socket());
         mockResponse.statusCode = 200;
         mockResponse.statusMessage = 'OK';
         mockResponse.headers = { 'content-type': 'text/calendar' };
-        const mockRequest = new http.ClientRequest(options);
         setImmediate(() => {
           callback(mockResponse);
           mockResponse.emit('data', 'BEGIN:VCALENDAR\nSUMMARY:Test Event\nEND:VCALENDAR');
@@ -104,7 +120,10 @@ test('SSRF vulnerability via DNS Rebinding prevention in fetchWithTimeout', asyn
     // Mock dns.lookup to initially return a public IP
     dns.lookup = async (hostname, options) => {
       if (hostname === maliciousHost) {
-        return [{ address: publicIp, family: 4 }];
+        return [
+          { address: publicIp, family: 4 },
+          { address: fallbackPublicIp, family: 4 },
+        ];
       }
       return originalDnsLookup(hostname, options);
     };
@@ -113,7 +132,7 @@ test('SSRF vulnerability via DNS Rebinding prevention in fetchWithTimeout', asyn
     const { url: normalizedUrl, hostname, publicIps } = await normalizeTargetUrl(maliciousUrl);
 
     // Verify initial validation passed and public IP was resolved
-    assert.deepStrictEqual(publicIps, [publicIp], 'normalizeTargetUrl should return the public IP after initial DNS lookup');
+    assert.deepStrictEqual(publicIps, [publicIp, fallbackPublicIp], 'normalizeTargetUrl should return all validated public IPs after initial DNS lookup');
     assert.strictEqual(hostname, maliciousHost, 'hostname should be preserved');
 
 
@@ -129,16 +148,17 @@ test('SSRF vulnerability via DNS Rebinding prevention in fetchWithTimeout', asyn
     const response = await fetchWithTimeout(normalizedUrl, hostname, publicIps);
 
     // Assert that https.request was indeed called with the public IP
-    assert.ok(requestOptionsUsed, 'https.request should have been called');
+    assert.strictEqual(requestOptionsUsed.length, 2, 'https.request should retry the next validated IP after a connection failure');
+    assert.deepStrictEqual(requestOptionsUsed.map((options) => options.host), [publicIp, fallbackPublicIp], 'https.request should try validated IPs in resolution order');
     assert.ok(response.ok, 'fetchWithTimeout should return ok response');
     const icsText = await response.text();
     assert.ok(icsText.includes('BEGIN:VCALENDAR'), 'ICS text should be present');
 
     // Test redirect handling: fetchWithTimeout should reject redirects
     // Re-configure mocks for redirect test
-    requestOptionsUsed = null;
+    requestOptionsUsed.length = 0;
     mockHttps.request = (options, callback) => {
-      requestOptionsUsed = options;
+      requestOptionsUsed.push(options);
       assert.strictEqual(options.host, publicIp, 'HTTPS request for redirect should connect to pre-validated IP');
 
       const mockResponse = new http.IncomingMessage(new net.Socket());
@@ -146,7 +166,7 @@ test('SSRF vulnerability via DNS Rebinding prevention in fetchWithTimeout', asyn
       mockResponse.statusMessage = 'Found';
       mockResponse.headers = { 'location': 'https://new.example.com/redirected.ics' };
 
-      const mockRequest = new http.ClientRequest(options);
+      const mockRequest = createMockRequest();
       setImmediate(() => {
         callback(mockResponse);
         mockResponse.emit('end');
