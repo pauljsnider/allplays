@@ -312,6 +312,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return { children: [], events: [] };
                 }
 
+                export async function hydrateParentScheduleDetails(schedule) {
+                    return schedule;
+                }
+
                 export async function loadParentPracticePacket() {
                     return null;
                 }
