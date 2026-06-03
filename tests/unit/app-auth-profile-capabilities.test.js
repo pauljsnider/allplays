@@ -232,8 +232,38 @@ describe('React app auth/profile capability parity', () => {
             'saveNotificationDeviceToken',
             'createProfileAccessCode',
             'loadProfileAccessCodes',
-            'nativeUploadProfilePhoto'
+            'nativeUploadProfilePhoto',
+            'acquireProfilePhoto'
         ]);
+    });
+
+    it('keeps native profile photo capture wired to the Camera plugin dependency and Android permission', () => {
+        const rootPackage = readProjectFile('package.json');
+        const rootPackageLock = readProjectFile('package-lock.json');
+        const appPackage = readProjectFile('apps/app/package.json');
+        const appPackageLock = readProjectFile('apps/app/package-lock.json');
+        const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
+        const profileService = readProjectFile('apps/app/src/lib/profileService.ts');
+        const androidManifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
+
+        expectContains(rootPackage, ['"@capacitor/camera":']);
+        expectContains(rootPackageLock, ['"node_modules/@capacitor/camera"']);
+        expectContains(appPackage, ['"@capacitor/camera":']);
+        expectContains(appPackageLock, ['"node_modules/@capacitor/camera"']);
+        expectContains(profileService, [
+            "from '@capacitor/camera'",
+            'Camera.getPhoto',
+            'CameraResultType.Uri',
+            'CameraSource.Camera',
+            'CameraSource.Photos'
+        ]);
+        expectContains(profilePage, [
+            "handleNativePhotoChoice('camera')",
+            "handleNativePhotoChoice('photos')",
+            'Take photo',
+            'Choose existing photo'
+        ]);
+        expectContains(androidManifest, ['android.permission.CAMERA']);
     });
 
     it('registers push for the current Profile device without saving alert preferences', () => {
