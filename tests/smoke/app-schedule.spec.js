@@ -747,10 +747,9 @@ test('Android-sized schedule smoke covers practice packet and More workflow with
     await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Practice' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Practice packet ready/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'More, packet ready' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Practice packet ready, review packet' })).toBeVisible();
 
-    await page.getByRole('button', { name: /Practice packet ready/ }).click();
+    await page.getByRole('button', { name: 'Practice packet ready, review packet' }).click();
     await expect(page.getByRole('heading', { name: 'Practice hub' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Packet ready' })).toBeVisible();
     await expect(page.getByText('Ball Mastery')).toBeVisible();
@@ -885,9 +884,8 @@ test('app practice more tab uses hub cards and shares event details without a li
     await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Practice' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Practice packet ready/ })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'More, packet ready' })).toBeVisible();
-    await page.getByRole('button', { name: /Practice packet ready/ }).click();
+    await expect(page.getByRole('button', { name: 'Practice packet ready, review packet' })).toBeVisible();
+    await page.getByRole('button', { name: 'Practice packet ready, review packet' }).click();
     await expect(page.getByRole('heading', { name: 'Practice hub' })).toBeVisible();
     const practiceHub = page.locator('.app-card').filter({ has: page.getByRole('heading', { name: 'Practice hub' }) });
     await expect(page.getByText('2 drills · 20 min · Main Gym')).toBeVisible();
