@@ -630,9 +630,7 @@ async function reserveNextTeamMediaOrder(teamId, folderId) {
         }
 
         const folderData = folderSnapshot.data() || {};
-        const nextMediaOrder = Number.isFinite(Number(folderData.nextMediaOrder))
-            ? Number(folderData.nextMediaOrder)
-            : Date.now();
+        const nextMediaOrder = Number(folderData.nextMediaOrder || 0);
 
         transaction.update(folderRef, {
             nextMediaOrder: nextMediaOrder + 1,

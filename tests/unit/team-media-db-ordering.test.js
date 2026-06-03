@@ -134,9 +134,8 @@ describe('team media db ordering', () => {
         }));
     });
 
-    it('reuses the folder counter for link and file appends without reloading album items', async () => {
+    it('starts legacy folders at zero when the media order counter is missing', async () => {
         folderState.nextMediaOrder = Number.NaN;
-        const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(5000);
         const { createTeamMediaLink, uploadTeamMediaFile } = await import('../../js/db.js');
         const file = new File(['doc'], 'lineup.pdf', { type: 'application/pdf' });
 
@@ -147,19 +146,18 @@ describe('team media db ordering', () => {
         const filePromise = uploadTeamMediaFile('team-1', 'folder-1', file);
         uploadTaskQueue.splice(0).forEach((complete) => complete());
         const fileId = await filePromise;
-        dateNowSpy.mockRestore();
 
         expect(linkId).toBe('media-1');
         expect(fileId).toBe('media-2');
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
         expect(firebaseMocks.addDoc).toHaveBeenNthCalledWith(1, { path: 'teams/team-1/mediaItems' }, expect.objectContaining({
             title: 'Replay',
-            order: 5000,
+            order: 0,
             type: 'video-link'
         }));
         expect(firebaseMocks.addDoc).toHaveBeenNthCalledWith(2, { path: 'teams/team-1/mediaItems' }, expect.objectContaining({
             title: 'lineup.pdf',
-            order: 5001,
+            order: 1,
             type: 'file'
         }));
     });

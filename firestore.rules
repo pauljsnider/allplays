@@ -899,6 +899,15 @@ service cloud.firestore {
              data.updatedAt == request.time;
     }
 
+    function isTeamMediaUploadCounterUpdate(teamId) {
+      return hasTeamMediaUploadGrant(teamId) &&
+             resource.data.get('visibility', 'team') == 'team' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nextMediaOrder', 'updatedAt']) &&
+             request.resource.data.get('nextMediaOrder', 0) is number &&
+             request.resource.data.get('nextMediaOrder', 0) == resource.data.get('nextMediaOrder', 0) + 1 &&
+             request.resource.data.updatedAt == request.time;
+    }
+
     function isOwnTeamMediaUploadSoftDelete(teamId) {
       return canAccessTeamChat(teamId) &&
              resource.data.type in ['photo', 'file'] &&
@@ -1410,7 +1419,8 @@ service cloud.firestore {
 
       match /mediaFolders/{folderId} {
         allow read: if canReadTeamMediaFolder(teamId, resource.data);
-        allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        allow create, delete: if isTeamOwnerOrAdmin(teamId);
+        allow update: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCounterUpdate(teamId);
       }
 
       match /mediaItems/{itemId} {

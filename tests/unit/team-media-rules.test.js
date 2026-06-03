@@ -15,11 +15,16 @@ describe('team media Firestore rules', () => {
         const mediaRules = rules.slice(mediaRulesStart, mediaRulesEnd);
 
         expect(mediaRules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
+        expect(mediaRules).toContain('allow create, delete: if isTeamOwnerOrAdmin(teamId);');
+        expect(mediaRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCounterUpdate(teamId);');
         expect(mediaRules).toContain('allow read: if canReadTeamMediaItem(teamId, resource.data);');
         expect(mediaRules).toContain('allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);');
         expect(mediaRules).toContain('allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);');
         expect(rules).toContain("teamId in get(userPath).data.get('teamMediaUploadTeamIds', [])");
         expect(rules).toContain("teamId in get(userPath).data.get('mediaUploadTeamIds', [])");
+        expect(rules).toContain('function isTeamMediaUploadCounterUpdate(teamId) {');
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nextMediaOrder', 'updatedAt'])");
+        expect(rules).toContain("request.resource.data.get('nextMediaOrder', 0) == resource.data.get('nextMediaOrder', 0) + 1");
         expect(rules).toContain('return hasTeamMediaUploadGrant(teamId) &&');
         expect(rules).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
         expect(rules).toContain("data.type in ['photo', 'file']");
