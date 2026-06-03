@@ -31,6 +31,10 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("data.get('discoveryTeamIds', []).hasAny(currentUserPublicProfileTeamIds())");
         expect(source).toContain("data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds', 'emailHash', 'updatedAt'])");
         expect(source).toContain("!data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys'])");
+        expect(source).toContain("function userMembershipFields()");
+        expect(source).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];");
+        expect(source).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");
+        expect(source).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
         expect(source).toContain('allow read: if isGlobalAdmin() || isOwner(userId);');
         expect(source).not.toContain('allow read: if true;  // Public profiles');
     });

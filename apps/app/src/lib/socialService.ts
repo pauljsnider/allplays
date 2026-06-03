@@ -257,21 +257,25 @@ export async function searchSocialUsers(user: AuthUser | null, queryText: string
   if (lower.includes('@')) {
     const emailHash = await hashSocialEmail(lower);
     if (emailHash) {
-      const emailSnapshot = await withTimeout(getDocs(query(
-        collection(db, publicUserProfileCollection),
-        where('emailHash', '==', emailHash),
-        limit(5)
-      )), 'Friend email search').catch(() => null);
-      if (emailSnapshot) {
-        snapshotToDocs(emailSnapshot).forEach((candidate) => {
-          const sharedTeamIds = uniqueStrings((candidate.discoveryTeamIds || []).filter((teamId: string) => teamNames[teamId]));
-          const friend = normalizeSocialFriend({
-            ...candidate,
-            sharedTeamIds,
-            sharedTeamNames: sharedTeamIds.map((teamId) => teamNames[teamId] || teamId)
-          }, user.uid);
-          if (friend) resultsById.set(friend.userId, friend);
-        });
+      const teamIds = getHomeTeamIds(home).slice(0, 10);
+      for (const teamId of teamIds) {
+        const emailSnapshot = await withTimeout(getDocs(query(
+          collection(db, publicUserProfileCollection),
+          where('emailHash', '==', emailHash),
+          where('discoveryTeamIds', 'array-contains', teamId),
+          limit(5)
+        )), `Friend email search ${teamId}`).catch(() => null);
+        if (emailSnapshot) {
+          snapshotToDocs(emailSnapshot).forEach((candidate) => {
+            const sharedTeamIds = uniqueStrings((candidate.discoveryTeamIds || []).filter((candidateTeamId: string) => teamNames[candidateTeamId]));
+            const friend = normalizeSocialFriend({
+              ...candidate,
+              sharedTeamIds,
+              sharedTeamNames: sharedTeamIds.map((sharedTeamId) => teamNames[sharedTeamId] || sharedTeamId)
+            }, user.uid);
+            if (friend) resultsById.set(friend.userId, friend);
+          });
+        }
       }
     }
   }

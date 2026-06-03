@@ -256,6 +256,7 @@ describe('React app social service', () => {
 
         expect(firebaseMocks.collection).toHaveBeenCalledWith(firebaseMocks.db, 'publicUserProfiles');
         expect(firebaseMocks.where).toHaveBeenCalledWith('emailHash', '==', 'aabb');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('discoveryTeamIds', 'array-contains', 'team-1');
         expect(results).toEqual([expect.objectContaining({ userId: 'friend-3', name: 'Taylor Parent' })]);
     });
 

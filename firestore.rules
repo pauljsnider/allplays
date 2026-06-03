@@ -800,6 +800,20 @@ service cloud.firestore {
              !data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys']);
     }
 
+    function userMembershipFields() {
+      return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];
+    }
+
+    function isOwnerUserCreatePayloadValid(data) {
+      return data.get('isAdmin', false) != true &&
+             !data.keys().hasAny(userMembershipFields());
+    }
+
+    function isOwnerUserUpdatePayloadValid() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) &&
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(userMembershipFields());
+    }
+
     function isFriendshipCreatePayloadValid(data) {
       return isSignedIn() &&
              data.get('requesterId', '') == request.auth.uid &&
@@ -1090,9 +1104,9 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isGlobalAdmin() || isOwner(userId);
       allow create: if isGlobalAdmin() ||
-                    (isOwner(userId) && request.resource.data.get('isAdmin', false) != true);
+                    (isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data));
       allow update: if isGlobalAdmin() ||
-                    (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']));
+                    (isOwner(userId) && isOwnerUserUpdatePayloadValid());
       allow delete: if isGlobalAdmin() ||
                     (isOwner(userId) && resource.data.get('isAdmin', false) != true);
 
