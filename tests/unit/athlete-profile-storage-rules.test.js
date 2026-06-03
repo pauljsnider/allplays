@@ -27,7 +27,7 @@ function canGetAthleteProfileMedia({ authUid, userId, profilePrivacy = 'private'
     const isOwner = authUid === userId;
     const isPublicProfile = profileExists && profilePrivacy === 'public';
 
-    return signedIn && (isOwner || isPublicProfile);
+    return (signedIn && isOwner) || isPublicProfile;
 }
 
 function canDeleteAthleteProfileMedia({ authUid, userId }) {
@@ -102,6 +102,20 @@ describe('athlete profile Storage rules', () => {
             userId: 'parent-1',
             profilePrivacy: 'public',
             profileExists: false
+        })).toBe(false);
+    });
+
+    it('allows logged-out viewers to read media for public athlete profiles only', () => {
+        expect(canGetAthleteProfileMedia({
+            authUid: null,
+            userId: 'parent-1',
+            profilePrivacy: 'public'
+        })).toBe(true);
+
+        expect(canGetAthleteProfileMedia({
+            authUid: null,
+            userId: 'parent-1',
+            profilePrivacy: 'private'
         })).toBe(false);
     });
 

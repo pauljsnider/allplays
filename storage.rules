@@ -72,12 +72,9 @@ service firebase.storage {
 
     function canReadAthleteProfileMedia(userId, profileId) {
       let profilePath = /databases/(default)/documents/athleteProfiles/$(profileId);
-      return isSignedIn() &&
-        (
-          request.auth.uid == userId ||
-          (firestore.exists(profilePath) &&
-           firestore.get(profilePath).data.get('privacy', 'private') == 'public')
-        );
+      return (isSignedIn() && request.auth.uid == userId) ||
+        (firestore.exists(profilePath) &&
+         firestore.get(profilePath).data.get('privacy', 'private') == 'public');
     }
 
     match /team-media/{teamId}/{folderId}/{userId}/{fileName} {
