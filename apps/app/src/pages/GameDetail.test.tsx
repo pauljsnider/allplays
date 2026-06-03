@@ -1,22 +1,24 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// @vitest-environment jsdom
 
-const liveGameChatMocks = vi.hoisted(() => ({
-  canUseLiveGameChat: vi.fn(),
-  getLiveGameChatNotice: vi.fn(),
-  sendLiveGameChatMessage: vi.fn(),
-  subscribeToLiveGameChat: vi.fn(() => vi.fn())
-}));
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../lib/liveGameChatService', () => liveGameChatMocks);
+const scheduleServiceMocks = vi.hoisted(() => ({
+  loadParentSchedule: vi.fn()
+}))
 
-import { GameDetail } from './GameDetail';
-import { mockGames } from '../data/mockData';
-import type { AuthState } from '../lib/types';
+vi.mock('../lib/scheduleService', () => scheduleServiceMocks)
+
+import { GameDetail } from './GameDetail'
+import type { AuthState } from '../lib/types'
 
 const auth: AuthState = {
-  user: null,
+  user: {
+    uid: 'parent-1',
+    email: 'parent@example.com',
+    displayName: 'Pat Parent'
+  } as any,
   profile: null,
   loading: false,
   error: null,
@@ -27,117 +29,83 @@ const auth: AuthState = {
   isPlatformAdmin: false,
   refresh: vi.fn(),
   signOut: vi.fn()
-};
+}
 
 function renderGameDetail(path = '/games/game-1') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/games/:gameId" element={<GameDetail auth={auth} />} />
-        <Route path="/schedule" element={<div>Schedule</div>} />
+        <Route path="/schedule/:teamId/:eventId" element={(
+          <div>
+            <h1>Availability</h1>
+            <div>Rideshare</div>
+            <div>Assignments</div>
+            <div>Live event workflow</div>
+          </div>
+        )}
+        />
+        <Route path="/schedule" element={<div>Schedule home</div>} />
       </Routes>
     </MemoryRouter>
-  );
+  )
 }
 
-describe('GameDetail play-by-play audio', () => {
+describe('GameDetail route resolution', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    liveGameChatMocks.canUseLiveGameChat.mockReturnValue(true);
-    liveGameChatMocks.getLiveGameChatNotice.mockReturnValue(null);
-    liveGameChatMocks.subscribeToLiveGameChat.mockImplementation((...args: any[]) => {
-      const callback = args[2] as (messages: Array<{ id: string; senderName: string; text: string }>) => void;
-      callback([{ id: 'chat-1', senderName: 'Jamie', text: 'Let\'s go Bears!' }]);
-      return vi.fn();
-    });
-    liveGameChatMocks.sendLiveGameChatMessage.mockResolvedValue(undefined);
-    localStorage.clear();
-    vi.stubGlobal('speechSynthesis', { speak: vi.fn(), cancel: vi.fn() });
-    vi.stubGlobal('SpeechSynthesisUtterance', vi.fn(function MockUtterance(this: SpeechSynthesisUtterance, text: string) {
-      this.text = text;
-    }));
-  });
+    vi.clearAllMocks()
+  })
 
-  it('renders an accessible announcer toggle and live play-by-play events', () => {
-    renderGameDetail();
+  afterEach(() => {
+    cleanup()
+  })
 
-    expect(screen.getByRole('button', { name: 'Enable play-by-play audio announcements' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Live play by play' })).toBeInTheDocument();
-    expect(screen.getByText('#9 Kevin scored 2 points')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Live chat' })).toBeInTheDocument();
-    expect(liveGameChatMocks.subscribeToLiveGameChat).toHaveBeenCalledWith('team-bears', 'game-1', expect.any(Function), expect.any(Function));
-    expect(screen.getByText("Let's go Bears!")).toBeInTheDocument();
-  });
+  it('routes /games/:gameId into the schedule event detail workflow', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
+      children: [],
+      events: [
+        {
+          id: 'game-1',
+          teamId: 'team-bears',
+          childId: 'player-7',
+          type: 'game'
+        }
+      ]
+    })
 
-  it('announces displayed game events once when enabled', () => {
-    renderGameDetail();
+    renderGameDetail()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Enable play-by-play audio announcements' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Disable play-by-play audio announcements' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Enable play-by-play audio announcements' }));
-
-    expect(speechSynthesis.speak).toHaveBeenCalledTimes(2);
-    expect(SpeechSynthesisUtterance).toHaveBeenCalledWith('Q1. #9 Kevin scored 2 points');
-    expect(SpeechSynthesisUtterance).toHaveBeenCalledWith('Q1. #12 Paul defensive rebound');
-    expect(localStorage.getItem('allplaysPlayAnnouncerEnabled')).toBe('true');
-  });
-
-  it('sends anonymous live chat messages from the game detail panel', async () => {
-    renderGameDetail();
-
-    fireEvent.change(screen.getByLabelText('Display name'), { target: { value: 'Pat Parent' } });
-    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Great hustle!' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(screen.getByText('Opening game')).toBeTruthy()
 
     await waitFor(() => {
-      expect(liveGameChatMocks.sendLiveGameChatMessage).toHaveBeenCalledWith('team-bears', 'game-1', {
-        text: 'Great hustle!',
-        user: null,
-        anonymousDisplayName: 'Pat Parent'
-      });
-    });
-  });
+      expect(screen.getByText('Live event workflow')).toBeTruthy()
+    })
 
-  it('does not resubscribe when the game object is recreated with the same ids', () => {
-    const unsubscribe = vi.fn();
-    const originalGame = mockGames[0];
+    expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy()
+    expect(screen.getByText('Rideshare')).toBeTruthy()
+    expect(screen.getByText('Assignments')).toBeTruthy()
+    expect(screen.queryByText('Live chat')).toBeNull()
+    expect(screen.queryByText('Player Performance')).toBeNull()
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, {
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    })
+  })
 
-    liveGameChatMocks.subscribeToLiveGameChat.mockReturnValue(unsubscribe);
+  it('shows a recovery state when the game cannot be resolved', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
+      children: [],
+      events: []
+    })
 
-    try {
-      const view = renderGameDetail();
+    renderGameDetail('/games/missing-game')
 
-      expect(liveGameChatMocks.subscribeToLiveGameChat).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByText('Game not available')).toBeTruthy()
+    })
 
-      mockGames[0] = {
-        ...originalGame,
-        liveEvents: [...(originalGame.liveEvents || [])]
-      };
-
-      view.rerender(
-        <MemoryRouter initialEntries={['/games/game-1']}>
-          <Routes>
-            <Route path="/games/:gameId" element={<GameDetail auth={auth} />} />
-            <Route path="/schedule" element={<div>Schedule</div>} />
-          </Routes>
-        </MemoryRouter>
-      );
-
-      expect(liveGameChatMocks.subscribeToLiveGameChat).toHaveBeenCalledTimes(1);
-      expect(unsubscribe).not.toHaveBeenCalled();
-    } finally {
-      mockGames[0] = originalGame;
-    }
-  });
-
-  it('shows the locked notice and disables the composer when live chat is closed', () => {
-    liveGameChatMocks.canUseLiveGameChat.mockReturnValue(false);
-    liveGameChatMocks.getLiveGameChatNotice.mockReturnValue('Live chat opens on game day and closes after the live window ends.');
-
-    renderGameDetail('/games/game-2');
-
-    expect(screen.getByText('Live chat opens on game day and closes after the live window ends.')).toBeInTheDocument();
-    expect(screen.getByLabelText('Message')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
-  });
-});
+    expect(screen.getByText(/could not find this game in your live schedule/i)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Schedule' }).getAttribute('href')).toBe('/schedule')
+    expect(screen.queryByText('Live event workflow')).toBeNull()
+  })
+})
