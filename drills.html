@@ -798,7 +798,6 @@
                 const access = getTeamAccessInfo(user, state.team);
                 state.accessLevel = access.accessLevel;
                 if (!access.hasAccess) { location.href = access.exitUrl; return; }
-                if (state.accessLevel !== 'full') { location.href = access.exitUrl; return; }
 
                 renderTeamAdminBanner(document.getElementById('team-banner'), {
                     team: state.team, teamId: state.teamId,
