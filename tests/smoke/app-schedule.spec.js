@@ -914,8 +914,11 @@ test('app schedule assignments supports parent sign up and release', async ({ pa
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Assignments', exact: true }).click();
     const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
+    await expect(async () => {
+        await page.getByRole('button', { name: 'Assignments', exact: true }).click();
+        await expect(assignmentsSection.getByText('4 posted · 1 open')).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 15000 });
     const snacksCard = assignmentsSection.locator('article').filter({ hasText: 'Snacks' });
     const drinksCard = assignmentsSection.locator('article').filter({ hasText: 'Drinks' });
     const setupCard = assignmentsSection.locator('article').filter({ hasText: 'Setup' });

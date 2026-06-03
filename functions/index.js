@@ -2710,6 +2710,28 @@ function buildNotificationLink({ category, teamId, gameId }) {
   return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
 }
 
+function buildNotificationAppRoute({ category, teamId, gameId, eventId }) {
+  if (category === 'liveChat' && teamId) {
+    return `/messages/${encodeURIComponent(teamId)}`;
+  }
+  if (category === 'liveScore' && gameId) {
+    if (teamId) {
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}`;
+    }
+    return '/schedule';
+  }
+  if (category === 'schedule') {
+    if (teamId && eventId) {
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(eventId)}`;
+    }
+    if (teamId) {
+      return `/schedule?teamId=${encodeURIComponent(teamId)}`;
+    }
+    return '/schedule';
+  }
+  return '/home';
+}
+
 async function getUserIdsByEmails(emails) {
   const uniqueEmails = Array.from(new Set(
     (Array.isArray(emails) ? emails : [])
@@ -2807,6 +2829,7 @@ async function pruneInvalidTokens(sendResult, targets) {
 async function sendCategoryNotification({
   teamId,
   gameId = null,
+  eventId = null,
   category,
   title,
   body,
@@ -2817,6 +2840,7 @@ async function sendCategoryNotification({
   if (!targets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId });
+  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -2830,7 +2854,9 @@ async function sendCategoryNotification({
       data: {
         teamId: String(teamId),
         gameId: String(gameId || ''),
+        eventId: String(eventId || gameId || ''),
         category: String(category),
+        appRoute,
         link
       },
       webpush: {
@@ -3136,6 +3162,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
       const sendResult = await sendCategoryNotification({
         teamId,
         gameId,
+        eventId: gameId,
         category: 'schedule',
         title: payload.title,
         body: payload.body,
