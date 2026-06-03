@@ -12,7 +12,6 @@ import {
   getTeams,
   addGame,
   addPractice,
-  getTrackedCalendarEventUids,
   createRideOffer,
   claimAssignmentSlot,
   requestRideSpot,
@@ -1001,6 +1000,12 @@ function makeEventKey(teamId: string, id: string, childId: string, date: Date, t
   return `${teamId}::${id}::${childId}::${date.toISOString()}::${type}`;
 }
 
+function getTrackedCalendarEventUidsFromLoadedGames(games: any[] = []) {
+  return (Array.isArray(games) ? games : [])
+    .map((game) => compactString(game?.calendarEventUid))
+    .filter(Boolean);
+}
+
 async function loadTeam(teamId: string) {
   const team = await readWithNativeFallback(
     `team ${teamId}`,
@@ -1320,13 +1325,13 @@ function createScheduleEvent(input: {
 
 async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
   const events: ParentScheduleEvent[] = [];
-  const [team, dbGames, trackedUids, practiceSessions] = await Promise.all([
+  const [team, dbGames, practiceSessions] = await Promise.all([
     loadTeam(teamId),
     loadGames(teamId),
-    getTrackedCalendarEventUids(teamId).catch(() => []),
     loadPracticeSessions(teamId)
   ]);
   if (!team) return events;
+  const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(dbGames || []);
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };

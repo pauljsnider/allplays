@@ -2872,11 +2872,15 @@ export async function removeCalendarFromTeam(teamId, calendarUrl) {
     await updateTeam(teamId, { calendarUrls });
 }
 
-export async function getTrackedCalendarEventUids(teamId) {
-    const games = await getGames(teamId);
+export function getTrackedCalendarEventUidsFromGames(games = []) {
     return games
         .filter(game => game.calendarEventUid)
         .map(game => game.calendarEventUid);
+}
+
+export async function getTrackedCalendarEventUids(teamId, preloadedGames = null) {
+    const games = Array.isArray(preloadedGames) ? preloadedGames : await getGames(teamId);
+    return getTrackedCalendarEventUidsFromGames(games);
 }
 
 // Access Codes

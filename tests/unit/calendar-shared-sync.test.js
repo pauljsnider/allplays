@@ -6,6 +6,13 @@ function readCalendarPage() {
 }
 
 describe('global calendar ICS sync helper', () => {
+    it('reuses the loaded game list when resolving tracked calendar UIDs', () => {
+        const source = readCalendarPage();
+
+        expect(source).toContain('const games = await getGames(team.id);');
+        expect(source).toContain('const trackedUids = await getTrackedCalendarEventUids(team.id, games);');
+    });
+
     it('suppresses tracked ICS events while keeping distinct same-slot imports', async () => {
         const { mergeGlobalCalendarIcsEvents } = await import('../../js/calendar-ics-sync.js');
 
