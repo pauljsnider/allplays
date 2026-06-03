@@ -245,6 +245,9 @@ describe('React app auth/profile capability parity', () => {
         const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
         const profileService = readProjectFile('apps/app/src/lib/profileService.ts');
         const androidManifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
+        const androidSettings = readProjectFile('android/capacitor.settings.gradle');
+        const androidCapacitorBuild = readProjectFile('android/app/capacitor.build.gradle');
+        const iosCapAppPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
 
         expectContains(rootPackage, ['"@capacitor/camera":']);
         expectContains(rootPackageLock, ['"node_modules/@capacitor/camera"']);
@@ -252,6 +255,7 @@ describe('React app auth/profile capability parity', () => {
         expectContains(appPackageLock, ['"node_modules/@capacitor/camera"']);
         expectContains(profileService, [
             "from '@capacitor/camera'",
+            'Capacitor.isNativePlatform() || window.location.protocol === \'capacitor:\'',
             'Camera.getPhoto',
             'CameraResultType.Uri',
             'CameraSource.Camera',
@@ -264,6 +268,15 @@ describe('React app auth/profile capability parity', () => {
             'Choose existing photo'
         ]);
         expectContains(androidManifest, ['android.permission.CAMERA']);
+        expectContains(androidSettings, [
+            "include ':capacitor-camera'",
+            "project(':capacitor-camera').projectDir = new File('../node_modules/@capacitor/camera/android')"
+        ]);
+        expectContains(androidCapacitorBuild, ["implementation project(':capacitor-camera')"]);
+        expectContains(iosCapAppPackage, [
+            '.package(name: "CapacitorCamera", path: "../../../node_modules/@capacitor/camera")',
+            '.product(name: "CapacitorCamera", package: "CapacitorCamera")'
+        ]);
     });
 
     it('registers push for the current Profile device without saving alert preferences', () => {

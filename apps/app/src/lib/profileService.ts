@@ -118,7 +118,7 @@ function getFirestoreBaseUrl() {
 }
 
 function isNativeRuntime() {
-  return window.location.protocol === 'capacitor:';
+  return Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
 }
 
 function isNativeCameraAvailable() {
