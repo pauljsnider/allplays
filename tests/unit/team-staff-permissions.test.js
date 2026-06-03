@@ -10,6 +10,7 @@ describe('team staff and permissions view model', () => {
             teamPermissions: {
                 scorekeeping: { mode: 'selected', memberIds: [' scorekeeper-1 ', 'stream-score-1', 'scorekeeper-1'] },
                 streaming: { mode: 'selected', memberIds: ['video-1', 'stream-score-1'] },
+                videography: { mode: 'selected', memberIds: ['video-1', 'stream-score-1'] },
                 volunteer: { mode: 'selected', memberIds: ['snacks-1'] }
             },
             streamVolunteerEmails: ['video@example.com']

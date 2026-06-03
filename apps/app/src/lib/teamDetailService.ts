@@ -8,14 +8,17 @@ import {
   getPlayerTrackingStatuses,
   getPublicTrackingItems,
   getTeam,
+  getAllUsers,
   updateTeam,
   getEvents,
   updateEvent,
   updateGame,
   grantScorekeeperAccess,
+  grantVideographerAccess,
   inviteAdmin,
   addTeamAdminEmail,
-  revokeScorekeeperAccess
+  revokeScorekeeperAccess,
+  revokeVideographerAccess
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
@@ -112,6 +115,7 @@ export type TeamStaffPermissionsSummary = {
   }>;
   scorekeepingMode: string;
   scorekeeperGrantTargets: TeamScorekeeperGrantTarget[];
+  videographerGrantTargets: TeamScorekeeperGrantTarget[];
   hasAnyStaff: boolean;
 };
 
@@ -414,6 +418,22 @@ export async function revokeScorekeeperAccessForApp(teamId: string, memberUserId
   await revokeScorekeeperAccess(normalizedTeamId, normalizedUserId);
 }
 
+export async function grantVideographerAccessForApp(teamId: string, memberUserId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedUserId = cleanString(memberUserId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedUserId) throw new Error('Team member user ID is required.');
+  await grantVideographerAccess(normalizedTeamId, normalizedUserId);
+}
+
+export async function revokeVideographerAccessForApp(teamId: string, memberUserId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedUserId = cleanString(memberUserId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedUserId) throw new Error('Team member user ID is required.');
+  await revokeVideographerAccess(normalizedTeamId, normalizedUserId);
+}
+
 export async function saveTeamScheduleNotificationsForApp(teamId: string, settings: Partial<TeamScheduleNotificationSettings>) {
   const normalizedTeamId = cleanString(teamId);
   if (!normalizedTeamId) throw new Error('Team ID is required.');
@@ -517,6 +537,7 @@ export async function loadParentTeamDetail(teamId: string, user: AuthUser | null
 
   const canManageTeam = hasFullTeamAccess(user, team);
   const pendingAdminInvites = canManageTeam ? await loadPendingAdminInvites(teamId).catch(() => []) : [];
+  const confirmedTeamMembers = canManageTeam ? await Promise.resolve(getAllUsers()).catch(() => []) : [];
 
   const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
   const completedGameIds = (Array.isArray(games) ? games : [])
@@ -544,7 +565,8 @@ export async function loadParentTeamDetail(teamId: string, user: AuthUser | null
     trackingItems,
     trackingStatuses,
     sponsors: [...normalizeSponsorList(adSponsors), ...normalizeSponsorList(localSponsors)],
-    pendingAdminInvites
+    pendingAdminInvites,
+    confirmedTeamMembers
   });
 }
 
@@ -560,7 +582,8 @@ export function buildTeamDetailModel({
   trackingItems = [],
   trackingStatuses = [],
   sponsors = [],
-  pendingAdminInvites = []
+  pendingAdminInvites = [],
+  confirmedTeamMembers = []
 }: {
   teamId: string;
   team: Record<string, any>;
@@ -574,6 +597,7 @@ export function buildTeamDetailModel({
   trackingStatuses?: any[];
   sponsors?: TeamDetailSponsor[];
   pendingAdminInvites?: any[];
+  confirmedTeamMembers?: any[];
 }): TeamDetailModel {
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
   const normalizedEvents = normalizeEvents(games);
@@ -590,7 +614,8 @@ export function buildTeamDetailModel({
     ? {
       ...buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites),
       scorekeepingMode: cleanString(team?.teamPermissions?.scorekeeping?.mode),
-      scorekeeperGrantTargets: buildScorekeeperGrantTargets(team, players)
+      scorekeeperGrantTargets: buildPermissionGrantTargets(team, players, 'scorekeeping', confirmedTeamMembers, teamId),
+      videographerGrantTargets: buildPermissionGrantTargets(team, players, 'videography', confirmedTeamMembers, teamId)
     }
     : null;
 
@@ -669,8 +694,8 @@ function normalizePlayers(players: any[], linkedPlayerIds: string[]): TeamDetail
     .sort((a, b) => sortByNumberThenName(a, b));
 }
 
-function buildScorekeeperGrantTargets(team: Record<string, any>, players: any[]): TeamScorekeeperGrantTarget[] {
-  const selectedScorekeeperIds = getSelectedPermissionIds(team, 'scorekeeping');
+function buildPermissionGrantTargets(team: Record<string, any>, players: any[], permissionKey: string, confirmedTeamMembers: any[] = [], teamId = ''): TeamScorekeeperGrantTarget[] {
+  const selectedPermissionIds = getSelectedPermissionIds(team, permissionKey);
   const targetsByUserId = new Map<string, Omit<TeamScorekeeperGrantTarget, 'isGranted'>>();
 
   const addTarget = (userId: any, player: any, source: Record<string, any> = {}) => {
@@ -691,17 +716,27 @@ function buildScorekeeperGrantTargets(team: Record<string, any>, players: any[])
     targetsByUserId.set(normalizedUserId, existing);
   };
 
-  (Array.isArray(players) ? players : [])
-    .filter((player) => player?.active !== false)
-    .forEach((player) => {
-      getPlayerLinkedUserIds(player).forEach((userId) => addTarget(userId, player));
-      (Array.isArray(player?.parents) ? player.parents : []).forEach((parent: any) => {
-        addTarget(parent?.userId || parent?.uid || parent?.authUid || parent?.accountUserId || parent?.memberUserId, player, parent);
-      });
+  const activePlayers = (Array.isArray(players) ? players : []).filter((player) => player?.active !== false);
+  const playersById = new Map(activePlayers.map((player) => [cleanString(player?.id || player?.playerId), player]));
+
+  activePlayers.forEach((player) => {
+    getPlayerLinkedUserIds(player).forEach((userId) => addTarget(userId, player));
+    (Array.isArray(player?.parents) ? player.parents : []).forEach((parent: any) => {
+      addTarget(parent?.userId || parent?.uid || parent?.authUid || parent?.accountUserId || parent?.memberUserId, player, parent);
     });
+  });
+
+  (Array.isArray(confirmedTeamMembers) ? confirmedTeamMembers : []).forEach((member) => {
+    const parentLinks = (Array.isArray(member?.parentOf) ? member.parentOf : [])
+      .filter((link: any) => cleanString(link?.teamId) === teamId);
+    parentLinks.forEach((link: any) => {
+      const player = playersById.get(cleanString(link?.playerId));
+      if (player) addTarget(member?.id || member?.uid, player, member);
+    });
+  });
 
   return Array.from(targetsByUserId.values())
-    .map((target) => ({ ...target, isGranted: selectedScorekeeperIds.has(target.userId) }))
+    .map((target) => ({ ...target, isGranted: selectedPermissionIds.has(target.userId) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
