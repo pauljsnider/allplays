@@ -359,6 +359,14 @@ async function mockHomePlayerModules(page) {
                     return { success: true };
                 }
 
+                export async function grantVideographerAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function revokeVideographerAccessForApp() {
+                    return { success: true };
+                }
+
                 export async function saveTeamScheduleNotificationsForApp(teamId, settings = {}) {
                     return {
                         enabled: settings.enabled !== false,

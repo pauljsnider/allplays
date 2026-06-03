@@ -194,6 +194,83 @@ async function mockSearchModules(page) {
             `
         });
     });
+
+    await page.route(/\/src\/lib\/teamDetailService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function inviteTeamAdminForApp() {
+                    return { status: 'sent', email: 'coach@example.com' };
+                }
+
+                export async function grantScorekeeperAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function revokeScorekeeperAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function grantVideographerAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function revokeVideographerAccessForApp() {
+                    return { success: true };
+                }
+
+                export async function saveTeamScheduleNotificationsForApp(teamId, settings = {}) {
+                    return {
+                        enabled: settings.enabled !== false,
+                        reminderHours: settings.reminderHours || 24,
+                        delivery: 'team_chat',
+                        hasExplicitReminderHours: true,
+                        summary: 'Team default reminder window: 24 hours before event start.'
+                    };
+                }
+
+                export function buildPublicTeamGamesIcsUrl(teamId) {
+                    return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
+                }
+
+                export function canExposePublicFanFeed(team = {}, events = []) {
+                    return (events || []).some((event) => event?.type === 'game');
+                }
+
+                export async function loadParentTeamDetail(teamId) {
+                    const isRockets = teamId === 'team-2';
+                    return {
+                        team: {
+                            id: teamId,
+                            name: isRockets ? 'Rockets' : 'Bears',
+                            sport: isRockets ? 'Soccer' : 'Basketball',
+                            photoUrl: null,
+                            description: 'Parent-facing team page',
+                            zip: isRockets ? '64114' : '66210',
+                            leagueUrl: null,
+                            bracketUrl: null,
+                            streamUrl: null,
+                            websiteUrl: 'https://allplays.ai/team.html#teamId=' + encodeURIComponent(teamId),
+                            mediaUrl: 'https://allplays.ai/team-media.html#teamId=' + encodeURIComponent(teamId),
+                            registrationProvider: []
+                        },
+                        players: [],
+                        linkedPlayers: [],
+                        upcomingEvents: [],
+                        recentResults: [],
+                        nextEvent: null,
+                        record: { label: '2100', wins: 0, losses: 0, ties: 0, gamesPlayed: 0, winPercentage: null },
+                        standings: { enabled: false, label: 'No standings configured', rows: [], currentRow: null },
+                        leaderboards: [],
+                        trackingSummaries: [],
+                        sponsors: [],
+                        counts: { games: 0, practices: 0, completedGames: 0 }
+                    };
+                }
+            `
+        });
+    });
 }
 
 test.describe('app global search', () => {
