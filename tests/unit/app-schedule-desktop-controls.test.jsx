@@ -93,6 +93,10 @@ function buttonByText(container, text) {
     return button;
 }
 
+function queryButtonByText(container, text) {
+    return Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === text) || null;
+}
+
 function selectByLabel(container, label) {
     const select = Array.from(container.querySelectorAll('select')).find((candidate) => candidate.getAttribute('aria-label') === label);
     if (!select) throw new Error(`Select not found: ${label}`);
@@ -184,6 +188,57 @@ describe('React app desktop Schedule controls', () => {
         expect(selectByLabel(container, 'Time range').value).toBe('month');
         expect(selectByLabel(container, 'Team').value).toBe('team-1');
         expect(selectByLabel(container, 'Player').value).toBe('player-2');
+    });
+
+    it('paginates compact view rows and resets expanded state on view and filter changes', async () => {
+        const upcomingEvents = Array.from({ length: 25 }, (_, index) => event({
+            eventKey: `team-1::upcoming-${index}::player-1`,
+            id: `upcoming-${index}`,
+            childId: 'player-1',
+            childName: 'Pat',
+            opponent: `Upcoming ${index + 1}`,
+            location: `Field ${index + 1}`,
+            date: futureDate((index + 1) * 24)
+        }));
+        const pastEvents = Array.from({ length: 12 }, (_, index) => event({
+            eventKey: `team-1::past-${index}::player-1`,
+            id: `past-${index}`,
+            childId: 'player-1',
+            childName: 'Pat',
+            opponent: `Past ${index + 1}`,
+            location: `Old Field ${index + 1}`,
+            date: futureDate(-((index + 1) * 24))
+        }));
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+                { playerId: 'player-2', playerName: 'Sam', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [...upcomingEvents, ...pastEvents]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Upcoming 1');
+        await clickButton(container, 'Filters and views');
+        await clickButton(container, 'Compact');
+        await waitForText(container, 'Compact schedule');
+
+        expect(container.querySelectorAll('.compact-schedule-row')).toHaveLength(20);
+        expect(container.textContent).toContain('Showing 20 of 25 events');
+
+        await clickButton(container, 'Show 5 more');
+        expect(container.querySelectorAll('.compact-schedule-row')).toHaveLength(25);
+        expect(queryButtonByText(container, 'Show 5 more')).toBeNull();
+
+        await clickButton(container, 'List');
+        await clickButton(container, 'Compact');
+        expect(container.querySelectorAll('.compact-schedule-row')).toHaveLength(20);
+        expect(container.textContent).toContain('Showing 20 of 25 events');
+
+        await clickButton(container, 'Past Events');
+        expect(container.querySelectorAll('.compact-schedule-row')).toHaveLength(10);
+        expect(container.textContent).toContain('Showing 10 of 12 events');
+        expect(buttonByText(container, 'Show 2 more')).toBeTruthy();
     });
 
     it('shows staff-only calendar import and refreshes after save', async () => {
