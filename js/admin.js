@@ -82,6 +82,17 @@ function getVisibleTeams() {
     return showInactiveTeams ? allTeams : allTeams.filter(isTeamActive);
 }
 
+function canCurrentUserDeactivateTeam(team) {
+    if (!currentUser || !team) return false;
+    if (team.ownerId && currentUser.uid) {
+        return team.ownerId === currentUser.uid;
+    }
+    if (team.ownerEmail && currentUser.email) {
+        return team.ownerEmail.trim().toLowerCase() === currentUser.email.trim().toLowerCase();
+    }
+    return false;
+}
+
 checkAuth(async (user) => {
     if (!user) {
         window.location.href = 'login.html';
@@ -697,7 +708,9 @@ function renderTeams(teams) {
                 <button onclick="window.openRegistrationFormsAdmin(${inlineJsString(team.id)})" class="text-indigo-600 hover:text-indigo-900 mr-4">Registration forms</button>
                 <button onclick="window.openOfficialsAdmin(${inlineJsString(team.id)})" class="text-indigo-600 hover:text-indigo-900 mr-4">Officials</button>
                 <a href="edit-team.html?teamId=${encodeURIComponent(team.id)}" class="text-indigo-600 hover:text-indigo-900 mr-4">Edit</a>
-                <button onclick="window.deleteTeamAdmin(${inlineJsString(team.id)}, ${inlineJsString(team.name)})" class="text-red-600 hover:text-red-900">Deactivate</button>
+                ${canCurrentUserDeactivateTeam(team)
+        ? `<button onclick="window.deleteTeamAdmin(${inlineJsString(team.id)}, ${inlineJsString(team.name)})" class="text-red-600 hover:text-red-900">Deactivate</button>`
+        : '<span class="text-xs font-medium text-gray-400">Owner only</span>'}
             </td>
         </tr>
     `;
@@ -911,6 +924,12 @@ function renderUsers(users) {
 }
 
 window.deleteTeamAdmin = async function (teamId, teamName) {
+    const team = allTeams.find((entry) => entry.id === teamId) || null;
+    if (!canCurrentUserDeactivateTeam(team)) {
+        alert('Team deactivation is only available to the team owner in the dashboard workflow.');
+        return;
+    }
+
     if (confirm(`ADMIN ACTION: Deactivate team "${teamName}"? Team data will be retained.`)) {
         try {
             await deleteTeam(teamId);
