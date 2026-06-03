@@ -368,7 +368,9 @@ test('messages selected-member, dictation, and validation flows stay usable on m
     await mockMessagesModules(page, { speech: true });
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByText('Latest ride update.')).toBeVisible();
+    const thread = page.locator('.chat-messages-scroll');
+    await expect(page.getByRole('button', { name: /Audience: Full team/ })).toBeVisible();
+    await expect(thread).toContainText('Latest ride update.');
     await page.getByRole('button', { name: /Audience: Full team/ }).click();
     await page.getByRole('button', { name: /Selected members/ }).click();
     await page.locator('label').filter({ hasText: 'Coach Jamie' }).click();
