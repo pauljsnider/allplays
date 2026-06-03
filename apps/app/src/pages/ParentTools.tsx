@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -69,17 +69,48 @@ const tools: Array<{ id: ParentToolId; label: string; icon: LucideIcon }> = [
 ];
 
 const validToolIds = new Set(tools.map((tool) => tool.id));
+const accessDependentToolIds = tools.map((tool) => tool.id).filter((id): id is ParentToolId => id !== 'access');
+const initialToolRefreshVersions = Object.fromEntries(tools.map((tool) => [tool.id, 0])) as Record<ParentToolId, number>;
 
 export function ParentTools({ auth }: { auth: AuthState }) {
   const { toolId = 'access' } = useParams();
   const navigate = useNavigate();
   const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;
   const [visitedTools, setVisitedTools] = useState<ParentToolId[]>(() => activeTool ? [activeTool] : ['access']);
-  const [accessRefreshVersion, setAccessRefreshVersion] = useState(0);
+  const [toolRefreshVersions, setToolRefreshVersions] = useState<Record<ParentToolId, number>>(initialToolRefreshVersions);
+  const [staleTools, setStaleTools] = useState<Set<ParentToolId>>(() => new Set());
+  const activeToolRef = useRef<ParentToolId | null>(activeTool);
+  const visitedToolsRef = useRef<ParentToolId[]>(visitedTools);
+  const staleToolsRef = useRef(staleTools);
+
+  useEffect(() => {
+    activeToolRef.current = activeTool;
+  }, [activeTool]);
+
+  useEffect(() => {
+    visitedToolsRef.current = visitedTools;
+  }, [visitedTools]);
+
+  useEffect(() => {
+    staleToolsRef.current = staleTools;
+  }, [staleTools]);
 
   useEffect(() => {
     if (!activeTool) return;
     setVisitedTools((current) => (current.includes(activeTool) ? current : [...current, activeTool]));
+
+    if (!staleToolsRef.current.has(activeTool)) return;
+
+    setStaleTools((current) => {
+      if (!current.has(activeTool)) return current;
+      const next = new Set(current);
+      next.delete(activeTool);
+      return next;
+    });
+    setToolRefreshVersions((current) => ({
+      ...current,
+      [activeTool]: current[activeTool] + 1
+    }));
   }, [activeTool]);
 
   if (!activeTool) return <Navigate to="/parent-tools/access" replace />;
@@ -92,7 +123,14 @@ export function ParentTools({ auth }: { auth: AuthState }) {
   };
 
   const handleAccessChanged = () => {
-    setAccessRefreshVersion((current) => current + 1);
+    const currentActiveTool = activeToolRef.current;
+    const currentVisitedTools = visitedToolsRef.current;
+
+    setToolRefreshVersions((current) => currentActiveTool && currentActiveTool !== 'access' && accessDependentToolIds.includes(currentActiveTool) ? {
+      ...current,
+      [currentActiveTool]: current[currentActiveTool] + 1
+    } : current);
+    setStaleTools(() => new Set(accessDependentToolIds.filter((id) => id !== currentActiveTool && currentVisitedTools.includes(id))));
   };
 
   return (
@@ -132,12 +170,12 @@ export function ParentTools({ auth }: { auth: AuthState }) {
       </div>
 
       <KeepAliveTool active={activeTool === 'access'} mounted={visitedTools.includes('access')}><AccessTool auth={auth} onAccessChanged={handleAccessChanged} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'household'} mounted={visitedTools.includes('household')}><HouseholdInviteTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'fees'} mounted={visitedTools.includes('fees')}><FeesTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'calendar'} mounted={visitedTools.includes('calendar')}><CalendarTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'share'} mounted={visitedTools.includes('share')}><FamilyShareTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'registrations'} mounted={visitedTools.includes('registrations')}><RegistrationsTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'certificates'} mounted={visitedTools.includes('certificates')}><CertificatesTool auth={auth} refreshVersion={accessRefreshVersion} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'household'} mounted={visitedTools.includes('household')}><HouseholdInviteTool auth={auth} refreshVersion={toolRefreshVersions.household} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'fees'} mounted={visitedTools.includes('fees')}><FeesTool auth={auth} refreshVersion={toolRefreshVersions.fees} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'calendar'} mounted={visitedTools.includes('calendar')}><CalendarTool auth={auth} refreshVersion={toolRefreshVersions.calendar} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'share'} mounted={visitedTools.includes('share')}><FamilyShareTool auth={auth} refreshVersion={toolRefreshVersions.share} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'registrations'} mounted={visitedTools.includes('registrations')}><RegistrationsTool auth={auth} refreshVersion={toolRefreshVersions.registrations} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'certificates'} mounted={visitedTools.includes('certificates')}><CertificatesTool auth={auth} refreshVersion={toolRefreshVersions.certificates} /></KeepAliveTool>
     </div>
   );
 }
