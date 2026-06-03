@@ -70,6 +70,13 @@ service firebase.storage {
         contentType.matches('video/.*');
     }
 
+    function canReadAthleteProfileMedia(userId, profileId) {
+      let profilePath = /databases/(default)/documents/athleteProfiles/$(profileId);
+      return (isSignedIn() && request.auth.uid == userId) ||
+        (firestore.exists(profilePath) &&
+         firestore.get(profilePath).data.get('privacy', 'private') == 'public');
+    }
+
     match /team-media/{teamId}/{folderId}/{userId}/{fileName} {
       allow get: if canAccessTeamMedia(teamId);
       allow list: if false;
@@ -104,7 +111,7 @@ service firebase.storage {
     }
 
     match /athlete-profile-media/{userId}/{profileId}/{fileName} {
-      allow get: if isSignedIn();
+      allow get: if canReadAthleteProfileMedia(userId, profileId);
       allow list: if false;
       allow create: if isSignedIn() &&
         request.auth.uid == userId &&

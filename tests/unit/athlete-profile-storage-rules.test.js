@@ -22,6 +22,14 @@ function canCreateAthleteProfileMedia({ authUid, userId, size, contentType }) {
     return signedIn && pathOwnerAllowed && hasAllowedSize && hasAllowedContentType;
 }
 
+function canGetAthleteProfileMedia({ authUid, userId, profilePrivacy = 'private', profileExists = true }) {
+    const signedIn = authUid !== null;
+    const isOwner = authUid === userId;
+    const isPublicProfile = profileExists && profilePrivacy === 'public';
+
+    return (signedIn && isOwner) || isPublicProfile;
+}
+
 function canDeleteAthleteProfileMedia({ authUid, userId }) {
     const signedIn = authUid !== null;
     const deleteRuleStart = mediaRules.indexOf('allow delete:');
@@ -34,8 +42,9 @@ function canDeleteAthleteProfileMedia({ authUid, userId }) {
 }
 
 describe('athlete profile Storage rules', () => {
-    it('allows signed-in profile owners to upload image/video media within limits', () => {
-        expect(mediaRules).toContain('allow get: if isSignedIn();');
+    it('allows profile owners to read and upload image/video media within limits', () => {
+        expect(rules).toContain('function canReadAthleteProfileMedia(userId, profileId)');
+        expect(mediaRules).toContain('allow get: if canReadAthleteProfileMedia(userId, profileId);');
         expect(mediaRules).toContain('allow list: if false;');
         expect(mediaRules).toContain('allow create: if isSignedIn() &&');
         expect(mediaRules).toContain('request.auth.uid == userId');
@@ -45,6 +54,11 @@ describe('athlete profile Storage rules', () => {
         expect(mediaRules).toContain('allow delete: if isSignedIn() && request.auth.uid == userId;');
         expect(mediaRules).toContain('allow update: if false;');
 
+        expect(canGetAthleteProfileMedia({
+            authUid: 'parent-1',
+            userId: 'parent-1'
+        })).toBe(true);
+
         expect(canCreateAthleteProfileMedia({
             authUid: 'parent-1',
             userId: 'parent-1',
@@ -53,7 +67,16 @@ describe('athlete profile Storage rules', () => {
         })).toBe(true);
     });
 
-    it('denies profile media uploads and deletes for another user path', () => {
+    it('denies unrelated signed-in users from reading private profile media', () => {
+        expect(rules).toContain("firestore.exists(profilePath)");
+        expect(rules).toContain("firestore.get(profilePath).data.get('privacy', 'private') == 'public'");
+
+        expect(canGetAthleteProfileMedia({
+            authUid: 'parent-2',
+            userId: 'parent-1',
+            profilePrivacy: 'private'
+        })).toBe(false);
+
         expect(canCreateAthleteProfileMedia({
             authUid: 'parent-2',
             userId: 'parent-1',
@@ -64,6 +87,35 @@ describe('athlete profile Storage rules', () => {
         expect(canDeleteAthleteProfileMedia({
             authUid: 'parent-2',
             userId: 'parent-1'
+        })).toBe(false);
+    });
+
+    it('allows public athlete profile media reads for non-owners', () => {
+        expect(canGetAthleteProfileMedia({
+            authUid: 'viewer-1',
+            userId: 'parent-1',
+            profilePrivacy: 'public'
+        })).toBe(true);
+
+        expect(canGetAthleteProfileMedia({
+            authUid: 'viewer-1',
+            userId: 'parent-1',
+            profilePrivacy: 'public',
+            profileExists: false
+        })).toBe(false);
+    });
+
+    it('allows logged-out viewers to read media for public athlete profiles only', () => {
+        expect(canGetAthleteProfileMedia({
+            authUid: null,
+            userId: 'parent-1',
+            profilePrivacy: 'public'
+        })).toBe(true);
+
+        expect(canGetAthleteProfileMedia({
+            authUid: null,
+            userId: 'parent-1',
+            profilePrivacy: 'private'
         })).toBe(false);
     });
 
