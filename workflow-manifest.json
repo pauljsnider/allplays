@@ -107,7 +107,6 @@
     "id": "roster",
     "title": "Build and Maintain Team Roster",
     "roles": [
-      "Parent",
       "Coach",
       "Admin"
     ],
