@@ -102,10 +102,32 @@ function renderProfile() {
   );
 }
 
+function getPhotoInput(container: HTMLElement) {
+  const input = container.querySelector('input[type="file"][accept="image/*"]') as HTMLInputElement | null;
+  if (!input) {
+    throw new Error('Profile photo input not found');
+  }
+  return input;
+}
+
+async function selectPhoto(container: HTMLElement, fileName: string) {
+  const input = getPhotoInput(container);
+  const file = new File(['image-bytes'], fileName, { type: 'image/png' });
+  Object.defineProperty(input, 'files', {
+    configurable: true,
+    value: [file]
+  });
+  fireEvent.change(input);
+  await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledWith(file));
+  return file;
+}
+
 describe('Profile invites', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('scrollTo', vi.fn());
+    window.URL.createObjectURL = vi.fn((file: File) => `blob:${file.name}`);
+    window.URL.revokeObjectURL = vi.fn();
     profileServiceMocks.normalizeNotificationPreferences.mockClear();
     profileServiceMocks.loadProfileDocument.mockResolvedValue({
       fullName: 'Pat Parent',
@@ -183,6 +205,57 @@ describe('Profile invites', () => {
 
     fireEvent.click(within(activeCard).getByRole('button', { name: /Share saved invite link/ }));
     expect(await screen.findByText('Share cancelled.')).toBeTruthy();
+  });
+
+  it('revokes replaced and removed profile photo blob previews', async () => {
+    const { container } = renderProfile();
+
+    await screen.findByText('Choose photo');
+    await selectPhoto(container, 'first.png');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+    await selectPhoto(container, 'second.png');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:first.png');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second.png');
+  });
+
+  it('revokes temporary blob previews after save and on unmount without touching remote urls', async () => {
+    profileServiceMocks.loadProfileDocument
+      .mockResolvedValueOnce({
+        fullName: 'Pat Parent',
+        phone: '555-0100',
+        photoUrl: 'https://example.test/original.png',
+        signInMethod: 'emailLink',
+        hasPassword: false,
+        updatedAt: { seconds: 1717200000 }
+      })
+      .mockResolvedValueOnce({
+        fullName: 'Pat Parent',
+        phone: '555-0100',
+        photoUrl: 'https://example.test/persisted.png',
+        signInMethod: 'emailLink',
+        hasPassword: false,
+        updatedAt: { seconds: 1717203600 }
+      });
+
+    const { container, unmount } = renderProfile();
+
+    await screen.findByText('Choose photo');
+    await selectPhoto(container, 'saved.png');
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:saved.png');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/original.png');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/persisted.png');
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/persisted.png');
+
+    unmount();
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/persisted.png');
   });
 
   it('refreshes alert preferences before saving game-day alerts', async () => {

@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -104,6 +104,15 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
   const [loadedNotificationTeamId, setLoadedNotificationTeamId] = useState('');
   const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string }>({ email: '', phone: '' });
+  const ownedPhotoPreviewUrlRef = useRef<string | null>(null);
+
+  const revokeOwnedPhotoPreviewUrl = () => {
+    const activePreviewUrl = ownedPhotoPreviewUrlRef.current;
+    if (activePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(activePreviewUrl);
+    }
+    ownedPhotoPreviewUrlRef.current = null;
+  };
 
   const displayName = fullName || user?.displayName || profile.displayName || user?.email || 'ALL PLAYS User';
   const showPasswordSection = profile.signInMethod === 'emailLink' && !profile.hasPassword;
@@ -119,6 +128,12 @@ export function Profile({ auth }: { auth: AuthState }) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   };
+
+  useEffect(() => {
+    return () => {
+      revokeOwnedPhotoPreviewUrl();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +172,7 @@ export function Profile({ auth }: { auth: AuthState }) {
           return;
         }
 
+        revokeOwnedPhotoPreviewUrl();
         setProfile(loadedProfile);
         setFullName(loadedProfile.fullName || user.displayName || '');
         setPhone(loadedProfile.phone || '');
@@ -325,13 +341,17 @@ export function Profile({ auth }: { auth: AuthState }) {
       return;
     }
 
+    const nextPhotoPreviewUrl = URL.createObjectURL(file);
+    revokeOwnedPhotoPreviewUrl();
+    ownedPhotoPreviewUrlRef.current = nextPhotoPreviewUrl;
     setPhotoFile(file);
-    setPhotoPreview(URL.createObjectURL(file));
+    setPhotoPreview(nextPhotoPreviewUrl);
     setPhotoChanged(true);
     setProfileStatus(null);
   };
 
   const removePhoto = () => {
+    revokeOwnedPhotoPreviewUrl();
     setPhotoFile(null);
     setPhotoUrl('');
     setPhotoPreview('');
@@ -362,6 +382,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       });
 
       const nextProfile = await loadProfileDocument(user.uid);
+      revokeOwnedPhotoPreviewUrl();
       setProfile(nextProfile);
       setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');
       setPhotoPreview(nextProfile.photoUrl || nextPhotoUrl || '');
