@@ -280,6 +280,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export async function addPushNotificationOpenListener() {
+                    return async () => {};
+                }
+
                 export async function enablePushNotificationsForUser() {
                     window.__appProfileCalls.push += 1;
                 }
