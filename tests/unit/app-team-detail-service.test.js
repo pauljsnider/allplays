@@ -1,6 +1,16 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('@capacitor/core', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}), { virtual: true });
+
+vi.mock('@capacitor-firebase/authentication', () => ({
+    FirebaseAuthentication: {}
+}), { virtual: true });
+
 vi.mock('../../js/db.js', () => ({
     getAggregatedStatsForGames: vi.fn(),
     getAdSpaceSponsors: vi.fn(),
@@ -11,6 +21,7 @@ vi.mock('../../js/db.js', () => ({
     getPlayerTrackingStatuses: vi.fn(),
     getPublicTrackingItems: vi.fn(),
     getTeam: vi.fn(),
+    getAllUsers: vi.fn(),
     updateTeam: vi.fn(),
     getEvents: vi.fn(),
     updateEvent: vi.fn(),
@@ -35,14 +46,14 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/authService', () => ({
+vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
 
 import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 describe('React app team detail model', () => {
@@ -387,6 +398,26 @@ describe('React app team detail model', () => {
             { userId: 'scorekeeper-1', name: 'Pat Star', email: '', playerNames: ['Pat Star'], isGranted: false }
         ]);
 
+        const legacyLinkedModel = buildTeamDetailModel({
+            teamId: 'team-1',
+            team,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+            players: [
+                { id: 'player-2', name: 'Sam Wing' }
+            ],
+            confirmedTeamMembers: [
+                {
+                    id: 'video-1',
+                    fullName: 'Video Parent',
+                    email: 'video@example.com',
+                    parentOf: [{ teamId: 'team-1', playerId: 'player-2' }]
+                }
+            ]
+        });
+        expect(legacyLinkedModel.staffPermissions.videographerGrantTargets).toEqual([
+            { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Sam Wing'], isGranted: true }
+        ]);
+
         const parentModel = buildTeamDetailModel({
             teamId: 'team-1',
             team,
@@ -398,11 +429,12 @@ describe('React app team detail model', () => {
 
     it('loads pending admin invites for team admins but not parent members', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
-        getPlayers.mockResolvedValue([]);
+        getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star' }]);
         getGames.mockResolvedValue([]);
         getConfigs.mockResolvedValue([]);
         getAggregatedStatsForGames.mockResolvedValue({});
         getAdSpaceSponsors.mockResolvedValue([]);
+        getAllUsers.mockResolvedValue([{ id: 'video-1', fullName: 'Video Parent', email: 'video@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }]);
         getLocalAttractionSponsors.mockResolvedValue([]);
         const future = Date.now() + 60_000;
         const past = Date.now() - 60_000;
@@ -420,14 +452,20 @@ describe('React app team detail model', () => {
 
         const adminModel = await loadParentTeamDetail('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
         expect(adminModel.staffPermissions.pendingInvites).toEqual(['pending@example.com']);
+        expect(adminModel.staffPermissions.videographerGrantTargets).toEqual([
+            { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: false }
+        ]);
+        expect(getAllUsers).toHaveBeenCalledTimes(1);
         expect(getDocs).toHaveBeenCalledTimes(1);
         expect(collection).toHaveBeenCalledWith({}, 'accessCodes');
         expect(where).toHaveBeenCalledWith('teamId', '==', 'team-1');
         expect(query).toHaveBeenCalledWith({ db: {}, name: 'accessCodes' }, { field: 'teamId', op: '==', value: 'team-1' });
 
         getDocs.mockClear();
+        getAllUsers.mockClear();
         const parentModel = await loadParentTeamDetail('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] });
         expect(parentModel.staffPermissions).toBeNull();
         expect(getDocs).not.toHaveBeenCalled();
+        expect(getAllUsers).not.toHaveBeenCalled();
     });
 });
