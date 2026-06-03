@@ -13,6 +13,7 @@
     "@capacitor-firebase/authentication": "^8.2.0",
     "@capacitor-firebase/messaging": "^8.2.0",
     "@capacitor/browser": "^8.0.3",
+    "@capacitor/camera": "^8.2.0",
     "@capacitor/core": "^8.3.4",
     "@capacitor/share": "^8.0.1",
     "@capgo/capacitor-speech-recognition": "^8.1.3",

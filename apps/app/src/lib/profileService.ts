@@ -1,4 +1,11 @@
 import {
+  Camera,
+  CameraResultType,
+  CameraSource,
+  type CameraPhoto
+} from '@capacitor/camera';
+import { Capacitor } from '@capacitor/core';
+import {
   createAccessCode,
   createAccountMergeRequest,
   generateAccessCode,
@@ -54,6 +61,18 @@ export type AccessCodeRecord = {
   usedAt?: unknown;
 };
 
+export type ProfilePhotoSource = 'camera' | 'photos';
+
+export class ProfilePhotoAcquireError extends Error {
+  code: 'permission-denied' | 'cancelled' | 'unavailable' | 'failed';
+
+  constructor(code: 'permission-denied' | 'cancelled' | 'unavailable' | 'failed', message: string) {
+    super(message);
+    this.name = 'ProfilePhotoAcquireError';
+    this.code = code;
+  }
+}
+
 export type NotificationDeviceTokenInput = {
   token: string;
   platform?: string;
@@ -100,6 +119,83 @@ function getFirestoreBaseUrl() {
 
 function isNativeRuntime() {
   return window.location.protocol === 'capacitor:';
+}
+
+function isNativeCameraAvailable() {
+  return Capacitor.isNativePlatform() && Boolean((Capacitor as any).isPluginAvailable?.('Camera'));
+}
+
+function inferPhotoMimeType(photo: CameraPhoto, fallbackBlob?: Blob) {
+  const format = String(photo.format || '').trim().toLowerCase();
+  if (format) {
+    return format === 'jpg' ? 'image/jpeg' : `image/${format}`;
+  }
+  if (fallbackBlob?.type) {
+    return fallbackBlob.type;
+  }
+  return 'image/jpeg';
+}
+
+function buildPhotoFileName(source: ProfilePhotoSource, photo: CameraPhoto, mimeType: string) {
+  const extension = mimeType.split('/')[1] || 'jpg';
+  const baseName = source === 'camera' ? 'profile-camera' : 'profile-library';
+  return `${baseName}-${Date.now()}.${extension.replace(/[^a-z0-9]+/gi, '') || 'jpg'}`;
+}
+
+function isPermissionDeniedError(error: unknown) {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  return message.includes('permission') || message.includes('denied') || message.includes('not authorized');
+}
+
+function isCancellationError(error: unknown) {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  return message.includes('cancel') || message.includes('user denied') || message.includes('no image picked');
+}
+
+export async function acquireProfilePhoto(source: ProfilePhotoSource): Promise<File> {
+  if (!isNativeRuntime()) {
+    throw new ProfilePhotoAcquireError('unavailable', 'Native profile photo capture is only available in the mobile app.');
+  }
+
+  if (!isNativeCameraAvailable()) {
+    throw new ProfilePhotoAcquireError('unavailable', 'Camera access is not available on this device yet.');
+  }
+
+  try {
+    const photo = await Camera.getPhoto({
+      quality: 85,
+      resultType: CameraResultType.Uri,
+      source: source === 'camera' ? CameraSource.Camera : CameraSource.Photos,
+      correctOrientation: true
+    });
+
+    if (!photo.webPath) {
+      throw new ProfilePhotoAcquireError('failed', 'Photo data was unavailable after selection.');
+    }
+
+    const response = await fetch(photo.webPath);
+    if (!response.ok) {
+      throw new ProfilePhotoAcquireError('failed', `Photo data could not be loaded (${response.status}).`);
+    }
+
+    const blob = await response.blob();
+    const mimeType = inferPhotoMimeType(photo, blob);
+    return new File([blob], buildPhotoFileName(source, photo, mimeType), {
+      type: mimeType,
+      lastModified: Date.now()
+    });
+  } catch (error) {
+    if (error instanceof ProfilePhotoAcquireError) {
+      throw error;
+    }
+    if (isCancellationError(error)) {
+      throw new ProfilePhotoAcquireError('cancelled', 'Photo selection was cancelled.');
+    }
+    if (isPermissionDeniedError(error)) {
+      throw new ProfilePhotoAcquireError('permission-denied', 'Photo access permission was denied.');
+    }
+    throw new ProfilePhotoAcquireError('failed', String((error as any)?.message || 'Photo selection failed.'));
+  }
 }
 
 async function getNativeHeaders() {
