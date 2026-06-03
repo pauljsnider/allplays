@@ -7,36 +7,44 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+async function gotoAppRoute(page, baseURL, hashPath) {
+    await page.goto(appUrl(baseURL, hashPath), { waitUntil: 'domcontentloaded' });
+}
+
 async function openSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
     await expect(searchButton).toBeVisible({ timeout: 15000 });
-    await searchButton.click();
+    await expect(async () => {
+        await searchButton.click();
 
-    try {
-        await expect(searchDialog).toBeVisible({ timeout: 1000 });
-    } catch {
-        await page.keyboard.press('Control+K');
-        await expect(searchDialog).toBeVisible({ timeout: 15000 });
-    }
+        try {
+            await expect(searchDialog).toBeVisible({ timeout: 1000 });
+        } catch {
+            await page.keyboard.press('Control+K');
+            await expect(searchDialog).toBeVisible({ timeout: 1000 });
+        }
+    }).toPass({ timeout: 15000 });
 }
 
 async function openDesktopSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
-    try {
-        await expect(searchButton).toBeVisible({ timeout: 15000 });
-        await searchButton.click();
-        await expect(searchDialog).toBeVisible({ timeout: 1000 });
-        return;
-    } catch {
-        // Fall back to the desktop keyboard shortcut when the header control is not ready yet or does not open the dialog.
-    }
+    await expect(searchButton).toBeVisible({ timeout: 15000 });
+    await expect(async () => {
+        try {
+            await searchButton.click();
+            await expect(searchDialog).toBeVisible({ timeout: 1000 });
+            return;
+        } catch {
+            // Fall back to the desktop keyboard shortcut when the header control is not ready yet or does not open the dialog.
+        }
 
-    await page.keyboard.press('Control+K');
-    await expect(searchDialog).toBeVisible({ timeout: 15000 });
+        await page.keyboard.press('Control+K');
+        await expect(searchDialog).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 15000 });
 }
 
 async function mockSearchModules(page) {
@@ -192,7 +200,7 @@ test.describe('app global search', () => {
 
     test('mobile search finds actions, teams, and players without overflowing', async ({ page, baseURL }) => {
         await mockSearchModules(page);
-        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+        await gotoAppRoute(page, baseURL, '/home');
 
         await openSearch(page);
         await expect.poll(async () => {
@@ -217,7 +225,7 @@ test.describe('app global search', () => {
 
     test('mobile search handles short queries, no results, errors, and dismiss actions', async ({ page, baseURL }) => {
         await mockSearchModules(page);
-        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+        await gotoAppRoute(page, baseURL, '/home');
 
         await openSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('p');
@@ -248,7 +256,7 @@ test.describe('desktop app global search', () => {
 
     test('desktop search supports native navigation and website actions', async ({ page, baseURL }) => {
         await mockSearchModules(page);
-        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+        await gotoAppRoute(page, baseURL, '/home');
 
         await openDesktopSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('rock');
@@ -263,7 +271,7 @@ test.describe('desktop app global search', () => {
 
     test('desktop search filters help results by selected role', async ({ page, baseURL }) => {
         await mockSearchModules(page);
-        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+        await gotoAppRoute(page, baseURL, '/home');
 
         await openDesktopSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('live tracker');
@@ -281,7 +289,7 @@ test.describe('desktop app global search', () => {
 
     test('desktop search supports typed keyboard navigation from the dialog', async ({ page, baseURL }) => {
         await mockSearchModules(page);
-        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+        await gotoAppRoute(page, baseURL, '/home');
 
         await openDesktopSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('my');
