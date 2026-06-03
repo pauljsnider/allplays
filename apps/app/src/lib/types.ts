@@ -107,6 +107,8 @@ export interface Game {
   };
   assignments: string[];
   status: 'upcoming' | 'past' | 'live';
+  date?: Date | string;
+  liveStatus?: string;
   liveEvents?: LiveGameEvent[];
 }
 

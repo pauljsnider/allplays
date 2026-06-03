@@ -82,6 +82,8 @@ export const mockGames: Game[] = [
     rideshare: { seatsLeft: 2, requests: 1 },
     assignments: ['Snacks: Open', 'Scorebook: Jamie'],
     status: 'live',
+    date: '2026-06-03T10:30:00Z',
+    liveStatus: 'live',
     liveEvents: [
       { id: 'game-1-event-1', type: 'score', period: 'Q1', gameClockMs: 320000, description: '#9 Kevin scored 2 points' },
       { id: 'game-1-event-2', type: 'rebound', period: 'Q1', gameClockMs: 301000, description: '#12 Paul defensive rebound' }
@@ -115,7 +117,8 @@ export const mockGames: Game[] = [
     availability: 'maybe',
     rideshare: { seatsLeft: 4, requests: 0 },
     assignments: ['Clock: Assigned', 'Video: Open'],
-    status: 'upcoming'
+    status: 'upcoming',
+    date: '2026-06-10T19:15:00Z'
   }
 ];
 

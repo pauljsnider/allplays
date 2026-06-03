@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { BarChart3, Brain, Car, ClipboardCheck, FileText, ListTree, MessageCircleReply, Radio, Share2, Shield, Trophy, Users } from 'lucide-react';
 import { LiveGameAnnouncerToggle } from '../components/LiveGameAnnouncerToggle';
 import { mockGames, mockPlayers, mockTeams } from '../data/mockData';
+import { canUseLiveGameChat, getLiveGameChatNotice, sendLiveGameChatMessage, subscribeToLiveGameChat, type LiveGameChatMessage } from '../lib/liveGameChatService';
 import { applyWalk, createBaseballLiveState, type BaseballBases, type BaseballLiveState } from '../lib/sportScoring/baseballScorekeepingService';
 import { createPlayAnnouncer } from '../lib/liveGameAnnouncerService';
 import type { AuthState } from '../lib/types';
@@ -17,6 +18,12 @@ export function GameDetail({ auth }: { auth: AuthState }) {
   const liveEvents = game?.liveEvents || [];
   const announcer = useMemo(() => createPlayAnnouncer(), []);
   const [announcementsEnabled, setAnnouncementsEnabled] = useState(() => announcer.isEnabled());
+  const [chatMessages, setChatMessages] = useState<LiveGameChatMessage[]>([]);
+  const [chatDraft, setChatDraft] = useState('');
+  const [anonymousDisplayName, setAnonymousDisplayName] = useState('');
+  const [chatError, setChatError] = useState<string | null>(null);
+  const [chatSending, setChatSending] = useState(false);
+  const [chatReady, setChatReady] = useState(false);
 
   useEffect(() => {
     if (!game) return;
@@ -33,11 +40,53 @@ export function GameDetail({ auth }: { auth: AuthState }) {
     };
   }, [announcer, announcementsEnabled, game, liveEvents]);
 
+  useEffect(() => {
+    if (!game) return;
+
+    setChatReady(false);
+    setChatError(null);
+
+    return subscribeToLiveGameChat(game.teamId, game.id, (messages) => {
+      setChatMessages(messages);
+      setChatReady(true);
+    }, () => {
+      setChatError('Live chat is temporarily unavailable.');
+      setChatReady(true);
+    });
+  }, [game]);
+
   if (!game) {
     return <Navigate to="/schedule" replace />;
   }
 
-  const players = mockPlayers.filter((player) => game.playerIds.includes(player.id));
+  const currentGame = game;
+  const players = mockPlayers.filter((player) => currentGame.playerIds.includes(player.id));
+  const liveChatEnabled = canUseLiveGameChat(currentGame, { isReplay: currentGame.status === 'past' });
+  const liveChatNotice = getLiveGameChatNotice(currentGame, { isReplay: currentGame.status === 'past' });
+
+  async function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!liveChatEnabled) {
+      setChatError(liveChatNotice || 'Live chat is unavailable right now.');
+      return;
+    }
+
+    setChatError(null);
+    setChatSending(true);
+    try {
+      await sendLiveGameChatMessage(currentGame.teamId, currentGame.id, {
+        text: chatDraft,
+        user: auth.user,
+        anonymousDisplayName
+      });
+      setChatDraft('');
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : 'Unable to send message.');
+    } finally {
+      setChatSending(false);
+    }
+  }
 
   function toggleBase(base: keyof BaseballBases) {
     setBaseballState((current) => ({
@@ -91,6 +140,74 @@ export function GameDetail({ auth }: { auth: AuthState }) {
           </div>
         </section>
       ) : null}
+
+      <section className="app-card p-4" aria-labelledby="live-game-chat-heading">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="app-label">Game day chat</div>
+            <h2 id="live-game-chat-heading" className="mt-1 text-lg font-black text-gray-950">Live chat</h2>
+          </div>
+          <div className="rounded-full bg-primary-50 px-3 py-1 text-[11px] font-black uppercase tracking-wide text-primary-700">
+            {liveChatEnabled ? 'Open' : 'Locked'}
+          </div>
+        </div>
+
+        {liveChatNotice ? (
+          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-900">
+            {liveChatNotice}
+          </div>
+        ) : null}
+
+        <div className="mt-3 space-y-2" data-testid="live-game-chat-thread">
+          {chatMessages.length > 0 ? chatMessages.map((message) => (
+            <div key={message.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <div className="text-xs font-black uppercase tracking-wide text-gray-500">{message.senderName || 'Fan'}</div>
+              <div className="mt-1 text-sm font-semibold text-gray-700">{message.text || ''}</div>
+            </div>
+          )) : (
+            <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 px-3 py-4 text-sm font-semibold text-gray-500">
+              {chatReady ? 'No live game chat messages yet.' : 'Connecting to live game chat...'}
+            </div>
+          )}
+        </div>
+
+        <form className="mt-3 space-y-3" onSubmit={handleChatSubmit}>
+          {!auth.user ? (
+            <label className="block">
+              <span className="mb-1 block text-xs font-black uppercase tracking-wide text-gray-500">Display name</span>
+              <input
+                type="text"
+                aria-label="Display name"
+                className="auth-input"
+                value={anonymousDisplayName}
+                onChange={(event) => setAnonymousDisplayName(event.target.value)}
+                placeholder="Your first name"
+                disabled={chatSending}
+              />
+            </label>
+          ) : null}
+
+          <label className="block">
+            <span className="mb-1 block text-xs font-black uppercase tracking-wide text-gray-500">Message</span>
+            <textarea
+              aria-label="Message"
+              className="auth-input min-h-24"
+              value={chatDraft}
+              onChange={(event) => setChatDraft(event.target.value)}
+              placeholder={liveChatEnabled ? 'Send encouragement, updates, or reactions.' : 'Live chat is locked right now.'}
+              disabled={chatSending || !liveChatEnabled}
+            />
+          </label>
+
+          {chatError ? <div className="text-sm font-semibold text-rose-700">{chatError}</div> : null}
+
+          <div className="flex justify-end">
+            <button type="submit" className="primary-button" disabled={chatSending || !liveChatEnabled}>
+              {chatSending ? 'Sending...' : 'Send message'}
+            </button>
+          </div>
+        </form>
+      </section>
 
       {auth.isCoach || auth.isAdmin ? (
         <section className="app-card p-4">
