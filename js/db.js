@@ -979,10 +979,61 @@ export async function getUserProfile(userId) {
     return snap.exists() ? snap.data() : null;
 }
 
+function compactPublicProfileString(value) {
+    return String(value || '').trim();
+}
+
+function uniquePublicProfileStrings(values = []) {
+    return [...new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function derivePublicProfileTeamIds(userData = {}) {
+    const parentOfTeamIds = Array.isArray(userData.parentOf)
+        ? userData.parentOf.map((link) => link?.teamId)
+        : [];
+    const parentTeamIds = Array.isArray(userData.parentTeamIds)
+        ? userData.parentTeamIds
+        : [];
+    return uniquePublicProfileStrings([...parentOfTeamIds, ...parentTeamIds]);
+}
+
+async function hashPublicProfileEmail(email) {
+    const normalized = compactPublicProfileString(email).toLowerCase();
+    if (!normalized || !globalThis.crypto?.subtle) {
+        return null;
+    }
+    const bytes = new TextEncoder().encode(normalized);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+        .map((value) => value.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+async function buildPublicUserProfilePayload(userData = {}) {
+    const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
+    const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
+    const payload = {
+        displayName: displayName || null,
+        fullName: fullName || null,
+        photoUrl: compactPublicProfileString(userData.photoUrl) || null,
+        discoveryTeamIds: derivePublicProfileTeamIds(userData),
+        emailHash: await hashPublicProfileEmail(userData.email),
+        updatedAt: Timestamp.now()
+    };
+    return payload;
+}
+
+async function syncPublicUserProfile(userId, userData = null) {
+    const nextUserData = userData || await getUserProfile(userId) || {};
+    const payload = await buildPublicUserProfilePayload(nextUserData);
+    await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
+}
+
 export async function updateUserProfile(userId, profile) {
     const docRef = doc(db, "users", userId);
     profile.updatedAt = Timestamp.now();
     await setDoc(docRef, profile, { merge: true });
+    await syncPublicUserProfile(userId);
 }
 
 export async function createAccountMergeRequest(userId, { primaryEmail, secondaryEmail }) {
@@ -1924,6 +1975,7 @@ export async function removeParentFromPlayer(teamId, playerId, parentUserId) {
             parentPlayerKeys: updatedParentPlayerKeys,
             updatedAt: Timestamp.now()
         });
+        await syncPublicUserProfile(parentUserId);
     }
 }
 
@@ -3551,6 +3603,7 @@ export async function redeemParentInvite(userId, code) {
                 parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
                 roles: arrayUnion('parent')
             }, { merge: true });
+            await syncPublicUserProfile(userId);
             console.log('[redeemParentInvite] user profile updated');
         } catch (err) {
             console.error('redeemParentInvite: error updating user profile', err);
@@ -3693,6 +3746,7 @@ async function rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rol
                     parentPlayerKeys: filteredParentPlayerKeys,
                     roles: filteredRoles
                 }, { merge: true });
+                await syncPublicUserProfile(userId);
             }
         } catch (rollbackErr) {
             console.error('redeemHouseholdInvite: failed to rollback user profile updates', rollbackErr);
@@ -3806,6 +3860,7 @@ export async function redeemHouseholdInvite(userId, code) {
             parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
             roles: arrayUnion('parent')
         }, { merge: true });
+        await syncPublicUserProfile(userId);
         rollbackState.userWasUpdated = true;
 
         const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
@@ -3904,6 +3959,7 @@ export async function rollbackParentInviteRedemption(userId, code) {
                 parentPlayerKeys: filteredParentPlayerKeys,
                 roles: filteredRoles
             }, { merge: true });
+            await syncPublicUserProfile(userId);
         }
     } catch (error) {
         console.warn('[rollbackParentInviteRedemption] failed to rollback user profile links (non-fatal)', error);

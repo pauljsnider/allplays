@@ -36,6 +36,7 @@ import {
 const primaryDataTimeoutMs = 5000;
 const socialPostLimit = 30;
 const friendSuggestionLimit = 8;
+const publicUserProfileCollection = 'publicUserProfiles';
 
 type FirestoreDoc = Record<string, any> & { id: string };
 
@@ -80,6 +81,18 @@ function compactString(value: unknown) {
 
 function normalizeEmail(value: unknown) {
   return compactString(value).toLowerCase();
+}
+
+async function hashSocialEmail(value: unknown) {
+  const normalized = normalizeEmail(value);
+  if (!normalized || !globalThis.crypto?.subtle) {
+    return null;
+  }
+  const bytes = new TextEncoder().encode(normalized);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((entry) => entry.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function uniqueStrings(values: unknown[] = []) {
@@ -198,7 +211,7 @@ export async function loadFriendships(user: AuthUser): Promise<SocialFriend[]> {
   const friendDocs = await Promise.all(friendships.map(async (friendship) => {
     const otherUserId = (friendship.memberIds || []).find((id: string) => id !== user.uid);
     if (!otherUserId) return null;
-    const userSnap = await getDoc(doc(db, 'users', otherUserId)).catch(() => null);
+    const userSnap = await getDoc(doc(db, publicUserProfileCollection, otherUserId)).catch(() => null);
     const userData = userSnap?.exists?.() ? { id: userSnap.id, ...userSnap.data() } : { id: otherUserId };
     return normalizeSocialFriend({
       ...userData,
@@ -215,8 +228,8 @@ export async function loadFriendSuggestions(user: AuthUser, home: ParentHomeMode
   const suggestionsById = new Map<string, SocialFriend>();
   for (const teamId of teamIds.slice(0, 5)) {
     const teamUserQuery = query(
-      collection(db, 'users'),
-      where('parentTeamIds', 'array-contains', teamId),
+      collection(db, publicUserProfileCollection),
+      where('discoveryTeamIds', 'array-contains', teamId),
       limit(12)
     );
     const snapshot = await withTimeout(getDocs(teamUserQuery), `Friend suggestions ${teamId}`).catch(() => null);
@@ -242,21 +255,28 @@ export async function searchSocialUsers(user: AuthUser | null, queryText: string
   const teamNames = getHomeTeamNames(home);
 
   if (lower.includes('@')) {
-    const emailSnapshot = await withTimeout(getDocs(query(
-      collection(db, 'users'),
-      where('email', '==', lower),
-      limit(5)
-    )), 'Friend email search').catch(() => null);
-    if (emailSnapshot) {
-      snapshotToDocs(emailSnapshot).forEach((candidate) => {
-        const sharedTeamIds = uniqueStrings((candidate.parentTeamIds || []).filter((teamId: string) => teamNames[teamId]));
-        const friend = normalizeSocialFriend({
-          ...candidate,
-          sharedTeamIds,
-          sharedTeamNames: sharedTeamIds.map((teamId) => teamNames[teamId] || teamId)
-        }, user.uid);
-        if (friend) resultsById.set(friend.userId, friend);
-      });
+    const emailHash = await hashSocialEmail(lower);
+    if (emailHash) {
+      const teamIds = getHomeTeamIds(home).slice(0, 10);
+      for (const teamId of teamIds) {
+        const emailSnapshot = await withTimeout(getDocs(query(
+          collection(db, publicUserProfileCollection),
+          where('emailHash', '==', emailHash),
+          where('discoveryTeamIds', 'array-contains', teamId),
+          limit(5)
+        )), `Friend email search ${teamId}`).catch(() => null);
+        if (emailSnapshot) {
+          snapshotToDocs(emailSnapshot).forEach((candidate) => {
+            const sharedTeamIds = uniqueStrings((candidate.discoveryTeamIds || []).filter((candidateTeamId: string) => teamNames[candidateTeamId]));
+            const friend = normalizeSocialFriend({
+              ...candidate,
+              sharedTeamIds,
+              sharedTeamNames: sharedTeamIds.map((sharedTeamId) => teamNames[sharedTeamId] || sharedTeamId)
+            }, user.uid);
+            if (friend) resultsById.set(friend.userId, friend);
+          });
+        }
+      }
     }
   }
 

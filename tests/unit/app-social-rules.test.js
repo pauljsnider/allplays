@@ -22,4 +22,20 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
         expect(source).toContain("request.resource.data.get('status', '') in ['pending', 'accepted', 'declined', 'removed', 'blocked']");
     });
+
+    it('locks down top-level users docs and routes discovery through projected public profiles', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('match /publicUserProfiles/{userId}');
+        expect(source).toContain('function canReadPublicUserProfile(userId, data)');
+        expect(source).toContain("data.get('discoveryTeamIds', []).hasAny(currentUserPublicProfileTeamIds())");
+        expect(source).toContain("data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds', 'emailHash', 'updatedAt'])");
+        expect(source).toContain("!data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys'])");
+        expect(source).toContain("function userMembershipFields()");
+        expect(source).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];");
+        expect(source).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");
+        expect(source).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
+        expect(source).toContain('allow read: if isGlobalAdmin() || isOwner(userId);');
+        expect(source).not.toContain('allow read: if true;  // Public profiles');
+    });
 });

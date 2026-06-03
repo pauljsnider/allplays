@@ -775,6 +775,45 @@ service cloud.firestore {
              request.auth.uid in data.get('memberIds', []);
     }
 
+    function currentUserPublicProfileTeamIds() {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return isSignedIn() && exists(userPath)
+        ? get(userPath).data.get('parentTeamIds', [])
+        : [];
+    }
+
+    function canReadPublicUserProfile(userId, data) {
+      return isSignedIn() && (
+        userId == request.auth.uid ||
+        isGlobalAdmin() ||
+        data.get('discoveryTeamIds', []).hasAny(currentUserPublicProfileTeamIds())
+      );
+    }
+
+    function isPublicUserProfilePayloadValid(userId, data) {
+      return data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds', 'emailHash', 'updatedAt']) &&
+             (!data.keys().hasAny(['displayName']) || data.displayName == null || data.displayName is string) &&
+             (!data.keys().hasAny(['fullName']) || data.fullName == null || data.fullName is string) &&
+             (!data.keys().hasAny(['photoUrl']) || data.photoUrl == null || data.photoUrl is string) &&
+             (!data.keys().hasAny(['emailHash']) || data.emailHash == null || data.emailHash is string) &&
+             (!data.keys().hasAny(['discoveryTeamIds']) || data.discoveryTeamIds is list) &&
+             !data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys']);
+    }
+
+    function userMembershipFields() {
+      return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];
+    }
+
+    function isOwnerUserCreatePayloadValid(data) {
+      return data.get('isAdmin', false) != true &&
+             !data.keys().hasAny(userMembershipFields());
+    }
+
+    function isOwnerUserUpdatePayloadValid() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) &&
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(userMembershipFields());
+    }
+
     function isFriendshipCreatePayloadValid(data) {
       return isSignedIn() &&
              data.get('requesterId', '') == request.auth.uid &&
@@ -1051,16 +1090,23 @@ service cloud.firestore {
       allow read, update, delete: if isGlobalAdmin();
     }
 
+    match /publicUserProfiles/{userId} {
+      allow read: if canReadPublicUserProfile(userId, resource.data);
+      allow create, update: if (isGlobalAdmin() || isOwner(userId)) &&
+                              isPublicUserProfilePayloadValid(userId, request.resource.data);
+      allow delete: if isGlobalAdmin() || isOwner(userId);
+    }
+
     // Users collection - users should only write their own profile.
     // Global admin status is privileged state: owners may not self-grant,
     // modify, or remove isAdmin. Firestore rules, not dashboard client state,
     // remain the authority for broad private-team reads.
     match /users/{userId} {
-      allow read: if true;  // Public profiles
+      allow read: if isGlobalAdmin() || isOwner(userId);
       allow create: if isGlobalAdmin() ||
-                    (isOwner(userId) && request.resource.data.get('isAdmin', false) != true);
+                    (isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data));
       allow update: if isGlobalAdmin() ||
-                    (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']));
+                    (isOwner(userId) && isOwnerUserUpdatePayloadValid());
       allow delete: if isGlobalAdmin() ||
                     (isOwner(userId) && resource.data.get('isAdmin', false) != true);
 

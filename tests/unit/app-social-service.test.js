@@ -47,6 +47,14 @@ function snapshot(docs) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(globalThis, 'crypto', {
+        value: {
+            subtle: {
+                digest: vi.fn(async () => new Uint8Array([0xaa, 0xbb]).buffer)
+            }
+        },
+        configurable: true
+    });
     firebaseMocks.addDoc.mockResolvedValue({ id: 'post-new' });
     firebaseMocks.setDoc.mockResolvedValue();
     firebaseMocks.updateDoc.mockResolvedValue();
@@ -203,8 +211,8 @@ describe('React app social service', () => {
                     sharedTeamNames: ['Bears']
                 }]);
             }
-            if (whereClause?.field === 'parentTeamIds') {
-                return snapshot([{ id: 'friend-2', displayName: 'Morgan Parent', email: 'morgan@example.com', parentTeamIds: ['team-1'] }]);
+            if (whereClause?.field === 'discoveryTeamIds') {
+                return snapshot([{ id: 'friend-2', displayName: 'Morgan Parent', discoveryTeamIds: ['team-1'] }]);
             }
             return snapshot([]);
         });
@@ -220,6 +228,36 @@ describe('React app social service', () => {
         expect(model.incomingRequests).toEqual([expect.objectContaining({ userId: 'friend-1', name: 'Jamie Friend' })]);
         expect(model.suggestions).toEqual([expect.objectContaining({ userId: 'friend-2', name: 'Morgan Parent' })]);
         expect(model.metrics.feedItems).toBeGreaterThanOrEqual(2);
+    });
+
+    it('searches public profiles by hashed email and shared discovery teams', async () => {
+        const { searchSocialUsers } = await import('../../apps/app/src/lib/socialService.ts');
+        const home = {
+            players: [],
+            teams: [{ teamId: 'team-1', teamName: 'Bears' }],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: { players: 0, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
+        };
+
+        firebaseMocks.getDocs.mockImplementation(async (queryRef) => {
+            const whereClause = queryRef.clauses.find((clause) => clause.field);
+            if (whereClause?.field === 'emailHash') {
+                return snapshot([{ id: 'friend-3', displayName: 'Taylor Parent', discoveryTeamIds: ['team-1'] }]);
+            }
+            if (whereClause?.field === 'discoveryTeamIds') {
+                return snapshot([{ id: 'friend-4', displayName: 'Casey Parent', discoveryTeamIds: ['team-1'] }]);
+            }
+            return snapshot([]);
+        });
+
+        const results = await searchSocialUsers(user, 'taylor@example.com', home);
+
+        expect(firebaseMocks.collection).toHaveBeenCalledWith(firebaseMocks.db, 'publicUserProfiles');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('emailHash', '==', 'aabb');
+        expect(firebaseMocks.where).toHaveBeenCalledWith('discoveryTeamIds', 'array-contains', 'team-1');
+        expect(results).toEqual([expect.objectContaining({ userId: 'friend-3', name: 'Taylor Parent' })]);
     });
 
     it('reuses chat media upload hardening for social post media', async () => {
