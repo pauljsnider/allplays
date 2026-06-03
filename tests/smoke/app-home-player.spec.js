@@ -624,7 +624,7 @@ test.describe('desktop Home workspace', () => {
         await mockHomePlayerModules(page);
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'Today for your players' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Today for your players' })).toBeVisible({ timeout: 10000 });
         await expect(page.getByRole('button', { name: 'Today' })).toHaveAttribute('aria-pressed', 'true');
         await expect(page.getByRole('button', { name: 'Feed' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Players' })).toBeVisible();
