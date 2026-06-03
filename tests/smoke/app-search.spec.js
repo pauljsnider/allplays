@@ -32,18 +32,19 @@ async function openDesktopSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
-    await expect(searchButton).toBeVisible({ timeout: 15000 });
     await expect(async () => {
-        try {
+        await page.keyboard.press('Control+K');
+        if (await searchDialog.isVisible().catch(() => false)) {
+            return;
+        }
+
+        if (await searchButton.isVisible().catch(() => false)) {
             await searchButton.click();
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
             return;
-        } catch {
-            // Fall back to the desktop keyboard shortcut when the header control is not ready yet or does not open the dialog.
         }
 
-        await page.keyboard.press('Control+K');
-        await expect(searchDialog).toBeVisible({ timeout: 1000 });
+        throw new Error('Desktop search controls not ready');
     }).toPass({ timeout: 15000 });
 }
 

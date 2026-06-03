@@ -725,7 +725,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : view === 'packets' ? (
             <PracticePacketsPanel rows={packetRows} />
           ) : view === 'compact' ? (
-            <CompactScheduleList events={listEntries} />
+            <CompactScheduleList
+              events={listEntries}
+              visibleCount={visibleListCount}
+              pageSize={listPageSize}
+              onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length))}
+            />
           ) : (
             <ScheduleList
               events={listEntries}
@@ -1372,7 +1377,12 @@ function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
   );
 }
 
-function CompactScheduleList({ events }: { events: CalendarScheduleEntry[] }) {
+function CompactScheduleList({ events, visibleCount, pageSize, onShowMore }: {
+  events: CalendarScheduleEntry[];
+  visibleCount: number;
+  pageSize: number;
+  onShowMore: () => void;
+}) {
   if (!events.length) {
     return (
       <div className="app-card p-8 text-center">
@@ -1383,31 +1393,46 @@ function CompactScheduleList({ events }: { events: CalendarScheduleEntry[] }) {
     );
   }
 
+  const renderedEvents = events.slice(0, visibleCount);
+  const remainingCount = Math.max(events.length - renderedEvents.length, 0);
+
   return (
-    <section className="app-card overflow-hidden">
-      <div className="border-b border-gray-100 bg-gray-50 px-3 py-2">
-        <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Compact schedule</div>
+    <section className="space-y-3">
+      <div className="app-card overflow-hidden">
+        <div className="border-b border-gray-100 bg-gray-50 px-3 py-2">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Compact schedule</div>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {renderedEvents.map((event) => {
+            const rsvp = normalizeRsvpResponse(event.myRsvp);
+            return (
+              <Link key={event.eventKey} to={getEventDetailPath(event)} className="compact-schedule-row grid grid-cols-[82px_minmax(0,1fr)_auto] gap-3 px-3 py-2.5 transition hover:bg-primary-50">
+                <div className="text-xs font-black text-gray-700">
+                  <div>{formatEventDateLabel(event.date)}</div>
+                  <div className="mt-0.5 text-gray-500">{formatEventTimeLabel(event.date)}</div>
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(event)}</div>
+                  <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{getScheduleChildLabel(event)} · {event.teamName} · {event.location || 'TBD'}</div>
+                </div>
+                <span className={`self-center rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
+                  {rsvpLabels[rsvp]}
+                </span>
+              </Link>
+            );
+          })}
+        </div>
       </div>
-      <div className="divide-y divide-gray-100">
-        {events.map((event) => {
-          const rsvp = normalizeRsvpResponse(event.myRsvp);
-          return (
-            <Link key={event.eventKey} to={getEventDetailPath(event)} className="grid grid-cols-[82px_minmax(0,1fr)_auto] gap-3 px-3 py-2.5 transition hover:bg-primary-50">
-              <div className="text-xs font-black text-gray-700">
-                <div>{formatEventDateLabel(event.date)}</div>
-                <div className="mt-0.5 text-gray-500">{formatEventTimeLabel(event.date)}</div>
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(event)}</div>
-                <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{getScheduleChildLabel(event)} · {event.teamName} · {event.location || 'TBD'}</div>
-              </div>
-              <span className={`self-center rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
-                {rsvpLabels[rsvp]}
-              </span>
-            </Link>
-          );
-        })}
-      </div>
+      {remainingCount > 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
+          <div className="text-xs font-bold text-gray-500">
+            Showing {renderedEvents.length} of {events.length} events
+          </div>
+          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore}>
+            Show {Math.min(pageSize, remainingCount)} more
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
