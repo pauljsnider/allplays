@@ -28,6 +28,16 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function canReadAccessCode(data) {
+      return isSignedIn() &&
+             (data.generatedBy == request.auth.uid ||
+              (request.auth.token.email != null &&
+               data.email is string &&
+               request.auth.token.email.lower() == data.email.lower()) ||
+              (data.teamId is string && isTeamOwnerOrAdmin(data.teamId)) ||
+              isGlobalAdmin());
+    }
+
     function canReadTeamDocument(data) {
       return (data.isPublic is bool && data.isPublic == true) ||
              (isSignedIn() &&
@@ -1137,11 +1147,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-	    // Access codes - allow public read for validation during signup
+    // Access codes
 	    match /accessCodes/{codeId} {
-      // Allow anyone to read for code validation (needed for unauthenticated signup)
-      // This is secure because users can only query by exact code match
-      allow read: if true;
+      allow get: if resource == null || canReadAccessCode(resource.data);
+      allow list: if canReadAccessCode(resource.data);
       allow create: if isSignedIn() && request.resource.data.generatedBy == request.auth.uid;
       // Only allow the code generator to update/delete, OR allow system to mark as used during signup
       allow update: if isSignedIn() &&

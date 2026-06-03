@@ -2919,23 +2919,10 @@ export function generateAccessCode() {
     return code;
 }
 
-async function accessCodeExists(code) {
-    const existingCodeQuery = query(
-        collection(db, "accessCodes"),
-        where("code", "==", code),
-        limit(1)
-    );
-    const existingCodes = await getDocs(existingCodeQuery);
-    return !existingCodes.empty;
-}
-
 async function createUniqueAccessCode(accessCodeData, preferredCode) {
     for (let attempt = 0; attempt < ACCESS_CODE_MAX_ATTEMPTS; attempt += 1) {
         const candidateCode = String(attempt === 0 && preferredCode ? preferredCode : generateAccessCode()).trim().toUpperCase();
         if (!candidateCode) {
-            continue;
-        }
-        if (await accessCodeExists(candidateCode)) {
             continue;
         }
 
@@ -3008,37 +2995,31 @@ export async function getTeamAccessCodes(teamId) {
 }
 
 export async function validateAccessCode(code) {
-    const q = query(
-        collection(db, "accessCodes"),
-        where("code", "==", code.toUpperCase())
-    );
-    const snapshot = await getDocs(q);
-
-    if (snapshot.empty) {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    if (!normalizedCode) {
         return { valid: false, message: "Invalid access code" };
     }
 
-    const codeDoc = snapshot.docs.find((doc) => {
-        const codeData = doc.data() || {};
-        return codeData.used !== true && !isAccessCodeExpired(codeData.expiresAt);
-    }) || snapshot.docs[0];
-    const data = codeDoc.data();
+    const callable = httpsCallable(functions, 'validateAccessCodeForAcceptance');
+    const response = await callable({ code: normalizedCode });
+    const payload = response?.data || response;
+    return payload && typeof payload === 'object'
+        ? payload
+        : { valid: false, message: "Invalid access code" };
+}
 
-    if (data.used) {
-        return { valid: false, message: "Code already used" };
+async function getValidatedAccessCodeDoc(code) {
+    const validation = await validateAccessCode(code);
+    if (!validation?.valid || !validation.codeId) {
+        throw new Error(validation?.message || 'Invalid or used code');
     }
 
-    if (isAccessCodeExpired(data.expiresAt)) {
-        return { valid: false, message: "Code has expired" };
+    const codeSnapshot = await getDoc(doc(db, "accessCodes", validation.codeId));
+    if (!codeSnapshot.exists()) {
+        throw new Error("Invalid or used code");
     }
 
-    // Code exists, not used, and not expired
-    return {
-        valid: true,
-        codeId: codeDoc.id,
-        type: data.type || 'standard',
-        data: data
-    };
+    return codeSnapshot;
 }
 
 export async function markAccessCodeAsUsed(codeId, userId) {
@@ -3493,22 +3474,7 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
 export async function redeemParentInvite(userId, code) {
     console.log('[redeemParentInvite] start', { userId, code });
 
-    // 1. Find candidate code document
-    const q = query(
-        collection(db, "accessCodes"),
-        where("code", "==", code.toUpperCase())
-    );
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) throw new Error("Invalid or used code");
-
-    const parentInviteDocs = snapshot.docs.filter(d => (d.data() || {}).type === 'parent_invite' || (d.data() || {}).type === 'coparent_invite');
-    if (parentInviteDocs.length === 0) throw new Error("Invalid or used code");
-
-    // Duplicates can exist; prefer a currently redeemable parent invite doc.
-    const codeDoc = parentInviteDocs.find((d) => {
-        const invite = d.data() || {};
-        return invite.used !== true && !isAccessCodeExpired(invite.expiresAt);
-    }) || parentInviteDocs[0];
+    const codeDoc = await getValidatedAccessCodeDoc(code);
     const codeRef = codeDoc.ref;
     let codeData;
 
@@ -3771,20 +3737,7 @@ async function rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rol
 export async function redeemHouseholdInvite(userId, code) {
     console.log('[redeemHouseholdInvite] start', { userId, code });
 
-    const q = query(
-        collection(db, "accessCodes"),
-        where("code", "==", code.toUpperCase())
-    );
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) throw new Error("Invalid or used code");
-
-    const householdInviteDocs = snapshot.docs.filter(d => (d.data() || {}).type === 'household_invite');
-    if (householdInviteDocs.length === 0) throw new Error("Invalid or used code");
-
-    const codeDoc = householdInviteDocs.find((d) => {
-        const invite = d.data() || {};
-        return invite.used !== true && invite.revoked !== true && !isAccessCodeExpired(invite.expiresAt);
-    }) || householdInviteDocs[0];
+    const codeDoc = await getValidatedAccessCodeDoc(code);
     const codeRef = codeDoc.ref;
     let codeData;
 

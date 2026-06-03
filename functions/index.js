@@ -65,6 +65,7 @@ const {
   buildRegistrationPaymentRetryUrl,
   shouldStopRegistrationPaymentReminders
 } = require('./registration-payment-reminders-core.cjs');
+const { validateAccessCodeCandidates } = require('./access-code-validation.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -1043,6 +1044,19 @@ exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (da
   });
 
   return { autoLinked: true, userId: userRef.id };
+});
+
+exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data) => {
+  const code = String(data?.code || '').trim().toUpperCase();
+  if (!code) {
+    throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
+  }
+
+  const snapshot = await firestore.collection('accessCodes').where('code', '==', code).get();
+  return validateAccessCodeCandidates(snapshot.docs.map((docSnap) => ({
+    id: docSnap.id,
+    data: docSnap.data() || {}
+  })));
 });
 
 function accountMergePreviewAuditRef() {

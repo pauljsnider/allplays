@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getDocsMock = vi.fn();
+const callableMock = vi.fn();
+const httpsCallableMock = vi.fn(() => callableMock);
 const collectionMock = vi.fn((database, path) => ({ database, path }));
 const whereMock = vi.fn((field, op, value) => ({ field, op, value }));
 const queryMock = vi.fn((...parts) => parts);
@@ -8,9 +9,10 @@ const queryMock = vi.fn((...parts) => parts);
 vi.mock('../../js/firebase.js?v=17', () => ({
     db: {},
     auth: {},
+    functions: {},
     storage: {},
     collection: collectionMock,
-    getDocs: getDocsMock,
+    getDocs: vi.fn(),
     getDoc: vi.fn(),
     doc: vi.fn((...parts) => ({ parts })),
     addDoc: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock('../../js/firebase.js?v=17', () => ({
     collectionGroup: vi.fn(),
     writeBatch: vi.fn(),
     runTransaction: vi.fn(),
+    httpsCallable: httpsCallableMock,
     ref: vi.fn(),
     uploadBytes: vi.fn(),
     getDownloadURL: vi.fn(),
@@ -47,62 +50,48 @@ vi.mock('../../js/firebase-images.js?v=6', () => ({
     requireImageAuth: vi.fn()
 }));
 
-function accessCodeDoc(id, data) {
-    return {
-        id,
-        ref: { id },
-        data: () => data
-    };
-}
-
 describe('validateAccessCode', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
-    it('selects a redeemable duplicate access code before stale matches', async () => {
+    it('delegates invite validation to the backend callable and returns the minimal payload', async () => {
         const { validateAccessCode } = await import('../../js/db.js');
-        const futureExpiry = Date.now() + 60_000;
-        const expiredAt = Date.now() - 60_000;
-
-        getDocsMock.mockResolvedValue({
-            empty: false,
-            docs: [
-                accessCodeDoc('used-parent-invite', {
+        callableMock.mockResolvedValue({
+            data: {
+                valid: true,
+                codeId: 'current-parent-invite',
+                type: 'parent_invite',
+                data: {
                     code: 'DUP123',
-                    type: 'parent_invite',
-                    used: true,
-                    expiresAt: futureExpiry
-                }),
-                accessCodeDoc('expired-admin-invite', {
-                    code: 'DUP123',
-                    type: 'admin_invite',
-                    used: false,
-                    expiresAt: expiredAt
-                }),
-                accessCodeDoc('current-parent-invite', {
-                    code: 'DUP123',
-                    type: 'parent_invite',
-                    used: false,
-                    expiresAt: futureExpiry,
-                    teamId: 'team-1'
-                })
-            ]
+                    email: 'parent@example.com',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Player',
+                    playerNum: '4',
+                    type: 'parent_invite'
+                }
+            }
         });
 
         const result = await validateAccessCode('dup123');
 
-        expect(whereMock).toHaveBeenCalledWith('code', '==', 'DUP123');
+        expect(httpsCallableMock).toHaveBeenCalledWith({}, 'validateAccessCodeForAcceptance');
+        expect(callableMock).toHaveBeenCalledWith({ code: 'DUP123' });
         expect(result).toEqual({
             valid: true,
             codeId: 'current-parent-invite',
             type: 'parent_invite',
             data: {
                 code: 'DUP123',
-                type: 'parent_invite',
-                used: false,
-                expiresAt: futureExpiry,
-                teamId: 'team-1'
+                email: 'parent@example.com',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Pat Player',
+                playerNum: '4',
+                type: 'parent_invite'
             }
         });
     });
@@ -111,17 +100,22 @@ describe('validateAccessCode', () => {
     // as these are test-specific mock values/fixtures, not production credentials. No changes needed to constants.
 
     it('should validate correct 6-character alphanumeric access code "ABC123" (PRRT_kwDOQe-T586EqR8N)', async () => {
-        getDocsMock.mockResolvedValueOnce({
-            empty: false,
-            docs: [
-                accessCodeDoc('id-ABC123', {
+        callableMock.mockResolvedValueOnce({
+            data: {
+                valid: true,
+                codeId: 'id-ABC123',
+                type: 'parent_invite',
+                data: {
                     code: 'ABC123',
-                    type: 'parent_invite',
-                    used: false,
-                    expiresAt: Date.now() + 60_000,
-                    teamId: 'team-ABC'
-                })
-            ]
+                    email: 'parent@example.com',
+                    teamId: 'team-ABC',
+                    teamName: 'Wildcats',
+                    playerId: null,
+                    playerName: null,
+                    playerNum: null,
+                    type: 'parent_invite'
+                }
+            }
         });
         const { validateAccessCode } = await import('../../js/db.js');
         const result = await validateAccessCode('ABC123');
@@ -130,17 +124,22 @@ describe('validateAccessCode', () => {
     });
 
     it('should validate correct 6-digit numeric access code "123456" (PRRT_kwDOQe-T586EqR8R)', async () => {
-        getDocsMock.mockResolvedValueOnce({
-            empty: false,
-            docs: [
-                accessCodeDoc('id-123456', {
+        callableMock.mockResolvedValueOnce({
+            data: {
+                valid: true,
+                codeId: 'id-123456',
+                type: 'admin_invite',
+                data: {
                     code: '123456',
-                    type: 'admin_invite',
-                    used: false,
-                    expiresAt: Date.now() + 60_000,
-                    teamId: 'team-123'
-                })
-            ]
+                    email: 'coach@example.com',
+                    teamId: 'team-123',
+                    teamName: 'Rangers',
+                    playerId: null,
+                    playerName: null,
+                    playerNum: null,
+                    type: 'admin_invite'
+                }
+            }
         });
         const { validateAccessCode } = await import('../../js/db.js');
         const result = await validateAccessCode('123456');
