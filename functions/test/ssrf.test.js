@@ -4,8 +4,15 @@ import { promises as dns } from 'node:dns';
 import * as https from 'node:https';
 import * as http from 'node:http';
 import * as net from 'node:net';
+import { EventEmitter } from 'node:events';
 import * as securityUtils from '../utils/security-utils.js';
 const { fetchWithTimeout, normalizeTargetUrl, assertPublicHost, isPrivateIpAddress, _setClientModulesForTesting } = securityUtils;
+
+function createMockRequest() {
+  const mockRequest = new EventEmitter();
+  mockRequest.end = () => {};
+  return mockRequest;
+}
 
 test('isPrivateIpAddress correctly identifies private IPs', () => {
   assert.strictEqual(isPrivateIpAddress('10.0.0.1'), true, '10.0.0.1 should be private');
@@ -71,7 +78,7 @@ test('fetchWithTimeout uses validated IPs and falls back across failures', async
         mockResponse.statusCode = 200;
         mockResponse.statusMessage = 'OK';
         mockResponse.headers = { 'content-type': 'text/calendar' };
-        const mockRequest = new http.ClientRequest(options);
+        const mockRequest = createMockRequest();
         setImmediate(() => {
           callback(mockResponse);
           mockResponse.emit('data', 'BEGIN:VCALENDAR\nSUMMARY:Test Event\nEND:VCALENDAR');
@@ -86,7 +93,7 @@ test('fetchWithTimeout uses validated IPs and falls back across failures', async
         assert.ok([publicIp, fallbackPublicIp].includes(options.host), 'HTTPS request should connect only to validated public IPs');
         assert.strictEqual(options.servername, maliciousHost, 'HTTPS request should use original hostname for SNI');
         assert.strictEqual(options.headers['Host'], maliciousHost, 'HTTPS request should use original hostname in Host header');
-        const mockRequest = new http.ClientRequest(options);
+        const mockRequest = createMockRequest();
 
         if (options.host === publicIp) {
           setImmediate(() => {
@@ -159,7 +166,7 @@ test('fetchWithTimeout uses validated IPs and falls back across failures', async
       mockResponse.statusMessage = 'Found';
       mockResponse.headers = { 'location': 'https://new.example.com/redirected.ics' };
 
-      const mockRequest = new http.ClientRequest(options);
+      const mockRequest = createMockRequest();
       setImmediate(() => {
         callback(mockResponse);
         mockResponse.emit('end');
