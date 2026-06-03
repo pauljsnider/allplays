@@ -6,6 +6,7 @@ describe('push notification payload contract', () => {
         const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
         expect(source).toContain('function buildNotificationAppRoute');
         expect(source).toContain('appRoute,');
+        expect(source).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}`;");
         expect(source).toContain('eventId: String(eventId || gameId || \'\')');
         expect(source).toContain('fcmOptions: { link }');
     });

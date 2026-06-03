@@ -47,7 +47,10 @@ function buildLegacyLinkFallback(link: string) {
             return `/messages/${encodeRouteParam(teamId)}`;
         }
         if (path.endsWith('/live-game.html') && gameId) {
-            return `/games/${encodeRouteParam(gameId)}`;
+            if (teamId) {
+                return `/schedule/${encodeRouteParam(teamId)}/${encodeRouteParam(gameId)}`;
+            }
+            return '/schedule';
         }
         if (path.endsWith('/game-day.html')) {
             if (teamId && gameId) {
@@ -83,7 +86,10 @@ export function resolvePushNotificationRoute(input: unknown) {
         return `/messages/${encodeRouteParam(teamId)}`;
     }
     if (category === 'liveScore' && gameId) {
-        return `/games/${encodeRouteParam(gameId)}`;
+        if (teamId) {
+            return `/schedule/${encodeRouteParam(teamId)}/${encodeRouteParam(gameId)}`;
+        }
+        return '/schedule';
     }
     if (category === 'schedule') {
         if (teamId && eventId) {

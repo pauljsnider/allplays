@@ -16,7 +16,7 @@ vi.mock('../../apps/app/src/lib/pushService.ts', () => ({
                 return;
             }
             if (data.category === 'liveScore') {
-                onRouteOpen(`/games/${encodeURIComponent(data.gameId)}`);
+                onRouteOpen(`/schedule/${encodeURIComponent(data.teamId)}/${encodeURIComponent(data.gameId)}`);
                 return;
             }
             onRouteOpen(`/schedule/${encodeURIComponent(data.teamId)}/${encodeURIComponent(data.eventId)}`);
@@ -56,7 +56,6 @@ function NotificationOpenHarness() {
             <Routes>
                 <Route path="/home" element={<div>Home</div>} />
                 <Route path="/messages/:teamId" element={<div>Messages</div>} />
-                <Route path="/games/:gameId" element={<div>Game</div>} />
                 <Route path="/schedule/:teamId/:eventId" element={<div>Schedule Event</div>} />
             </Routes>
             <LocationProbe />
@@ -103,7 +102,7 @@ describe('app notification open routing', () => {
 
     it.each([
         [{ category: 'liveChat', teamId: 'team-1' }, '/messages/team-1'],
-        [{ category: 'liveScore', teamId: 'team-1', gameId: 'game-7' }, '/games/game-7'],
+        [{ category: 'liveScore', teamId: 'team-1', gameId: 'game-7' }, '/schedule/team-1/game-7'],
         [{ category: 'schedule', teamId: 'team-1', eventId: 'event-9' }, '/schedule/team-1/event-9']
     ])('navigates to the expected route when a notification is opened: %o', async (payload, expectedRoute) => {
         const { container, root } = await renderHarness();

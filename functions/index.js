@@ -2715,7 +2715,10 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId }) {
     return `/messages/${encodeURIComponent(teamId)}`;
   }
   if (category === 'liveScore' && gameId) {
-    return `/games/${encodeURIComponent(gameId)}`;
+    if (teamId) {
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}`;
+    }
+    return '/schedule';
   }
   if (category === 'schedule') {
     if (teamId && eventId) {
