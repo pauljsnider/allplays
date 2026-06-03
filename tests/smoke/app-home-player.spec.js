@@ -79,6 +79,11 @@ async function mockHomePlayerModules(page) {
                     return loadParentHome(...args);
                 }
 
+                export async function loadParentHomeSummaryBootstrap(...args) {
+                    const home = await loadParentHome(...args);
+                    return { home, schedule: [] };
+                }
+
                 export async function loadParentTeamsSummary(...args) {
                     return loadParentHome(...args);
                 }

@@ -8,7 +8,12 @@ import {
   type ParentHomeModel
 } from './homeLogic';
 import { loadCachedAppData } from './appDataCache';
-import { loadParentSchedule, type ParentScheduleChild, type ParentScheduleLoadResult } from './scheduleService';
+import {
+  hydrateParentScheduleDetails,
+  loadParentSchedule,
+  type ParentScheduleChild,
+  type ParentScheduleLoadResult
+} from './scheduleService';
 import type { AuthUser } from './types';
 
 const homeSummaryTtlMs = 45 * 1000;
@@ -41,17 +46,32 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
 }
 
 export async function loadParentHomeSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentHomeModel> {
+  const summary = await loadParentHomeSummaryBootstrap(user, options);
+  return summary.home;
+}
+
+export async function loadParentHomeSummaryBootstrap(
+  user: AuthUser | null,
+  options: { force?: boolean } = {}
+): Promise<{ home: ParentHomeModel; schedule: ParentScheduleLoadResult }> {
   if (!user?.uid) {
-    return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
+    const schedule = { children: [], events: [] };
+    return {
+      home: buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] }),
+      schedule
+    };
   }
 
   const schedule = await loadParentScheduleSummary(user, options);
-  return buildParentHomeModel({
-    children: schedule.children,
-    events: schedule.events,
-    inboxTeams: [],
-    fees: []
-  });
+  return {
+    home: buildParentHomeModel({
+      children: schedule.children,
+      events: schedule.events,
+      inboxTeams: [],
+      fees: []
+    }),
+    schedule
+  };
 }
 
 export async function loadParentTeamsSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentHomeModel> {
@@ -90,14 +110,18 @@ export async function loadParentTeamsSummary(user: AuthUser | null, options: { f
   );
 }
 
-export async function loadParentHomeWithSecondaryData(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentHomeModel> {
+export async function loadParentHomeWithSecondaryData(
+  user: AuthUser | null,
+  options: { force?: boolean; schedule?: ParentScheduleLoadResult } = {}
+): Promise<ParentHomeModel> {
   if (!user?.uid) {
     return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
   }
 
   const cacheKey = `home-secondary:${user.uid}`;
   return loadCachedAppData(cacheKey, async () => {
-    const schedule = await loadParentSchedule(user, { hydrateDetails: true });
+    const schedule = options.schedule || await loadParentScheduleSummary(user, { force: options.force });
+    await hydrateParentScheduleDetails(schedule, user);
     const [chatInbox, rawFees] = await Promise.all([
       loadChatInbox(user).catch((error) => {
         console.warn('[home-service] Unable to load chat inbox:', error);

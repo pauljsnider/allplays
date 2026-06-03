@@ -26,7 +26,7 @@ import {
   Users,
   type LucideIcon
 } from 'lucide-react';
-import { loadParentHomeSummary, loadParentHomeWithSecondaryData } from '../lib/homeService';
+import { loadParentHomeSummaryBootstrap, loadParentHomeWithSecondaryData } from '../lib/homeService';
 import {
   blockFriend,
   commentOnSocialPost,
@@ -146,11 +146,11 @@ export function Home({ auth }: { auth: AuthState }) {
     setError('');
     setSocialStatus(null);
     try {
-      const nextHome = await loadParentHomeSummary(auth.user, { force });
+      const { home: nextHome, schedule } = await loadParentHomeSummaryBootstrap(auth.user, { force });
       setHome(nextHome);
       setLoading(false);
 
-      void loadParentHomeWithSecondaryData(auth.user, { force })
+      void loadParentHomeWithSecondaryData(auth.user, { force, schedule })
         .then(async (secondaryHome) => {
           setHome(secondaryHome);
           setSocial(await loadSocialHome(auth.user, secondaryHome));

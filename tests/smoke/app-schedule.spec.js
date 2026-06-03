@@ -327,6 +327,10 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
+                export async function hydrateParentScheduleDetails(schedule) {
+                    return schedule;
+                }
+
                 export async function loadParentScheduleEventDetail(user, { teamId, eventId }) {
                     const result = await loadParentSchedule(user);
                     return {

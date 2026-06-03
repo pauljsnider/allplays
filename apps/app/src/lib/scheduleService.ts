@@ -1725,6 +1725,14 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
   return events;
 }
 
+export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadResult, user: AuthUser | null): Promise<ParentScheduleLoadResult> {
+  if (!user?.uid || !schedule.events.length) {
+    return schedule;
+  }
+  await hydrateEventDetails(schedule.events, user);
+  return schedule;
+}
+
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
   const children = normalizeChildLinks(user, profile as Record<string, unknown>);

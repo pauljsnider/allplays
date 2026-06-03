@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const homeMocks = vi.hoisted(() => ({
     loadParentHome: vi.fn(),
     loadParentHomeSummary: vi.fn(),
+    loadParentHomeSummaryBootstrap: vi.fn(),
     loadParentHomeWithSecondaryData: vi.fn()
 }));
 
@@ -223,6 +224,10 @@ beforeEach(() => {
     window.URL.revokeObjectURL = vi.fn();
     window.scrollTo = vi.fn();
     homeMocks.loadParentHomeSummary.mockImplementation((user) => homeMocks.loadParentHome(user));
+    homeMocks.loadParentHomeSummaryBootstrap.mockImplementation(async (user) => ({
+        home: await homeMocks.loadParentHome(user),
+        schedule: { children: [], events: [] }
+    }));
     homeMocks.loadParentHomeWithSecondaryData.mockImplementation((user) => homeMocks.loadParentHome(user));
 
     const nextEvent = event({ id: 'game-next', opponent: 'Falcons' });
