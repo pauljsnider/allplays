@@ -798,6 +798,7 @@
                 const access = getTeamAccessInfo(user, state.team);
                 state.accessLevel = access.accessLevel;
                 if (!access.hasAccess) { location.href = access.exitUrl; return; }
+                if (state.accessLevel !== 'full') { location.href = access.exitUrl; return; }
 
                 renderTeamAdminBanner(document.getElementById('team-banner'), {
                     team: state.team, teamId: state.teamId,
@@ -3017,7 +3018,14 @@ ${text}
         }
 
         // ==================== SESSION SAVE ====================
+        function requireFullPlanningAccess(actionLabel) {
+            if (state.accessLevel === 'full') return true;
+            showToast(`${actionLabel} is only available to coaches and team admins`, 'error');
+            return false;
+        }
+
         async function saveSession() {
+            if (!requireFullPlanningAccess('Saving practice plans')) return;
             if (state.canvasBlocks.length === 0) { showToast('Add drills to canvas first', 'error'); return; }
             const saveBtn = document.getElementById('btn-save-session');
             if (saveBtn) {
@@ -3088,6 +3096,7 @@ ${text}
 
         // ==================== AI CHAT ====================
         async function ensurePracticeSessionExists(status = 'draft') {
+            if (!requireFullPlanningAccess('Saving practice plans')) return null;
             if (state.sessionId) return state.sessionId;
             const seed = {
                 date: new Date(document.getElementById('session-date').value),
@@ -4252,6 +4261,7 @@ ${userPrompt}
         }
 
         function generateHomePacket() {
+            if (!requireFullPlanningAccess('Home packets')) return;
             if (state.canvasBlocks.length === 0 && state.homePacketBlocks.length === 0) {
                 showToast('Add drills first', 'error');
                 return;
@@ -4306,6 +4316,7 @@ ${userPrompt}
         }
 
         async function openHomePacketLibrary() {
+            if (!requireFullPlanningAccess('Home packets')) return;
             state.homePacketLibraryOpen = !state.homePacketLibraryOpen;
             if (!state.homePacketLibraryOpen) {
                 renderHomePacketLibraryPicker([]);
@@ -4338,6 +4349,7 @@ ${userPrompt}
         }
 
         function addHomePacketFromLibrary(drillId) {
+            if (!requireFullPlanningAccess('Home packets')) return;
             const universe = Array.isArray(state.aiDrillUniverse) ? state.aiDrillUniverse : [];
             const drill = universe.find(d => d.id === drillId);
             if (!drill) {
@@ -4380,6 +4392,7 @@ ${userPrompt}
         }
 
         async function saveHomePacket() {
+            if (!requireFullPlanningAccess('Saving home packets')) return;
             if (!state.homePacketBlocks.length) {
                 showToast('Add at least one home drill', 'error');
                 return;
