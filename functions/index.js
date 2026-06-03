@@ -66,6 +66,12 @@ const {
   shouldStopRegistrationPaymentReminders
 } = require('./registration-payment-reminders-core.cjs');
 const { validateAccessCodeCandidates } = require('./access-code-validation.cjs');
+const {
+  PRE_EVENT_REMINDER_QUERY_PAGE_SIZE,
+  PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN,
+  PRE_EVENT_REMINDER_MAX_RUNTIME_MS,
+  drainDueReminderPages
+} = require('./pre-event-reminder-dispatcher-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -3143,71 +3149,85 @@ async function markReminderPendingAfterFailure(eventRef, claimId, error) {
 }
 
 async function dispatchDuePreEventReminders(now = new Date()) {
-  const dueIso = now.toISOString();
-  const dueSnap = await firestore
-    .collectionGroup('games')
-    .where('scheduleNotifications.nextReminderAt', '<=', dueIso)
-    .limit(50)
-    .get();
-
-  const results = [];
-  for (const docSnap of dueSnap.docs) {
-    const eventRef = docSnap.ref;
-    const teamRef = eventRef.parent?.parent;
-    const teamId = teamRef?.id;
-    const gameId = eventRef.id;
-    if (!teamId) continue;
-
-    const claimId = `pre-event-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const claimedEvent = await markReminderSending(eventRef, claimId, now);
-    if (!claimedEvent) continue;
-
-    try {
-      const payload = buildPreEventReminderPayload({ teamId, gameId, event: claimedEvent });
-      let chatResult = { messageId: null, created: false };
-      let chatMessageError = null;
-      try {
-        chatResult = await postPreEventReminderChatMessage({ teamId, gameId, event: claimedEvent, payload });
-      } catch (chatError) {
-        chatMessageError = chatError;
-        console.error('Failed to write pre-event reminder chat fallback', { teamId, gameId, error: chatError });
+  const drainSummary = await drainDueReminderPages({
+    now,
+    maxPages: PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN,
+    maxRuntimeMs: PRE_EVENT_REMINDER_MAX_RUNTIME_MS,
+    loadPage: async ({ dueIso, cursor, limit }) => {
+      let query = firestore
+        .collectionGroup('games')
+        .where('scheduleNotifications.nextReminderAt', '<=', dueIso)
+        .orderBy('scheduleNotifications.nextReminderAt')
+        .limit(limit || PRE_EVENT_REMINDER_QUERY_PAGE_SIZE);
+      if (cursor) {
+        query = query.startAfter(cursor);
       }
+      const dueSnap = await query.get();
+      return {
+        docs: dueSnap.docs,
+        nextCursor: dueSnap.docs[dueSnap.docs.length - 1] || null
+      };
+    },
+    processReminder: async (docSnap) => {
+      const eventRef = docSnap.ref;
+      const teamRef = eventRef.parent?.parent;
+      const teamId = teamRef?.id;
+      const gameId = eventRef.id;
+      if (!teamId) return null;
 
-      const sendResult = await sendCategoryNotification({
-        teamId,
-        gameId,
-        eventId: gameId,
-        category: 'schedule',
-        title: payload.title,
-        body: payload.body,
-        linkOverride: payload.link
-      });
-      const emailResult = await createPublicRsvpEmailDeliveries({
-        teamId,
-        gameId,
-        actorUid: 'scheduled-reminder'
-      });
-      await markReminderSent(eventRef, claimId, {
-        ...sendResult,
-        chatMessageId: chatResult.messageId,
-        chatMessageCreated: chatResult.created,
-        chatMessageError: chatMessageError?.message || null,
-        rsvpEmailCount: emailResult.sentCount
-      });
-      results.push({
-        teamId,
-        gameId,
-        sent: Number(sendResult?.successCount || 0),
-        chatMessageId: chatResult.messageId,
-        chatMessageCreated: chatResult.created,
-        rsvpEmailCount: emailResult.sentCount
-      });
-    } catch (error) {
-      await markReminderPendingAfterFailure(eventRef, claimId, error);
-      console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
+      const claimId = `pre-event-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const claimedEvent = await markReminderSending(eventRef, claimId, now);
+      if (!claimedEvent) return null;
+
+      try {
+        const payload = buildPreEventReminderPayload({ teamId, gameId, event: claimedEvent });
+        let chatResult = { messageId: null, created: false };
+        let chatMessageError = null;
+        try {
+          chatResult = await postPreEventReminderChatMessage({ teamId, gameId, event: claimedEvent, payload });
+        } catch (chatError) {
+          chatMessageError = chatError;
+          console.error('Failed to write pre-event reminder chat fallback', { teamId, gameId, error: chatError });
+        }
+
+        const sendResult = await sendCategoryNotification({
+          teamId,
+          gameId,
+          eventId: gameId,
+          category: 'schedule',
+          title: payload.title,
+          body: payload.body,
+          linkOverride: payload.link
+        });
+        const emailResult = await createPublicRsvpEmailDeliveries({
+          teamId,
+          gameId,
+          actorUid: 'scheduled-reminder'
+        });
+        await markReminderSent(eventRef, claimId, {
+          ...sendResult,
+          chatMessageId: chatResult.messageId,
+          chatMessageCreated: chatResult.created,
+          chatMessageError: chatMessageError?.message || null,
+          rsvpEmailCount: emailResult.sentCount
+        });
+        return {
+          teamId,
+          gameId,
+          sent: Number(sendResult?.successCount || 0),
+          chatMessageId: chatResult.messageId,
+          chatMessageCreated: chatResult.created,
+          rsvpEmailCount: emailResult.sentCount
+        };
+      } catch (error) {
+        await markReminderPendingAfterFailure(eventRef, claimId, error);
+        console.error('Failed to dispatch pre-event reminder', { teamId, gameId, error });
+        return null;
+      }
     }
-  }
-  return results;
+  });
+
+  return drainSummary.results.filter(Boolean);
 }
 
 exports.dispatchDuePreEventReminders = functions.pubsub
