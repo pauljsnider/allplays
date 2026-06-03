@@ -28,8 +28,8 @@ import {
 import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
 import type { AuthState, NavItem } from '../lib/types';
-import { RoleBadge } from './Badges';
 import { AppSearchDialog } from './AppSearchDialog';
+import { RoleBadge } from './Badges';
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -272,9 +272,7 @@ export function AppShell({ auth, children }: AppShellProps) {
         </>
       )}
 
-      {searchOpen ? (
-        <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
-      ) : null}
+      {searchOpen ? <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} /> : null}
 
       {addTeamOpen ? (
         <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add workflow">
