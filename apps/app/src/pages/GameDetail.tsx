@@ -53,7 +53,7 @@ export function GameDetail({ auth }: { auth: AuthState }) {
       setChatError('Live chat is temporarily unavailable.');
       setChatReady(true);
     });
-  }, [game]);
+  }, [game?.id, game?.teamId]);
 
   if (!game) {
     return <Navigate to="/schedule" replace />;

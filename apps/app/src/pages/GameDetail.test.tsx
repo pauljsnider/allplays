@@ -12,6 +12,7 @@ const liveGameChatMocks = vi.hoisted(() => ({
 vi.mock('../lib/liveGameChatService', () => liveGameChatMocks);
 
 import { GameDetail } from './GameDetail';
+import { mockGames } from '../data/mockData';
 import type { AuthState } from '../lib/types';
 
 const auth: AuthState = {
@@ -95,6 +96,38 @@ describe('GameDetail play-by-play audio', () => {
         anonymousDisplayName: 'Pat Parent'
       });
     });
+  });
+
+  it('does not resubscribe when the game object is recreated with the same ids', () => {
+    const unsubscribe = vi.fn();
+    const originalGame = mockGames[0];
+
+    liveGameChatMocks.subscribeToLiveGameChat.mockReturnValue(unsubscribe);
+
+    try {
+      const view = renderGameDetail();
+
+      expect(liveGameChatMocks.subscribeToLiveGameChat).toHaveBeenCalledTimes(1);
+
+      mockGames[0] = {
+        ...originalGame,
+        liveEvents: [...(originalGame.liveEvents || [])]
+      };
+
+      view.rerender(
+        <MemoryRouter initialEntries={['/games/game-1']}>
+          <Routes>
+            <Route path="/games/:gameId" element={<GameDetail auth={auth} />} />
+            <Route path="/schedule" element={<div>Schedule</div>} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      expect(liveGameChatMocks.subscribeToLiveGameChat).toHaveBeenCalledTimes(1);
+      expect(unsubscribe).not.toHaveBeenCalled();
+    } finally {
+      mockGames[0] = originalGame;
+    }
   });
 
   it('shows the locked notice and disables the composer when live chat is closed', () => {
