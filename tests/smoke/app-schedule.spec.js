@@ -981,9 +981,11 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
     const mobileRows = page.locator('.schedule-list > a');
-    await expect(mobileRows.first()).toBeVisible();
-    await expect(mobileRows).toHaveCount(20);
-    await expect(page.getByText(/Showing 20 of 2[45] events/)).toBeVisible();
+    await expect(async () => {
+        await expect(mobileRows.first()).toBeVisible({ timeout: 1000 });
+        await expect(mobileRows).toHaveCount(20, { timeout: 1000 });
+        await expect(page.getByText(/Showing 20 of 2[45] events/)).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 15000 });
     await page.getByRole('button', { name: /Show [45] more/ }).click();
     const expandedRowCount = await mobileRows.count();
     expect(expandedRowCount).toBeGreaterThanOrEqual(24);
