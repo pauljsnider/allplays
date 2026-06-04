@@ -58,6 +58,8 @@ async function mockSearchModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                import './firebaseAuthRuntime.ts';
+
                 export function useAuth() {
                     const user = {
                         uid: 'user-1',
