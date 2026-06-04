@@ -199,8 +199,12 @@ describe('React app parent tools service', () => {
         expect(getRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
         expect(getAppRegistrationUrl('team-1', 'form-1')).toBe('https://allplays.ai/app/#/registration?teamId=team-1&formId=form-1');
         expect(getCertificateUrl('team-1', 'cert-1')).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
-        expect(getAppleCalendarFeedUrl('https://example.test/feed.ics')).toBe('webcal://example.test/feed.ics');
-        expect(getGoogleCalendarFeedUrl('https://example.test/feed.ics')).toContain(encodeURIComponent('https://example.test/feed.ics'));
+    });
+
+    it('builds Apple and Google subscription URLs without altering private feed tokens', () => {
+        const privateFeedUrl = 'https://example.test/privateTeamCalendarIcs?teamId=team-1&token=abc123%2Bsafe&view=full';
+        expect(getAppleCalendarFeedUrl(privateFeedUrl)).toBe('webcal://example.test/privateTeamCalendarIcs?teamId=team-1&token=abc123%2Bsafe&view=full');
+        expect(getGoogleCalendarFeedUrl(privateFeedUrl)).toBe(`https://calendar.google.com/calendar/render?cid=${encodeURIComponent(privateFeedUrl)}`);
     });
 
     it('loads public access teams, selectable players, and submits membership requests', async () => {
