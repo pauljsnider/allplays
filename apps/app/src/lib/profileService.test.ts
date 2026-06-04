@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
     createAccessCode: vi.fn(),
@@ -34,7 +35,53 @@ vi.mock('../../../../js/team-visibility.js', () => ({
     isTeamActive: vi.fn(() => true)
 }));
 
-import { requestAccountMerge } from './profileService';
+import { normalizeProfilePhoto, requestAccountMerge } from './profileService';
+
+describe('normalizeProfilePhoto', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('resizes oversized profile photos before upload', async () => {
+        const sourceFile = new File([new Uint8Array(900000)], 'profile.png', { type: 'image/png' });
+        const bitmap = {
+            width: 2400,
+            height: 1800,
+            close: vi.fn()
+        };
+        const drawImage = vi.fn();
+        const toBlob = vi.fn((callback: (blob: Blob | null) => void) => callback(new Blob([new Uint8Array(120000)], { type: 'image/png' })));
+        const originalCreateElement = document.createElement.bind(document);
+        const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+            if (tagName === 'canvas') {
+                return {
+                    width: 0,
+                    height: 0,
+                    getContext: vi.fn(() => ({ drawImage })),
+                    toBlob
+                } as unknown as HTMLCanvasElement;
+            }
+            return originalCreateElement(tagName);
+        });
+
+        vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue(bitmap));
+
+        const normalizedFile = await normalizeProfilePhoto(sourceFile);
+
+        expect(normalizedFile).not.toBe(sourceFile);
+        expect(normalizedFile.size).toBeLessThan(sourceFile.size);
+        expect(normalizedFile.type).toBe('image/png');
+        expect(drawImage).toHaveBeenCalledWith(bitmap, 0, 0, 1024, 768);
+        expect(toBlob).toHaveBeenCalled();
+        expect(bitmap.close).toHaveBeenCalled();
+
+        createElementSpy.mockRestore();
+    });
+});
 
 describe('requestAccountMerge', () => {
     beforeEach(() => {

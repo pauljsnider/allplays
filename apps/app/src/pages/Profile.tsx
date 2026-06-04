@@ -33,6 +33,7 @@ import {
   loadProfileAccessCodes,
   loadProfileDocument,
   normalizeNotificationPreferences,
+  normalizeProfilePhoto,
   requestAccountMerge,
   saveNotificationPreferences,
   saveProfileDocument,
@@ -352,10 +353,28 @@ export function Profile({ auth }: { auth: AuthState }) {
     setProfileStatus(null);
   };
 
-  const handlePhotoChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const prepareSelectedPhoto = async (file: File, options: { normalize?: boolean } = {}) => {
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setProfileStatus({ message: 'Choose an image file.', tone: 'error' });
+      return;
+    }
+
+    try {
+      const nextFile = options.normalize === false ? file : await normalizeProfilePhoto(file);
+      applySelectedPhoto(nextFile);
+    } catch (error: any) {
+      setProfileStatus({ message: error?.message || 'Profile photo could not be prepared right now.', tone: 'error' });
+    }
+  };
+
+  const handlePhotoChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      applySelectedPhoto(file);
+      await prepareSelectedPhoto(file);
     }
     event.target.value = '';
   };
@@ -366,7 +385,7 @@ export function Profile({ auth }: { auth: AuthState }) {
 
     try {
       const file = await acquireProfilePhoto(source);
-      applySelectedPhoto(file);
+      await prepareSelectedPhoto(file, { normalize: false });
       setPhotoChooserOpen(false);
     } catch (error: any) {
       if (error?.code === 'cancelled') {
