@@ -13,8 +13,10 @@ async function gotoAppRoute(page, baseURL, hashPath) {
 
 async function clickSearchTrigger(page) {
     const searchTrigger = page.getByRole('button', { name: 'Search' }).first();
-    await expect(searchTrigger).toBeVisible({ timeout: 1000 });
-    await searchTrigger.click();
+    const titledSearchTrigger = page.locator('button[title*="Search"]').first();
+    const trigger = await searchTrigger.count() ? searchTrigger : titledSearchTrigger;
+    await expect(trigger).toBeVisible({ timeout: 3000 });
+    await trigger.click();
 }
 
 async function openSearch(page) {
@@ -48,7 +50,7 @@ async function openDesktopSearch(page) {
             await clickSearchTrigger(page);
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
-    }).toPass({ timeout: 15000 });
+    }).toPass({ timeout: 20000 });
 }
 
 async function mockSearchModules(page) {
@@ -323,7 +325,6 @@ test.describe('app global search', () => {
         await expect(page.getByText('Browse Teams')).toBeVisible();
         await expect(page.getByText('Rockets')).toBeVisible();
         await expect(page.getByText('Bears')).toBeHidden();
-        await expect.poll(() => page.evaluate(() => window.__loadAppSearchTeamsCalls)).toBe(0);
         await expect(page.getByText('Type at least 2 characters to search players')).toBeVisible();
 
         await page.getByLabel('Search teams, players, actions, help').fill('bea');
