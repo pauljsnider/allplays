@@ -16,6 +16,14 @@ describe('team fees admin page routing', () => {
         expect(registrations.map(({ eventName }) => eventName)).toEqual(['DOMContentLoaded', 'hashchange']);
         expect(registrations[1].handler).toBe(registrations[0].handler);
     });
+
+    it('pins the team fees page shell and admin module to the latest cache-busted versions', () => {
+        const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
+        const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
+
+        expect(adminSource).toContain("import('./db.js?v=37')");
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=8"></script>');
+    });
 });
 
 describe('create offline team fee form', () => {
