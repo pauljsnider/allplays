@@ -4140,6 +4140,31 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         updatedAt: serverTimestamp()
     };
 
+    const invalidatesOnlineCheckout = [
+        'status',
+        'amountDueCents',
+        'balanceDueCents',
+        'remainingBalanceCents',
+        'amountPaidCents',
+        'paidAmountCents',
+        'amountRefundedCents',
+        'refundedAmountCents',
+        'manualPayment',
+        'refunded',
+        'adjustment',
+        'paidAt',
+        'lastRefundedAt'
+    ].some((key) => Object.prototype.hasOwnProperty.call(recipientUpdates, key));
+
+    if (invalidatesOnlineCheckout) {
+        updatePayload.checkoutStatus = 'stale';
+        updatePayload.checkoutAttemptToken = deleteField();
+        updatePayload.checkoutUrl = deleteField();
+        updatePayload.paymentLink = deleteField();
+        updatePayload.stripeCheckoutSessionId = deleteField();
+        updatePayload.checkoutAmountCents = deleteField();
+    }
+
     if (Array.isArray(ledgerEntries) && ledgerEntries.length > 0) {
         updatePayload.paymentLedger = arrayUnion(...ledgerEntries);
     }

@@ -19,6 +19,8 @@ const {
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
   canReuseTeamFeeCheckoutSession,
+  getTeamFeeCheckoutGuardFailure,
+  shouldApplyTeamFeeCheckoutSession,
   shouldMarkTeamFeePaidFromEvent,
   shouldRecordTeamFeeCheckoutNotPaidFromEvent,
   buildTeamFeePaidUpdate,
@@ -1494,6 +1496,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
   const stripe = createStripeClient();
   const { appUrl } = getStripeConfig();
   const { successUrl, cancelUrl } = buildTeamFeeCheckoutUrls(appUrl, input);
+  const checkoutAttemptToken = (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')).replace(/-/g, '');
   const title = recipient.feeTitle || recipient.title || 'Team fee';
   const playerName = recipient.playerName || recipient.childName || '';
   const description = playerName ? `${title} for ${playerName}` : title;
@@ -1513,7 +1516,12 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     cancel_url: cancelUrl,
     customer_email: email || recipient.parentEmail || recipient.email || undefined,
     client_reference_id: `${input.teamId}:${input.batchId}:${input.recipientId}`,
-    metadata: buildTeamFeeCheckoutMetadata({ ...input, payerUid: context.auth.uid })
+    metadata: buildTeamFeeCheckoutMetadata({
+      ...input,
+      payerUid: context.auth.uid,
+      checkoutAttemptToken,
+      checkoutAmountCents: amountCents
+    })
   });
 
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -1523,6 +1531,7 @@ exports.createStripeTeamFeeCheckout = functions.https.onCall(async (data, contex
     checkoutStatus: 'open',
     paymentProvider: 'stripe',
     stripeCheckoutSessionId: session.id,
+    checkoutAttemptToken,
     stripePaymentStatus: session.payment_status || 'unpaid',
     checkoutAmountCents: amountCents,
     balanceDueCents: amountCents,
@@ -2068,17 +2077,27 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           throw new Error('Team fee recipient not found for Stripe webhook.');
         }
 
-        if (shouldMarkTeamFeePaidFromEvent(event)) {
+        const recipient = recipientSnap.data() || {};
+        const shouldApplyCheckoutEvent = shouldApplyTeamFeeCheckoutSession({ recipient, session });
+        const ignoredReason = shouldApplyCheckoutEvent
+          ? null
+          : getTeamFeeCheckoutGuardFailure({ recipient, session });
+
+        if (shouldMarkTeamFeePaidFromEvent(event) && shouldApplyCheckoutEvent) {
           transaction.set(recipientRef, buildTeamFeePaidUpdate({
-            recipient: recipientSnap.data() || {},
+            recipient,
             session,
             eventId: event.id,
             receivedAt
           }), { merge: true });
-        } else {
+        } else if (shouldRecordTeamFeeCheckoutNotPaidFromEvent(event) && shouldApplyCheckoutEvent) {
           transaction.set(recipientRef, {
             checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
             stripeCheckoutSessionId: session.id || null,
+            checkoutAttemptToken: null,
+            checkoutUrl: null,
+            paymentLink: null,
+            checkoutAmountCents: null,
             stripeEventId: event.id,
             updatedAt: receivedAt
           }, { merge: true });
@@ -2090,6 +2109,8 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           type: event.type,
           checkoutSessionId: session.id || null,
           recipientPath: recipientRef.path,
+          ignored: shouldApplyCheckoutEvent !== true,
+          ignoredReason,
           receivedAt
         });
       });

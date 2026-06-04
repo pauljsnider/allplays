@@ -2,6 +2,15 @@ function normalizeString(value) {
     return String(value || '').trim();
 }
 
+function normalizeCheckoutAttemptToken(value, label = 'checkoutAttemptToken') {
+    const token = normalizeString(value);
+    if (!token) return '';
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(token)) {
+        throw new Error(`${label} is invalid.`);
+    }
+    return token;
+}
+
 function normalizeTeamFeeCheckoutInput(data = {}) {
     const teamId = normalizeString(data.teamId);
     const batchId = normalizeString(data.batchId);
@@ -129,23 +138,69 @@ function buildTeamFeeCheckoutUrls(appUrl, { teamId, batchId, recipientId }) {
     };
 }
 
-function buildTeamFeeCheckoutMetadata({ teamId, batchId, recipientId, payerUid }) {
-    return {
+function buildTeamFeeCheckoutMetadata({ teamId, batchId, recipientId, payerUid, checkoutAttemptToken = '', checkoutAmountCents = 0 }) {
+    const metadata = {
         product: 'team_fee',
         teamId,
         batchId,
         recipientId,
         payerUid
     };
+
+    const normalizedToken = normalizeCheckoutAttemptToken(checkoutAttemptToken);
+    if (normalizedToken) {
+        metadata.checkoutAttemptToken = normalizedToken;
+    }
+
+    const amountCents = Math.round(Number(checkoutAmountCents || 0));
+    if (Number.isFinite(amountCents) && amountCents > 0) {
+        metadata.checkoutAmountCents = String(amountCents);
+    }
+
+    return metadata;
 }
 
 function canReuseTeamFeeCheckoutSession(recipient = {}, amountCents = 0) {
     return Boolean(
         recipient.checkoutUrl &&
         recipient.stripeCheckoutSessionId &&
+        normalizeCheckoutAttemptToken(recipient.checkoutAttemptToken) &&
         recipient.checkoutStatus === 'open' &&
         Number(recipient.checkoutAmountCents) === Number(amountCents)
     );
+}
+
+function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
+    const activeSessionId = normalizeString(recipient.stripeCheckoutSessionId);
+    const sessionId = normalizeString(session.id);
+    if (!activeSessionId || !sessionId || activeSessionId !== sessionId) {
+        return 'checkout_session_mismatch';
+    }
+
+    const recipientToken = normalizeCheckoutAttemptToken(recipient.checkoutAttemptToken);
+    const sessionToken = normalizeCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
+    const isLegacyCheckoutSession = !recipientToken && !sessionToken;
+    if (!isLegacyCheckoutSession && (!recipientToken || !sessionToken || recipientToken !== sessionToken)) {
+        return 'checkout_attempt_mismatch';
+    }
+
+    const sessionAmountCents = getTeamFeeStripePaidAmountCents({ recipient, session });
+    const expectedCheckoutAmountCents = Math.round(Number(recipient.checkoutAmountCents || 0));
+    if (!Number.isFinite(sessionAmountCents) || sessionAmountCents <= 0) {
+        return 'checkout_amount_missing';
+    }
+    if (!Number.isFinite(expectedCheckoutAmountCents) || expectedCheckoutAmountCents <= 0 || sessionAmountCents !== expectedCheckoutAmountCents) {
+        return 'checkout_amount_mismatch';
+    }
+    if (sessionAmountCents !== getTeamFeeBalanceCents(recipient)) {
+        return 'balance_mismatch';
+    }
+
+    return '';
+}
+
+function shouldApplyTeamFeeCheckoutSession({ recipient = {}, session = {} } = {}) {
+    return !getTeamFeeCheckoutGuardFailure({ recipient, session });
 }
 
 function shouldMarkTeamFeePaidFromEvent(event = {}) {
@@ -204,6 +259,12 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
         amountRefundedCents: refundedAmountCents,
         lastRefundedAt: refundedAt,
         updatedAt: refundedAt,
+        checkoutStatus: 'stale',
+        checkoutAttemptToken: null,
+        checkoutUrl: null,
+        paymentLink: null,
+        stripeCheckoutSessionId: null,
+        checkoutAmountCents: null,
         paymentProvider: 'stripe',
         stripeLastRefundId: refund.id || null,
         stripeLastRefundStatus: refundStatus,
@@ -234,6 +295,9 @@ function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receive
         amountPaidCents: paidAmountCents,
         balanceDueCents,
         checkoutStatus: 'paid',
+        checkoutAttemptToken: null,
+        checkoutUrl: null,
+        paymentLink: null,
         paymentProvider: 'stripe',
         stripeCheckoutSessionId: session.id || null,
         stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : null,
@@ -270,6 +334,8 @@ module.exports = {
     buildTeamFeeCheckoutUrls,
     buildTeamFeeCheckoutMetadata,
     canReuseTeamFeeCheckoutSession,
+    getTeamFeeCheckoutGuardFailure,
+    shouldApplyTeamFeeCheckoutSession,
     shouldMarkTeamFeePaidFromEvent,
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
     getTeamFeeStripePaidAmountCents,
