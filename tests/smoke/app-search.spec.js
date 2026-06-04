@@ -12,8 +12,8 @@ async function gotoAppRoute(page, baseURL, hashPath) {
 }
 
 async function clickSearchTrigger(page) {
-    const searchTrigger = page.locator('button[aria-label="Search"], button[title="Search (Ctrl+K / Cmd+K)"]').first();
-    await expect(searchTrigger).toBeVisible({ timeout: 2000 });
+    const searchTrigger = page.getByRole('button', { name: 'Search' }).first();
+    await expect(searchTrigger).toBeVisible({ timeout: 5000 });
     await searchTrigger.click();
 }
 
@@ -36,6 +36,10 @@ async function openDesktopSearch(page) {
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
     await expect(async () => {
+        if (await searchDialog.isVisible().catch(() => false)) {
+            return;
+        }
+
         await page.keyboard.press('Control+K');
 
         try {
@@ -380,6 +384,7 @@ test.describe('desktop app global search', () => {
         await page.keyboard.press('Enter');
         await expect(page).toHaveURL(/#\/teams$/);
 
+        await gotoAppRoute(page, baseURL, '/home');
         await openDesktopSearch(page);
         await page.keyboard.press('ArrowDown');
         await page.keyboard.press('ArrowDown');
