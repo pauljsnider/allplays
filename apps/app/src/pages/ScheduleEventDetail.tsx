@@ -2209,7 +2209,8 @@ function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const [loadingReport, setLoadingReport] = useState(true);
   const [reportError, setReportError] = useState<string | null>(null);
   const visibleReportSections = useMemo(() => getVisibleGameReportSections(report), [report]);
-  const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && String(event.liveStatus || '').trim().toLowerCase() === 'live';
+  const liveReportStatus = String(report?.game?.liveStatus || report?.game?.status || event.liveStatus || event.status || '').trim().toLowerCase();
+  const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && liveReportStatuses.has(liveReportStatus);
 
   const refreshReport = useCallback(async (showLoading = true) => {
     if (showLoading) setLoadingReport(true);

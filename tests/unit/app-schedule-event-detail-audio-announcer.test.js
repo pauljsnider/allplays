@@ -22,7 +22,8 @@ describe('React app schedule event detail audio announcer wiring', () => {
         const source = readDetailSource();
 
         expect(source).toContain('const liveReportPollIntervalMs = 15000;');
-        expect(source).toContain("const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && String(event.liveStatus || '').trim().toLowerCase() === 'live';");
+        expect(source).toContain("const liveReportStatus = String(report?.game?.liveStatus || report?.game?.status || event.liveStatus || event.status || '').trim().toLowerCase();");
+        expect(source).toContain("const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && liveReportStatuses.has(liveReportStatus);");
         expect(source).toContain('if (!isLivePlaysRefreshEnabled) return undefined;');
         expect(source).toContain('const intervalId = window.setInterval(() => {');
         expect(source).toContain('void refreshReport(false);');
