@@ -379,6 +379,7 @@ test.describe('desktop app global search', () => {
         await expect(page.getByRole('button', { name: /Rockets/ })).toBeVisible();
         await page.getByRole('button', { name: /Rockets/ }).click();
         await expect(page).toHaveURL(/#\/teams\/team-2$/);
+        await expect(page.getByRole('heading', { name: 'Rockets' })).toBeVisible();
 
         await openDesktopSearch(page);
         await page.getByRole('button', { name: /Browse Teams/ }).click();
