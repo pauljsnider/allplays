@@ -347,7 +347,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     <div className="event-detail-page space-y-3">
       <aside className="event-detail-rail space-y-3">
         <section className="event-summary-card app-card overflow-hidden p-0">
-          <div className="px-3 py-2.5 sm:p-4">
+          <div className="event-summary-shell px-3 py-2 sm:p-4">
             <div className="flex items-center justify-between gap-2">
               <Link to="/schedule" className="inline-flex min-h-8 w-fit items-center gap-1 rounded-full text-xs font-black text-gray-600 transition hover:text-primary-700">
                 <ChevronLeft className="h-4 w-4" aria-hidden="true" />
@@ -364,7 +364,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               </button>
             </div>
 
-            <div className="mt-2 flex items-start gap-2.5 sm:gap-3">
+            <div className="mt-1.5 flex items-start gap-2.5 sm:mt-2 sm:gap-3">
               <DateTile date={selectedEvent.date} />
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
@@ -381,7 +381,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               </div>
             </div>
 
-            <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
+            <div className="mt-1.5 flex min-w-0 items-center justify-between gap-2 sm:mt-2">
               <div className="min-w-0 flex-1">
                 {events.length > 1 ? (
                   <>
@@ -400,7 +400,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             <EventBrief event={selectedEvent} />
             <button
               type="button"
-              className="secondary-button mt-2 w-full justify-center"
+              className="secondary-button event-calendar-button mt-1.5 w-full justify-center sm:mt-2"
               onClick={addEventToCalendar}
             >
               <CalendarDays className="h-4 w-4" aria-hidden="true" />
@@ -631,9 +631,9 @@ function EventBrief({ event }: { event: ParentScheduleEvent }) {
   if (!pieces.length) return null;
 
   return (
-    <div className="event-brief mt-2 flex-wrap gap-1.5 sm:mt-3">
+    <div className="event-brief mt-1.5 flex-wrap gap-1 sm:mt-3 sm:gap-1.5">
       {pieces.map((piece) => (
-        <span key={piece} className="inline-flex min-h-7 items-center rounded-full border border-gray-200 bg-white px-2.5 text-xs font-extrabold text-gray-700">
+        <span key={piece} className="inline-flex min-h-6 items-center rounded-full border border-gray-200 bg-white px-2 text-[11px] font-extrabold text-gray-700 sm:min-h-7 sm:px-2.5 sm:text-xs">
           {piece}
         </span>
       ))}

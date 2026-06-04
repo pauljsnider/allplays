@@ -17,6 +17,7 @@ describe('React app schedule event detail add-to-calendar coverage', () => {
         expect(source).toContain('`${selectedEvent.teamName}-${title}-${fileDate}.ics`,');
         expect(source).toContain('buildParentScheduleEventIcs(selectedEvent, icsTitle)');
         expect(source).toContain("setStatusMessage('Add to Calendar download started.');");
+        expect(source).toContain('className="secondary-button event-calendar-button mt-1.5 w-full justify-center sm:mt-2"');
         expect(source).toContain('onClick={addEventToCalendar}');
         expect(source).toContain('Add to Calendar');
     });
