@@ -981,13 +981,9 @@ export async function getParentTeams(userId, options = {}) {
     const teamIds = [...new Set(profile.parentOf.map(p => p.teamId).filter(Boolean))];
     if (teamIds.length === 0) return [];
 
-    const teams = [];
-    for (const teamId of teamIds) {
-        const team = await getTeam(teamId, { includeInactive });
-        if (team) {
-            teams.push(team);
-        }
-    }
+    const teams = (await Promise.all(
+        teamIds.map((teamId) => getTeam(teamId, { includeInactive }))
+    )).filter(Boolean);
 
     // Sort by name for consistency with other helpers
     return teams.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
