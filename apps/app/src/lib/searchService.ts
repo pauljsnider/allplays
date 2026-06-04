@@ -347,6 +347,7 @@ export async function searchAppTeams(queryText: string, appAccessTeams: AppSearc
 
   const publicTeamQueries = prefixes.map((prefix) => getDocs(query(
     collection(db, 'teams'),
+    where('isPublic', '==', true),
     orderBy('name'),
     where('name', '>=', prefix),
     where('name', '<=', `${prefix}\uf8ff`),

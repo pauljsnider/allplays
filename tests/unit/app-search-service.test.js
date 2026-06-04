@@ -693,7 +693,7 @@ describe('React app search service', () => {
         await expect(loadAppSearchTeams(auth.user)).rejects.toThrow('direct access down');
     });
 
-    it('searches teams by bounded prefix queries and merges app-access teams locally', async () => {
+    it('searches teams by public-only bounded prefix queries and merges app-access teams locally', async () => {
         firebaseMocks.getDocs
             .mockResolvedValueOnce({
                 docs: [
@@ -706,6 +706,7 @@ describe('React app search service', () => {
         const teams = await searchAppTeams('be', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
 
         expect(firebaseMocks.limit).toHaveBeenCalledWith(20);
+        expect(firebaseMocks.where).toHaveBeenCalledWith('isPublic', '==', true);
         expect(teams.map((team) => team.id)).toEqual(['team-home', 'team-public']);
         expect(teams.find((team) => team.id === 'team-private-hidden')).toBeUndefined();
     });
