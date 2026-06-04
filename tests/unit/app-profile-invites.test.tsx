@@ -279,6 +279,43 @@ describe('Profile invites', () => {
     expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/persisted.png');
   });
 
+  it('shows a loading state until alert teams resolve and only then renders team controls', async () => {
+    const deferredTeams = createDeferred<Array<{ id: string; name: string }>>();
+    profileServiceMocks.loadNotificationTeams.mockReturnValue(deferredTeams.promise);
+    profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationTeams).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Loading your alert teams…')).toBeTruthy();
+    expect(screen.queryByLabelText('Team')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Turn on game-day alerts' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save preferences' })).toBeNull();
+
+    deferredTeams.resolve([{ id: 'team-1', name: 'Blue Team' }]);
+
+    await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
+    expect(await screen.findByRole('button', { name: 'Turn on game-day alerts' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save preferences' })).toBeTruthy();
+  });
+
+  it('shows an empty state when no alert teams are available', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([]);
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    expect(await screen.findByText('No team alerts available yet')).toBeTruthy();
+    expect(screen.getByText('Join or create a team first, then come back here to turn on game-day and team update alerts.')).toBeTruthy();
+    expect(screen.queryByLabelText('Team')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Turn on game-day alerts' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save preferences' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Go to My Teams' }).getAttribute('href')).toBe('/teams');
+  });
+
   it('refreshes alert preferences before saving game-day alerts', async () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
     profileServiceMocks.loadNotificationPreferences
