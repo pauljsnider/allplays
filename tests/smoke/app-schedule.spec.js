@@ -883,7 +883,7 @@ test('app practice more tab uses hub cards and shares event details without a li
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'Practice' })).toBeVisible();
+    await expect(page.locator('.event-summary-card')).toContainText('Practice');
     await expect(page.getByRole('button', { name: 'Practice packet ready, review packet' })).toBeVisible();
     await page.getByRole('button', { name: 'Practice packet ready, review packet' }).click();
     await expect(page.getByRole('heading', { name: 'Practice hub' })).toBeVisible();

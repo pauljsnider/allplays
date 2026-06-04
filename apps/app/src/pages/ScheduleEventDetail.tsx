@@ -2209,6 +2209,8 @@ function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const [loadingReport, setLoadingReport] = useState(true);
   const [reportError, setReportError] = useState<string | null>(null);
   const visibleReportSections = useMemo(() => getVisibleGameReportSections(report), [report]);
+  const liveReportStatus = String(report?.game?.liveStatus || report?.game?.status || event.liveStatus || event.status || '').trim().toLowerCase();
+  const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && liveReportStatuses.has(liveReportStatus);
 
   const refreshReport = useCallback(async (showLoading = true) => {
     if (showLoading) setLoadingReport(true);
@@ -2230,20 +2232,21 @@ function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   }, [refreshReport]);
 
   useEffect(() => {
-    if (activeReportSection !== 'plays') return undefined;
+    if (!isLivePlaysRefreshEnabled) return undefined;
     const intervalId = window.setInterval(() => {
       void refreshReport(false);
     }, liveReportPollIntervalMs);
     return () => window.clearInterval(intervalId);
-  }, [activeReportSection, refreshReport]);
+  }, [isLivePlaysRefreshEnabled, refreshReport]);
 
   useEffect(() => {
+    if (!isLivePlaysRefreshEnabled) return undefined;
     const handleFocus = () => {
       void refreshReport(false);
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [refreshReport]);
+  }, [isLivePlaysRefreshEnabled, refreshReport]);
 
   useEffect(() => {
     if (visibleReportSections.some((section) => section.id === activeReportSection)) return;
