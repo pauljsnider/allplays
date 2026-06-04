@@ -18,13 +18,15 @@ describe('React app schedule event detail audio announcer wiring', () => {
         expect(source).toContain('Announcements pause automatically when the game is backgrounded.');
     });
 
-    it('refreshes the game report while the plays tab stays open', () => {
+    it('only refreshes the game report automatically for live plays views', () => {
         const source = readDetailSource();
 
         expect(source).toContain('const liveReportPollIntervalMs = 15000;');
-        expect(source).toContain("if (activeReportSection !== 'plays') return undefined;");
+        expect(source).toContain("const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && String(event.liveStatus || '').trim().toLowerCase() === 'live';");
+        expect(source).toContain('if (!isLivePlaysRefreshEnabled) return undefined;');
         expect(source).toContain('const intervalId = window.setInterval(() => {');
         expect(source).toContain('void refreshReport(false);');
+        expect(source).toContain("window.addEventListener('focus', handleFocus);");
         expect(source).toContain('}, liveReportPollIntervalMs);');
     });
 });

@@ -225,6 +225,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    vi.useRealTimers();
     document.body.innerHTML = '';
 });
 
@@ -430,35 +431,73 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(queryButtonByText(container, 'Insights')).toBeNull();
     });
 
-    it('falls back to Summary when a refreshed report removes the active optional tab', async () => {
+    it('does not refresh completed game reports on focus or while Plays stays open', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [event({ liveStatus: 'completed', homeScore: 4, awayScore: 2 })]
         });
-        reportMocks.loadGameReportSections
-            .mockResolvedValueOnce(report({
-                opponentRows: [{ id: 'opp-1', name: 'Jordan', number: '12', stats: { pts: 9 } }],
-                opponentStatKeys: ['pts'],
-                opponentStatLabels: { pts: 'PTS' }
-            }))
-            .mockResolvedValueOnce(report());
+        reportMocks.loadGameReportSections.mockResolvedValue(report({
+            plays: [{ id: 'play-1', period: 'Q4', clock: '00:30', text: 'Final whistle' }]
+        }));
 
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
         await waitForText(container, 'Report sections');
-        await waitForText(container, 'Opponent');
+        await waitForText(container, 'Match Summary');
 
-        await clickButton(container, 'Opponent');
-        await waitForText(container, 'Jordan');
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             window.dispatchEvent(new Event('focus'));
             await Promise.resolve();
         });
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+
+        vi.useFakeTimers();
+        await clickButton(container, 'Plays');
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(16000);
+        });
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes live game reports on Plays focus and interval only', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ liveStatus: 'live', homeScore: 4, awayScore: 2 })]
+        });
+        reportMocks.loadGameReportSections.mockResolvedValue(report({
+            game: { id: 'game-1', status: 'live', liveStatus: 'live', homeScore: 4, awayScore: 2 }
+        }));
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
-        expect(queryButtonByText(container, 'Opponent')).toBeNull();
-        expect(container.textContent).not.toContain('Jordan');
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+
+        vi.useFakeTimers();
+        await clickButton(container, 'Plays');
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(15000);
+        });
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            window.dispatchEvent(new Event('focus'));
+            await Promise.resolve();
+        });
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(3);
+
+        await clickButton(container, 'Summary');
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(15000);
+            window.dispatchEvent(new Event('focus'));
+            await Promise.resolve();
+        });
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(3);
     });
 
     it('renders the live period and clock chip beside the score for live games', async () => {
