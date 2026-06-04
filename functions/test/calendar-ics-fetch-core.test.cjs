@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   DEFAULT_TTL_MS,
+  DEFAULT_MAX_ENTRIES,
   createCalendarIcsCache,
   fetchCalendarIcsWithCache
 } = require('../calendar-ics-fetch-core.cjs');
@@ -95,4 +96,67 @@ test('fetchCalendarIcsWithCache serves stale cache when refresh fails', async ()
   assert.strictEqual(first.source, 'live');
   assert.strictEqual(stale.source, 'stale-cache');
   assert.match(stale.icsText, /X-SEQ:1/);
+});
+
+test('fetchCalendarIcsWithCache does not serve stale cache during forceRefresh failures', async () => {
+  const cache = createCalendarIcsCache({ ttlMs: 1 });
+
+  await fetchCalendarIcsWithCache({
+    cache,
+    cacheKey: 'https://example.com/calendar.ics',
+    fetchIcs: async () => ({
+      fetchedAt: '2026-06-04T16:53:00.000Z',
+      icsText: 'BEGIN:VCALENDAR\nX-SEQ:1\nEND:VCALENDAR'
+    })
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  await assert.rejects(
+    () => fetchCalendarIcsWithCache({
+      cache,
+      cacheKey: 'https://example.com/calendar.ics',
+      forceRefresh: true,
+      fetchIcs: async () => {
+        throw new Error('upstream timeout');
+      }
+    }),
+    /upstream timeout/
+  );
+});
+
+test('createCalendarIcsCache evicts expired and oldest entries when maxEntries is reached', async () => {
+  const cache = createCalendarIcsCache({ ttlMs: 1, maxEntries: 2 });
+
+  await fetchCalendarIcsWithCache({
+    cache,
+    cacheKey: 'https://example.com/calendar-1.ics',
+    fetchIcs: async () => ({
+      fetchedAt: '2026-06-04T16:53:01.000Z',
+      icsText: 'BEGIN:VCALENDAR\nX-SEQ:1\nEND:VCALENDAR'
+    })
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await fetchCalendarIcsWithCache({
+    cache,
+    cacheKey: 'https://example.com/calendar-2.ics',
+    fetchIcs: async () => ({
+      fetchedAt: '2026-06-04T16:53:02.000Z',
+      icsText: 'BEGIN:VCALENDAR\nX-SEQ:2\nEND:VCALENDAR'
+    })
+  });
+  await fetchCalendarIcsWithCache({
+    cache,
+    cacheKey: 'https://example.com/calendar-3.ics',
+    fetchIcs: async () => ({
+      fetchedAt: '2026-06-04T16:53:03.000Z',
+      icsText: 'BEGIN:VCALENDAR\nX-SEQ:3\nEND:VCALENDAR'
+    })
+  });
+
+  assert.strictEqual(DEFAULT_MAX_ENTRIES > cache.maxEntries, true);
+  assert.strictEqual(cache.entries.size, 2);
+  assert.strictEqual(cache.entries.has('https://example.com/calendar-1.ics'), false);
+  assert.strictEqual(cache.entries.has('https://example.com/calendar-2.ics'), true);
+  assert.strictEqual(cache.entries.has('https://example.com/calendar-3.ics'), true);
 });

@@ -1,4 +1,5 @@
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_MAX_ENTRIES = 100;
 
 function normalizeTtlMs(ttlMs) {
   const parsed = Number(ttlMs);
@@ -8,9 +9,41 @@ function normalizeTtlMs(ttlMs) {
   return DEFAULT_TTL_MS;
 }
 
-function createCalendarIcsCache({ ttlMs = DEFAULT_TTL_MS } = {}) {
+function normalizeMaxEntries(maxEntries) {
+  const parsed = Number(maxEntries);
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+  return DEFAULT_MAX_ENTRIES;
+}
+
+function pruneCalendarIcsCache(cache) {
+  const now = Date.now();
+  for (const [key, entry] of cache.entries) {
+    if (!entry?.promise && entry?.expiresAt <= now) {
+      cache.entries.delete(key);
+    }
+  }
+
+  while (cache.entries.size > cache.maxEntries) {
+    const oldestKey = cache.entries.keys().next().value;
+    if (typeof oldestKey === 'undefined') {
+      break;
+    }
+    cache.entries.delete(oldestKey);
+  }
+}
+
+function setCalendarIcsCacheEntry(cache, cacheKey, entry) {
+  cache.entries.delete(cacheKey);
+  cache.entries.set(cacheKey, entry);
+  pruneCalendarIcsCache(cache);
+}
+
+function createCalendarIcsCache({ ttlMs = DEFAULT_TTL_MS, maxEntries = DEFAULT_MAX_ENTRIES } = {}) {
   return {
     ttlMs: normalizeTtlMs(ttlMs),
+    maxEntries: normalizeMaxEntries(maxEntries),
     entries: new Map()
   };
 }
@@ -49,7 +82,7 @@ async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false
         fetchedAt: nextFetchedAt,
         expiresAt: Date.now() + cache.ttlMs
       };
-      cache.entries.set(cacheKey, nextEntry);
+      setCalendarIcsCacheEntry(cache, cacheKey, nextEntry);
       return {
         source: 'live',
         fetchedAt: nextEntry.fetchedAt,
@@ -57,7 +90,7 @@ async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false
       };
     } catch (error) {
       const staleEntry = cache.entries.get(cacheKey);
-      if (staleEntry?.icsText) {
+      if (!forceRefresh && staleEntry?.icsText) {
         return {
           source: 'stale-cache',
           fetchedAt: staleEntry.fetchedAt,
@@ -73,7 +106,7 @@ async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false
     }
   })();
 
-  cache.entries.set(cacheKey, {
+  setCalendarIcsCacheEntry(cache, cacheKey, {
     ...(cachedEntry || {}),
     promise: fetchPromise
   });
@@ -83,6 +116,7 @@ async function fetchCalendarIcsWithCache({ cache, cacheKey, forceRefresh = false
 
 module.exports = {
   DEFAULT_TTL_MS,
+  DEFAULT_MAX_ENTRIES,
   createCalendarIcsCache,
   fetchCalendarIcsWithCache
 };
