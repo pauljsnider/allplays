@@ -35,6 +35,6 @@ describe('parent dashboard active player filtering', () => {
         expect(functionSource).toContain('activeChildren.push(activeChild);');
         expect(functionSource).toContain('childName: activeChild.playerName');
         expect(functionSource).not.toContain('activeChildren.push(child);');
-        expect(dashboardSource).toContain("./js/db.js?v=35");
+        expect(dashboardSource).toContain("./js/db.js?v=36");
     });
 });
