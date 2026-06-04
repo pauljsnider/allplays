@@ -347,7 +347,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     <div className="event-detail-page space-y-3">
       <aside className="event-detail-rail space-y-3">
         <section className="event-summary-card app-card overflow-hidden p-0">
-          <div className="event-summary-shell px-3 py-2 sm:p-4">
+          <div className="event-summary-shell px-3 py-1.5 sm:p-4">
             <div className="flex items-center justify-between gap-2">
               <Link to="/schedule" className="inline-flex min-h-8 w-fit items-center gap-1 rounded-full text-xs font-black text-gray-600 transition hover:text-primary-700">
                 <ChevronLeft className="h-4 w-4" aria-hidden="true" />
@@ -374,14 +374,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
                   </span>
                 </div>
                 <h1 className="mt-0.5 text-lg font-black leading-tight text-gray-950 sm:text-2xl">{title}</h1>
-                <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-xs font-bold leading-5 text-gray-600 sm:text-sm">
+                <div className="mt-0 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-xs font-bold leading-5 text-gray-600 sm:text-sm">
                   <span>{formatHeroTime(selectedEvent)}</span>
                   <span className="min-w-0 truncate">{selectedEvent.location || 'Location TBD'}</span>
                 </div>
               </div>
             </div>
 
-            <div className="mt-1.5 flex min-w-0 items-center justify-between gap-2 sm:mt-2">
+            <div className="mt-1 flex min-w-0 items-center justify-between gap-2 sm:mt-2">
               <div className="min-w-0 flex-1">
                 {events.length > 1 ? (
                   <>
