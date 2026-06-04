@@ -28,7 +28,7 @@ import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActi
 import { getEventDetailPath } from '../lib/homeLogic';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -47,6 +47,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<TeamTab>('overview');
+  const [staffPermissionsLoading, setStaffPermissionsLoading] = useState(false);
+  const [staffPermissionsError, setStaffPermissionsError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -56,11 +58,17 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setError('');
       try {
         const nextModel = await loadParentTeamDetail(teamId, auth.user);
-        if (!cancelled) setModel(nextModel);
+        if (!cancelled) {
+          setModel(nextModel);
+          setStaffPermissionsError('');
+          setStaffPermissionsLoading(false);
+        }
       } catch (loadError: any) {
         if (!cancelled) {
           setError(loadError?.message || 'Unable to load this team.');
           setModel(null);
+          setStaffPermissionsError('');
+          setStaffPermissionsLoading(false);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -71,6 +79,30 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       cancelled = true;
     };
   }, [auth.user, teamId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadStaffPermissionsForMoreTab() {
+      if (!teamId || activeTab !== 'more' || !model?.canManageTeam || model.staffPermissions || staffPermissionsLoading) return;
+      setStaffPermissionsLoading(true);
+      setStaffPermissionsError('');
+      try {
+        const staffPermissions = await loadTeamStaffPermissions(teamId, auth.user);
+        if (!cancelled) {
+          setModel((currentModel) => currentModel ? { ...currentModel, staffPermissions } : currentModel);
+        }
+      } catch (loadError: any) {
+        if (!cancelled) setStaffPermissionsError(loadError?.message || 'Unable to load team staff permissions.');
+      } finally {
+        if (!cancelled) setStaffPermissionsLoading(false);
+      }
+    }
+
+    void loadStaffPermissionsForMoreTab();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, auth.user, model?.canManageTeam, model?.staffPermissions, teamId]);
 
   useEffect(() => {
     const scroll = () => {
@@ -90,7 +122,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   async function refreshTeamDetail() {
     if (!teamId) return;
     const nextModel = await loadParentTeamDetail(teamId, auth.user);
+    if (activeTab === 'more' && nextModel.canManageTeam) {
+      const staffPermissions = await loadTeamStaffPermissions(teamId, auth.user);
+      setModel({ ...nextModel, staffPermissions });
+      setStaffPermissionsError('');
+      setStaffPermissionsLoading(false);
+      return;
+    }
     setModel(nextModel);
+    setStaffPermissionsError('');
+    setStaffPermissionsLoading(false);
   }
 
   const tabBadges = useMemo(() => ({
@@ -165,7 +206,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
       {activeTab === 'roster' ? <RosterTab model={model} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} /> : null}
-      {activeTab === 'more' ? <MoreTab model={model} onTeamDetailRefresh={refreshTeamDetail} /> : null}
+      {activeTab === 'more' ? <MoreTab model={model} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
     </div>
   );
 }
@@ -348,9 +389,23 @@ function InsightsTab({ model }: { model: TeamDetailModel }) {
   );
 }
 
-function MoreTab({ model, onTeamDetailRefresh }: { model: TeamDetailModel; onTeamDetailRefresh: () => Promise<void> }) {
+function MoreTab({ model, staffPermissionsLoading, staffPermissionsError, onTeamDetailRefresh }: { model: TeamDetailModel; staffPermissionsLoading: boolean; staffPermissionsError: string; onTeamDetailRefresh: () => Promise<void> }) {
   return (
     <div className="space-y-4">
+      {model.canManageTeam && !model.staffPermissions && staffPermissionsLoading ? (
+        <section className="app-card p-4">
+          <div className="flex items-center gap-3 text-sm font-semibold text-gray-600">
+            <Loader2 className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
+            Loading team staff permissions…
+          </div>
+        </section>
+      ) : null}
+      {model.canManageTeam && !model.staffPermissions && staffPermissionsError ? (
+        <section className="app-card p-4">
+          <div className="text-sm font-black text-gray-950">Team staff permissions unavailable</div>
+          <div className="mt-1 text-xs font-semibold text-rose-700">{staffPermissionsError}</div>
+        </section>
+      ) : null}
       {model.staffPermissions ? <StaffPermissionsCard model={model} onInviteSuccess={onTeamDetailRefresh} /> : null}
       {model.canManageTeam ? <ReminderTimingDefaultsCard model={model} onSaved={onTeamDetailRefresh} /> : null}
       {canExposePublicFanFeed(model.team, [...model.upcomingEvents, ...model.recentResults]) ? <FanFeedCard model={model} /> : null}

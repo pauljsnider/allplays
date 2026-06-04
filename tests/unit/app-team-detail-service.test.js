@@ -51,7 +51,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
 import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
@@ -427,7 +427,7 @@ describe('React app team detail model', () => {
         expect(parentModel.staffPermissions).toBeNull();
     });
 
-    it('loads pending admin invites for team admins but not parent members', async () => {
+    it('does not load staff permissions during the initial team detail fetch', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star' }]);
         getGames.mockResolvedValue([]);
@@ -451,9 +451,41 @@ describe('React app team detail model', () => {
         });
 
         const adminModel = await loadParentTeamDetail('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
-        expect(adminModel.staffPermissions.pendingInvites).toEqual(['pending@example.com']);
-        expect(adminModel.staffPermissions.videographerGrantTargets).toEqual([
-            { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: false }
+        expect(adminModel.canManageTeam).toBe(true);
+        expect(adminModel.staffPermissions).toBeNull();
+        expect(getAllUsers).not.toHaveBeenCalled();
+        expect(getDocs).not.toHaveBeenCalled();
+
+        getDocs.mockClear();
+        getAllUsers.mockClear();
+        const parentModel = await loadParentTeamDetail('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] });
+        expect(parentModel.staffPermissions).toBeNull();
+        expect(getDocs).not.toHaveBeenCalled();
+        expect(getAllUsers).not.toHaveBeenCalled();
+    });
+
+    it('loads deferred staff permissions only when requested for a team manager', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'owner-1',
+            adminEmails: ['coach@example.com'],
+            teamPermissions: { videography: { mode: 'selected', memberIds: ['video-1'] } }
+        });
+        getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star' }]);
+        getAllUsers.mockResolvedValue([{ id: 'video-1', fullName: 'Video Parent', email: 'video@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }]);
+        const future = Date.now() + 60_000;
+        getDocs.mockResolvedValue({
+            docs: [
+                { id: 'invite-1', data: () => ({ email: 'pending@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) }
+            ]
+        });
+
+        const staffPermissions = await loadTeamStaffPermissions('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
+
+        expect(staffPermissions.pendingInvites).toEqual(['pending@example.com']);
+        expect(staffPermissions.videographerGrantTargets).toEqual([
+            { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: true }
         ]);
         expect(getAllUsers).toHaveBeenCalledTimes(1);
         expect(getDocs).toHaveBeenCalledTimes(1);
@@ -463,8 +495,8 @@ describe('React app team detail model', () => {
 
         getDocs.mockClear();
         getAllUsers.mockClear();
-        const parentModel = await loadParentTeamDetail('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] });
-        expect(parentModel.staffPermissions).toBeNull();
+        const parentStaffPermissions = await loadTeamStaffPermissions('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] });
+        expect(parentStaffPermissions).toBeNull();
         expect(getDocs).not.toHaveBeenCalled();
         expect(getAllUsers).not.toHaveBeenCalled();
     });

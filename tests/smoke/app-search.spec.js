@@ -32,13 +32,15 @@ async function openDesktopSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
-    await expect(searchButton).toBeVisible({ timeout: 15000 });
     await expect(async () => {
         await page.keyboard.press('Control+K');
 
         try {
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         } catch {
+            if (!await searchButton.count()) {
+                throw new Error('Desktop search did not open from the keyboard shortcut and the search button was unavailable.');
+            }
             await searchButton.click();
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
@@ -225,6 +227,10 @@ async function mockSearchModules(page) {
                         hasExplicitReminderHours: true,
                         summary: 'Team default reminder window: 24 hours before event start.'
                     };
+                }
+
+                export async function loadTeamStaffPermissions() {
+                    return null;
                 }
 
                 export function buildPublicTeamGamesIcsUrl(teamId) {

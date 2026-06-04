@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const teamDetailMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn(),
+    loadTeamStaffPermissions: vi.fn(),
     saveTeamScheduleNotificationsForApp: vi.fn(),
     buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
     canExposePublicFanFeed: vi.fn((team, events = []) => (events || []).some((event) => event?.type === 'game' && event?.visibility !== 'private' && event?.isPrivate !== true && event?.status !== 'deleted' && event?.liveStatus !== 'deleted' && ((team?.isPublic !== false && team?.active !== false) || event?.isPublic === true || event?.shareable === true || event?.publicCalendar === true)))
@@ -23,6 +24,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
     loadParentTeamDetail: teamDetailMocks.loadParentTeamDetail,
+    loadTeamStaffPermissions: teamDetailMocks.loadTeamStaffPermissions,
     saveTeamScheduleNotificationsForApp: teamDetailMocks.saveTeamScheduleNotificationsForApp,
     buildPublicTeamGamesIcsUrl: teamDetailMocks.buildPublicTeamGamesIcsUrl,
     canExposePublicFanFeed: teamDetailMocks.canExposePublicFanFeed
@@ -222,6 +224,7 @@ beforeEach(() => {
         hasExplicitReminderHours: true,
         summary: 'Team default reminder window: 24 hours before event start.'
     });
+    teamDetailMocks.loadTeamStaffPermissions.mockResolvedValue(null);
     teamDetailMocks.loadParentTeamDetail.mockResolvedValue(model());
 });
 
@@ -386,6 +389,53 @@ describe('React app TeamDetail page', () => {
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'More');
         expect(hidden.container.textContent).not.toContain('Reminder timing defaults');
+    });
+
+    it('renders overview content before deferred staff permissions resolve and keeps More lazy', async () => {
+        const managerModel = model();
+        managerModel.canManageTeam = true;
+        managerModel.staffPermissions = null;
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        let resolveStaffPermissions;
+        teamDetailMocks.loadTeamStaffPermissions.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveStaffPermissions = resolve;
+        }));
+
+        const { container } = await renderTeamDetail({
+            ...auth,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+            roles: ['coach'],
+            isParent: false,
+            isCoach: true
+        });
+
+        expect(container.textContent).toContain('Bears');
+        expect(container.textContent).toContain('Season record (2100)');
+        expect(teamDetailMocks.loadTeamStaffPermissions).not.toHaveBeenCalled();
+
+        await clickButton(container, 'More');
+
+        expect(teamDetailMocks.loadTeamStaffPermissions).toHaveBeenCalledTimes(1);
+        expect(teamDetailMocks.loadTeamStaffPermissions).toHaveBeenCalledWith('team-1', expect.objectContaining({ uid: 'coach-1' }));
+        expect(container.textContent).toContain('Loading team staff permissions');
+        expect(container.textContent).not.toContain('Team Staff & Permissions');
+
+        await act(async () => {
+            resolveStaffPermissions({
+                staff: [{ label: 'coach@example.com', role: 'Admin' }],
+                pendingInvites: ['pending@example.com'],
+                helperPermissions: [],
+                scorekeepingMode: '',
+                scorekeeperGrantTargets: [],
+                videographerGrantTargets: [],
+                hasAnyStaff: true
+            });
+        });
+        await flush();
+
+        expect(container.textContent).not.toContain('Loading team staff permissions');
+        expect(container.textContent).toContain('Team Staff & Permissions');
+        expect(container.textContent).toContain('coach@example.com · Admin');
     });
 
     it('exposes schedule, parent action links, and recent scores', async () => {
