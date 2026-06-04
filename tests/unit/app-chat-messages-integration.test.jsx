@@ -498,6 +498,62 @@ describe('React app messages integration', () => {
         formatSpy.mockRestore();
     });
 
+    it('rerenders sender labels when sender email or ai name changes', async () => {
+        let emitMessages = () => {};
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            emitMessages = onMessages;
+            onMessages([
+                chatMessage({
+                    id: 'msg-email',
+                    text: 'Email fallback label',
+                    senderId: 'coach-1',
+                    senderName: '',
+                    senderEmail: 'old-coach@example.com'
+                }),
+                chatMessage({
+                    id: 'msg-ai',
+                    text: 'AI summary',
+                    ai: true,
+                    aiName: 'Old Assistant',
+                    senderId: '',
+                    senderName: ''
+                })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+
+        expect(container.textContent).toContain('old-coach@example.com');
+        expect(container.textContent).toContain('Old Assistant');
+
+        await act(async () => {
+            emitMessages([
+                chatMessage({
+                    id: 'msg-email',
+                    text: 'Email fallback label',
+                    senderId: 'coach-1',
+                    senderName: '',
+                    senderEmail: 'new-coach@example.com'
+                }),
+                chatMessage({
+                    id: 'msg-ai',
+                    text: 'AI summary',
+                    ai: true,
+                    aiName: 'New Assistant',
+                    senderId: '',
+                    senderName: ''
+                })
+            ], { id: 'cursor' });
+        });
+        await flush();
+
+        expect(container.textContent).toContain('new-coach@example.com');
+        expect(container.textContent).toContain('New Assistant');
+        expect(container.textContent).not.toContain('old-coach@example.com');
+        expect(container.textContent).not.toContain('Old Assistant');
+    });
+
     it('opens a team thread at the latest message and exposes a latest shortcut after scrolling up', async () => {
         const { container } = await renderMessages('/messages/team-1');
         const scrollIntoView = window.HTMLElement.prototype.scrollIntoView;

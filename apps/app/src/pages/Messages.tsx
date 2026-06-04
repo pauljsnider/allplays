@@ -2014,7 +2014,9 @@ function areMessagesEquivalent(previous: ChatMessage, next: ChatMessage) {
     && previous.deleted === next.deleted
     && previous.senderId === next.senderId
     && previous.senderName === next.senderName
+    && previous.senderEmail === next.senderEmail
     && previous.senderPhotoUrl === next.senderPhotoUrl
+    && previous.aiName === next.aiName
     && normalizeTimestampValue(previous.createdAt) === normalizeTimestampValue(next.createdAt)
     && normalizeTimestampValue(previous.editedAt) === normalizeTimestampValue(next.editedAt)
     && JSON.stringify(getMessageAttachments(previous)) === JSON.stringify(getMessageAttachments(next))
