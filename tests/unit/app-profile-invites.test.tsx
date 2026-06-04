@@ -129,6 +129,16 @@ async function selectPhoto(container: HTMLElement, fileName: string) {
   return file;
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('Profile invites', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -309,6 +319,37 @@ describe('Profile invites', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
     await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(normalizedFile));
+  });
+
+  it('keeps the most recent profile photo selection when normalization finishes out of order', async () => {
+    const firstNormalizedFile = new File(['first-normalized'], 'first-normalized.jpg', { type: 'image/jpeg' });
+    const secondNormalizedFile = new File(['second-normalized'], 'second-normalized.jpg', { type: 'image/jpeg' });
+    const firstNormalization = createDeferred<File>();
+    const secondNormalization = createDeferred<File>();
+    profileServiceMocks.normalizeProfilePhoto
+      .mockReturnValueOnce(firstNormalization.promise)
+      .mockReturnValueOnce(secondNormalization.promise);
+
+    const { container } = renderProfile();
+
+    await screen.findByText('Choose photo');
+    await selectPhoto(container, 'first.png');
+    await selectPhoto(container, 'second.png');
+
+    secondNormalization.resolve(secondNormalizedFile);
+    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledWith(secondNormalizedFile));
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:second-normalized.jpg');
+
+    firstNormalization.resolve(firstNormalizedFile);
+    await waitFor(() => expect(profileServiceMocks.normalizeProfilePhoto).toHaveBeenCalledTimes(2));
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:second-normalized.jpg');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(secondNormalizedFile));
+    expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profileServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).toBe(secondNormalizedFile);
+    expect(profileServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).not.toBe(firstNormalizedFile);
   });
 
   it('uses the native chooser to capture a profile photo before saving', async () => {

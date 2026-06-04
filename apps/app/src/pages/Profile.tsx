@@ -110,6 +110,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string }>({ email: '', phone: '' });
   const ownedPhotoPreviewUrlRef = useRef<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const photoSelectionIdRef = useRef(0);
 
   const revokeOwnedPhotoPreviewUrl = () => {
     const activePreviewUrl = ownedPhotoPreviewUrlRef.current;
@@ -148,6 +149,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         return;
       }
 
+      photoSelectionIdRef.current += 1;
       setLoading(true);
       setProfileStatus(null);
       setNotificationStatus(null);
@@ -363,10 +365,19 @@ export function Profile({ auth }: { auth: AuthState }) {
       return;
     }
 
+    const selectionId = photoSelectionIdRef.current + 1;
+    photoSelectionIdRef.current = selectionId;
+
     try {
       const nextFile = options.normalize === false ? file : await normalizeProfilePhoto(file);
+      if (photoSelectionIdRef.current !== selectionId) {
+        return;
+      }
       applySelectedPhoto(nextFile);
     } catch (error: any) {
+      if (photoSelectionIdRef.current !== selectionId) {
+        return;
+      }
       setProfileStatus({ message: error?.message || 'Profile photo could not be prepared right now.', tone: 'error' });
     }
   };
@@ -410,6 +421,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   };
 
   const removePhoto = () => {
+    photoSelectionIdRef.current += 1;
     revokeOwnedPhotoPreviewUrl();
     setPhotoFile(null);
     setPhotoUrl('');
