@@ -1070,6 +1070,9 @@ describe('React app messages integration', () => {
 
         const { container } = await renderMessages('/messages/team-1');
 
+        expect(container.querySelector('button[aria-label="Voice to text"]')).toBeTruthy();
+        expect(buttonByText(container, 'Audience: Full team')).toBeTruthy();
+
         await click(container, 'Voice to text');
         expect(recognitionInstance.lang).toBe('es-MX');
         expect(recognitionInstance.start).toHaveBeenCalled();

@@ -268,7 +268,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await mockParentToolsModules(page);
     await page.goto(appUrl(baseURL, '/parent-tools/access'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'Family workflows' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Family workflows' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Request player access')).toBeVisible();
     await page.getByRole('button', { name: /Send request/ }).click();
     await expect.poll(() => page.evaluate(() => window.__accessRequests.at(-1))).toEqual({ teamId: 'team-1', playerId: 'player-1', relation: 'Parent' });

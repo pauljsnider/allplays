@@ -11,6 +11,7 @@ import {
   loadParentScheduleEventDetail,
   loadParentScheduleAssignments,
   loadParentScheduleRideOffers,
+  loadStaffScheduleRsvpBreakdown,
   loadStaffRsvpReminderPreview,
   loadAutoFilledLineupDraftPreviewForApp,
   markParentPracticePacketComplete,
@@ -20,6 +21,7 @@ import {
   sendStaffRsvpReminder,
   setParentScheduleRideOfferStatus,
   submitParentScheduleRsvp,
+  submitStaffScheduleRsvpOverride,
   summarizeParentScheduleRideOffers,
   loadHomeScoringPlayers,
   publishLiveScoreUpdateEvent,
@@ -30,6 +32,8 @@ import {
   type RideOfferInput,
   type ParentPracticePacket,
   type ParentPracticePacketChild,
+  type StaffScheduleRsvpBreakdown,
+  type StaffScheduleRsvpRow,
   type StaffRsvpReminderSendResult,
   type RideRequestChildInput,
   type ScheduleHomeScoringPlayer,
@@ -171,6 +175,12 @@ type AttentionItem = {
   section: EventDetailSectionId;
 };
 
+type StaffRsvpOverrideStatus = {
+  tone: 'success' | 'error';
+  playerId: string;
+  message: string;
+};
+
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
   const [searchParams] = useSearchParams();
@@ -183,6 +193,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [activeSection, setActiveSection] = useState<EventDetailSectionId>('availability');
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
+  const [staffRsvpBreakdown, setStaffRsvpBreakdown] = useState<StaffScheduleRsvpBreakdown | null>(null);
+  const [staffRsvpLoading, setStaffRsvpLoading] = useState(false);
+  const [staffRsvpError, setStaffRsvpError] = useState<string | null>(null);
+  const [staffRsvpSubmittingPlayerId, setStaffRsvpSubmittingPlayerId] = useState<string | null>(null);
+  const [staffRsvpStatus, setStaffRsvpStatus] = useState<StaffRsvpOverrideStatus | null>(null);
+  const [staffRsvpRefreshToken, setStaffRsvpRefreshToken] = useState(0);
 
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
@@ -226,6 +242,39 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     setAvailabilityNote(selectedEvent?.myRsvpNote || '');
   }, [selectedEvent?.eventKey, selectedEvent?.myRsvpNote]);
+
+  const refreshStaffRsvpBreakdown = useCallback(async (showLoading = true) => {
+    if (!auth.user || !selectedEvent?.isTeamAdmin || !selectedEvent.isDbGame) {
+      setStaffRsvpBreakdown(null);
+      setStaffRsvpError(null);
+      return null;
+    }
+    if (showLoading) setStaffRsvpLoading(true);
+    setStaffRsvpError(null);
+    try {
+      const breakdown = await loadStaffScheduleRsvpBreakdown(selectedEvent, auth.user);
+      setStaffRsvpBreakdown(breakdown);
+      return breakdown;
+    } catch (loadError: any) {
+      setStaffRsvpBreakdown(null);
+      setStaffRsvpError(loadError?.message || 'Unable to load staff RSVP breakdown.');
+      return null;
+    } finally {
+      if (showLoading) setStaffRsvpLoading(false);
+    }
+  }, [auth.user, selectedEvent]);
+
+  useEffect(() => {
+    setStaffRsvpStatus(null);
+    setStaffRsvpSubmittingPlayerId(null);
+    if (!selectedEvent?.isTeamAdmin || !selectedEvent.isDbGame) {
+      setStaffRsvpBreakdown(null);
+      setStaffRsvpError(null);
+      setStaffRsvpLoading(false);
+      return;
+    }
+    refreshStaffRsvpBreakdown();
+  }, [refreshStaffRsvpBreakdown, selectedEvent?.eventKey]);
 
   const handleRideOffersChanged = useCallback((offers: ScheduleRideOffer[]) => {
     const rideshareSummary = summarizeParentScheduleRideOffers(offers);
@@ -301,6 +350,33 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
       setError(submitError?.message || 'Unable to submit availability.');
     } finally {
       setSubmitting(null);
+    }
+  };
+
+  const submitStaffRsvpOverride = async (player: StaffScheduleRsvpRow, response: Exclude<RsvpResponse, 'not_responded'>) => {
+    if (!auth.user || !selectedEvent) return;
+    setStaffRsvpSubmittingPlayerId(player.playerId);
+    setStaffRsvpStatus(null);
+    setStaffRsvpError(null);
+    try {
+      await submitStaffScheduleRsvpOverride(selectedEvent, auth.user, player.playerId, response);
+      const breakdown = await refreshStaffRsvpBreakdown(false);
+      if (breakdown) {
+        setEvents((current) => current.map((event) => {
+          if (event.teamId !== selectedEvent.teamId || event.id !== selectedEvent.id) return event;
+          return {
+            ...event,
+            myRsvp: event.childId === player.playerId ? response : event.myRsvp,
+            rsvpSummary: breakdown.counts
+          };
+        }));
+      }
+      setStaffRsvpRefreshToken((current) => current + 1);
+      setStaffRsvpStatus({ tone: 'success', playerId: player.playerId, message: `${player.playerName} marked ${rsvpLabels[response].toLowerCase()}.` });
+    } catch (submitError: any) {
+      setStaffRsvpStatus({ tone: 'error', playerId: player.playerId, message: submitError?.message || 'Unable to update player RSVP.' });
+    } finally {
+      setStaffRsvpSubmittingPlayerId(null);
     }
   };
 
@@ -447,6 +523,13 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             availabilityNote={availabilityNote}
             onAvailabilityNoteChange={setAvailabilityNote}
             onSubmit={submitRsvp}
+            staffRsvpBreakdown={staffRsvpBreakdown}
+            staffRsvpLoading={staffRsvpLoading}
+            staffRsvpError={staffRsvpError}
+            staffRsvpSubmittingPlayerId={staffRsvpSubmittingPlayerId}
+            staffRsvpStatus={staffRsvpStatus}
+            staffRsvpRefreshToken={staffRsvpRefreshToken}
+            onStaffRsvpOverride={submitStaffRsvpOverride}
             attentionItems={attentionItems}
             onSelectSection={selectSection}
           />
@@ -785,7 +868,7 @@ function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: 
   );
 }
 
-function AvailabilitySection({ auth, event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit, attentionItems, onSelectSection }: {
+function AvailabilitySection({ auth, event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit, staffRsvpBreakdown, staffRsvpLoading, staffRsvpError, staffRsvpSubmittingPlayerId, staffRsvpStatus, staffRsvpRefreshToken, onStaffRsvpOverride, attentionItems, onSelectSection }: {
   auth: AuthState;
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;
@@ -794,6 +877,13 @@ function AvailabilitySection({ auth, event, rsvp, canSubmitRsvp, submitting, ava
   availabilityNote: string;
   onAvailabilityNoteChange: (note: string) => void;
   onSubmit: (response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
+  staffRsvpBreakdown: StaffScheduleRsvpBreakdown | null;
+  staffRsvpLoading: boolean;
+  staffRsvpError: string | null;
+  staffRsvpSubmittingPlayerId: string | null;
+  staffRsvpStatus: StaffRsvpOverrideStatus | null;
+  staffRsvpRefreshToken: number;
+  onStaffRsvpOverride: (player: StaffScheduleRsvpRow, response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
   attentionItems: AttentionItem[];
   onSelectSection: (sectionId: EventDetailSectionId) => void;
 }) {
@@ -819,7 +909,16 @@ function AvailabilitySection({ auth, event, rsvp, canSubmitRsvp, submitting, ava
       />
       <div className="px-3 pb-3 sm:px-4">
         <AttentionPanel items={attentionItems} onSelectSection={onSelectSection} />
-        <StaffRsvpReminderPanel auth={auth} event={event} />
+        <StaffRsvpBreakdownPanel
+          event={event}
+          breakdown={staffRsvpBreakdown}
+          loading={staffRsvpLoading}
+          error={staffRsvpError}
+          submittingPlayerId={staffRsvpSubmittingPlayerId}
+          status={staffRsvpStatus}
+          onOverride={onStaffRsvpOverride}
+        />
+        <StaffRsvpReminderPanel auth={auth} event={event} refreshToken={staffRsvpRefreshToken} />
         <AvailabilityNotesList event={event} />
         {!event.isDbGame ? <div className="mt-2 text-xs font-semibold text-gray-500">Availability opens after this event is tracked in the schedule.</div> : null}
         {event.availabilityLocked ? <div className="mt-2 text-xs font-semibold text-amber-700">Availability locked {String(event.availabilityCutoffLabel || '').toLowerCase()}.</div> : null}
@@ -828,7 +927,96 @@ function AvailabilitySection({ auth, event, rsvp, canSubmitRsvp, submitting, ava
   );
 }
 
-function StaffRsvpReminderPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+function StaffRsvpBreakdownPanel({ event, breakdown, loading, error, submittingPlayerId, status, onOverride }: {
+  event: ParentScheduleEvent;
+  breakdown: StaffScheduleRsvpBreakdown | null;
+  loading: boolean;
+  error: string | null;
+  submittingPlayerId: string | null;
+  status: StaffRsvpOverrideStatus | null;
+  onOverride: (player: StaffScheduleRsvpRow, response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
+}) {
+  if (!event.isTeamAdmin || !event.isDbGame) return null;
+  if (loading && !breakdown) {
+    return <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 text-sm font-semibold text-gray-600">Loading team RSVP breakdown…</div>;
+  }
+  if (error && !breakdown) {
+    return <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-700">{error}</div>;
+  }
+  if (!breakdown) return null;
+
+  return (
+    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-gray-950">Staff RSVP overrides</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">Review every player, including no response, and update availability inline.</div>
+        </div>
+        <span className="inline-flex min-h-8 items-center rounded-full border border-primary-100 bg-primary-50 px-3 text-xs font-black text-primary-700">
+          {formatRsvpSummary(breakdown.counts)}
+        </span>
+      </div>
+      <div className="mt-3 space-y-3">
+        {(['not_responded', 'going', 'maybe', 'not_going'] as const).map((responseKey) => {
+          const rows = breakdown.grouped[responseKey];
+          if (!rows.length) return null;
+          return (
+            <div key={responseKey}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{rsvpLabels[responseKey]}</div>
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[responseKey]}`}>
+                  {rows.length}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {rows.map((player) => {
+                  const inlineStatus = status?.playerId === player.playerId ? status : null;
+                  return (
+                    <div key={player.playerId} className="rounded-xl border border-gray-200 bg-gray-50 p-3" data-testid={`staff-rsvp-row-${player.playerId}`}>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="text-sm font-black text-gray-950">{player.playerNumber ? `#${player.playerNumber} ` : ''}{player.playerName}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[player.response]}`}>
+                              {rsvpLabels[player.response]}
+                            </span>
+                            {player.note ? <span className="text-xs font-semibold text-gray-500">{player.note}</span> : null}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5 sm:min-w-[220px]">
+                          {(['going', 'maybe', 'not_going'] as const).map((response) => {
+                            const busy = submittingPlayerId === player.playerId;
+                            return (
+                              <button
+                                key={response}
+                                type="button"
+                                className={`min-h-8 rounded-full border px-2 text-[11px] font-black transition ${player.response === response ? rsvpBadgeClasses[response] : 'border-gray-200 bg-white text-gray-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'}`}
+                                disabled={busy || event.isCancelled || event.availabilityLocked}
+                                onClick={() => onOverride(player, response)}
+                              >
+                                {busy && player.response !== response ? 'Saving' : rsvpLabels[response]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      {inlineStatus ? <div className={`mt-2 text-xs font-bold ${inlineStatus.tone === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>{inlineStatus.message}</div> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {error && breakdown ? <div className="mt-3 text-xs font-bold text-rose-700">{error}</div> : null}
+      {event.isCancelled ? <div className="mt-3 text-xs font-semibold text-gray-500">Cancelled events cannot be updated.</div> : null}
+      {event.availabilityLocked ? <div className="mt-3 text-xs font-semibold text-amber-700">Availability is locked for this event.</div> : null}
+    </div>
+  );
+}
+
+function StaffRsvpReminderPanel({ auth, event, refreshToken = 0 }: { auth: AuthState; event: ParentScheduleEvent; refreshToken?: number }) {
   const [preview, setPreview] = useState<StaffRsvpReminderPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -858,7 +1046,7 @@ function StaffRsvpReminderPanel({ auth, event }: { auth: AuthState; event: Paren
     } else {
       setPreview(null);
     }
-  }, [canLoad, refreshPreview]);
+  }, [canLoad, refreshPreview, refreshToken]);
 
   if (!event.isTeamRsvpReminderManager || !event.isDbGame || event.isCancelled) return null;
   if (loading && !preview) {
