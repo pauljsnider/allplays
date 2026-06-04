@@ -14,8 +14,8 @@ function extractRuleBlock(startMarker) {
 
 const chatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{userId}/{fileName}');
 const clipFallbackRules = extractRuleBlock('match /game-clips/{teamId}/{gameId}/{userId}/{fileName}');
-const legacyStatSheetRules = extractRuleBlock('match /stat-sheets/{fileName=**}');
-const legacyGameClipRules = extractRuleBlock('match /game-clips/{fileName=**}');
+const legacyStatSheetRules = extractRuleBlock('match /stat-sheets/{fileName}');
+const legacyGameClipRules = extractRuleBlock('match /game-clips/{fileName}');
 
 function canAccessTeamMedia({ authUid, isTeamAdmin = false, isTeamParent = false }) {
     return authUid !== null && (isTeamAdmin || isTeamParent);
@@ -65,8 +65,10 @@ describe('fallback media paths and Storage rules', () => {
         expect(canDeleteScopedFallback({ authUid: 'outsider-1', pathUserId: 'uploader-1' })).toBe(false);
     });
 
-    it('narrows legacy stat-sheet and game-clip prefixes so nested fallback paths are not open to any signed-in user', () => {
-        expect(legacyStatSheetRules).toContain("allow get, create, delete: if isSignedIn() && !fileName.matches('.*/.*');");
-        expect(legacyGameClipRules).toContain("allow get, create, delete: if isSignedIn() && !fileName.matches('.*/.*');");
+    it('uses single-segment legacy fallback rules so flat uploads stay available without path wildcard string checks', () => {
+        expect(legacyStatSheetRules).toContain('match /stat-sheets/{fileName} {');
+        expect(legacyStatSheetRules).toContain('allow get, create, delete: if isSignedIn();');
+        expect(legacyGameClipRules).toContain('match /game-clips/{fileName} {');
+        expect(legacyGameClipRules).toContain('allow get, create, delete: if isSignedIn();');
     });
 });

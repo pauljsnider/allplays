@@ -111,8 +111,8 @@ service firebase.storage {
       allow update: if false;
     }
 
-    match /stat-sheets/{fileName=**} {
-      allow get, create, delete: if isSignedIn() && !fileName.matches('.*/.*');
+    match /stat-sheets/{fileName} {
+      allow get, create, delete: if isSignedIn();
       allow list, update: if false;
     }
 
@@ -129,8 +129,8 @@ service firebase.storage {
       allow update: if false;
     }
 
-    match /game-clips/{fileName=**} {
-      allow get, create, delete: if isSignedIn() && !fileName.matches('.*/.*');
+    match /game-clips/{fileName} {
+      allow get, create, delete: if isSignedIn();
       allow list, update: if false;
     }
 
