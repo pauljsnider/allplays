@@ -30,11 +30,19 @@ describe('access code Firestore rules', () => {
 
     it('blocks self-minted admin invites unless the caller already administers the target team', () => {
         expect(rules).toContain('function isAdminInvitePayloadValid(data)');
-        expect(accessCodeRules).toContain("request.resource.data.type != 'admin_invite' ||");
+        expect(accessCodeRules).toContain("request.resource.data.get('type', null) != 'admin_invite' ||");
         expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
         expect(accessCodeRules).toContain('isAdminInvitePayloadValid(request.resource.data)');
         expect(accessCodeRules).toContain('request.resource.data.code == codeId');
         expect(accessCodeRules).not.toContain('allow create: if isSignedIn() && request.resource.data.generatedBy == request.auth.uid;');
+    });
+
+    it('prevents creators from updating an existing access code into an admin invite without team-admin authorization', () => {
+        expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite'");
+        expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) == 'admin_invite'");
+        expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
+        expect(accessCodeRules).toContain('isAdminInvitePayloadValid(request.resource.data)');
+        expect(accessCodeRules).toContain('request.resource.data.code == codeId');
     });
 
     it('validates the allowed admin_invite payload fields before redemption can trust the record', () => {

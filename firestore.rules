@@ -1238,7 +1238,7 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
                        request.resource.data.generatedBy == request.auth.uid &&
                        (
-                         request.resource.data.type != 'admin_invite' ||
+                         request.resource.data.get('type', null) != 'admin_invite' ||
                          (
                            request.resource.data.teamId is string &&
                            isTeamOwnerOrAdmin(request.resource.data.teamId) &&
@@ -1248,7 +1248,14 @@ service cloud.firestore {
                        );
       // Only allow the code generator to update/delete, OR allow system to mark as used during signup
       allow update: if isSignedIn() &&
-                       (resource.data.generatedBy == request.auth.uid ||
+                       ((resource.data.generatedBy == request.auth.uid &&
+                         request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite') ||
+                        (resource.data.generatedBy == request.auth.uid &&
+                         request.resource.data.get('type', resource.data.get('type', null)) == 'admin_invite' &&
+                         request.resource.data.teamId is string &&
+                         isTeamOwnerOrAdmin(request.resource.data.teamId) &&
+                         isAdminInvitePayloadValid(request.resource.data) &&
+                         request.resource.data.code == codeId) ||
                         // Allow marking as used only if setting these specific fields
                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
                          request.resource.data.usedBy == request.auth.uid) ||
