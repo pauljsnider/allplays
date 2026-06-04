@@ -535,10 +535,6 @@ export async function loadParentTeamDetail(teamId: string, user: AuthUser | null
 
   if (!team) throw new Error('Team not found.');
 
-  const canManageTeam = hasFullTeamAccess(user, team);
-  const pendingAdminInvites = canManageTeam ? await loadPendingAdminInvites(teamId).catch(() => []) : [];
-  const confirmedTeamMembers = canManageTeam ? await Promise.resolve(getAllUsers()).catch(() => []) : [];
-
   const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
   const completedGameIds = (Array.isArray(games) ? games : [])
     .filter(isCompletedGame)
@@ -565,6 +561,27 @@ export async function loadParentTeamDetail(teamId: string, user: AuthUser | null
     trackingItems,
     trackingStatuses,
     sponsors: [...normalizeSponsorList(adSponsors), ...normalizeSponsorList(localSponsors)],
+    includeStaffPermissions: false
+  });
+}
+
+export async function loadTeamStaffPermissions(teamId: string, user: AuthUser | null): Promise<TeamStaffPermissionsSummary | null> {
+  const [team, players] = await Promise.all([
+    loadTeamDocument(teamId),
+    loadTeamPlayers(teamId)
+  ]);
+
+  if (!team || !hasFullTeamAccess(user, team)) return null;
+
+  const [pendingAdminInvites, confirmedTeamMembers] = await Promise.all([
+    loadPendingAdminInvites(teamId).catch(() => []),
+    Promise.resolve(getAllUsers()).catch(() => [])
+  ]);
+
+  return buildTeamStaffPermissionsSummary({
+    teamId,
+    team,
+    players,
     pendingAdminInvites,
     confirmedTeamMembers
   });
@@ -583,7 +600,8 @@ export function buildTeamDetailModel({
   trackingStatuses = [],
   sponsors = [],
   pendingAdminInvites = [],
-  confirmedTeamMembers = []
+  confirmedTeamMembers = [],
+  includeStaffPermissions = true
 }: {
   teamId: string;
   team: Record<string, any>;
@@ -598,6 +616,7 @@ export function buildTeamDetailModel({
   sponsors?: TeamDetailSponsor[];
   pendingAdminInvites?: any[];
   confirmedTeamMembers?: any[];
+  includeStaffPermissions?: boolean;
 }): TeamDetailModel {
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
   const normalizedEvents = normalizeEvents(games);
@@ -610,13 +629,8 @@ export function buildTeamDetailModel({
   const leaderboards = buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport);
   const trackingSummaries = buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses);
   const canManageTeam = hasFullTeamAccess(user, team);
-  const staffPermissions = canManageTeam
-    ? {
-      ...buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites),
-      scorekeepingMode: cleanString(team?.teamPermissions?.scorekeeping?.mode),
-      scorekeeperGrantTargets: buildPermissionGrantTargets(team, players, 'scorekeeping', confirmedTeamMembers, teamId),
-      videographerGrantTargets: buildPermissionGrantTargets(team, players, 'videography', confirmedTeamMembers, teamId)
-    }
+  const staffPermissions = canManageTeam && includeStaffPermissions
+    ? buildTeamStaffPermissionsSummary({ teamId, team, players, pendingAdminInvites, confirmedTeamMembers })
     : null;
 
   return {
@@ -662,6 +676,27 @@ export function buildTeamDetailModel({
       practices: games.filter((game: any) => game?.type === 'practice').length,
       completedGames: completedGames.length
     }
+  };
+}
+
+function buildTeamStaffPermissionsSummary({
+  teamId,
+  team,
+  players = [],
+  pendingAdminInvites = [],
+  confirmedTeamMembers = []
+}: {
+  teamId: string;
+  team: Record<string, any>;
+  players?: any[];
+  pendingAdminInvites?: any[];
+  confirmedTeamMembers?: any[];
+}): TeamStaffPermissionsSummary {
+  return {
+    ...buildTeamStaffPermissionsViewModel({ ...team, id: teamId }, pendingAdminInvites),
+    scorekeepingMode: cleanString(team?.teamPermissions?.scorekeeping?.mode),
+    scorekeeperGrantTargets: buildPermissionGrantTargets(team, players, 'scorekeeping', confirmedTeamMembers, teamId),
+    videographerGrantTargets: buildPermissionGrantTargets(team, players, 'videography', confirmedTeamMembers, teamId)
   };
 }
 
