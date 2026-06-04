@@ -347,7 +347,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     <div className="event-detail-page space-y-3">
       <aside className="event-detail-rail space-y-3">
         <section className="event-summary-card app-card overflow-hidden p-0">
-          <div className="p-3 sm:p-4">
+          <div className="px-3 py-2.5 sm:p-4">
             <div className="flex items-center justify-between gap-2">
               <Link to="/schedule" className="inline-flex min-h-8 w-fit items-center gap-1 rounded-full text-xs font-black text-gray-600 transition hover:text-primary-700">
                 <ChevronLeft className="h-4 w-4" aria-hidden="true" />
@@ -382,7 +382,11 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             </div>
 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
-              <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
+              {events.length > 1 ? (
+                <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} compact />
+              ) : (
+                <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
+              )}
               <span className={`inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
                 {rsvpLabels[rsvp]}
               </span>
@@ -391,13 +395,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             <EventBrief event={selectedEvent} />
             <button
               type="button"
-              className="secondary-button mt-3 w-full justify-center"
+              className="secondary-button mt-2 w-full justify-center"
               onClick={addEventToCalendar}
             >
               <CalendarDays className="h-4 w-4" aria-hidden="true" />
               Add to Calendar
             </button>
-            {events.length > 1 ? <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} /> : null}
             {hasPracticePacket ? <PracticePacketPrompt event={selectedEvent} onOpen={() => selectSection('game')} /> : null}
             <EventSectionNav
               className="event-workflow-nav event-nav-desktop mt-3"
@@ -683,13 +686,17 @@ function AttentionPanel({ items, onSelectSection }: { items: AttentionItem[]; on
   );
 }
 
-function PlayerSwitcher({ events, selectedChildId, onSelect }: {
+function PlayerSwitcher({ events, selectedChildId, onSelect, compact = false }: {
   events: ParentScheduleEvent[];
   selectedChildId: string;
   onSelect: (childId: string) => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="mt-2 inline-flex max-w-full gap-1 rounded-full border border-gray-200 bg-gray-50 p-0.5 sm:mt-3">
+    <div
+      data-testid="event-player-switcher"
+      className={`${compact ? 'flex-1 ' : 'mt-2 sm:mt-3 '}inline-flex max-w-full gap-1 rounded-full border border-gray-200 bg-gray-50 p-0.5`}
+    >
       {events.map((event) => {
         const selected = event.childId === selectedChildId;
         return (
