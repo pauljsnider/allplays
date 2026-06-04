@@ -83,7 +83,7 @@ describe('AppSearchDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('waits for route preload before navigating search results', async () => {
+  it('navigates search results immediately while preloading the route in the background', async () => {
     const onClose = vi.fn();
     let releasePreload!: () => void;
     preloadSearchRouteMock.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
@@ -101,10 +101,9 @@ describe('AppSearchDialog', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Rockets/ }));
 
     await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledWith('/teams/team-2'));
-    expect(navigateMock).not.toHaveBeenCalled();
+    expect(navigateMock).toHaveBeenCalledWith('/teams/team-2');
 
     releasePreload();
-
-    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/teams/team-2'));
+    await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledTimes(1));
   });
 });
