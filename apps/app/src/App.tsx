@@ -2,6 +2,7 @@ import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
+import { shouldReloadTeamsToHome } from './lib/reloadRouting';
 import { addPushNotificationOpenListener } from './lib/pushService';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
@@ -35,7 +36,12 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const authUserRef = useRef(auth.user);
-  const shouldDefaultReloadToHome = auth.user && location.pathname === '/teams' && isBrowserReload();
+  const shouldDefaultReloadToHome = shouldReloadTeamsToHome({
+    hasUser: Boolean(auth.user),
+    pathname: location.pathname,
+    search: location.search,
+    isReload: isBrowserReload()
+  });
 
   useEffect(() => {
     authUserRef.current = auth.user;
