@@ -415,6 +415,7 @@ describe('React app TeamDetail page', () => {
 
         await clickButton(container, 'More');
 
+        expect(teamDetailMocks.loadTeamStaffPermissions).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamStaffPermissions).toHaveBeenCalledWith('team-1', expect.objectContaining({ uid: 'coach-1' }));
         expect(container.textContent).toContain('Loading team staff permissions');
         expect(container.textContent).not.toContain('Team Staff & Permissions');

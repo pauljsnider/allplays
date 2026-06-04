@@ -102,7 +102,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, auth.user, model, teamId]);
+  }, [activeTab, auth.user, model?.canManageTeam, model?.staffPermissions, teamId]);
 
   useEffect(() => {
     const scroll = () => {
