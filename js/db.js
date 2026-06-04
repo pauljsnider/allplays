@@ -36,6 +36,7 @@ import {
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=6';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
+import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath } from './fallback-media-paths.js?v=1';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
@@ -366,10 +367,19 @@ export async function uploadUserPhoto(file) {
     return downloadURL;
 }
 
+function getRequiredSignedInUserId() {
+    const userId = auth.currentUser?.uid || null;
+    if (!userId) {
+        throw new Error('You must be signed in to upload team media.');
+    }
+    return userId;
+}
+
 export async function uploadChatImage(teamId, file) {
     await requireImageAuth();
 
     const ts = Date.now();
+    const userId = getRequiredSignedInUserId();
     const safeName = String(file.name || 'media').replace(/[^\w.\-]+/g, '_');
     const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
     const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
@@ -391,7 +401,7 @@ export async function uploadChatImage(teamId, file) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
             console.warn('Image storage denied chat upload, falling back to main storage:', error?.message || error);
-            const fallbackPath = `stat-sheets/${ts}_chat_${teamId}_${safeName}`;
+            const fallbackPath = buildChatAttachmentFallbackPath(teamId, userId, file.name, ts);
             const fallbackRef = ref(storage, fallbackPath);
             const fallbackSnapshot = await uploadBytes(fallbackRef, file);
             const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);
@@ -429,6 +439,7 @@ export async function uploadGameClip(teamId, gameId, file) {
     await requireImageAuth();
 
     const ts = Date.now();
+    const userId = getRequiredSignedInUserId();
     const safeName = String(file.name || 'clip').replace(/[^\w.\-]+/g, '_');
     const clipPath = `team-videos/${ts}_game-clip_${teamId}_${gameId}_${safeName}`;
 
@@ -448,7 +459,7 @@ export async function uploadGameClip(teamId, gameId, file) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
             console.warn('Image storage denied game clip upload, falling back to main storage:', error?.message || error);
-            const fallbackPath = `game-clips/${ts}_${teamId}_${gameId}_${safeName}`;
+            const fallbackPath = buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts);
             const fallbackRef = ref(storage, fallbackPath);
             const fallbackSnapshot = await uploadBytes(fallbackRef, file);
             const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);

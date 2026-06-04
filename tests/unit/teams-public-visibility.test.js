@@ -23,7 +23,7 @@ describe('public teams visibility', () => {
     it('wires Browse Teams to the public-only helper path and keeps a defensive client filter', () => {
         const source = readRepoFile('teams.html');
 
-        expect(source).toContain("import { getTeams } from './js/db.js?v=34';");
+        expect(source).toContain("import { getTeams } from './js/db.js?v=35';");
         expect(source).toContain('getTeams(locationFilter ? { locationFilter, publicOnly: true } : { publicOnly: true })');
         expect(source).toContain('allTeams.filter(t => t.isPublic === true)');
         expect(source).not.toContain('getTeams(locationFilter ? { locationFilter } : {})');
