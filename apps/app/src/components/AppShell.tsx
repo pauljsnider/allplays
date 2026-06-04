@@ -212,6 +212,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   title="Private AI"
                 >
                   <Sparkles className="h-5 w-5" aria-hidden="true" />
+                  <span className="sr-only">Private AI</span>
                 </button>
                 <button
                   type="button"
