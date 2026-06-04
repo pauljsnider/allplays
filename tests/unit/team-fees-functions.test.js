@@ -15,6 +15,8 @@ const {
     buildTeamFeeCheckoutUrls,
     buildTeamFeeCheckoutMetadata,
     canReuseTeamFeeCheckoutSession,
+    getTeamFeeCheckoutGuardFailure,
+    shouldApplyTeamFeeCheckoutSession,
     shouldMarkTeamFeePaidFromEvent,
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
     getTeamFeeStripePaidAmountCents,
@@ -83,12 +85,27 @@ describe('team fee checkout function helpers', () => {
             recipientId: 'player_789',
             payerUid: 'user_123'
         });
+        expect(buildTeamFeeCheckoutMetadata({
+            ...input,
+            payerUid: 'user_123',
+            checkoutAttemptToken: 'tok_1234567890abcdef',
+            checkoutAmountCents: 7500
+        })).toEqual({
+            product: 'team_fee',
+            teamId: 'team_123',
+            batchId: 'batch_456',
+            recipientId: 'player_789',
+            payerUid: 'user_123',
+            checkoutAttemptToken: 'tok_1234567890abcdef',
+            checkoutAmountCents: '7500'
+        });
     });
 
     it('reuses only currently open checkout sessions for the same amount', () => {
         const recipient = {
             checkoutUrl: 'https://checkout.stripe.test/session',
             stripeCheckoutSessionId: 'cs_123',
+            checkoutAttemptToken: 'tok_1234567890abcdef',
             checkoutStatus: 'open',
             checkoutAmountCents: 7500
         };
@@ -97,6 +114,31 @@ describe('team fee checkout function helpers', () => {
         expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutStatus: 'payment_failed' }, 7500)).toBe(false);
         expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutStatus: 'expired' }, 7500)).toBe(false);
         expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutAmountCents: 8000 }, 7500)).toBe(false);
+        expect(canReuseTeamFeeCheckoutSession({ ...recipient, checkoutAttemptToken: '' }, 7500)).toBe(false);
+    });
+
+    it('rejects stale team fee checkout sessions when session, token, or balance drifted', () => {
+        const recipient = {
+            stripeCheckoutSessionId: 'cs_current',
+            checkoutAttemptToken: 'tok_current_123456',
+            checkoutAmountCents: 7500,
+            amountDueCents: 7500,
+            paidAmountCents: 0
+        };
+        const session = {
+            id: 'cs_current',
+            amount_total: 7500,
+            metadata: {
+                checkoutAttemptToken: 'tok_current_123456'
+            }
+        };
+
+        expect(shouldApplyTeamFeeCheckoutSession({ recipient, session })).toBe(true);
+        expect(getTeamFeeCheckoutGuardFailure({ recipient, session })).toBe('');
+        expect(getTeamFeeCheckoutGuardFailure({ recipient, session: { ...session, id: 'cs_old' } })).toBe('checkout_session_mismatch');
+        expect(getTeamFeeCheckoutGuardFailure({ recipient, session: { ...session, metadata: { checkoutAttemptToken: 'tok_old_1234567890' } } })).toBe('checkout_attempt_mismatch');
+        expect(getTeamFeeCheckoutGuardFailure({ recipient, session: { ...session, amount_total: 7000 } })).toBe('checkout_amount_mismatch');
+        expect(getTeamFeeCheckoutGuardFailure({ recipient: { ...recipient, amountDueCents: 9000 }, session })).toBe('balance_mismatch');
     });
 
     it('marks paid immediate and async team fee checkout sessions as paid', () => {
@@ -159,6 +201,7 @@ describe('team fee checkout function helpers', () => {
             amountPaidCents: 12500,
             balanceDueCents: 0,
             checkoutStatus: 'paid',
+            checkoutAttemptToken: null,
             paymentProvider: 'stripe',
             stripeCheckoutSessionId: 'cs_123',
             stripePaymentIntentId: 'pi_123',
@@ -241,6 +284,9 @@ describe('team fee checkout function helpers', () => {
             balanceDueCents: 5000,
             refundedAmountCents: 7500,
             amountRefundedCents: 7500,
+            checkoutStatus: 'stale',
+            checkoutAttemptToken: null,
+            stripeCheckoutSessionId: null,
             paymentProvider: 'stripe',
             stripeLastRefundId: 're_123',
             stripeLastRefundStatus: 'succeeded'
@@ -268,6 +314,20 @@ describe('team fee checkout function helpers', () => {
         expect(source).toContain("stripeRefundStatus !== 'succeeded'");
         expect(source).toContain('const ledgerRefundedAt = admin.firestore.Timestamp.now();');
         expect(source).toContain('hasStripeRefundLedgerEntry(latestRecipient, refund.id)');
+    });
+
+    it('guards team fee webhook processing behind the current checkout attempt', () => {
+        const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+        const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+
+        expect(functionsSource).toContain('checkoutAttemptToken');
+        expect(functionsSource).toContain('checkoutAmountCents: amountCents');
+        expect(functionsSource).toContain('shouldApplyTeamFeeCheckoutSession({ recipient, session })');
+        expect(functionsSource).toContain('getTeamFeeCheckoutGuardFailure({ recipient, session })');
+        expect(functionsSource).toContain("ignoredReason");
+        expect(dbSource).toContain("updatePayload.checkoutStatus = 'stale'");
+        expect(dbSource).toContain('updatePayload.checkoutAttemptToken = deleteField()');
+        expect(dbSource).toContain('updatePayload.stripeCheckoutSessionId = deleteField()');
     });
 
     it('does not mark the recipient fully paid when the balance grew after checkout creation', () => {
