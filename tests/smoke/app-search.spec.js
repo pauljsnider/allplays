@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { buildUrl } from './helpers/boot-path.js';
 
 function appUrl(baseURL, hashPath) {
     const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL;
-    const url = new URL('/', appBaseURL);
+    const url = new URL(buildUrl(appBaseURL, '/'));
     url.hash = hashPath;
     return url.toString();
 }

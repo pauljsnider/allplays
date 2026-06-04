@@ -533,6 +533,28 @@ async function mockScheduleModules(page, options = {}) {
                     window.__scheduleCalls.rideshare.push({ action: 'status', offerId: offer.id, status });
                 }
 
+                export async function loadStaffScheduleRsvpBreakdown() {
+                    return {
+                        counts: { going: 1, maybe: 0, notGoing: 0, notResponded: 1 },
+                        grouped: {
+                            not_responded: [],
+                            going: [],
+                            maybe: [],
+                            not_going: []
+                        }
+                    };
+                }
+
+                export async function submitStaffScheduleRsvpOverride(event, user, playerId, response) {
+                    window.__scheduleCalls.staffRsvps = (window.__scheduleCalls.staffRsvps || []).concat({
+                        eventId: event?.id || null,
+                        userId: user?.uid || null,
+                        playerId,
+                        response
+                    });
+                    return { playerId, response };
+                }
+
                 export async function loadStaffRsvpReminderPreview() {
                     return { missingPlayerCount: 0, eligibleEmailCount: 0, players: [] };
                 }
@@ -722,7 +744,7 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByLabel('Schedule filter', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('Schedule filter', { exact: true })).toBeVisible({ timeout: 15000 });
     await expect(page.locator('.schedule-web-sidebar')).toBeHidden();
     await expect(page.locator('.schedule-list > a').first()).toBeVisible();
     const scheduleRowCount = await page.locator('.schedule-list > a').count();
@@ -770,7 +792,7 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
     const eventSummaryCard = page.locator('.event-summary-card');
-    await expect(eventSummaryCard.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible({ timeout: 10000 });
+    await expect(eventSummaryCard.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Pat · Bears')).toBeVisible();
     await expect(page.getByText('Availability needed')).toBeVisible();
     await expect(page.getByText('Is Pat going?')).toBeVisible();

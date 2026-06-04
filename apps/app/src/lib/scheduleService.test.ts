@@ -26,6 +26,7 @@ vi.mock('../../../../js/db.js', () => ({
   getPracticePacketCompletions: vi.fn(),
   getPracticeSessions: vi.fn(),
   getPlayers: vi.fn(),
+  getRsvpBreakdownByPlayer: vi.fn(),
   getRsvps: vi.fn(),
   getRsvpSummaries: vi.fn(),
   getTeam: vi.fn(),
@@ -81,11 +82,12 @@ vi.mock('./uxTiming', () => ({ startUxTimer: vi.fn(() => ({ end: vi.fn() })) }))
 vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 
-import { updateGame, getPlayers, getRsvps } from '../../../../js/db.js';
-import { buildPlayerScoringLiveEvent, recordPlayerScoringStat, saveScheduledGameLineupDraftForApp } from './scheduleService';
+import { updateGame, getPlayers, getRsvpBreakdownByPlayer, getRsvps, submitRsvpForPlayer } from '../../../../js/db.js';
+import { buildPlayerScoringLiveEvent, loadStaffScheduleRsvpBreakdown, recordPlayerScoringStat, saveScheduledGameLineupDraftForApp, submitStaffScheduleRsvpOverride } from './scheduleService';
 
 describe('player-attributed live scoring', () => {
   beforeEach(() => {
+    (globalThis as any).window = globalThis as any;
     vi.clearAllMocks();
     mocks.transactionGet
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8 }) })
@@ -287,5 +289,62 @@ describe('mobile lineup draft creation', () => {
 
     vi.mocked(getRsvps).mockResolvedValue([{ playerId: 'p1', response: 'maybe' }] as any);
     await expect(saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5')).rejects.toThrow('No Going players');
+  });
+});
+
+describe('staff RSVP management', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] };
+  const event = {
+    id: 'game-1',
+    teamId: 'team-1',
+    childId: 'child-event-player',
+    isDbGame: true,
+    isCancelled: false,
+    availabilityLocked: false,
+    isTeamAdmin: true,
+    isTeamStaff: true
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('maps staff RSVP breakdown rows including no-response players', async () => {
+    vi.mocked(getRsvpBreakdownByPlayer).mockResolvedValue({
+      grouped: {
+        going: [{ playerId: 'p1', playerName: 'Avery Smith', response: 'going' }],
+        maybe: [{ playerId: 'p2', playerName: 'Blake Jones', response: 'maybe' }],
+        not_going: [{ playerId: 'p3', playerName: 'Casey Brown', response: 'not_going' }],
+        not_responded: [{ playerId: 'p4', playerName: 'Devon Lee', response: 'not_responded' }]
+      },
+      counts: { going: 1, maybe: 1, notGoing: 1, notResponded: 1, total: 4 }
+    } as any);
+
+    const result = await loadStaffScheduleRsvpBreakdown(event, user as any);
+
+    expect(getRsvpBreakdownByPlayer).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(result.counts).toEqual({ going: 1, maybe: 1, notGoing: 1, notResponded: 1, total: 4 });
+    expect(result.grouped.not_responded).toEqual([
+      expect.objectContaining({ playerId: 'p4', playerName: 'Devon Lee', response: 'not_responded' })
+    ]);
+  });
+
+  it('submits staff RSVP overrides for the selected player instead of event.childId', async () => {
+    vi.mocked(submitRsvpForPlayer).mockResolvedValue(undefined as any);
+
+    await submitStaffScheduleRsvpOverride(event, user as any, 'player-override', 'going');
+
+    expect(submitRsvpForPlayer).toHaveBeenCalledWith('team-1', 'game-1', 'coach-1', expect.objectContaining({
+      playerId: 'player-override',
+      response: 'going'
+    }));
+    expect(submitRsvpForPlayer).not.toHaveBeenCalledWith('team-1', 'game-1', 'coach-1', expect.objectContaining({
+      playerId: 'child-event-player'
+    }));
+  });
+
+  it('rejects coach-only staff without admin write access', async () => {
+    await expect(submitStaffScheduleRsvpOverride({ ...event, isTeamAdmin: false }, user as any, 'player-override', 'going')).rejects.toThrow('Only team owners and admins can manage player RSVPs.');
+    expect(submitRsvpForPlayer).not.toHaveBeenCalled();
   });
 });
