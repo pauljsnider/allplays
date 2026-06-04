@@ -1,4 +1,3 @@
-import { getTeams } from '../../../../js/db.js';
 import { isTeamActive } from '../../../../js/team-visibility.js';
 import {
   db,
@@ -18,6 +17,7 @@ import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
 const playerSearchQueryLimit = 20;
+const teamSearchQueryLimit = 20;
 
 let cachedTeams: AppSearchTeam[] | null = null;
 let cachedTeamsLoadedAt = 0;
@@ -216,6 +216,31 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
   return actions;
 }
 
+export function getKnownAppSearchTeams(user: AuthUser | null): AppSearchTeam[] {
+  const teamsById = new Map<string, AppSearchTeam>();
+
+  (Array.isArray(user?.parentOf) ? user?.parentOf : []).forEach((entry: any) => {
+    const teamId = cleanString(entry?.teamId || entry?.id);
+    if (!teamId) return;
+    const teamName = cleanString(entry?.teamName || entry?.name) || 'Team';
+    teamsById.set(teamId, {
+      id: teamId,
+      name: teamName,
+      sport: cleanString(entry?.sport),
+      zip: cleanString(entry?.zip),
+      city: cleanString(entry?.city),
+      state: cleanString(entry?.state),
+      active: entry?.active,
+      archived: entry?.archived,
+      status: cleanString(entry?.status),
+      photoUrl: getFirstUrl(entry?.photoUrl, entry?.teamPhotoUrl, entry?.logoUrl, entry?.imageUrl),
+      fromAppAccess: true
+    });
+  });
+
+  return Array.from(teamsById.values()).filter(isTeamActive).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function computeAppSearchResults({
   queryText,
   auth,
@@ -259,16 +284,23 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
     return cachedTeams;
   }
 
-  const [siteTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
-    Promise.resolve(getTeams()),
+  if (!user) {
+    cachedTeams = [];
+    cachedTeamsLoadedAt = now;
+    cachedTeamsUserKey = userCacheKey;
+    return cachedTeams;
+  }
+
+  const [directAccessTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
+    loadDirectAccessSearchTeams(user),
     user ? loadParentHomeSummary(user) : Promise.resolve(null),
     user ? loadStreamVolunteerSearchTeams(user) : Promise.resolve([])
   ]);
 
   const teamsById = new Map<string, AppSearchTeam>();
 
-  if (siteTeamsResult.status === 'fulfilled') {
-    normalizeTeams(siteTeamsResult.value).forEach((team) => {
+  if (directAccessTeamsResult.status === 'fulfilled') {
+    normalizeTeams(directAccessTeamsResult.value).forEach((team) => {
       if (canUserDiscoverTeamInAppSearch(team, user)) teamsById.set(team.id, team);
     });
   }
@@ -284,8 +316,8 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
   }
 
   if (!teamsById.size) {
-    const firstError = siteTeamsResult.status === 'rejected'
-      ? siteTeamsResult.reason
+    const firstError = directAccessTeamsResult.status === 'rejected'
+      ? directAccessTeamsResult.reason
       : homeTeamsResult.status === 'rejected'
         ? homeTeamsResult.reason
         : streamVolunteerTeamsResult.status === 'rejected'
@@ -299,6 +331,48 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
   cachedTeamsLoadedAt = now;
   cachedTeamsUserKey = userCacheKey;
   return cachedTeams;
+}
+
+export async function searchAppTeams(queryText: string, appAccessTeams: AppSearchTeam[], user: AuthUser | null): Promise<AppSearchTeam[]> {
+  const rawQuery = String(queryText || '').trim();
+  if (rawQuery.length < 2) return appAccessTeams.slice(0, teamSearchQueryLimit);
+
+  const firstToken = splitSearchTokens(rawQuery)[0] || '';
+  if (!firstToken) return appAccessTeams.slice(0, teamSearchQueryLimit);
+
+  const prefixes = Array.from(new Set([
+    firstToken,
+    titleCaseWord(firstToken)
+  ].filter(Boolean))).slice(0, 2);
+
+  const publicTeamQueries = prefixes.map((prefix) => getDocs(query(
+    collection(db, 'teams'),
+    orderBy('name'),
+    where('name', '>=', prefix),
+    where('name', '<=', `${prefix}\uf8ff`),
+    limit(teamSearchQueryLimit)
+  )));
+
+  const localTeamsById = new Map(appAccessTeams.map((team) => [team.id, team]));
+  const snapshots = await Promise.allSettled(publicTeamQueries);
+  const rejected = snapshots.filter((snapshot) => snapshot.status === 'rejected').map((snapshot: any) => snapshot.reason).filter(Boolean);
+  const hasFulfilled = snapshots.some((snapshot) => snapshot.status === 'fulfilled');
+
+  snapshots.forEach((snapshot: any) => {
+    if (snapshot.status !== 'fulfilled') return;
+    normalizeTeams((snapshot.value?.docs || []).map((doc: any) => ({ id: doc.id, ...(typeof doc.data === 'function' ? doc.data() || {} : {}) }))).forEach((team) => {
+      if (canUserDiscoverTeamInAppSearch(team, user)) {
+        localTeamsById.set(team.id, team);
+      }
+    });
+  });
+
+  const rankedTeams = rankTeamsForQuery(Array.from(localTeamsById.values()), rawQuery).slice(0, teamSearchQueryLimit);
+  if (rankedTeams.length || hasFulfilled || rejected.length === 0) {
+    return rankedTeams;
+  }
+
+  throw rejected[0];
 }
 
 export async function searchAppPlayers(queryText: string, teamsById: Map<string, AppSearchTeam>, user: AuthUser | null): Promise<AppSearchPlayer[]> {
@@ -502,6 +576,39 @@ async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>,
   });
 }
 
+async function loadDirectAccessSearchTeams(user: AuthUser): Promise<AppSearchTeam[]> {
+  const uid = cleanString(user.uid);
+  const email = cleanString(user.email).toLowerCase();
+  if (!uid && !email) return [];
+
+  const teamsRef = collection(db, 'teams');
+  const directQueries = [];
+  if (uid) {
+    directQueries.push(getDocs(query(teamsRef, where('ownerId', '==', uid))));
+  }
+  if (email) {
+    directQueries.push(getDocs(query(teamsRef, where('adminEmails', 'array-contains', email))));
+  }
+
+  const snapshots = await Promise.allSettled(directQueries);
+  const rejected = snapshots.filter((snapshot) => snapshot.status === 'rejected').map((snapshot: any) => snapshot.reason).filter(Boolean);
+  const hasFulfilled = snapshots.some((snapshot) => snapshot.status === 'fulfilled');
+
+  if (!hasFulfilled && rejected.length) {
+    throw rejected[0];
+  }
+
+  const teamsById = new Map<string, any>();
+  snapshots.forEach((snapshot: any) => {
+    if (snapshot.status !== 'fulfilled') return;
+    (snapshot.value?.docs || []).forEach((doc: any) => {
+      teamsById.set(doc.id, { id: doc.id, ...(typeof doc.data === 'function' ? doc.data() || {} : {}) });
+    });
+  });
+
+  return normalizeTeams(Array.from(teamsById.values()));
+}
+
 function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): AppSearchTeam {
   const teamId = cleanString(homeTeam?.teamId || homeTeam?.id || baseTeam?.id);
   return {
@@ -571,6 +678,21 @@ function rankSearchItems<T extends AppSearchItem>(items: T[], tokens: string[]) 
     .filter((entry) => entry.score >= 0)
     .sort((a, b) => b.score - a.score)
     .map((entry) => entry.item);
+}
+
+function rankTeamsForQuery(teams: AppSearchTeam[], queryText: string) {
+  const tokens = splitSearchTokens(queryText);
+  const itemsById = new Map<string, AppSearchTeam>();
+  const rankedItems = rankSearchItems(
+    teams.map((team) => {
+      itemsById.set(team.id, team);
+      return teamToSearchItem(team);
+    }),
+    tokens
+  );
+  return rankedItems
+    .map((item) => itemsById.get(item.id.replace(/^team:/, '')))
+    .filter(Boolean) as AppSearchTeam[];
 }
 
 function teamToSearchItem(team: AppSearchTeam): AppSearchItem {

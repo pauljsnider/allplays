@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSearchDialog } from './AppSearchDialog';
 import type { AuthState } from '../lib/types';
 
@@ -26,27 +26,33 @@ vi.mock('../lib/searchRoutePreload', () => ({
   preloadSearchRoute: preloadSearchRouteMock,
 }));
 
+const { getKnownAppSearchTeamsMock, loadAppSearchTeamsMock, searchAppTeamsMock } = vi.hoisted(() => ({
+  getKnownAppSearchTeamsMock: vi.fn((): Array<{ id: string; name: string; sport?: string; zip?: string }> => []),
+  loadAppSearchTeamsMock: vi.fn(async () => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
+  searchAppTeamsMock: vi.fn(async (_query: string, teams: Array<{ id: string; name: string; sport?: string; zip?: string }>) => teams),
+}));
+
 vi.mock('../lib/searchService', () => ({
-  computeAppSearchResults: ({ teams }: { teams: Array<{ id: string; name: string; sport?: string; zip?: string }> }) => ({
-    actions: [],
-    teams: teams.map((team) => ({
+  computeAppSearchResults: ({ teams }: { teams: Array<{ id: string; name: string; sport?: string; zip?: string }> }) => {
+    const actionItems = [{ id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams', route: '/teams' }];
+    const teamItems = teams.map((team) => ({
       id: `team:${team.id}`,
       kind: 'team',
       title: team.name,
       subtitle: [team.sport, team.zip].filter(Boolean).join(' • '),
       route: `/teams/${team.id}`,
-    })),
-    help: [],
-    players: [],
-    flat: teams.map((team) => ({
-      id: `team:${team.id}`,
-      kind: 'team',
-      title: team.name,
-      subtitle: [team.sport, team.zip].filter(Boolean).join(' • '),
-      route: `/teams/${team.id}`,
-    })),
-  }),
-  loadAppSearchTeams: vi.fn(async () => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
+    }));
+    return {
+      actions: actionItems,
+      teams: teamItems,
+      help: [],
+      players: [],
+      flat: [...actionItems, ...teamItems],
+    };
+  },
+  getKnownAppSearchTeams: getKnownAppSearchTeamsMock,
+  loadAppSearchTeams: loadAppSearchTeamsMock,
+  searchAppTeams: searchAppTeamsMock,
   searchAppPlayers: vi.fn(async () => []),
 }));
 
@@ -65,6 +71,18 @@ const auth: AuthState = {
 };
 
 describe('AppSearchDialog', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getKnownAppSearchTeamsMock.mockReturnValue([]);
+    loadAppSearchTeamsMock.mockResolvedValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
+    searchAppTeamsMock.mockImplementation(async (_query, teams) => teams);
+    preloadSearchRouteMock.mockImplementation(async () => true);
+  });
+
   it('closes from a backdrop mousedown but not from pressing inside the search panel', () => {
     const onClose = vi.fn();
 
@@ -89,6 +107,7 @@ describe('AppSearchDialog', () => {
     preloadSearchRouteMock.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
       releasePreload = () => resolve(true);
     }));
+    getKnownAppSearchTeamsMock.mockReturnValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
 
     render(
       <MemoryRouter initialEntries={['/home']}>
@@ -105,5 +124,25 @@ describe('AppSearchDialog', () => {
 
     releasePreload();
     await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not load teams on open and waits for typing before bounded team search queries', async () => {
+    const onClose = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findAllByRole('button', { name: /Browse Teams/ })).not.toHaveLength(0);
+    expect(loadAppSearchTeamsMock).not.toHaveBeenCalled();
+    expect(searchAppTeamsMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+    await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledWith('ro', expect.arrayContaining([
+      expect.objectContaining({ id: 'team-2', name: 'Rockets' })
+    ]), null));
   });
 });

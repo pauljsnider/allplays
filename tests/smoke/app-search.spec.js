@@ -57,6 +57,8 @@ async function openDesktopSearch(page) {
 async function mockSearchModules(page) {
     await page.addInitScript(() => {
         window.__openedPublicUrls = [];
+        window.__teamSearchQueries = [];
+        window.__loadAppSearchTeamsCalls = 0;
         window.__playerSearchQueries = [];
     });
 
@@ -73,7 +75,7 @@ async function mockSearchModules(page) {
                         email: 'parent@example.com',
                         displayName: 'Pat Parent',
                         roles: ['parent'],
-                        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+                        parentOf: [{ teamId: 'team-2', teamName: 'Rockets', sport: 'Soccer', zip: '64114', playerId: 'player-1' }]
                     };
                     return {
                         user,
@@ -116,11 +118,31 @@ async function mockSearchModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
-                export async function loadAppSearchTeams() {
-                    return [
-                        { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true },
-                        { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114', fromAppAccess: true }
-                    ];
+                export function getKnownAppSearchTeams(user) {
+                    return (user?.parentOf || []).map((team) => ({
+                        id: team.teamId,
+                        name: team.teamName || team.name || 'Team',
+                        sport: team.sport,
+                        zip: team.zip,
+                        fromAppAccess: true
+                    }));
+                }
+
+                export async function loadAppSearchTeams(user) {
+                    window.__loadAppSearchTeamsCalls += 1;
+                    return getKnownAppSearchTeams(user);
+                }
+
+                export async function searchAppTeams(queryText, appAccessTeams = []) {
+                    window.__teamSearchQueries.push(String(queryText || ''));
+                    const q = String(queryText || '').trim().toLowerCase();
+                    const publicTeams = q.includes('bea') ? [
+                        { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true }
+                    ] : [];
+                    return [...appAccessTeams, ...publicTeams].filter((team) => {
+                        const haystack = [team.name, team.sport, team.zip].filter(Boolean).join(' ').toLowerCase();
+                        return haystack.includes(q);
+                    }).slice(0, 20);
                 }
 
                 export async function searchAppPlayers(queryText) {
@@ -302,12 +324,18 @@ test.describe('app global search', () => {
             return Math.round((box?.y || 0) + (box?.height || 0));
         }).toBeLessThanOrEqual(844);
         await expect(page.getByText('Browse Teams')).toBeVisible();
-        await expect(page.getByText('Bears')).toBeVisible();
+        await expect(page.getByText('Rockets')).toBeVisible();
+        await expect(page.getByText('Bears')).toBeHidden();
+        await expect.poll(() => page.evaluate(() => window.__loadAppSearchTeamsCalls)).toBe(0);
         await expect(page.getByText('Type at least 2 characters to search players')).toBeVisible();
+
+        await page.getByLabel('Search teams, players, actions, help').fill('bea');
+        await expect(page.getByRole('button', { name: /Bears Basketball/ })).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__teamSearchQueries)).toEqual(['bea']);
 
         await page.getByLabel('Search teams, players, actions, help').fill('pat');
         await expect(page.getByText('#9 Pat Star')).toBeVisible();
-        await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['pat']);
+        await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['bea', 'pat']);
         await page.getByRole('button', { name: /#9 Pat Star/ }).click();
         await expect(page).toHaveURL(/#\/players\/team-1\/player-1$/);
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
@@ -351,6 +379,7 @@ test.describe('desktop app global search', () => {
         await openDesktopSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('rock');
         await expect(page.getByRole('button', { name: /Rockets/ })).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__teamSearchQueries)).toEqual(['rock']);
         await page.getByRole('button', { name: /Rockets/ }).click();
         await expect(page).toHaveURL(/#\/teams\/team-2$/);
 

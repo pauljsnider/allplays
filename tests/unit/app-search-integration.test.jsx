@@ -15,6 +15,7 @@ const homeMocks = vi.hoisted(() => ({
 
 const firebaseMocks = vi.hoisted(() => ({
     db: {},
+    collection: vi.fn((db, collectionName) => ({ db, collectionName })),
     collectionGroup: vi.fn((db, collectionName) => ({ db, collectionName })),
     doc: vi.fn(),
     getDoc: vi.fn(),
@@ -50,7 +51,7 @@ const auth = {
         email: 'parent@example.com',
         displayName: 'Pat Parent',
         roles: ['parent'],
-        parentOf: [{ teamId: 'team-home', playerId: 'player-home' }]
+        parentOf: [{ teamId: 'team-home', teamName: 'Home Rockets', sport: 'Soccer', playerId: 'player-home' }]
     },
     profile: {},
     loading: false,
@@ -68,6 +69,14 @@ function firestorePlayer(path, data) {
     return {
         id: path.split('/').pop(),
         ref: { path },
+        data: () => data
+    };
+}
+
+function firestoreTeam(id, data) {
+    return {
+        id,
+        ref: { path: `teams/${id}` },
         data: () => data
     };
 }
@@ -174,11 +183,31 @@ beforeEach(() => {
         }]
     });
     firebaseMocks.getDoc.mockResolvedValue({ exists: () => true, data: () => ({}) });
-    firebaseMocks.getDocs.mockResolvedValue({
-        docs: [
-            firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '9' }),
-            firestorePlayer('teams/team-private/players/player-2', { name: 'Pat Secret', number: '10' })
-        ]
+    firebaseMocks.getDocs.mockImplementation(async (request) => {
+        const parts = request?.parts || [];
+        const collectionName = parts.find((part) => part?.collectionName)?.collectionName;
+        const ownerQuery = parts.find((part) => part?.type === 'where' && part.field === 'ownerId');
+        const adminQuery = parts.find((part) => part?.type === 'where' && part.field === 'adminEmails');
+        const streamMemberQuery = parts.find((part) => part?.type === 'where' && part.field === 'teamPermissions.streaming.memberIds');
+        const streamEmailQuery = parts.find((part) => part?.type === 'where' && part.field === 'streamVolunteerEmails');
+        const nameLowerBound = parts.find((part) => part?.type === 'where' && part.field === 'name' && part.op === '>=')?.value;
+
+        if (collectionName === 'teams') {
+            if (ownerQuery || adminQuery || streamMemberQuery || streamEmailQuery) {
+                return { docs: [] };
+            }
+            if (nameLowerBound === 'bea' || nameLowerBound === 'Bea') {
+                return { docs: [firestoreTeam('team-1', { name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true })] };
+            }
+            return { docs: [] };
+        }
+
+        return {
+            docs: [
+                firestorePlayer('teams/team-home/players/player-1', { name: 'Pat Star', number: '9' }),
+                firestorePlayer('teams/team-private/players/player-2', { name: 'Pat Secret', number: '10' })
+            ]
+        };
     });
     helpMocks.searchHelpKnowledge.mockReturnValue([]);
 });
@@ -200,29 +229,47 @@ describe('React app shell search', () => {
 
         await clickButton(container, 'Search');
         await waitForText(container, 'Browse Teams');
-        expect(container.textContent).toContain('Bears');
         expect(container.textContent).toContain('Home Rockets');
+        expect(container.textContent).not.toContain('Bears');
         expect(container.textContent).not.toContain('PrivateSoccer');
         expect(container.textContent).toContain('Type at least 2 characters to search players');
 
+        await fillSearch(container, 'bea');
+        expect(container.textContent).toContain('Bears');
+
         await fillSearch(container, 'pat');
         expect(firebaseMocks.getDocs).toHaveBeenCalled();
+        await waitForText(container, '#9 Pat Star');
         expect(container.textContent).toContain('#9 Pat Star');
         expect(container.textContent).not.toContain('Pat Secret');
 
         await clickButton(container, '#9 Pat Star');
-        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-1/player-1');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-home/player-1');
     });
 
     it('avoids repeated Firestore player lookups for narrower mobile search refinements', async () => {
         firebaseMocks.getDocs.mockImplementation(async (request) => {
-            const lowerBound = request.parts.find((part) => part?.type === 'where' && part.field === 'name' && part.op === '>=')?.value;
+            const parts = request?.parts || [];
+            const collectionName = parts.find((part) => part?.collectionName)?.collectionName;
+            const lowerBound = parts.find((part) => part?.type === 'where' && part.field === 'name' && part.op === '>=')?.value;
+            const ownerQuery = parts.find((part) => part?.type === 'where' && part.field === 'ownerId');
+            const adminQuery = parts.find((part) => part?.type === 'where' && part.field === 'adminEmails');
+            const streamMemberQuery = parts.find((part) => part?.type === 'where' && part.field === 'teamPermissions.streaming.memberIds');
+            const streamEmailQuery = parts.find((part) => part?.type === 'where' && part.field === 'streamVolunteerEmails');
+
+            if (collectionName === 'teams') {
+                if (ownerQuery || adminQuery || streamMemberQuery || streamEmailQuery) {
+                    return { docs: [] };
+                }
+                return { docs: [] };
+            }
+
             if (lowerBound === 'pa' || lowerBound === 'Pa') {
                 return {
                     docs: [
-                        firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '9' }),
-                        firestorePlayer('teams/team-1/players/player-2', { name: 'Pat Stone', number: '10' }),
-                        firestorePlayer('teams/team-1/players/player-3', { name: 'Paige Forward', number: '11' })
+                        firestorePlayer('teams/team-home/players/player-1', { name: 'Pat Star', number: '9' }),
+                        firestorePlayer('teams/team-home/players/player-2', { name: 'Pat Stone', number: '10' }),
+                        firestorePlayer('teams/team-home/players/player-3', { name: 'Paige Forward', number: '11' })
                     ]
                 };
             }
@@ -233,13 +280,19 @@ describe('React app shell search', () => {
         const { container } = await renderShell();
 
         await clickButton(container, 'Search');
+        const getPlayerSearchCallCount = () => firebaseMocks.getDocs.mock.calls.filter(([request]) => {
+            const parts = request?.parts || [];
+            return parts.some((part) => part?.collectionName === 'players');
+        }).length;
+        const baselinePlayerCalls = getPlayerSearchCallCount();
         await fillSearch(container, 'pa');
-        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(getPlayerSearchCallCount() - baselinePlayerCalls).toBe(2);
+        await waitForText(container, '#9 Pat Star');
         expect(container.textContent).toContain('#9 Pat Star');
         expect(container.textContent).toContain('#10 Pat Stone');
 
         await fillSearch(container, 'pat');
-        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(getPlayerSearchCallCount() - baselinePlayerCalls).toBe(2);
         expect(container.textContent).toContain('#9 Pat Star');
         expect(container.textContent).toContain('#10 Pat Stone');
         expect(container.textContent).not.toContain('Paige Forward');
@@ -485,7 +538,7 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('Browse Teams');
         expect(container.textContent).toContain('Sign In');
         expect(container.textContent).toContain('Get Started');
-        expect(container.textContent).toContain('Bears');
+        expect(container.textContent).not.toContain('Bears');
         expect(homeMocks.loadParentHomeSummary).not.toHaveBeenCalled();
 
         await clickButton(container, 'Get Started');
@@ -493,40 +546,36 @@ describe('React app shell search', () => {
     });
 
     it('keeps one-character player searches local and shows empty result states', async () => {
-        dbMocks.getTeams.mockResolvedValueOnce([
-            { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true }
-        ]);
         homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
         firebaseMocks.getDocs.mockResolvedValueOnce({ docs: [] });
         const { container } = await renderShell();
 
         await clickButton(container, 'Search');
+        const baselineCalls = firebaseMocks.getDocs.mock.calls.length;
         await fillSearch(container, 'p');
-        expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
+        expect(firebaseMocks.getDocs.mock.calls.length).toBe(baselineCalls);
         expect(container.textContent).toContain('Type at least 2 characters to search players');
 
         await fillSearch(container, 'zzzz');
-        expect(firebaseMocks.getDocs).toHaveBeenCalled();
+        expect(firebaseMocks.getDocs.mock.calls.length).toBeGreaterThan(baselineCalls);
         expect(container.textContent).toContain('No matching teams');
         expect(container.textContent).toContain('No matching players');
         expect(container.textContent).toContain('No results');
     });
 
     it('shows team and player search errors in the dialog', async () => {
-        dbMocks.getTeams.mockRejectedValueOnce(new Error('Site teams unavailable'));
+        firebaseMocks.getDocs.mockRejectedValue(new Error('Team search unavailable'));
         homeMocks.loadParentHome.mockRejectedValueOnce(new Error('Home teams unavailable'));
         const { container } = await renderShell();
 
         await clickButton(container, 'Search');
-        await flush();
-        expect(container.textContent).toContain('Site teams unavailable');
+        expect(container.textContent).not.toContain('Home teams unavailable');
         expect(container.textContent).toContain('Type at least 2 characters to search players');
+        await fillSearch(container, 'zz');
+        expect(container.textContent).toContain('Team search unavailable');
 
         await clickButton(container, 'Close search');
         resetAppSearchCacheForTests();
-        dbMocks.getTeams.mockResolvedValueOnce([
-            { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true }
-        ]);
         homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
         firebaseMocks.getDocs.mockRejectedValue(Object.assign(new Error('Permission denied'), { code: 'permission-denied' }));
 
@@ -536,9 +585,6 @@ describe('React app shell search', () => {
 
         await clickButton(container, 'Close search');
         resetAppSearchCacheForTests();
-        dbMocks.getTeams.mockResolvedValueOnce([
-            { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true }
-        ]);
         homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
         firebaseMocks.getDocs.mockRejectedValue(Object.assign(new Error('not ready yet: create index'), { code: 'failed-precondition' }));
 
