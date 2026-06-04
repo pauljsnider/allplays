@@ -396,16 +396,9 @@ describe('React app TeamDetail page', () => {
         managerModel.canManageTeam = true;
         managerModel.staffPermissions = null;
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+        let resolveStaffPermissions;
         teamDetailMocks.loadTeamStaffPermissions.mockImplementationOnce(() => new Promise((resolve) => {
-            setTimeout(() => resolve({
-                staff: [{ label: 'coach@example.com', role: 'Admin' }],
-                pendingInvites: ['pending@example.com'],
-                helperPermissions: [],
-                scorekeepingMode: '',
-                scorekeeperGrantTargets: [],
-                videographerGrantTargets: [],
-                hasAnyStaff: true
-            }), 0);
+            resolveStaffPermissions = resolve;
         }));
 
         const { container } = await renderTeamDetail({
@@ -426,6 +419,22 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Loading team staff permissions');
         expect(container.textContent).not.toContain('Team Staff & Permissions');
 
+        await act(async () => {
+            resolveStaffPermissions({
+                staff: [{ label: 'coach@example.com', role: 'Admin' }],
+                pendingInvites: ['pending@example.com'],
+                helperPermissions: [],
+                scorekeepingMode: '',
+                scorekeeperGrantTargets: [],
+                videographerGrantTargets: [],
+                hasAnyStaff: true
+            });
+        });
+        await flush();
+
+        expect(container.textContent).not.toContain('Loading team staff permissions');
+        expect(container.textContent).toContain('Team Staff & Permissions');
+        expect(container.textContent).toContain('coach@example.com · Admin');
     });
 
     it('exposes schedule, parent action links, and recent scores', async () => {
