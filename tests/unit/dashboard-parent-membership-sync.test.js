@@ -21,8 +21,8 @@ describe('dashboard parent membership sync', () => {
     it('uses the rich auth path before loading parent-linked teams', () => {
         const html = readRepoFile('dashboard.html');
 
-        expect(html).toContain("import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=33';");
-        expect(html).toContain("import { checkAuth } from './js/auth.js?v=15';");
+        expect(html).toContain("import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=36';");
+        expect(html).toContain("import { checkAuth } from './js/auth.js?v=16';");
         expect(html).toContain('function requireSyncedAuth()');
         expect(html).toContain('const user = await requireSyncedAuth();');
         expect(html).toContain('getParentTeams(user.uid)');
