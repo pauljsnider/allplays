@@ -16,6 +16,11 @@ const publicActionMocks = vi.hoisted(() => ({
     openPublicUrl: vi.fn(),
     sharePublicUrl: vi.fn()
 }));
+const parentToolsMocks = vi.hoisted(() => ({
+    buildPrivateTeamCalendarFeedUrl: vi.fn(),
+    getAppleCalendarFeedUrl: vi.fn((url) => String(url).replace(/^https?:\/\//i, 'webcal://')),
+    getGoogleCalendarFeedUrl: vi.fn((url) => `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(url)}`)
+}));
 const scheduleServiceMocks = vi.hoisted(() => ({
     createStaffRsvpReminderPreviewLoader: vi.fn(),
     loadPreview: vi.fn(),
@@ -30,6 +35,7 @@ vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
     canExposePublicFanFeed: teamDetailMocks.canExposePublicFanFeed
 }));
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
     createStaffRsvpReminderPreviewLoader: scheduleServiceMocks.createStaffRsvpReminderPreviewLoader,
     sendStaffRsvpReminder: scheduleServiceMocks.sendStaffRsvpReminder
@@ -159,6 +165,17 @@ async function clickButton(container, text) {
     await flush();
 }
 
+async function clickButtonInCard(container, cardTitle, text) {
+    const card = Array.from(container.querySelectorAll('section')).find((candidate) => candidate.textContent.includes(cardTitle));
+    if (!card) throw new Error(`Card not found: ${cardTitle}`);
+    const button = Array.from(card.querySelectorAll('button')).find((candidate) => candidate.textContent.includes(text));
+    if (!button) throw new Error(`Button not found in ${cardTitle}: ${text}`);
+    await act(async () => {
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+}
+
 async function clickLink(container, text) {
     const link = Array.from(container.querySelectorAll('a')).find((candidate) => candidate.textContent.includes(text));
     if (!link) throw new Error(`Link not found: ${text}`);
@@ -201,6 +218,7 @@ beforeEach(() => {
     };
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
+    parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
     scheduleServiceMocks.loadPreview.mockResolvedValue({
         missingPlayerCount: 0,
         eligibleEmailCount: 0,
@@ -274,6 +292,34 @@ describe('React app TeamDetail page', () => {
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pizza.example.test');
     });
 
+    it('renders private calendar sync separately from the public fan feed and wires copy/open actions', async () => {
+        const fanModel = model();
+        fanModel.team.id = 'team 1/blue';
+        fanModel.team.name = 'Bears & Wolves';
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(fanModel);
+        parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
+
+        const { container } = await renderTeamDetail();
+
+        await clickButton(container, 'More');
+        expect(container.textContent).toContain('Private calendar sync');
+        expect(container.textContent).toContain('Fan Feed');
+        expect(container.textContent).toContain('Open team schedule for one-time .ics export');
+
+        await clickButtonInCard(container, 'Private calendar sync', 'Copy Link');
+        expect(parentToolsMocks.buildPrivateTeamCalendarFeedUrl).toHaveBeenCalledWith('team 1/blue', expect.objectContaining({ id: 'team 1/blue' }));
+        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
+        expect(container.textContent).toContain('Private calendar link copied.');
+
+        await clickButtonInCard(container, 'Private calendar sync', 'Apple Calendar');
+        expect(parentToolsMocks.getAppleCalendarFeedUrl).toHaveBeenCalledWith('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('webcal://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
+
+        await clickButtonInCard(container, 'Private calendar sync', 'Google Calendar');
+        expect(parentToolsMocks.getGoogleCalendarFeedUrl).toHaveBeenCalledWith('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://calendar.google.com/calendar/render?cid=https%3A%2F%2Ffeed.example.test%2Fprivate-team.ics%3FteamId%3Dteam%25201%252Fblue%26token%3Dabc123');
+    });
+
     it('renders and shares the public fan feed when at least one game is public or shareable', async () => {
         const fanModel = model();
         fanModel.team.id = 'team 1/blue';
@@ -309,6 +355,24 @@ describe('React app TeamDetail page', () => {
         expect(hidden.container.textContent).not.toContain('Fan Feed');
     });
 
+    it('shows a private calendar sync error and hides sync actions without a signed-in user', async () => {
+        parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockImplementationOnce(() => { throw new Error('Unable to create private calendar feed. Sign in again and retry.'); });
+        const { container } = await renderTeamDetail();
+
+        await clickButton(container, 'More');
+        await clickButtonInCard(container, 'Private calendar sync', 'Copy Link');
+        expect(container.textContent).toContain('Unable to create private calendar feed. Sign in again and retry.');
+
+        const signedOut = await renderTeamDetail({
+            ...auth,
+            user: null,
+            roles: [],
+            isParent: false
+        });
+        await clickButton(signedOut.container, 'More');
+        expect(signedOut.container.textContent).not.toContain('Private calendar sync');
+    });
+
     it('renders scoreboard widget copy tools only for managers', async () => {
         const managerModel = model();
         managerModel.canManageTeam = true;
@@ -328,8 +392,8 @@ describe('React app TeamDetail page', () => {
         expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(expectedEmbed);
         expect(container.textContent).toContain('Embed code copied.');
 
-        await clickButton(container, 'Copy Link');
-        expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith(expectedUrl);
+        await clickButtonInCard(container, 'Scoreboard widget', 'Copy Link');
+        expect(publicActionMocks.copyPublicText).toHaveBeenLastCalledWith(expectedUrl);
         expect(container.textContent).toContain('Widget link copied.');
 
         const parentModel = model();

@@ -455,7 +455,36 @@ export function downloadIcs(filename: string, icsText: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
+export function buildPrivateTeamCalendarFeedUrl(teamId: string, team: Record<string, any> | null | undefined) {
+  const directUrl = team?.privateCalendarFeedUrl
+    || team?.calendarSubscriptionUrl
+    || team?.calendarFeedUrl
+    || team?.teamCalendarFeedUrl;
+  if (typeof directUrl === 'string' && directUrl.trim()) {
+    return directUrl.trim().replace(/^webcal:\/\//i, 'https://');
+  }
+
+  const token = team?.calendarSubscriptionToken
+    || team?.privateCalendarToken
+    || team?.calendarFeedToken
+    || team?.teamCalendarToken;
+  if (!teamId || !token) return '';
+
+  const configured = (window as any).__ALLPLAYS_CONFIG__?.privateTeamCalendarIcsFunctionUrl || (window as any).ALLPLAYS_PRIVATE_TEAM_CALENDAR_ICS_URL;
+  const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
+  const baseUrl = typeof configured === 'string' && configured.trim()
+    ? configured.trim()
+    : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
+      ? fallback.replace('fetchCalendarIcs', 'privateTeamCalendarIcs')
+      : 'https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs';
+  const separator = baseUrl.includes('?') ? '&' : '?';
+  return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
+}
+
 export async function getPrivateTeamCalendarFeedUrl(teamId: string) {
+  const teamSnap = await Promise.resolve(getTeam(teamId)).catch(() => null);
+  const teamFeedUrl = buildPrivateTeamCalendarFeedUrl(teamId, teamSnap);
+  if (teamFeedUrl) return teamFeedUrl;
   const token = await getNativeAuthIdToken(false).catch(() => null)
     || await firebaseAuth.currentUser?.getIdToken?.(false).catch(() => null);
   if (!teamId || !token) return '';

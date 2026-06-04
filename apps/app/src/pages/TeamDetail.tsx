@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
+import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
 import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
@@ -206,7 +207,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
       {activeTab === 'roster' ? <RosterTab model={model} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} /> : null}
-      {activeTab === 'more' ? <MoreTab model={model} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
+      {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
     </div>
   );
 }
@@ -389,7 +390,7 @@ function InsightsTab({ model }: { model: TeamDetailModel }) {
   );
 }
 
-function MoreTab({ model, staffPermissionsLoading, staffPermissionsError, onTeamDetailRefresh }: { model: TeamDetailModel; staffPermissionsLoading: boolean; staffPermissionsError: string; onTeamDetailRefresh: () => Promise<void> }) {
+function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, onTeamDetailRefresh }: { model: TeamDetailModel; auth: AuthState; staffPermissionsLoading: boolean; staffPermissionsError: string; onTeamDetailRefresh: () => Promise<void> }) {
   return (
     <div className="space-y-4">
       {model.canManageTeam && !model.staffPermissions && staffPermissionsLoading ? (
@@ -408,6 +409,7 @@ function MoreTab({ model, staffPermissionsLoading, staffPermissionsError, onTeam
       ) : null}
       {model.staffPermissions ? <StaffPermissionsCard model={model} onInviteSuccess={onTeamDetailRefresh} /> : null}
       {model.canManageTeam ? <ReminderTimingDefaultsCard model={model} onSaved={onTeamDetailRefresh} /> : null}
+      {auth.user ? <PrivateCalendarSyncCard model={model} /> : null}
       {canExposePublicFanFeed(model.team, [...model.upcomingEvents, ...model.recentResults]) ? <FanFeedCard model={model} /> : null}
       {model.canManageTeam ? <ScoreboardWidgetCard model={model} /> : null}
 
@@ -550,6 +552,65 @@ function ReminderTimingDefaultsCard({ model, onSaved }: { model: TeamDetailModel
             </button>
             {status ? <div className={`text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{status.message}</div> : null}
           </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PrivateCalendarSyncCard({ model }: { model: TeamDetailModel }) {
+  const [busyTarget, setBusyTarget] = useState<'apple' | 'google' | 'copy' | ''>('');
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  async function openFeed(target: 'apple' | 'google' | 'copy') {
+    if (busyTarget) return;
+    setBusyTarget(target);
+    setStatus(null);
+    try {
+      const feedUrl = buildPrivateTeamCalendarFeedUrl(model.team.id, model.team);
+      if (!feedUrl) throw new Error('Unable to create private calendar feed. Sign in again and retry.');
+      if (target === 'copy') {
+        const result = await copyPublicText(feedUrl);
+        setStatus(result === 'copied'
+          ? { success: true, message: 'Private calendar link copied.' }
+          : { success: false, message: 'Unable to copy the private calendar link. Sign in again and retry.' });
+        return;
+      }
+      await openPublicUrl(target === 'apple' ? getAppleCalendarFeedUrl(feedUrl) : getGoogleCalendarFeedUrl(feedUrl));
+    } catch (feedError: any) {
+      setStatus({ success: false, message: feedError?.message || 'Unable to open private calendar sync. Sign in again and retry.' });
+    } finally {
+      setBusyTarget('');
+    }
+  }
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+          <CalendarDays className="h-5 w-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-gray-950">Private calendar sync</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Subscribe to the live private team feed for games and practices. For a one-time .ics file instead, use the team schedule export.</div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed('apple')} disabled={Boolean(busyTarget)}>
+              {busyTarget === 'apple' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              Apple Calendar
+            </button>
+            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed('google')} disabled={Boolean(busyTarget)}>
+              {busyTarget === 'google' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              Google Calendar
+            </button>
+            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => openFeed('copy')} disabled={Boolean(busyTarget)}>
+              {busyTarget === 'copy' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
+              Copy Link
+            </button>
+          </div>
+          <Link to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} className="ghost-button mt-3 !min-h-9 px-0 text-xs text-primary-700">
+            Open team schedule for one-time .ics export
+          </Link>
+          {status ? <div className={`mt-2 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{status.message}</div> : null}
         </div>
       </div>
     </section>
