@@ -12,9 +12,12 @@ async function gotoAppRoute(page, baseURL, hashPath) {
 }
 
 async function clickSearchTrigger(page) {
-    const searchTrigger = page.getByRole('button', { name: 'Search' }).first();
-    await expect(searchTrigger).toBeVisible({ timeout: 5000 });
-    await searchTrigger.click();
+    const searchTrigger = page.getByRole('button', { name: 'Search' });
+    if (!await searchTrigger.count()) {
+        throw new Error('Search trigger is not available yet.');
+    }
+    await expect(searchTrigger.first()).toBeVisible({ timeout: 1000 });
+    await searchTrigger.first().click();
 }
 
 async function openSearch(page) {

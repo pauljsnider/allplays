@@ -27,4 +27,31 @@ describe('access code Firestore rules', () => {
         expect(accessCodeRules).not.toMatch(/allow\s+list\s*:\s*if\s+true/);
         expect(accessCodeRules).not.toMatch(/allow\s+get\s*:\s*if\s+true/);
     });
+
+    it('blocks self-minted admin invites unless the caller already administers the target team', () => {
+        expect(rules).toContain('function isAdminInvitePayloadValid(data)');
+        expect(accessCodeRules).toContain("request.resource.data.get('type', null) != 'admin_invite' ||");
+        expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
+        expect(accessCodeRules).toContain('isAdminInvitePayloadValid(request.resource.data)');
+        expect(accessCodeRules).toContain('request.resource.data.code == codeId');
+        expect(accessCodeRules).not.toContain('allow create: if isSignedIn() && request.resource.data.generatedBy == request.auth.uid;');
+    });
+
+    it('prevents creators from updating an existing access code into an admin invite without team-admin authorization', () => {
+        expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite'");
+        expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) == 'admin_invite'");
+        expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
+        expect(accessCodeRules).toContain('isAdminInvitePayloadValid(request.resource.data)');
+        expect(accessCodeRules).toContain('request.resource.data.code == codeId');
+    });
+
+    it('validates the allowed admin_invite payload fields before redemption can trust the record', () => {
+        expect(rules).toContain("data.keys().hasOnly([");
+        expect(rules).toContain("'code', 'type', 'teamId', 'teamName', 'email', 'generatedBy'");
+        expect(rules).toContain("'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'");
+        expect(rules).toContain("data.type == 'admin_invite'");
+        expect(rules).toContain('data.used == false');
+        expect(rules).toContain('data.usedBy == null');
+        expect(rules).toContain('data.usedAt == null');
+    });
 });
