@@ -480,6 +480,24 @@ describe('React app messages integration', () => {
         expect(chatMocks.deleteTeamChatMessage).toHaveBeenCalledWith('team-1', 'msg-2', 'team');
     });
 
+    it('does not recompute existing message html while the composer changes', async () => {
+        const chatLogic = await import('../../apps/app/src/lib/chatLogic.ts');
+        const formatSpy = vi.spyOn(chatLogic, 'formatChatMessageHtml');
+        const { container } = await renderMessages('/messages/team-1');
+
+        expect(formatSpy).toHaveBeenCalledTimes(2);
+        formatSpy.mockClear();
+
+        const textarea = container.querySelector('textarea');
+        await setFieldValue(textarea, 'Drafting a quick update');
+        expect(formatSpy).not.toHaveBeenCalled();
+
+        await click(container, 'Add attachment');
+        expect(formatSpy).not.toHaveBeenCalled();
+
+        formatSpy.mockRestore();
+    });
+
     it('opens a team thread at the latest message and exposes a latest shortcut after scrolling up', async () => {
         const { container } = await renderMessages('/messages/team-1');
         const scrollIntoView = window.HTMLElement.prototype.scrollIntoView;

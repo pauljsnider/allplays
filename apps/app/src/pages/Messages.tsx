@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
@@ -1213,7 +1213,7 @@ function ChatWindow({
     });
   };
 
-  const handleToggleReaction = async (messageId: string, reactionKey: string) => {
+  const handleToggleReaction = useCallback(async (messageId: string, reactionKey: string) => {
     if (!auth.user) return;
     try {
       await toggleTeamChatReaction(teamId, messageId, reactionKey, auth.user.uid, selectedConversationId);
@@ -1221,13 +1221,13 @@ function ChatWindow({
     } catch (reactionError: any) {
       setStatus({ tone: 'error', message: reactionError?.message || 'Failed to update reaction.' });
     }
-  };
+  }, [auth.user, selectedConversationId, teamId]);
 
-  const handleEdit = (message: ChatMessage) => {
+  const handleEdit = useCallback((message: ChatMessage) => {
     setEditingMessage(message);
     setEditText(message.text || '');
     setActionMessageId('');
-  };
+  }, []);
 
   const saveEdit = async () => {
     if (!editingMessage) return;
@@ -1245,7 +1245,7 @@ function ChatWindow({
     }
   };
 
-  const handleDelete = async (message: ChatMessage) => {
+  const handleDelete = useCallback(async (message: ChatMessage) => {
     setActionMessageId('');
     if (!window.confirm('Delete this message?')) return;
     try {
@@ -1253,7 +1253,7 @@ function ChatWindow({
     } catch (deleteError: any) {
       setStatus({ tone: 'error', message: deleteError?.message || 'Failed to delete message.' });
     }
-  };
+  }, [selectedConversationId, teamId]);
 
   if (loadingContext) {
     return (
@@ -1799,18 +1799,7 @@ function formatEmailSentTime(value: unknown) {
   return [day, time].filter(Boolean).join(' ') || 'Queued';
 }
 
-function MessageList({
-  messages,
-  currentUserId,
-  canModerate,
-  actionMessageId,
-  reactionMessageId,
-  onActionMessage,
-  onReactionMessage,
-  onToggleReaction,
-  onEdit,
-  onDelete
-}: {
+type MessageListProps = {
   messages: ChatMessage[];
   currentUserId: string;
   canModerate: boolean;
@@ -1821,7 +1810,20 @@ function MessageList({
   onToggleReaction: (messageId: string, reactionKey: string) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
-}) {
+};
+
+const MessageList = memo(function MessageList({
+  messages,
+  currentUserId,
+  canModerate,
+  actionMessageId,
+  reactionMessageId,
+  onActionMessage,
+  onReactionMessage,
+  onToggleReaction,
+  onEdit,
+  onDelete
+}: MessageListProps) {
   let lastDay = '';
   return (
     <div className="space-y-3 p-3 sm:p-4">
@@ -1851,21 +1853,11 @@ function MessageList({
       })}
     </div>
   );
-}
+});
 
-function MessageBubble({
-  message,
-  currentUserId,
-  canModerate,
-  actionsOpen,
-  reactionsOpen,
-  preferReactionPickerAbove,
-  onActionMessage,
-  onReactionMessage,
-  onToggleReaction,
-  onEdit,
-  onDelete
-}: {
+MessageList.displayName = 'MessageList';
+
+type MessageBubbleProps = {
   message: ChatMessage;
   currentUserId: string;
   canModerate: boolean;
@@ -1877,13 +1869,32 @@ function MessageBubble({
   onToggleReaction: (messageId: string, reactionKey: string) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
-}) {
+};
+
+const MessageBubble = memo(function MessageBubble({
+  message,
+  currentUserId,
+  canModerate,
+  actionsOpen,
+  reactionsOpen,
+  preferReactionPickerAbove,
+  onActionMessage,
+  onReactionMessage,
+  onToggleReaction,
+  onEdit,
+  onDelete
+}: MessageBubbleProps) {
   const isAi = message.ai === true;
   const isOwn = !isAi && message.senderId === currentUserId;
   const isDeleted = message.deleted === true;
-  const senderLabel = getMessageSenderLabel(message, currentUserId);
-  const attachments = getMessageAttachments(message).filter((attachment: any) => isSafeChatMediaUrl(attachment.url));
-  const reactions = normalizeChatReactions(message);
+  const senderLabel = useMemo(() => getMessageSenderLabel(message, currentUserId), [currentUserId, message]);
+  const attachments = useMemo(
+    () => getMessageAttachments(message).filter((attachment: any) => isSafeChatMediaUrl(attachment.url)),
+    [message]
+  );
+  const reactions = useMemo(() => normalizeChatReactions(message), [message]);
+  const messageHtml = useMemo(() => formatChatMessageHtml(message.text || ''), [message.text]);
+  const createdAtLabel = useMemo(() => formatChatTime(message.createdAt), [message.createdAt]);
   const canEdit = isOwn && !isDeleted && Boolean(message.text);
   const canDelete = !isAi && !isDeleted && (isOwn || canModerate);
 
@@ -1904,7 +1915,7 @@ function MessageBubble({
         <div className={`mb-1 flex items-center gap-2 text-[11px] font-bold text-gray-500 ${isOwn ? 'justify-end' : 'justify-start'}`}>
           {!isOwn ? <span className="truncate">{senderLabel}</span> : null}
           {message.editedAt ? <span className="italic">(edited)</span> : null}
-          <span>{formatChatTime(message.createdAt)}</span>
+          <span>{createdAtLabel}</span>
         </div>
         <div className={`rounded-2xl px-3 py-2 shadow-sm ${
           isAi
@@ -1917,7 +1928,7 @@ function MessageBubble({
           {message.text ? (
             <div
               className={`chat-message-html text-sm font-semibold leading-6 ${isOwn ? 'chat-message-html-own' : ''}`}
-              dangerouslySetInnerHTML={{ __html: formatChatMessageHtml(message.text) }}
+              dangerouslySetInnerHTML={{ __html: messageHtml }}
             />
           ) : null}
         </div>
@@ -1977,6 +1988,51 @@ function MessageBubble({
       {isOwn ? <MessageAvatar message={message} label={senderLabel} /> : null}
     </div>
   );
+}, areMessageBubblePropsEqual);
+
+MessageBubble.displayName = 'MessageBubble';
+
+function areMessageBubblePropsEqual(previous: MessageBubbleProps, next: MessageBubbleProps) {
+  return previous.currentUserId === next.currentUserId
+    && previous.canModerate === next.canModerate
+    && previous.actionsOpen === next.actionsOpen
+    && previous.reactionsOpen === next.reactionsOpen
+    && previous.preferReactionPickerAbove === next.preferReactionPickerAbove
+    && previous.onActionMessage === next.onActionMessage
+    && previous.onReactionMessage === next.onReactionMessage
+    && previous.onToggleReaction === next.onToggleReaction
+    && previous.onEdit === next.onEdit
+    && previous.onDelete === next.onDelete
+    && areMessagesEquivalent(previous.message, next.message);
+}
+
+function areMessagesEquivalent(previous: ChatMessage, next: ChatMessage) {
+  return previous === next || (
+    previous.id === next.id
+    && previous.text === next.text
+    && previous.ai === next.ai
+    && previous.deleted === next.deleted
+    && previous.senderId === next.senderId
+    && previous.senderName === next.senderName
+    && previous.senderPhotoUrl === next.senderPhotoUrl
+    && normalizeTimestampValue(previous.createdAt) === normalizeTimestampValue(next.createdAt)
+    && normalizeTimestampValue(previous.editedAt) === normalizeTimestampValue(next.editedAt)
+    && JSON.stringify(getMessageAttachments(previous)) === JSON.stringify(getMessageAttachments(next))
+    && JSON.stringify(normalizeChatReactions(previous)) === JSON.stringify(normalizeChatReactions(next))
+  );
+}
+
+function normalizeTimestampValue(value: unknown) {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString();
+  if (typeof (value as any)?.toDate === 'function') {
+    const date = (value as any).toDate();
+    return date instanceof Date ? date.toISOString() : '';
+  }
+  if (typeof (value as any)?.seconds === 'number') {
+    return `${(value as any).seconds}:${(value as any).nanoseconds || 0}`;
+  }
+  return String(value);
 }
 
 function MessageAvatar({ message, label }: { message: ChatMessage; label: string }) {
