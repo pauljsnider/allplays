@@ -127,6 +127,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   const visibleAccessCodes = inviteHistoryExpanded ? accessCodes : accessCodes.slice(0, collapsedInviteCount);
   const hiddenAccessCodeCount = Math.max(0, accessCodes.length - visibleAccessCodes.length);
   const canRequestAccountMerge = auth.isParent && (accountMergeExpanded || !parentLinkedTeamsLoaded || parentLinkedTeams.length > 0);
+  const selectedNotificationTeam = notificationTeams.find((team) => team.id === selectedTeamId) || null;
+  const alertsLoading = activeProfileSection === 'alerts' && !notificationTeamsLoaded;
+  const alertsEmpty = activeProfileSection === 'alerts' && notificationTeamsLoaded && notificationTeams.length === 0;
+  const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && Boolean(selectedNotificationTeam);
 
   const selectProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
@@ -883,48 +887,72 @@ export function Profile({ auth }: { auth: AuthState }) {
         </div>
         <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Per-team alerts for live chat, score updates, and schedule changes.</p>
 
-        <div className="mt-4 grid gap-3">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Team</span>
-            <select className="auth-input" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
-              <option value="">Select a team</option>
-              {notificationTeams.map((team) => (
-                <option key={team.id} value={team.id}>{team.name || team.id}</option>
-              ))}
-            </select>
-          </label>
-          <div className="rounded-2xl border border-gray-200 bg-white p-3">
-            <div className="text-sm font-black text-gray-900">Device push</div>
-            <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Register this device for push notifications without changing team alert preferences.</p>
-            <button type="button" className="secondary-button mt-3" onClick={enablePushOnDevice} disabled={busy === 'push-device' || !user}>
-              {busy === 'push-device' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-              Enable push on this device
-            </button>
+        {alertsLoading ? (
+          <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4" role="status" aria-live="polite">
+            <div className="flex items-center gap-2 text-sm font-black text-gray-900">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              Loading your alert teams…
+            </div>
+            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">We are checking which teams can receive alerts on this device.</p>
           </div>
-          <div className="rounded-2xl border border-primary-100 bg-primary-50 p-3">
-            <div className="text-sm font-black text-primary-900">Game-day alerts</div>
-            <p className="mt-1 text-sm font-semibold leading-6 text-primary-800">One tap enables push on this device and turns on schedule changes and live score updates for the selected team.</p>
-            <button type="button" className="primary-button mt-3" onClick={turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId}>
-              {busy === 'game-day-alerts' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-              Turn on game-day alerts
-            </button>
-          </div>
-        </div>
+        ) : null}
 
-        <details className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
-          <summary className="cursor-pointer text-sm font-black text-gray-700">Customize alerts</summary>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <PreferenceToggle label="Live Chat" checked={notificationPreferences.liveChat} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveChat: checked }))} />
-            <PreferenceToggle label="Live Score" checked={notificationPreferences.liveScore} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveScore: checked }))} />
-            <PreferenceToggle label="Schedule Changes" checked={notificationPreferences.schedule} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, schedule: checked }))} />
+        {alertsEmpty ? (
+          <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4">
+            <div className="text-sm font-black text-gray-900">No team alerts available yet</div>
+            <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Join or create a team first, then come back here to turn on game-day and team update alerts.</p>
+            <Link to="/teams" className="secondary-button mt-3 inline-flex">
+              Go to My Teams
+            </Link>
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId}>
-              {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-              Save preferences
-            </button>
-          </div>
-        </details>
+        ) : null}
+
+        {alertsReady ? (
+          <>
+            <div className="mt-4 grid gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Team</span>
+                <select className="auth-input" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+                  <option value="">Select a team</option>
+                  {notificationTeams.map((team) => (
+                    <option key={team.id} value={team.id}>{team.name || team.id}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="rounded-2xl border border-gray-200 bg-white p-3">
+                <div className="text-sm font-black text-gray-900">Device push</div>
+                <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Register this device for push notifications without changing team alert preferences.</p>
+                <button type="button" className="secondary-button mt-3" onClick={enablePushOnDevice} disabled={busy === 'push-device' || !user}>
+                  {busy === 'push-device' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+                  Enable push on this device
+                </button>
+              </div>
+              <div className="rounded-2xl border border-primary-100 bg-primary-50 p-3">
+                <div className="text-sm font-black text-primary-900">Game-day alerts</div>
+                <p className="mt-1 text-sm font-semibold leading-6 text-primary-800">One tap enables push on this device and turns on schedule changes and live score updates for the selected team.</p>
+                <button type="button" className="primary-button mt-3" onClick={turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId}>
+                  {busy === 'game-day-alerts' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+                  Turn on game-day alerts
+                </button>
+              </div>
+            </div>
+
+            <details className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
+              <summary className="cursor-pointer text-sm font-black text-gray-700">Customize alerts</summary>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <PreferenceToggle label="Live Chat" checked={notificationPreferences.liveChat} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveChat: checked }))} />
+                <PreferenceToggle label="Live Score" checked={notificationPreferences.liveScore} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveScore: checked }))} />
+                <PreferenceToggle label="Schedule Changes" checked={notificationPreferences.schedule} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, schedule: checked }))} />
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId}>
+                  {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                  Save preferences
+                </button>
+              </div>
+            </details>
+          </>
+        ) : null}
 
         <StatusMessage status={notificationStatus} className="mt-3 block" />
       </section>
