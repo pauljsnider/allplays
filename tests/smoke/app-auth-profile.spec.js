@@ -222,6 +222,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return new File(['native-photo'], 'native-camera.jpg', { type: 'image/jpeg' });
                 }
 
+                export async function normalizeProfilePhoto(file) {
+                    return file;
+                }
+
                 export async function saveProfileDocument(userId, profile) {
                     window.__appProfileCalls.saves.push({ userId, profile });
                 }

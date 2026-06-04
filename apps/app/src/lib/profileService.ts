@@ -28,6 +28,9 @@ const profileTimeoutMs = 8000;
 const primaryDataTimeoutMs = 3000;
 const nativeImageUploadTimeoutMs = 20000;
 const imageUploadSessionKey = 'allplays-image-upload-session';
+const profilePhotoMaxDimensionPx = 1024;
+const profilePhotoMaxBytes = 512 * 1024;
+const profilePhotoQuality = 0.82;
 
 export type ProfileDocument = {
   email?: string;
@@ -152,6 +155,99 @@ function isCancellationError(error: unknown) {
   return message.includes('cancel') || message.includes('user denied') || message.includes('no image picked');
 }
 
+function shouldNormalizeProfilePhoto(file: File, width: number, height: number) {
+  return width > profilePhotoMaxDimensionPx || height > profilePhotoMaxDimensionPx || file.size > profilePhotoMaxBytes;
+}
+
+function getNormalizedProfilePhotoType(file: File) {
+  return file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+}
+
+function loadProfilePhotoImage(file: File): Promise<{ image: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
+  const imageBitmapFactory = (globalThis as typeof globalThis & { createImageBitmap?: (image: Blob) => Promise<ImageBitmap> }).createImageBitmap;
+  if (typeof imageBitmapFactory === 'function') {
+    return imageBitmapFactory(file).then((bitmap) => ({
+      image: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      cleanup: () => bitmap.close()
+    }));
+  }
+
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      resolve({
+        image,
+        width: image.naturalWidth || image.width,
+        height: image.naturalHeight || image.height,
+        cleanup: () => URL.revokeObjectURL(objectUrl)
+      });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Profile photo could not be decoded.'));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+        return;
+      }
+      reject(new Error('Profile photo could not be normalized.'));
+    }, type, quality);
+  });
+}
+
+export async function normalizeProfilePhoto(file: File): Promise<File> {
+  if (!(file instanceof File) || !file.type.startsWith('image/') || typeof document === 'undefined') {
+    return file;
+  }
+
+  const { image, width, height, cleanup } = await loadProfilePhotoImage(file);
+
+  try {
+    if (!shouldNormalizeProfilePhoto(file, width, height)) {
+      return file;
+    }
+
+    const scale = Math.min(1, profilePhotoMaxDimensionPx / Math.max(width, height));
+    const targetWidth = Math.max(1, Math.round(width * scale));
+    const targetHeight = Math.max(1, Math.round(height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+
+    const context = canvas.getContext('2d');
+    if (!context) {
+      return file;
+    }
+
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+    const outputType = getNormalizedProfilePhotoType(file);
+    const blob = await canvasToBlob(canvas, outputType, outputType === 'image/png' ? undefined : profilePhotoQuality);
+
+    if (blob.size >= file.size && targetWidth === width && targetHeight === height) {
+      return file;
+    }
+
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'profile-photo';
+    const extension = outputType === 'image/png' ? 'png' : 'jpg';
+    return new File([blob], `${baseName}.${extension}`, {
+      type: outputType,
+      lastModified: Date.now()
+    });
+  } finally {
+    cleanup();
+  }
+}
+
 export async function acquireProfilePhoto(source: ProfilePhotoSource): Promise<File> {
   if (!isNativeRuntime()) {
     throw new ProfilePhotoAcquireError('unavailable', 'Native profile photo capture is only available in the mobile app.');
@@ -180,10 +276,10 @@ export async function acquireProfilePhoto(source: ProfilePhotoSource): Promise<F
 
     const blob = await response.blob();
     const mimeType = inferPhotoMimeType(photo, blob);
-    return new File([blob], buildPhotoFileName(source, photo, mimeType), {
+    return normalizeProfilePhoto(new File([blob], buildPhotoFileName(source, photo, mimeType), {
       type: mimeType,
       lastModified: Date.now()
-    });
+    }));
   } catch (error) {
     if (error instanceof ProfilePhotoAcquireError) {
       throw error;
