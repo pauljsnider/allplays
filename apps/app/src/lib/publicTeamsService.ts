@@ -1,5 +1,10 @@
-import { getTeams } from '../../../../js/db.js';
+import { discoverPublicTeams } from '../../../../js/db.js';
 import { type ParentHomeTeam } from './homeLogic';
+
+export type PublicTeamsPage = {
+    teams: ParentHomeTeam[];
+    nextCursor: unknown | null;
+};
 
 function teamLocation(team: { city?: string; state?: string; zip?: string }): string | null {
     if (team.city && team.state) return `${team.city}, ${team.state}`;
@@ -7,9 +12,8 @@ function teamLocation(team: { city?: string; state?: string; zip?: string }): st
     return null;
 }
 
-export async function getPublicTeamsByLocation(locationFilter?: string): Promise<ParentHomeTeam[]> {
-    const teams = await getTeams({ publicOnly: true, locationFilter: locationFilter || '' });
-    return teams.map((team: { id: string; name: string; sport?: string | null; photoUrl?: string | null; city?: string; state?: string; zip?: string; appAccess?: boolean; webAccess?: boolean; isPublic?: boolean }) => ({
+function mapPublicTeam(team: { id: string; name: string; sport?: string | null; photoUrl?: string | null; city?: string; state?: string; zip?: string; appAccess?: boolean; webAccess?: boolean; isPublic?: boolean }): ParentHomeTeam {
+    return {
         teamId: team.id,
         teamName: team.name,
         role: 'Public',
@@ -24,5 +28,23 @@ export async function getPublicTeamsByLocation(locationFilter?: string): Promise
         eventCount: 0,
         unreadCount: 0,
         openActions: 0,
-    }));
+    };
+}
+
+export async function getPublicTeamsPage({ locationFilter, cursor = null, pageSize = 24 }: { locationFilter?: string; cursor?: unknown | null; pageSize?: number } = {}): Promise<PublicTeamsPage> {
+    const result = await discoverPublicTeams({
+        searchText: locationFilter || '',
+        cursor,
+        pageSize
+    });
+
+    return {
+        teams: result.teams.map(mapPublicTeam),
+        nextCursor: result.nextCursor || null
+    };
+}
+
+export async function getPublicTeamsByLocation(locationFilter?: string): Promise<ParentHomeTeam[]> {
+    const result = await getPublicTeamsPage({ locationFilter });
+    return result.teams;
 }

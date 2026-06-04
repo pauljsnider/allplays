@@ -7,20 +7,34 @@ export function checkAuth(callback) {
 `;
 
 const DB_STUB = `
-const teams = [
-  { id: 'alpha', name: 'Alpha Soccer', sport: 'Soccer', description: 'Open play', isPublic: true, city: 'Denver', state: 'CO' },
-  { id: 'current', name: 'Kansas City Current', sport: 'Soccer', description: 'Midwest club', isPublic: true, city: 'Kansas City', state: 'MO' }
-];
+const pages = {
+  browse: [
+    { id: 'alpha', name: 'Alpha Soccer', sport: 'Soccer', description: 'Open play', isPublic: true, city: 'Denver', state: 'CO' }
+  ],
+  browseNext: [
+    { id: 'current', name: 'Kansas City Current', sport: 'Soccer', description: 'Midwest club', isPublic: true, city: 'Kansas City', state: 'MO' }
+  ],
+  kansas: [
+    { id: 'current', name: 'Kansas City Current', sport: 'Soccer', description: 'Midwest club', isPublic: true, city: 'Kansas City', state: 'MO' }
+  ]
+};
 
 window.__teamSearchCalls = [];
 
-export async function getTeams(options = {}) {
+export async function discoverPublicTeams(options = {}) {
   window.__teamSearchCalls.push(options);
-  const filter = String(options.locationFilter || '').trim().toLowerCase();
+  const filter = String(options.searchText || '').trim().toLowerCase();
   if (!filter) {
-    return teams;
+    if (options.cursor === 'page-2') {
+      return { teams: pages.browseNext, nextCursor: null };
+    }
+    return { teams: pages.browse, nextCursor: 'page-2' };
   }
-  return teams.filter((team) => [team.name, team.city, team.state, team.zip].filter(Boolean).join(' ').toLowerCase().includes(filter));
+  return { teams: filter.includes('kansas') ? pages.kansas : [], nextCursor: null };
+}
+
+export async function getTeams() {
+  throw new Error('teams.html should use discoverPublicTeams instead of getTeams');
 }
 `;
 
@@ -52,7 +66,7 @@ export async function resolveZip() {
 }
 `;
 
-test('browse teams location search submits filters and clear restores all teams', async ({ page, baseURL }) => {
+test('browse teams location search uses bounded discovery and clear restores browse page', async ({ page, baseURL }) => {
     await page.route('**/js/auth.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/db.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route('**/js/telemetry.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
@@ -61,20 +75,24 @@ test('browse teams location search submits filters and clear restores all teams'
     await page.goto(`${baseURL}/teams.html`, { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByText('Alpha Soccer')).toBeVisible();
+    await expect(page.getByText('Kansas City Current')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls)).toEqual([{ cursor: null, pageSize: 24 }]);
+
+    await page.getByRole('button', { name: 'Load more teams' }).click();
     await expect(page.getByText('Kansas City Current')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls)).toEqual([{ publicOnly: true }]);
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ cursor: 'page-2', pageSize: 24 });
 
     await page.locator('#location-search-input').fill('Kansas');
     await page.locator('#search-button').click();
 
     await expect(page.getByText('Kansas City Current')).toBeVisible();
     await expect(page.getByText('Alpha Soccer')).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ locationFilter: 'Kansas', publicOnly: true });
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ searchText: 'Kansas', pageSize: 24 });
     expect(new URL(page.url()).pathname).toMatch(/\/teams\.html$/);
 
     await page.locator('#clear-search-button').click();
 
     await expect(page.getByText('Alpha Soccer')).toBeVisible();
-    await expect(page.getByText('Kansas City Current')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ publicOnly: true });
+    await expect(page.getByText('Kansas City Current')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ cursor: null, pageSize: 24 });
 });

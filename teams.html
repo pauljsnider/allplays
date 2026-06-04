@@ -102,7 +102,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getTeams } from './js/db.js?v=36';
+    import { discoverPublicTeams } from './js/db.js?v=37';
     import { renderHeader, renderFooter, escapeHtml, getSafeImageUrl, resolveZip } from './js/utils.js?v=9';
     import { checkAuth } from './js/auth.js?v=16';
 
@@ -117,6 +117,8 @@
     const locationSearchInput = document.getElementById('location-search-input');
     const searchButton = document.getElementById('search-button');
     const clearSearchButton = document.getElementById('clear-search-button');
+    let browseCursor = null;
+    let renderedTeams = [];
 
     function getLocationSearchValue() {
       return locationSearchInput.value.trim();
@@ -129,16 +131,37 @@
       clearSearchButton.classList.toggle('opacity-70', isPending);
     }
 
-    async function loadTeams(locationFilter = '') {
+    function renderLoadMoreButton(container, { canLoadMore, onClick }) {
+      const existing = document.getElementById('load-more-public-teams');
+      existing?.remove();
+      if (!canLoadMore) return;
+
+      const wrapper = document.createElement('div');
+      wrapper.id = 'load-more-public-teams';
+      wrapper.className = 'col-span-full flex justify-center';
+      wrapper.innerHTML = `
+        <button type="button" class="px-5 py-3 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-700 hover:border-primary-300 hover:text-primary-700 transition">
+          Load more teams
+        </button>
+      `;
+      wrapper.querySelector('button')?.addEventListener('click', onClick);
+      container.appendChild(wrapper);
+    }
+
+    async function loadTeams(locationFilter = '', { cursor = null, append = false } = {}) {
       const container = document.getElementById('teams-list');
       setSearchPending(true);
       try {
-        const allTeams = await getTeams(locationFilter ? { locationFilter, publicOnly: true } : { publicOnly: true });
+        const discovery = await discoverPublicTeams(locationFilter
+          ? { searchText: locationFilter, pageSize: 24 }
+          : { cursor, pageSize: 24 });
+        const allTeams = discovery.teams || [];
+        browseCursor = locationFilter ? null : (discovery.nextCursor || null);
         // Defense in depth: the query only requests public teams, and this keeps
         // private teams hidden if a stale helper or local test double returns one.
         const teams = allTeams.filter(t => t.isPublic === true);
 
-        if (teams.length === 0) {
+        if (teams.length === 0 && !append) {
           const emptyMessage = locationFilter
             ? `No public teams found for "${escapeHtml(locationFilter)}".`
             : 'No teams found yet.';
@@ -158,8 +181,10 @@
           return;
         }
 
+        renderedTeams = append ? [...renderedTeams, ...teams] : teams;
+
         // Resolve locations for teams with zip
-        const uniqueZips = [...new Set(teams.map(t => t.zip).filter(Boolean))];
+        const uniqueZips = [...new Set(renderedTeams.map(t => t.zip).filter(Boolean))];
         const zipToLocation = {};
         await Promise.all(uniqueZips.map(async (zip) => {
           zipToLocation[zip] = await resolveZip(zip);
@@ -167,7 +192,7 @@
 
         // Group teams by location label
         const grouped = {};
-        teams.forEach(team => {
+        renderedTeams.forEach(team => {
           const loc = team.zip && zipToLocation[team.zip] ? zipToLocation[team.zip] : 'Other';
           if (!grouped[loc]) grouped[loc] = [];
           grouped[loc].push(team);
@@ -225,7 +250,7 @@
         `;
         };
 
-        container.innerHTML = locationKeys.map(loc => {
+        const markup = locationKeys.map(loc => {
           const teamsForLoc = grouped[loc].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
           return `
             <section class="space-y-4">
@@ -244,6 +269,17 @@
             </section>
           `;
         }).join('');
+
+        container.innerHTML = markup;
+
+        renderLoadMoreButton(container, {
+          canLoadMore: !locationFilter && Boolean(browseCursor),
+          onClick: async () => {
+            const nextCursor = browseCursor;
+            if (!nextCursor) return;
+            await loadTeams('', { cursor: nextCursor, append: true });
+          }
+        });
 
         // Attach card navigation
         container.querySelectorAll('.team-card').forEach(cardEl => {
@@ -274,11 +310,15 @@
 
     searchForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+      browseCursor = null;
+      renderedTeams = [];
       await loadTeams(getLocationSearchValue());
     });
 
     clearSearchButton.addEventListener('click', async () => {
       locationSearchInput.value = '';
+      browseCursor = null;
+      renderedTeams = [];
       await loadTeams();
       locationSearchInput.focus();
     });

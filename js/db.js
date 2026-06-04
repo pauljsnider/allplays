@@ -131,6 +131,7 @@ export {
 export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
 const startAfterQuery = startAfter;
+const DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE = 24;
 const CHAT_REACTIONS = [
     { key: 'thumbs_up', emoji: '👍' },
     { key: 'heart', emoji: '❤️' },
@@ -507,6 +508,146 @@ export async function uploadStatSheetPhoto(file) {
 }
 
 import { resolveZip } from './utils.js?v=9'; // Import resolveZip
+
+function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
+    const normalized = String(value || '').trim();
+    return uppercase ? normalized.toUpperCase() : normalized.toLowerCase();
+}
+
+function toTitleCase(value) {
+    return String(value || '')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+        .join(' ');
+}
+
+function buildPublicTeamSearchFields(teamData = {}) {
+    const searchFields = {};
+
+    if (Object.prototype.hasOwnProperty.call(teamData, 'city')) {
+        searchFields.publicSearchCity = normalizePublicTeamSearchValue(teamData.city);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(teamData, 'state')) {
+        searchFields.publicSearchState = normalizePublicTeamSearchValue(teamData.state, { uppercase: true });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(teamData, 'zip')) {
+        searchFields.publicSearchZip = String(teamData.zip || '').trim();
+    }
+
+    if (Object.prototype.hasOwnProperty.call(searchFields, 'publicSearchCity') || Object.prototype.hasOwnProperty.call(searchFields, 'publicSearchState')) {
+        const city = Object.prototype.hasOwnProperty.call(searchFields, 'publicSearchCity')
+            ? searchFields.publicSearchCity
+            : normalizePublicTeamSearchValue(teamData.city);
+        const state = Object.prototype.hasOwnProperty.call(searchFields, 'publicSearchState')
+            ? searchFields.publicSearchState
+            : normalizePublicTeamSearchValue(teamData.state, { uppercase: true });
+        searchFields.publicSearchCityState = city && state ? `${city}, ${state.toLowerCase()}` : '';
+    }
+
+    return searchFields;
+}
+
+function normalizePublicTeamSearchInput(value) {
+    return String(value || '').trim();
+}
+
+function buildPublicTeamSearchStrategies(searchText = '') {
+    const trimmed = normalizePublicTeamSearchInput(searchText);
+    if (!trimmed) return [];
+
+    if (/^\d{1,5}$/.test(trimmed)) {
+        return [
+            { field: 'publicSearchZip', start: trimmed, end: `${trimmed}\uf8ff` },
+            { field: 'zip', start: trimmed, end: `${trimmed}\uf8ff` }
+        ];
+    }
+
+    const [rawCityPart, rawStatePart = ''] = trimmed.split(',').map((part) => part.trim()).filter((part, index, parts) => index === 0 || part || parts.length > 1);
+    const stateOnlySearch = /^[A-Za-z]{2}$/.test(trimmed) && !trimmed.includes(',');
+
+    if (stateOnlySearch) {
+        const normalizedState = trimmed.toUpperCase();
+        return [
+            { field: 'publicSearchState', start: normalizedState, end: `${normalizedState}\uf8ff` },
+            { field: 'state', start: normalizedState, end: `${normalizedState}\uf8ff` }
+        ];
+    }
+
+    const citySearch = normalizePublicTeamSearchValue(rawCityPart || trimmed);
+    const legacyCitySearch = toTitleCase(rawCityPart || trimmed);
+    const normalizedState = rawStatePart ? rawStatePart.toUpperCase() : '';
+    const filterByState = normalizedState
+        ? (team) => String(team.state || '').trim().toUpperCase().startsWith(normalizedState)
+        : null;
+
+    return [
+        { field: 'publicSearchCity', start: citySearch, end: `${citySearch}\uf8ff`, filter: filterByState },
+        { field: 'city', start: legacyCitySearch, end: `${legacyCitySearch}\uf8ff`, filter: filterByState }
+    ];
+}
+
+function sortTeamsByName(teams = []) {
+    return [...teams].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+export async function discoverPublicTeams(options = {}) {
+    const rawPageSize = Number(options.pageSize);
+    const pageSize = Number.isFinite(rawPageSize)
+        ? Math.min(Math.max(Math.floor(rawPageSize), 1), 100)
+        : DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE;
+    const searchText = normalizePublicTeamSearchInput(options.searchText || options.locationFilter || '');
+    const cursor = options.cursor || null;
+    const teamsRef = collection(db, 'teams');
+
+    if (!searchText) {
+        const constraints = [where('isPublic', '==', true), orderBy('name')];
+        if (cursor) {
+            constraints.push(startAfterQuery(cursor));
+        }
+        constraints.push(limitQuery(pageSize));
+        const snapshot = await getDocs(query(teamsRef, ...constraints));
+        const teams = filterTeamsByActive(snapshot.docs.map((teamDoc) => ({ id: teamDoc.id, ...teamDoc.data() })), false);
+        return {
+            teams,
+            nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null
+        };
+    }
+
+    const strategies = buildPublicTeamSearchStrategies(searchText);
+    if (!strategies.length) {
+        return { teams: [], nextCursor: null };
+    }
+
+    const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
+        teamsRef,
+        where('isPublic', '==', true),
+        where(strategy.field, '>=', strategy.start),
+        where(strategy.field, '<=', strategy.end),
+        orderBy(strategy.field),
+        limitQuery(pageSize)
+    ))));
+
+    const teamsById = new Map();
+    snapshots.forEach((snapshot, index) => {
+        const strategy = strategies[index];
+        snapshot.docs.forEach((teamDoc) => {
+            const team = { id: teamDoc.id, ...teamDoc.data() };
+            if (typeof strategy.filter === 'function' && !strategy.filter(team)) {
+                return;
+            }
+            teamsById.set(team.id, team);
+        });
+    });
+
+    return {
+        teams: filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())).slice(0, pageSize), false),
+        nextCursor: null
+    };
+}
 
 // Teams
 export async function getTeams(options = {}) {
@@ -1152,6 +1293,7 @@ export async function getUserByEmail(email) {
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
+    Object.assign(teamData, buildPublicTeamSearchFields(teamData));
     if (!Object.prototype.hasOwnProperty.call(teamData, 'active')) {
         teamData.active = true;
     }
@@ -1167,6 +1309,7 @@ export async function createTeam(teamData) {
 
 export async function updateTeam(teamId, teamData) {
     teamData.updatedAt = Timestamp.now();
+    Object.assign(teamData, buildPublicTeamSearchFields(teamData));
     const docRef = doc(db, "teams", teamId);
     await updateDoc(docRef, teamData);
 }

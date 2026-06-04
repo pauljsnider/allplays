@@ -4,11 +4,11 @@ import {
   createRegistrationCheckoutSession,
   createTeamMediaFolder,
   createTeamMediaLink,
+  discoverPublicTeams,
   getPlayers,
   getTeam,
   getTeamMediaFolders,
   getTeamMediaItems,
-  getTeams,
   canAccessTeamChat,
   listCertificatesForPlayer,
   listFamilyShareTokens,
@@ -336,8 +336,8 @@ export function getCertificateUrl(teamId: string, certificateId: string) {
 
 export async function loadParentAccessModel(user: AuthUser | null) {
   if (!user?.uid) return { teams: [], requests: [] };
-  const [teams, requests] = await Promise.all([
-    Promise.resolve(getTeams({ publicOnly: true })),
+  const [{ teams }, requests] = await Promise.all([
+    Promise.resolve(discoverPublicTeams({ pageSize: 100 })),
     Promise.resolve(listMyParentMembershipRequests(user.uid))
   ]);
   return {

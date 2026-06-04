@@ -7,6 +7,7 @@ const dbMocks = vi.hoisted(() => ({
     createTeamMediaFolder: vi.fn(),
     createTeamMediaLink: vi.fn(),
     db: { _is_mock_db_instance: true }, // Mock db instance for runTransaction
+    discoverPublicTeams: vi.fn(),
     doc: vi.fn((db, path, ...segments) => ({
         path: `${path}/${segments.join('/')}`,
         id: segments[segments.length - 1] || 'mock-id',
@@ -20,7 +21,6 @@ const dbMocks = vi.hoisted(() => ({
     getTeam: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItems: vi.fn(),
-    getTeams: vi.fn(),
     canAccessTeamChat: vi.fn(() => true),
     listCertificatesForPlayer: vi.fn(),
     listFamilyShareTokens: vi.fn(),
@@ -209,10 +209,13 @@ describe('React app parent tools service', () => {
     });
 
     it('loads public access teams, selectable players, and submits membership requests', async () => {
-        dbMocks.getTeams.mockResolvedValue([
-            { id: 'team-b', name: 'Wolves', isPublic: false },
-            { id: 'team-a', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true }
-        ]);
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                { id: 'team-b', name: 'Wolves', isPublic: false },
+                { id: 'team-a', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true }
+            ],
+            nextCursor: 'cursor-1'
+        });
         dbMocks.listMyParentMembershipRequests.mockResolvedValue([
             { id: 'request-1', teamId: 'team-a', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', relation: 'Parent', status: 'pending' }
         ]);
@@ -231,6 +234,7 @@ describe('React app parent tools service', () => {
             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null },
             { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: 'https://img.example.test/sam.png' }
         ]);
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ pageSize: 100 });
         await submitParentAccessRequest('team-a', 'player-1', 'Guardian');
         expect(dbMocks.createParentMembershipRequest).toHaveBeenCalledWith('team-a', 'player-1', 'Guardian');
     });

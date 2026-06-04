@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
-    getTeams: vi.fn()
+    discoverPublicTeams: vi.fn()
 }));
 
 vi.mock('../../../../js/db.js', () => dbMocks);
 
-import { getPublicTeamsByLocation } from './publicTeamsService';
+import { getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsService';
 
 describe('getPublicTeamsByLocation', () => {
     beforeEach(() => {
@@ -14,38 +14,47 @@ describe('getPublicTeamsByLocation', () => {
     });
 
     it('defaults public teams without access flags to website access', async () => {
-        dbMocks.getTeams.mockResolvedValue([
-            {
-                id: 'team-legacy-1',
-                name: 'Legacy Legends',
-                city: 'Chicago',
-                state: 'IL'
-            }
-        ]);
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                {
+                    id: 'team-legacy-1',
+                    name: 'Legacy Legends',
+                    city: 'Chicago',
+                    state: 'IL'
+                }
+            ],
+            nextCursor: 'cursor-1'
+        });
 
-        await expect(getPublicTeamsByLocation()).resolves.toEqual([
-            expect.objectContaining({
-                teamId: 'team-legacy-1',
-                teamName: 'Legacy Legends',
-                location: 'Chicago, IL',
-                appAccess: false,
-                webAccess: true,
-                isPublic: true
-            })
-        ]);
-        expect(dbMocks.getTeams).toHaveBeenCalledWith({ publicOnly: true, locationFilter: '' });
+        await expect(getPublicTeamsPage()).resolves.toEqual({
+            teams: [
+                expect.objectContaining({
+                    teamId: 'team-legacy-1',
+                    teamName: 'Legacy Legends',
+                    location: 'Chicago, IL',
+                    appAccess: false,
+                    webAccess: true,
+                    isPublic: true
+                })
+            ],
+            nextCursor: 'cursor-1'
+        });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: '', cursor: null, pageSize: 24 });
     });
 
     it('preserves explicit access flags from the public team document', async () => {
-        dbMocks.getTeams.mockResolvedValue([
-            {
-                id: 'team-hidden-1',
-                name: 'Hidden Club',
-                zip: '60601',
-                appAccess: false,
-                webAccess: false
-            }
-        ]);
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                {
+                    id: 'team-hidden-1',
+                    name: 'Hidden Club',
+                    zip: '60601',
+                    appAccess: false,
+                    webAccess: false
+                }
+            ],
+            nextCursor: null
+        });
 
         await expect(getPublicTeamsByLocation('60601')).resolves.toEqual([
             expect.objectContaining({
@@ -55,6 +64,6 @@ describe('getPublicTeamsByLocation', () => {
                 webAccess: false
             })
         ]);
-        expect(dbMocks.getTeams).toHaveBeenCalledWith({ publicOnly: true, locationFilter: '60601' });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: '60601', cursor: null, pageSize: 24 });
     });
 });

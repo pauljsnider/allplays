@@ -4,7 +4,7 @@ import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
 import { TeamAvatar, TeamLauncherChip, Status } from '../pages/Teams';
 import { openPublicUrl } from '../lib/publicActions';
-import { getPublicTeamsByLocation } from '../lib/publicTeamsService';
+import { getPublicTeamsPage } from '../lib/publicTeamsService';
 import { resolveZip } from '../lib/utils';
 
 const PUBLIC_TEAM_WEBSITE_BASE_URL = 'https://allplays.ai/team.html';
@@ -17,29 +17,41 @@ export function PublicTeamSearch() {
   const [error, setError] = useState<string>('');
   const [activeSearchLocation, setActiveSearchLocation] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
+  const [nextCursor, setNextCursor] = useState<unknown | null>(null);
 
-  const fetchPublicTeams = useCallback(async (location?: string) => {
+  const fetchPublicTeams = useCallback(async ({ location, cursor = null, append = false }: { location?: string; cursor?: unknown | null; append?: boolean } = {}) => {
     setLoading(true);
-    setError('');
+    if (!append) {
+      setError('');
+    }
     setHasSearched(true);
     try {
-      const teams = await getPublicTeamsByLocation(location);
-      setPublicTeams(teams);
+      const result = await getPublicTeamsPage({ locationFilter: location, cursor });
+      setPublicTeams((current) => append ? [...current, ...result.teams] : result.teams);
+      setNextCursor(result.nextCursor);
       setActiveSearchLocation(location || null);
     } catch (err: any) {
-      setError(err?.message || 'Failed to fetch public teams.');
-      setPublicTeams([]);
+      if (!append) {
+        setError(err?.message || 'Failed to fetch public teams.');
+        setPublicTeams([]);
+        setNextCursor(null);
+      }
     } finally {
       setLoading(false);
     }
   }, []);
 
   const handleSearch = () => {
-    void fetchPublicTeams(locationQuery.trim() || undefined);
+    void fetchPublicTeams({ location: locationQuery.trim() || undefined });
   };
 
   const handleBrowseAll = () => {
     void fetchPublicTeams();
+  };
+
+  const handleLoadMore = () => {
+    if (!nextCursor || activeSearchLocation) return;
+    void fetchPublicTeams({ cursor: nextCursor, append: true });
   };
 
   const handleClear = () => {
@@ -48,6 +60,7 @@ export function PublicTeamSearch() {
     setError('');
     setActiveSearchLocation(null);
     setHasSearched(false);
+    setNextCursor(null);
   };
 
   const handleOpenTeam = useCallback(async (team: ParentHomeTeam) => {
@@ -155,6 +168,21 @@ export function PublicTeamSearch() {
               </div>
             </div>
           ))}
+          {nextCursor && !activeSearchLocation ? (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                className="ghost-button !min-h-10 !px-4 text-sm"
+                onClick={handleLoadMore}
+                disabled={loading}
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : null}
+                <span>Load more teams</span>
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500 text-center">
