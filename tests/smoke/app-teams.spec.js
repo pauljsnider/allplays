@@ -219,6 +219,10 @@ async function mockTeamsModules(page) {
                     };
                 }
 
+                export async function loadTeamStaffPermissions() {
+                    return null;
+                }
+
                 export function buildPublicTeamGamesIcsUrl(teamId) {
                     return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
                 }
