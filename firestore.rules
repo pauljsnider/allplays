@@ -41,6 +41,32 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function isAdminInvitePayloadValid(data) {
+      return data.keys().hasOnly([
+               'code', 'type', 'teamId', 'teamName', 'email', 'generatedBy',
+               'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.keys().hasAll([
+               'code', 'type', 'teamId', 'email', 'generatedBy',
+               'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.type == 'admin_invite' &&
+             data.code is string &&
+             data.code.size() > 0 &&
+             data.teamId is string &&
+             data.teamId.size() > 0 &&
+             (!('teamName' in data) || data.teamName == null || data.teamName is string) &&
+             data.email is string &&
+             data.email.size() > 0 &&
+             data.generatedBy == request.auth.uid &&
+             data.createdAt is timestamp &&
+             data.expiresAt is timestamp &&
+             data.expiresAt > request.time &&
+             data.used == false &&
+             data.usedBy == null &&
+             data.usedAt == null;
+    }
+
     function canReadTeamDocument(data) {
       return (data.isPublic is bool && data.isPublic == true) ||
              (isSignedIn() &&
@@ -1209,7 +1235,17 @@ service cloud.firestore {
 	    match /accessCodes/{codeId} {
       allow get: if resource == null || canReadAccessCode(resource.data);
       allow list: if canReadAccessCode(resource.data);
-      allow create: if isSignedIn() && request.resource.data.generatedBy == request.auth.uid;
+      allow create: if isSignedIn() &&
+                       request.resource.data.generatedBy == request.auth.uid &&
+                       (
+                         request.resource.data.type != 'admin_invite' ||
+                         (
+                           request.resource.data.teamId is string &&
+                           isTeamOwnerOrAdmin(request.resource.data.teamId) &&
+                           isAdminInvitePayloadValid(request.resource.data) &&
+                           request.resource.data.code == codeId
+                         )
+                       );
       // Only allow the code generator to update/delete, OR allow system to mark as used during signup
       allow update: if isSignedIn() &&
                        (resource.data.generatedBy == request.auth.uid ||
