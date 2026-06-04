@@ -382,11 +382,16 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             </div>
 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
-              {events.length > 1 ? (
-                <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} compact />
-              ) : (
-                <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
-              )}
+              <div className="min-w-0 flex-1">
+                {events.length > 1 ? (
+                  <>
+                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} compact />
+                    <div className="mt-1 truncate text-xs font-bold text-gray-600">{selectedEvent.childName} · {selectedEvent.teamName}</div>
+                  </>
+                ) : (
+                  <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
+                )}
+              </div>
               <span className={`inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
                 {rsvpLabels[rsvp]}
               </span>

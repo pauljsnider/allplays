@@ -371,6 +371,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(switchers).toHaveLength(1);
         expect(buttonByText(container, 'Pat')).not.toBeNull();
         expect(buttonByText(container, 'Sam')).not.toBeNull();
+        expect(container.textContent).toContain('Pat · Bears');
         expect(container.textContent).toContain('Add to Calendar');
     });
 
