@@ -38,9 +38,7 @@ async function openDesktopSearch(page) {
         try {
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         } catch {
-            if (!await searchButton.count()) {
-                throw new Error('Desktop search did not open from the keyboard shortcut and the search button was unavailable.');
-            }
+            await expect(searchButton).toBeVisible({ timeout: 2000 });
             await searchButton.click();
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }

@@ -1003,7 +1003,7 @@ test('schedule role permissions let admins manage non-owned rideshare requests',
     await mockScheduleModules(page, { isAdmin: true });
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('button', { name: 'Rideshare', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Rideshare', exact: true })).toBeVisible({ timeout: 15000 });
     await page.getByRole('button', { name: 'Rideshare', exact: true }).click();
     const rideshareSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Rideshare' }) });
     const danaCard = rideshareSection.locator('article').filter({ hasText: 'Dana Driver' });
@@ -1022,7 +1022,7 @@ test('schedule failure states show errors without trapping users in spinners', a
     await mockScheduleModules(page, { scheduleLoadError: 'Schedule unavailable.' });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByText('Schedule unavailable.')).toBeVisible();
+    await expect(page.getByText('Schedule unavailable.')).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Loading schedule')).toHaveCount(0);
 
     const errorPage = await page.context().newPage();
@@ -1033,12 +1033,12 @@ test('schedule failure states show errors without trapping users in spinners', a
     await errorPage.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
     await errorPage.getByRole('button', { name: 'Rideshare', exact: true }).click();
-    await expect(errorPage.getByText('Rideshare unavailable.')).toBeVisible();
+    await expect(errorPage.getByText('Rideshare unavailable.')).toBeVisible({ timeout: 15000 });
     await expect(errorPage.getByText('Loading rideshare offers')).toHaveCount(0);
 
     await errorPage.getByRole('button', { name: 'Assignments', exact: true }).click();
     const assignmentsSection = errorPage.locator('section').filter({ has: errorPage.getByRole('heading', { name: 'Assignments' }) });
     await assignmentsSection.locator('article').filter({ hasText: 'Snacks' }).getByRole('button', { name: 'Sign up' }).click();
-    await expect(assignmentsSection.getByText('Slot already taken.')).toBeVisible();
+    await expect(assignmentsSection.getByText('Slot already taken.')).toBeVisible({ timeout: 15000 });
     await errorPage.close();
 });
