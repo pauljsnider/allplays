@@ -39,6 +39,7 @@ import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../li
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
+import { buildParentScheduleEventIcs, downloadIcs } from '../lib/parentToolsService';
 import {
   buildGameHubDestinations,
   buildPracticeHubDestinations,
@@ -331,6 +332,17 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const attentionItems = getAttentionItems(selectedEvent, rsvp).filter((item) => item.section !== 'availability' && item.title !== 'Practice packet ready');
   const sections = getEventDetailSections(selectedEvent);
 
+  const addEventToCalendar = () => {
+    const icsTitle = `${title} | ${selectedEvent.teamName}`;
+    const fileDate = selectedEvent.date.toISOString().slice(0, 10);
+    downloadIcs(
+      `${selectedEvent.teamName}-${title}-${fileDate}.ics`,
+      buildParentScheduleEventIcs(selectedEvent, icsTitle)
+    );
+    setError(null);
+    setStatusMessage('Add to Calendar download started.');
+  };
+
   return (
     <div className="event-detail-page space-y-3">
       <aside className="event-detail-rail space-y-3">
@@ -377,6 +389,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             </div>
 
             <EventBrief event={selectedEvent} />
+            <button
+              type="button"
+              className="secondary-button mt-3 w-full justify-center"
+              onClick={addEventToCalendar}
+            >
+              <CalendarDays className="h-4 w-4" aria-hidden="true" />
+              Add to Calendar
+            </button>
             {events.length > 1 ? <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} /> : null}
             {hasPracticePacket ? <PracticePacketPrompt event={selectedEvent} onOpen={() => selectSection('game')} /> : null}
             <EventSectionNav
