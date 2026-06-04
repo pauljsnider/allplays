@@ -39,11 +39,19 @@ describe('React app auth/profile capability parity', () => {
 
     it('defaults a browser refresh on My Teams back to Home', () => {
         const appRoutes = readProjectFile('apps/app/src/App.tsx');
+        const reloadRouting = readProjectFile('apps/app/src/lib/reloadRouting.ts');
 
         expectContains(appRoutes, [
-            'location.pathname === \'/teams\'',
-            'isBrowserReload()',
+            "import { shouldReloadTeamsToHome } from './lib/reloadRouting';",
+            'pathname: location.pathname',
+            'search: location.search',
+            'isReload: isBrowserReload()',
             'shouldDefaultReloadToHome ? <Navigate to="/home" replace />'
+        ]);
+        expectContains(reloadRouting, [
+            "pathname === '/teams'",
+            '!search',
+            'isReload'
         ]);
     });
 
