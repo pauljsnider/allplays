@@ -1471,8 +1471,8 @@ a {
 
 .chat-audience-pill {
   display: inline-flex;
+  flex: 1 1 0;
   min-width: 0;
-  max-width: 48%;
   height: 34px;
   align-items: center;
   gap: 6px;
@@ -1483,6 +1483,22 @@ a {
   color: #4338ca;
   font-size: 0.75rem;
   font-weight: 900;
+}
+
+.chat-audience-pill span {
+  min-width: 0;
+}
+
+.chat-audience-pill[aria-label="Open Team Email"] {
+  flex: 0 1 auto;
+  max-width: 48%;
+}
+
+@media (min-width: 640px) {
+  .chat-audience-pill {
+    flex: 0 1 auto;
+    max-width: 48%;
+  }
 }
 
 .chat-composer-notice {
