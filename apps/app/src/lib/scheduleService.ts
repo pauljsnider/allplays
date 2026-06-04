@@ -1912,8 +1912,8 @@ function assertStaffRsvpManagementEvent(event: ParentScheduleEvent, user: AuthUs
   if (!user?.uid) {
     throw new Error('Sign in before managing player RSVPs.');
   }
-  if (!event.isTeamStaff) {
-    throw new Error('Only team staff can manage player RSVPs.');
+  if (!event.isTeamAdmin) {
+    throw new Error('Only team owners and admins can manage player RSVPs.');
   }
 }
 

@@ -301,6 +301,7 @@ describe('staff RSVP management', () => {
     isDbGame: true,
     isCancelled: false,
     availabilityLocked: false,
+    isTeamAdmin: true,
     isTeamStaff: true
   } as any;
 
@@ -340,5 +341,10 @@ describe('staff RSVP management', () => {
     expect(submitRsvpForPlayer).not.toHaveBeenCalledWith('team-1', 'game-1', 'coach-1', expect.objectContaining({
       playerId: 'child-event-player'
     }));
+  });
+
+  it('rejects coach-only staff without admin write access', async () => {
+    await expect(submitStaffScheduleRsvpOverride({ ...event, isTeamAdmin: false }, user as any, 'player-override', 'going')).rejects.toThrow('Only team owners and admins can manage player RSVPs.');
+    expect(submitRsvpForPlayer).not.toHaveBeenCalled();
   });
 });

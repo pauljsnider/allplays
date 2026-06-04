@@ -172,9 +172,9 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('hides staff override controls for non-staff viewers', async () => {
+  it('hides staff override controls for coach-only staff without admin write access', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ isTeamStaff: false })],
+      events: [buildEvent({ isTeamStaff: true, isTeamAdmin: false })],
       children: []
     });
 

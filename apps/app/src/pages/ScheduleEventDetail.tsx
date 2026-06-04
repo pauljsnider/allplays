@@ -244,7 +244,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   }, [selectedEvent?.eventKey, selectedEvent?.myRsvpNote]);
 
   const refreshStaffRsvpBreakdown = useCallback(async (showLoading = true) => {
-    if (!auth.user || !selectedEvent?.isTeamStaff || !selectedEvent.isDbGame) {
+    if (!auth.user || !selectedEvent?.isTeamAdmin || !selectedEvent.isDbGame) {
       setStaffRsvpBreakdown(null);
       setStaffRsvpError(null);
       return null;
@@ -267,7 +267,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     setStaffRsvpStatus(null);
     setStaffRsvpSubmittingPlayerId(null);
-    if (!selectedEvent?.isTeamStaff || !selectedEvent.isDbGame) {
+    if (!selectedEvent?.isTeamAdmin || !selectedEvent.isDbGame) {
       setStaffRsvpBreakdown(null);
       setStaffRsvpError(null);
       setStaffRsvpLoading(false);
@@ -936,7 +936,7 @@ function StaffRsvpBreakdownPanel({ event, breakdown, loading, error, submittingP
   status: StaffRsvpOverrideStatus | null;
   onOverride: (player: StaffScheduleRsvpRow, response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
 }) {
-  if (!event.isTeamStaff || !event.isDbGame) return null;
+  if (!event.isTeamAdmin || !event.isDbGame) return null;
   if (loading && !breakdown) {
     return <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 text-sm font-semibold text-gray-600">Loading team RSVP breakdown…</div>;
   }
