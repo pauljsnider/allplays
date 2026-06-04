@@ -39,4 +39,10 @@ describe('admin invite signup cache busting', () => {
             expect(source).toContain(expectedVersion);
         }
     });
+
+    it('keeps the shared header logout import on the current auth module version', () => {
+        const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
+
+        expect(utilsSource).toContain("const { logout } = await import('./auth.js?v=17');");
+    });
 });
