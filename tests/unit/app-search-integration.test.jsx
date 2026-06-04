@@ -188,15 +188,21 @@ afterEach(() => {
 });
 
 describe('React app shell search', () => {
-    it('renders a mobile search trigger with a stable text label and opens search results', async () => {
+    it('renders stable mobile action labels for private AI and search', async () => {
         const { container } = await renderShell();
 
+        expect(buttonByText(container, 'Private AI').textContent).toContain('Private AI');
         expect(buttonByText(container, 'Search').textContent).toContain('Search');
+    });
+
+    it('opens mobile search results from the shell trigger', async () => {
+        const { container } = await renderShell();
+
         await clickButton(container, 'Search');
         await waitForText(container, 'Browse Teams');
         expect(container.textContent).toContain('Bears');
         expect(container.textContent).toContain('Home Rockets');
-        expect(container.textContent).not.toContain('Private');
+        expect(container.textContent).not.toContain('PrivateSoccer');
         expect(container.textContent).toContain('Type at least 2 characters to search players');
 
         await fillSearch(container, 'pat');

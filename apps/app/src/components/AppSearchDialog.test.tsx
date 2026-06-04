@@ -5,9 +5,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { AppSearchDialog } from './AppSearchDialog';
 import type { AuthState } from '../lib/types';
 
-const { preloadSearchRouteMock } = vi.hoisted(() => ({
+const { navigateMock, preloadSearchRouteMock } = vi.hoisted(() => ({
+  navigateMock: vi.fn(),
   preloadSearchRouteMock: vi.fn(async () => true),
 }));
+
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>();
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
 
 vi.mock('../lib/publicActions', () => ({
   openPublicUrl: vi.fn(),
@@ -74,7 +83,7 @@ describe('AppSearchDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('starts route preload without blocking the search result click flow', async () => {
+  it('navigates search results immediately while preloading the route in the background', async () => {
     const onClose = vi.fn();
     let releasePreload!: () => void;
     preloadSearchRouteMock.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
@@ -92,7 +101,9 @@ describe('AppSearchDialog', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Rockets/ }));
 
     await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledWith('/teams/team-2'));
+    expect(navigateMock).toHaveBeenCalledWith('/teams/team-2');
 
     releasePreload();
+    await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledTimes(1));
   });
 });

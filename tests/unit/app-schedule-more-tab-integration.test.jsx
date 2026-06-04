@@ -355,6 +355,26 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(shareCall.clipboardText).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
     });
 
+    it('keeps the multi-child summary switcher inline with the event metadata row', async () => {
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            events: [
+                event({ childId: 'player-1', childName: 'Pat', liveStatus: 'completed', homeScore: 4, awayScore: 2 }),
+                event({ eventKey: 'team-1::game-1::player-2', childId: 'player-2', childName: 'Sam', myRsvp: 'maybe', liveStatus: 'completed', homeScore: 4, awayScore: 2 })
+            ]
+        });
+        reportMocks.loadGameReportSections.mockResolvedValue(report());
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+
+        const switchers = container.querySelectorAll('[data-testid="event-player-switcher"]');
+        expect(switchers).toHaveLength(1);
+        expect(buttonByText(container, 'Pat')).not.toBeNull();
+        expect(buttonByText(container, 'Sam')).not.toBeNull();
+        expect(container.textContent).toContain('Pat · Bears');
+        expect(container.textContent).toContain('Add to Calendar');
+    });
+
     it('hides empty optional postgame report tabs for completed games', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [event({ liveStatus: 'completed', homeScore: 4, awayScore: 2 })]

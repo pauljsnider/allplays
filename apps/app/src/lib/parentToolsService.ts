@@ -439,6 +439,10 @@ export function buildParentScheduleIcs(events: ParentScheduleEvent[], calendarNa
   return lines.join('\r\n');
 }
 
+export function buildParentScheduleEventIcs(event: ParentScheduleEvent, calendarName = 'ALL PLAYS Schedule') {
+  return buildParentScheduleIcs(event ? [event] : [], calendarName);
+}
+
 export function downloadIcs(filename: string, icsText: string) {
   const blob = new Blob([icsText], { type: 'text/calendar;charset=utf-8' });
   const url = URL.createObjectURL(blob);

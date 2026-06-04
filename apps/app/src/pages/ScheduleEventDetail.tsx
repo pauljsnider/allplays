@@ -39,6 +39,7 @@ import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../li
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
+import { buildParentScheduleEventIcs, downloadIcs } from '../lib/parentToolsService';
 import {
   buildGameHubDestinations,
   buildPracticeHubDestinations,
@@ -331,11 +332,22 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const attentionItems = getAttentionItems(selectedEvent, rsvp).filter((item) => item.section !== 'availability' && item.title !== 'Practice packet ready');
   const sections = getEventDetailSections(selectedEvent);
 
+  const addEventToCalendar = () => {
+    const icsTitle = `${title} | ${selectedEvent.teamName}`;
+    const fileDate = selectedEvent.date.toISOString().slice(0, 10);
+    downloadIcs(
+      `${selectedEvent.teamName}-${title}-${fileDate}.ics`,
+      buildParentScheduleEventIcs(selectedEvent, icsTitle)
+    );
+    setError(null);
+    setStatusMessage('Add to Calendar download started.');
+  };
+
   return (
     <div className="event-detail-page space-y-3">
       <aside className="event-detail-rail space-y-3">
         <section className="event-summary-card app-card overflow-hidden p-0">
-          <div className="p-3 sm:p-4">
+          <div className="event-summary-shell px-3 py-1.5 sm:p-4">
             <div className="flex items-center justify-between gap-2">
               <Link to="/schedule" className="inline-flex min-h-8 w-fit items-center gap-1 rounded-full text-xs font-black text-gray-600 transition hover:text-primary-700">
                 <ChevronLeft className="h-4 w-4" aria-hidden="true" />
@@ -352,7 +364,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               </button>
             </div>
 
-            <div className="mt-2 flex items-start gap-2.5 sm:gap-3">
+            <div className="mt-1.5 flex items-start gap-2.5 sm:mt-2 sm:gap-3">
               <DateTile date={selectedEvent.date} />
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
@@ -362,22 +374,38 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
                   </span>
                 </div>
                 <h1 className="mt-0.5 text-lg font-black leading-tight text-gray-950 sm:text-2xl">{title}</h1>
-                <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-xs font-bold leading-5 text-gray-600 sm:text-sm">
+                <div className="mt-0 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-xs font-bold leading-5 text-gray-600 sm:text-sm">
                   <span>{formatHeroTime(selectedEvent)}</span>
                   <span className="min-w-0 truncate">{selectedEvent.location || 'Location TBD'}</span>
                 </div>
               </div>
             </div>
 
-            <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
-              <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
+            <div className="mt-1 flex min-w-0 items-center justify-between gap-2 sm:mt-2">
+              <div className="min-w-0 flex-1">
+                {events.length > 1 ? (
+                  <>
+                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} compact />
+                    <div className="mt-1 truncate text-xs font-bold text-gray-600">{selectedEvent.childName} · {selectedEvent.teamName}</div>
+                  </>
+                ) : (
+                  <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
+                )}
+              </div>
               <span className={`inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
                 {rsvpLabels[rsvp]}
               </span>
             </div>
 
             <EventBrief event={selectedEvent} />
-            {events.length > 1 ? <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} /> : null}
+            <button
+              type="button"
+              className="secondary-button event-calendar-button mt-1.5 w-full justify-center sm:mt-2"
+              onClick={addEventToCalendar}
+            >
+              <CalendarDays className="h-4 w-4" aria-hidden="true" />
+              Add to Calendar
+            </button>
             {hasPracticePacket ? <PracticePacketPrompt event={selectedEvent} onOpen={() => selectSection('game')} /> : null}
             <EventSectionNav
               className="event-workflow-nav event-nav-desktop mt-3"
@@ -603,9 +631,9 @@ function EventBrief({ event }: { event: ParentScheduleEvent }) {
   if (!pieces.length) return null;
 
   return (
-    <div className="event-brief mt-2 flex-wrap gap-1.5 sm:mt-3">
+    <div className="event-brief mt-1.5 flex-wrap gap-1 sm:mt-3 sm:gap-1.5">
       {pieces.map((piece) => (
-        <span key={piece} className="inline-flex min-h-7 items-center rounded-full border border-gray-200 bg-white px-2.5 text-xs font-extrabold text-gray-700">
+        <span key={piece} className="inline-flex min-h-6 items-center rounded-full border border-gray-200 bg-white px-2 text-[11px] font-extrabold text-gray-700 sm:min-h-7 sm:px-2.5 sm:text-xs">
           {piece}
         </span>
       ))}
@@ -663,13 +691,17 @@ function AttentionPanel({ items, onSelectSection }: { items: AttentionItem[]; on
   );
 }
 
-function PlayerSwitcher({ events, selectedChildId, onSelect }: {
+function PlayerSwitcher({ events, selectedChildId, onSelect, compact = false }: {
   events: ParentScheduleEvent[];
   selectedChildId: string;
   onSelect: (childId: string) => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="mt-2 inline-flex max-w-full gap-1 rounded-full border border-gray-200 bg-gray-50 p-0.5 sm:mt-3">
+    <div
+      data-testid="event-player-switcher"
+      className={`${compact ? 'flex-1 ' : 'mt-2 sm:mt-3 '}inline-flex max-w-full gap-1 rounded-full border border-gray-200 bg-gray-50 p-0.5`}
+    >
       {events.map((event) => {
         const selected = event.childId === selectedChildId;
         return (

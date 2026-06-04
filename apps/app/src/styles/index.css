@@ -835,6 +835,20 @@ a {
   border-radius: 12px;
 }
 
+.event-summary-shell .event-calendar-button {
+  min-height: 34px;
+  padding: 8px 12px;
+  font-size: 0.82rem;
+}
+
+@media (min-width: 640px) {
+  .event-summary-shell .event-calendar-button {
+    min-height: 40px;
+    padding: 10px 14px;
+    font-size: 0.9rem;
+  }
+}
+
 .desktop-app-page-messages .messages-page-web {
   display: flex;
   height: 100%;
