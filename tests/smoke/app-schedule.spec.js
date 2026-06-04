@@ -533,6 +533,28 @@ async function mockScheduleModules(page, options = {}) {
                     window.__scheduleCalls.rideshare.push({ action: 'status', offerId: offer.id, status });
                 }
 
+                export async function loadStaffScheduleRsvpBreakdown() {
+                    return {
+                        counts: { going: 1, maybe: 0, notGoing: 0, notResponded: 1 },
+                        grouped: {
+                            not_responded: [],
+                            going: [],
+                            maybe: [],
+                            not_going: []
+                        }
+                    };
+                }
+
+                export async function submitStaffScheduleRsvpOverride(event, user, playerId, response) {
+                    window.__scheduleCalls.staffRsvps = (window.__scheduleCalls.staffRsvps || []).concat({
+                        eventId: event?.id || null,
+                        userId: user?.uid || null,
+                        playerId,
+                        response
+                    });
+                    return { playerId, response };
+                }
+
                 export async function loadStaffRsvpReminderPreview() {
                     return { missingPlayerCount: 0, eligibleEmailCount: 0, players: [] };
                 }
