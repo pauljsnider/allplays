@@ -7,6 +7,7 @@ import {
   getPracticeSessions,
   getPlayers,
   getRsvps,
+  getRsvpBreakdownByPlayer,
   getRsvpSummaries,
   getTeam,
   getTeams,
@@ -42,6 +43,7 @@ import { filterVisiblePracticeSessions } from '../../../../js/parent-dashboard-p
 import { buildPracticePacketCompletionPayload as buildPracticePacketCompletionPayloadBase } from '../../../../js/parent-dashboard-packets.js';
 import { resolveMyRsvpByChildForGame } from '../../../../js/parent-dashboard-rsvp.js';
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from '../../../../js/availability-preferences.js';
+import { buildGameDayRsvpBreakdown } from '../../../../js/game-day-rsvp-breakdown.js';
 import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
 import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
 import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
@@ -117,6 +119,26 @@ export type ParentScheduleLoadOptions = {
 export type ParentScheduleEventDetailLoadOptions = ParentScheduleLoadOptions & {
   teamId: string;
   eventId: string;
+};
+
+export type StaffScheduleRsvpRow = {
+  playerId: string;
+  playerName: string;
+  playerNumber?: string | number | null;
+  response: RsvpResponse;
+  respondedAt?: unknown;
+  note?: string | null;
+  responderUserId?: string | null;
+};
+
+export type StaffScheduleRsvpBreakdown = {
+  grouped: {
+    going: StaffScheduleRsvpRow[];
+    maybe: StaffScheduleRsvpRow[];
+    not_going: StaffScheduleRsvpRow[];
+    not_responded: StaffScheduleRsvpRow[];
+  };
+  counts: Required<ScheduleRsvpSummary>;
 };
 
 type FirestoreDocument = Record<string, any> & { id: string };
@@ -1881,6 +1903,102 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
     note: compactString(note) || null
   });
   return null;
+}
+
+function assertStaffRsvpManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  if (!event.isDbGame) {
+    throw new Error('Availability opens after this event is tracked in the schedule.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before managing player RSVPs.');
+  }
+  if (!event.isTeamStaff) {
+    throw new Error('Only team staff can manage player RSVPs.');
+  }
+}
+
+function normalizeStaffScheduleRsvpBreakdown(value: any): StaffScheduleRsvpBreakdown {
+  const grouped = value?.grouped || {};
+  const normalizeRows = (rows: any[], fallbackResponse: RsvpResponse): StaffScheduleRsvpRow[] => (
+    Array.isArray(rows)
+      ? rows.map((row) => ({
+        playerId: compactString(row?.playerId),
+        playerName: compactString(row?.playerName) || 'Player',
+        playerNumber: compactString(row?.playerNumber ?? ''),
+        response: normalizeRsvpResponse(row?.response || fallbackResponse),
+        respondedAt: row?.respondedAt || null,
+        note: compactString(row?.note) || null,
+        responderUserId: compactString(row?.responderUserId) || null
+      })).filter((row) => row.playerId)
+      : []
+  );
+
+  const normalizedGrouped = {
+    going: normalizeRows(grouped.going, 'going'),
+    maybe: normalizeRows(grouped.maybe, 'maybe'),
+    not_going: normalizeRows(grouped.not_going, 'not_going'),
+    not_responded: normalizeRows(grouped.not_responded, 'not_responded')
+  };
+
+  return {
+    grouped: normalizedGrouped,
+    counts: {
+      going: normalizedGrouped.going.length,
+      maybe: normalizedGrouped.maybe.length,
+      notGoing: normalizedGrouped.not_going.length,
+      notResponded: normalizedGrouped.not_responded.length,
+      total: normalizedGrouped.going.length + normalizedGrouped.maybe.length + normalizedGrouped.not_going.length + normalizedGrouped.not_responded.length
+    }
+  };
+}
+
+export async function loadStaffScheduleRsvpBreakdown(event: ParentScheduleEvent, user: AuthUser | null): Promise<StaffScheduleRsvpBreakdown> {
+  assertStaffRsvpManagementEvent(event, user);
+
+  try {
+    const breakdown = await withTimeout(Promise.resolve(getRsvpBreakdownByPlayer(event.teamId, event.id)), 'Staff RSVP breakdown');
+    return normalizeStaffScheduleRsvpBreakdown(breakdown);
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST RSVP breakdown load:', error);
+    const [players, rsvps] = await Promise.all([
+      loadPlayers(event.teamId),
+      loadRsvps(event.teamId, event.id)
+    ]);
+    return normalizeStaffScheduleRsvpBreakdown(buildGameDayRsvpBreakdown({ players, rsvps }));
+  }
+}
+
+export async function submitStaffScheduleRsvpOverride(event: ParentScheduleEvent, user: AuthUser | null, playerId: string, response: Exclude<RsvpResponse, 'not_responded'>) {
+  assertStaffRsvpManagementEvent(event, user);
+  const normalizedPlayerId = compactString(playerId);
+  if (!normalizedPlayerId) {
+    throw new Error('Select a player before updating the RSVP.');
+  }
+  if (event.isCancelled) {
+    throw new Error('Cancelled events cannot be updated.');
+  }
+  if (event.availabilityLocked) {
+    throw new Error('Availability is locked for this event.');
+  }
+
+  try {
+    await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user!.uid, {
+      displayName: user!.displayName || user!.email,
+      playerId: normalizedPlayerId,
+      response,
+      note: null
+    })), 'Staff RSVP override');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST staff RSVP override:', error);
+    await nativeSubmitRsvpForPlayer(event.teamId, event.id, user!, normalizedPlayerId, response);
+  }
+
+  return {
+    playerId: normalizedPlayerId,
+    response
+  };
 }
 
 export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user: AuthUser, response: Exclude<RsvpResponse, 'not_responded'>, note = '') {
