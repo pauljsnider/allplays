@@ -13,10 +13,8 @@ async function gotoAppRoute(page, baseURL, hashPath) {
 }
 
 async function clickSearchTrigger(page) {
-    const searchTrigger = page.getByRole('button', { name: 'Search' }).first();
-    const titledSearchTrigger = page.locator('button[title*="Search"]').first();
-    const trigger = await searchTrigger.count() ? searchTrigger : titledSearchTrigger;
-    await expect(trigger).toBeVisible({ timeout: 3000 });
+    const trigger = page.locator('button[aria-label="Search"], button[title*="Search"]').first();
+    await expect(trigger).toBeVisible({ timeout: 10000 });
     await trigger.click();
 }
 

@@ -325,6 +325,14 @@ test.describe('mobile My Teams', () => {
 
         await expect(page.getByRole('heading', { name: '3 teams ready' })).toBeVisible();
         await expect(page.getByText('Choose a team')).toBeVisible();
+        await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
+        await page.getByPlaceholder('Search teams or players').fill('Riley');
+        await expect(page.getByRole('button', { name: /Rockets/ }).first()).toBeVisible();
+        await expect(page.getByRole('button', { name: /Staff Wolves/ })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: /Bears/ })).toHaveCount(0);
+        await page.getByPlaceholder('Search teams or players').fill('zzz');
+        await expect(page.getByText('No teams match that search.')).toBeVisible();
+        await page.getByPlaceholder('Search teams or players').fill('Staff Wolves');
         await expect(page.getByRole('button', { name: /Staff Wolves/ }).first()).toHaveAttribute('aria-pressed', 'true');
         await expect(page.locator('a[aria-label="Staff Wolves messages"]')).toBeVisible();
         await expect(page.locator('a[aria-label="Staff Wolves schedule"]')).toHaveCount(0);
@@ -340,6 +348,7 @@ test.describe('mobile My Teams', () => {
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/team.html#teamId=team-staff');
         await expect(page).toHaveURL(/#\/teams/);
 
+        await page.getByPlaceholder('Search teams or players').fill('Bears');
         await page.getByRole('button', { name: /Bears/ }).first().click();
         await expect(page.getByRole('button', { name: /Bears/ }).first()).toHaveAttribute('aria-pressed', 'true');
         await expect(page.getByText('Pat Star, Sam Wing')).toBeVisible();
