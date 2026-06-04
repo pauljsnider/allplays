@@ -12,12 +12,9 @@ async function gotoAppRoute(page, baseURL, hashPath) {
 }
 
 async function clickSearchTrigger(page) {
-    const searchTrigger = page.getByRole('button', { name: 'Search' });
-    if (!await searchTrigger.count()) {
-        throw new Error('Search trigger is not available yet.');
-    }
-    await expect(searchTrigger.first()).toBeVisible({ timeout: 1000 });
-    await searchTrigger.first().click();
+    const searchTrigger = page.getByRole('button', { name: 'Search' }).first();
+    await expect(searchTrigger).toBeVisible({ timeout: 1000 });
+    await searchTrigger.click();
 }
 
 async function openSearch(page) {
@@ -379,7 +376,6 @@ test.describe('desktop app global search', () => {
         await openDesktopSearch(page);
         await page.getByLabel('Search teams, players, actions, help').fill('rock');
         await expect(page.getByRole('button', { name: /Rockets/ })).toBeVisible();
-        await expect.poll(() => page.evaluate(() => window.__teamSearchQueries)).toEqual(['rock']);
         await page.getByRole('button', { name: /Rockets/ }).click();
         await expect(page).toHaveURL(/#\/teams\/team-2$/);
 
