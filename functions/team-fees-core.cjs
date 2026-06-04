@@ -179,7 +179,8 @@ function getTeamFeeCheckoutGuardFailure({ recipient = {}, session = {} } = {}) {
 
     const recipientToken = normalizeCheckoutAttemptToken(recipient.checkoutAttemptToken);
     const sessionToken = normalizeCheckoutAttemptToken(session.metadata?.checkoutAttemptToken);
-    if (!recipientToken || !sessionToken || recipientToken !== sessionToken) {
+    const isLegacyCheckoutSession = !recipientToken && !sessionToken;
+    if (!isLegacyCheckoutSession && (!recipientToken || !sessionToken || recipientToken !== sessionToken)) {
         return 'checkout_attempt_mismatch';
     }
 

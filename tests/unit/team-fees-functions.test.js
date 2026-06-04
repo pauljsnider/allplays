@@ -132,6 +132,16 @@ describe('team fee checkout function helpers', () => {
                 checkoutAttemptToken: 'tok_current_123456'
             }
         };
+        const legacyRecipient = {
+            stripeCheckoutSessionId: 'cs_legacy',
+            checkoutAmountCents: 7500,
+            amountDueCents: 7500,
+            paidAmountCents: 0
+        };
+        const legacySession = {
+            id: 'cs_legacy',
+            metadata: {}
+        };
 
         expect(shouldApplyTeamFeeCheckoutSession({ recipient, session })).toBe(true);
         expect(getTeamFeeCheckoutGuardFailure({ recipient, session })).toBe('');
@@ -139,6 +149,9 @@ describe('team fee checkout function helpers', () => {
         expect(getTeamFeeCheckoutGuardFailure({ recipient, session: { ...session, metadata: { checkoutAttemptToken: 'tok_old_1234567890' } } })).toBe('checkout_attempt_mismatch');
         expect(getTeamFeeCheckoutGuardFailure({ recipient, session: { ...session, amount_total: 7000 } })).toBe('checkout_amount_mismatch');
         expect(getTeamFeeCheckoutGuardFailure({ recipient: { ...recipient, amountDueCents: 9000 }, session })).toBe('balance_mismatch');
+        expect(shouldApplyTeamFeeCheckoutSession({ recipient: legacyRecipient, session: legacySession })).toBe(true);
+        expect(getTeamFeeCheckoutGuardFailure({ recipient: legacyRecipient, session: legacySession })).toBe('');
+        expect(getTeamFeeCheckoutGuardFailure({ recipient: legacyRecipient, session: { ...legacySession, metadata: { checkoutAttemptToken: 'tok_new_1234567890' } } })).toBe('checkout_attempt_mismatch');
     });
 
     it('marks paid immediate and async team fee checkout sessions as paid', () => {
