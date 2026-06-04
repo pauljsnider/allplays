@@ -11,8 +11,13 @@ async function gotoAppRoute(page, baseURL, hashPath) {
     await page.goto(appUrl(baseURL, hashPath), { waitUntil: 'domcontentloaded' });
 }
 
+async function clickSearchTrigger(page) {
+    const searchTrigger = page.getByRole('button', { name: 'Search' }).first();
+    await expect(searchTrigger).toBeVisible({ timeout: 5000 });
+    await searchTrigger.click();
+}
+
 async function openSearch(page) {
-    const searchButton = page.getByRole('button', { name: 'Search' });
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
     await expect(async () => {
@@ -21,27 +26,26 @@ async function openSearch(page) {
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
             return;
         } catch {
-            await expect(searchButton).toBeVisible({ timeout: 1000 });
-            await searchButton.click();
+            await clickSearchTrigger(page);
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
     }).toPass({ timeout: 15000 });
 }
 
 async function openDesktopSearch(page) {
-    const searchButton = page.getByRole('button', { name: 'Search' });
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
     await expect(async () => {
+        if (await searchDialog.isVisible().catch(() => false)) {
+            return;
+        }
+
         await page.keyboard.press('Control+K');
 
         try {
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         } catch {
-            if (!await searchButton.count()) {
-                throw new Error('Desktop search did not open from the keyboard shortcut and the search button was unavailable.');
-            }
-            await searchButton.click();
+            await clickSearchTrigger(page);
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
     }).toPass({ timeout: 15000 });
@@ -58,6 +62,8 @@ async function mockSearchModules(page) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                import './firebaseAuthRuntime.ts';
+
                 export function useAuth() {
                     const user = {
                         uid: 'user-1',
@@ -378,6 +384,7 @@ test.describe('desktop app global search', () => {
         await page.keyboard.press('Enter');
         await expect(page).toHaveURL(/#\/teams$/);
 
+        await gotoAppRoute(page, baseURL, '/home');
         await openDesktopSearch(page);
         await page.keyboard.press('ArrowDown');
         await page.keyboard.press('ArrowDown');

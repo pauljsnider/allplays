@@ -19,6 +19,7 @@ const profileServiceMocks = vi.hoisted(() => ({
     liveScore: preferences?.liveScore === true,
     schedule: preferences?.schedule !== false
   })),
+  normalizeProfilePhoto: vi.fn(),
   requestAccountMerge: vi.fn(),
   saveNotificationPreferences: vi.fn(),
   saveProfileDocument: vi.fn(),
@@ -124,8 +125,18 @@ async function selectPhoto(container: HTMLElement, fileName: string) {
     value: [file]
   });
   fireEvent.change(input);
-  await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledWith(file));
+  await waitFor(() => expect(profileServiceMocks.normalizeProfilePhoto).toHaveBeenCalledWith(file));
   return file;
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 describe('Profile invites', () => {
@@ -152,6 +163,7 @@ describe('Profile invites', () => {
     profileServiceMocks.saveNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
     profileServiceMocks.uploadProfilePhoto.mockResolvedValue('https://example.test/avatar.png');
+    profileServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
     profileServiceMocks.createProfileAccessCode.mockResolvedValue('NEWMVP42');
     profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([
       { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
@@ -292,6 +304,52 @@ describe('Profile invites', () => {
       schedule: true
     });
     expect(await screen.findByText('Game-day alerts are on for this team.')).toBeTruthy();
+  });
+
+  it('uploads the normalized profile photo instead of the original selection', async () => {
+    const normalizedFile = new File(['normalized-image'], 'normalized.jpg', { type: 'image/jpeg' });
+    profileServiceMocks.normalizeProfilePhoto.mockResolvedValue(normalizedFile);
+    const { container } = renderProfile();
+
+    await screen.findByText('Choose photo');
+    await selectPhoto(container, 'original.png');
+
+    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledWith(normalizedFile));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(normalizedFile));
+  });
+
+  it('keeps the most recent profile photo selection when normalization finishes out of order', async () => {
+    const firstNormalizedFile = new File(['first-normalized'], 'first-normalized.jpg', { type: 'image/jpeg' });
+    const secondNormalizedFile = new File(['second-normalized'], 'second-normalized.jpg', { type: 'image/jpeg' });
+    const firstNormalization = createDeferred<File>();
+    const secondNormalization = createDeferred<File>();
+    profileServiceMocks.normalizeProfilePhoto
+      .mockReturnValueOnce(firstNormalization.promise)
+      .mockReturnValueOnce(secondNormalization.promise);
+
+    const { container } = renderProfile();
+
+    await screen.findByText('Choose photo');
+    await selectPhoto(container, 'first.png');
+    await selectPhoto(container, 'second.png');
+
+    secondNormalization.resolve(secondNormalizedFile);
+    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledWith(secondNormalizedFile));
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:second-normalized.jpg');
+
+    firstNormalization.resolve(firstNormalizedFile);
+    await waitFor(() => expect(profileServiceMocks.normalizeProfilePhoto).toHaveBeenCalledTimes(2));
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:second-normalized.jpg');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(secondNormalizedFile));
+    expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profileServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).toBe(secondNormalizedFile);
+    expect(profileServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).not.toBe(firstNormalizedFile);
   });
 
   it('uses the native chooser to capture a profile photo before saving', async () => {

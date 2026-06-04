@@ -426,6 +426,7 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams/team-empty'), { waitUntil: 'domcontentloaded' });
 
+        await expect(page.getByText('Loading team')).toHaveCount(0);
         await expect(page.getByRole('heading', { name: /Empty Team/i })).toBeVisible();
         await expect(page.getByText('No completed games yet')).toBeVisible();
         await expect(page.getByText('Schedule is clear for now')).toBeVisible();
