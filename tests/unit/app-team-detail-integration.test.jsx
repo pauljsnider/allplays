@@ -17,7 +17,7 @@ const publicActionMocks = vi.hoisted(() => ({
     sharePublicUrl: vi.fn()
 }));
 const parentToolsMocks = vi.hoisted(() => ({
-    getPrivateTeamCalendarFeedUrl: vi.fn(),
+    buildPrivateTeamCalendarFeedUrl: vi.fn(),
     getAppleCalendarFeedUrl: vi.fn((url) => String(url).replace(/^https?:\/\//i, 'webcal://')),
     getGoogleCalendarFeedUrl: vi.fn((url) => `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(url)}`)
 }));
@@ -218,7 +218,7 @@ beforeEach(() => {
     };
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
     publicActionMocks.sharePublicUrl.mockResolvedValue('copied');
-    parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
+    parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team-1&token=abc123');
     scheduleServiceMocks.loadPreview.mockResolvedValue({
         missingPlayerCount: 0,
         eligibleEmailCount: 0,
@@ -297,7 +297,7 @@ describe('React app TeamDetail page', () => {
         fanModel.team.id = 'team 1/blue';
         fanModel.team.name = 'Bears & Wolves';
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(fanModel);
-        parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockResolvedValue('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
+        parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
 
         const { container } = await renderTeamDetail();
 
@@ -307,7 +307,7 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Open team schedule for one-time .ics export');
 
         await clickButtonInCard(container, 'Private calendar sync', 'Copy Link');
-        expect(parentToolsMocks.getPrivateTeamCalendarFeedUrl).toHaveBeenCalledWith('team 1/blue');
+        expect(parentToolsMocks.buildPrivateTeamCalendarFeedUrl).toHaveBeenCalledWith('team 1/blue', expect.objectContaining({ id: 'team 1/blue' }));
         expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
         expect(container.textContent).toContain('Private calendar link copied.');
 
@@ -356,7 +356,7 @@ describe('React app TeamDetail page', () => {
     });
 
     it('shows a private calendar sync error and hides sync actions without a signed-in user', async () => {
-        parentToolsMocks.getPrivateTeamCalendarFeedUrl.mockRejectedValueOnce(new Error('Unable to create private calendar feed. Sign in again and retry.'));
+        parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockImplementationOnce(() => { throw new Error('Unable to create private calendar feed. Sign in again and retry.'); });
         const { container } = await renderTeamDetail();
 
         await clickButton(container, 'More');

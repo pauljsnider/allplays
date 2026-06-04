@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
-import { getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl, getPrivateTeamCalendarFeedUrl } from '../lib/parentToolsService';
+import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
 import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
@@ -567,7 +567,7 @@ function PrivateCalendarSyncCard({ model }: { model: TeamDetailModel }) {
     setBusyTarget(target);
     setStatus(null);
     try {
-      const feedUrl = await getPrivateTeamCalendarFeedUrl(model.team.id);
+      const feedUrl = buildPrivateTeamCalendarFeedUrl(model.team.id, model.team);
       if (!feedUrl) throw new Error('Unable to create private calendar feed. Sign in again and retry.');
       if (target === 'copy') {
         const result = await copyPublicText(feedUrl);
