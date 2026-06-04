@@ -241,17 +241,15 @@ function TeamLauncher({ teams, selectedTeamId, onSelect, variant = 'grid' }: {
           {teams.length} team{teams.length === 1 ? '' : 's'}
         </span>
       </div>
-      {isRail ? (
-        <label className="mt-3 block px-1">
-          <span className="sr-only">Filter teams</span>
-          <input
-            className="auth-input !min-h-10 !px-3 !py-2 text-sm"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search teams or players"
-          />
-        </label>
-      ) : null}
+      <label className="mt-3 block px-1">
+        <span className="sr-only">Filter teams</span>
+        <input
+          className="auth-input !min-h-10 !px-3 !py-2 text-sm"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search teams or players"
+        />
+      </label>
       <div className={`${isRail ? 'teams-team-rail-list mt-3 space-y-2' : 'mt-3 grid gap-2 xl:grid-cols-2'}`}>
         {visibleTeams.length ? visibleTeams.map((team) => (
           <TeamLauncherRow key={team.teamId} team={team} selected={team.teamId === selectedTeamId} onSelect={() => onSelect(team.teamId)} compact={isRail} />

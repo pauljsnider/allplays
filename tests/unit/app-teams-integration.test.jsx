@@ -109,6 +109,20 @@ async function clickLink(container, text) {
     await flush();
 }
 
+async function typeIntoInput(container, placeholder, value) {
+    const input = Array.from(container.querySelectorAll('input')).find((candidate) => candidate.getAttribute('placeholder') === placeholder);
+    if (!input) {
+        throw new Error(`Input not found: ${placeholder}`);
+    }
+    await act(async () => {
+        const prototype = Object.getPrototypeOf(input);
+        const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
+        descriptor?.set?.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await flush();
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
     window.requestAnimationFrame = (callback) => {
@@ -210,10 +224,25 @@ describe('React app Teams page', () => {
         expect(buttonByText(container, '6 more')).toBeTruthy();
     });
 
-    it('selects teams in place and keeps player/chat links available', async () => {
+    it('filters the mobile launcher by team and player text before selecting a result', async () => {
         const { container } = await renderTeams('/teams?selectedTeamId=team-staff&from=home');
         await waitForText(container, 'Staff Wolves');
 
+        const filterInput = container.querySelector('input[placeholder="Search teams or players"]');
+        expect(filterInput).toBeTruthy();
+
+        await typeIntoInput(container, 'Search teams or players', 'Pat');
+        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent.includes('Bears'))).toBe(true);
+        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent.includes('Staff Wolves'))).toBe(false);
+
+        await typeIntoInput(container, 'Search teams or players', 'Wolves');
+        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent.includes('Staff Wolves'))).toBe(true);
+        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent.includes('Bears'))).toBe(false);
+
+        await typeIntoInput(container, 'Search teams or players', 'zzz');
+        expect(container.textContent).toContain('No teams match that search.');
+
+        await typeIntoInput(container, 'Search teams or players', 'Bears');
         await clickButton(container, 'Bears');
 
         expect(buttonByText(container, 'Bears').getAttribute('aria-pressed')).toBe('true');
