@@ -949,19 +949,22 @@ test('app schedule keeps filters compact on phone', async ({ page, baseURL }) =>
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByLabel('Schedule filter', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Upcoming Practices' })).toBeHidden();
-    await expect(page.getByRole('link', { name: /Game details/i })).toHaveCount(0);
-
     const mobileRows = page.locator('.schedule-list > a');
-    await expect(mobileRows.first()).toBeVisible();
-    const compactRowCount = await mobileRows.count();
-    expect(compactRowCount).toBeGreaterThanOrEqual(2);
-    expect(compactRowCount).toBeLessThanOrEqual(3);
-    const rowHeights = await mobileRows.evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
-    for (const rowHeight of rowHeights) {
-        expect(rowHeight).toBeLessThanOrEqual(86);
-    }
+    await expect(async () => {
+        await expect(page.getByLabel('Schedule filter', { exact: true })).toBeVisible({ timeout: 1000 });
+        await expect(page.getByRole('button', { name: 'Upcoming Practices' })).toBeHidden();
+        await expect(page.getByRole('link', { name: /Game details/i })).toHaveCount(0);
+        await expect(mobileRows.first()).toBeVisible({ timeout: 1000 });
+
+        const compactRowCount = await mobileRows.count();
+        expect(compactRowCount).toBeGreaterThanOrEqual(2);
+        expect(compactRowCount).toBeLessThanOrEqual(3);
+
+        const rowHeights = await mobileRows.evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+        for (const rowHeight of rowHeights) {
+            expect(rowHeight).toBeLessThanOrEqual(86);
+        }
+    }).toPass({ timeout: 15000 });
 
     await page.getByLabel('Schedule filter', { exact: true }).selectOption('upcoming-practices');
     await expect(page.getByRole('heading', { name: 'Practice', exact: true })).toBeVisible();

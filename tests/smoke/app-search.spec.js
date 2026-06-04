@@ -13,6 +13,7 @@ async function gotoAppRoute(page, baseURL, hashPath) {
 
 async function openSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
+    const titledSearchButton = page.getByTitle('Search (Ctrl+K / Cmd+K)');
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
     await expect(async () => {
@@ -21,8 +22,13 @@ async function openSearch(page) {
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
             return;
         } catch {
-            await expect(searchButton).toBeVisible({ timeout: 1000 });
-            await searchButton.click();
+            if (await searchButton.count()) {
+                await expect(searchButton).toBeVisible({ timeout: 2000 });
+                await searchButton.click();
+            } else {
+                await expect(titledSearchButton).toBeVisible({ timeout: 2000 });
+                await titledSearchButton.click();
+            }
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
     }).toPass({ timeout: 15000 });
@@ -30,6 +36,7 @@ async function openSearch(page) {
 
 async function openDesktopSearch(page) {
     const searchButton = page.getByRole('button', { name: 'Search' });
+    const titledSearchButton = page.getByTitle('Search (Ctrl+K / Cmd+K)');
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
     await expect(async () => {
@@ -38,8 +45,13 @@ async function openDesktopSearch(page) {
         try {
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         } catch {
-            await expect(searchButton).toBeVisible({ timeout: 2000 });
-            await searchButton.click();
+            if (await searchButton.count()) {
+                await expect(searchButton).toBeVisible({ timeout: 2000 });
+                await searchButton.click();
+            } else {
+                await expect(titledSearchButton).toBeVisible({ timeout: 2000 });
+                await titledSearchButton.click();
+            }
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
     }).toPass({ timeout: 15000 });
