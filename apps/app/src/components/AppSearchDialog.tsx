@@ -6,7 +6,9 @@ import { openPublicUrl } from '../lib/publicActions';
 import { preloadSearchRoute } from '../lib/searchRoutePreload';
 import {
   computeAppSearchResults,
+  getKnownAppSearchTeams,
   loadAppSearchTeams,
+  searchAppTeams,
   searchAppPlayers,
   type AppSearchHelpRoleFilter,
   type AppSearchItem,
@@ -23,6 +25,7 @@ type AppSearchDialogProps = {
 
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
+  const [baseTeams, setBaseTeams] = useState<AppSearchTeam[]>([]);
   const [teams, setTeams] = useState<AppSearchTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamsError, setTeamsError] = useState('');
@@ -34,7 +37,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const searchRequestId = useRef(0);
   const navigate = useNavigate();
 
-  const teamsById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
   const results = useMemo(
     () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
     [auth, helpRoleFilter, players, query, teams]
@@ -48,29 +50,13 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayers([]);
     setPlayersError('');
     setPlayersLoading(false);
+    const knownTeams = getKnownAppSearchTeams(auth.user);
+    setBaseTeams(knownTeams);
+    setTeams(knownTeams);
     setActiveIndex(0);
     setHelpRoleFilter('all');
-    setTeamsLoading(true);
+    setTeamsLoading(false);
     setTeamsError('');
-
-    let cancelled = false;
-    loadAppSearchTeams(auth.user)
-      .then((loadedTeams) => {
-        if (cancelled) return;
-        setTeams(loadedTeams);
-      })
-      .catch((error: any) => {
-        if (cancelled) return;
-        setTeams([]);
-        setTeamsError(error?.message || 'Unable to load teams.');
-      })
-      .finally(() => {
-        if (!cancelled) setTeamsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
   }, [auth.user, open]);
 
   useEffect(() => {
@@ -79,32 +65,59 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     const requestId = ++searchRequestId.current;
 
     if (trimmedQuery.length < 2) {
+      setTeams(baseTeams);
+      setTeamsLoading(false);
+      setTeamsError('');
       setPlayers([]);
       setPlayersLoading(false);
       setPlayersError('');
       return;
     }
 
+    setTeamsLoading(true);
+    setTeamsError('');
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
-      searchAppPlayers(trimmedQuery, teamsById, auth.user)
-        .then((matchedPlayers) => {
-          if (requestId !== searchRequestId.current) return;
-          setPlayers(matchedPlayers);
+      loadAppSearchTeams(auth.user)
+        .catch(() => baseTeams)
+        .then(async (loadedTeams) => {
+          const accessibleTeams = mergeSearchTeams(baseTeams, loadedTeams);
+          const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
+          const results = await Promise.allSettled([
+            searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
+            searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
+          ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
+          return results;
         })
-        .catch((error: any) => {
+        .then(([teamsResult, playersResult]) => {
           if (requestId !== searchRequestId.current) return;
-          setPlayers([]);
-          setPlayersError(getPlayerSearchError(error));
+
+          if (teamsResult.status === 'fulfilled') {
+            setTeams(teamsResult.value);
+            setTeamsError('');
+          } else {
+            setTeams([]);
+            setTeamsError(teamsResult.reason?.message || 'Team search unavailable.');
+          }
+
+          if (playersResult.status === 'fulfilled') {
+            setPlayers(playersResult.value);
+          } else {
+            setPlayers([]);
+            setPlayersError(getPlayerSearchError(playersResult.reason));
+          }
         })
         .finally(() => {
-          if (requestId === searchRequestId.current) setPlayersLoading(false);
+          if (requestId === searchRequestId.current) {
+            setTeamsLoading(false);
+            setPlayersLoading(false);
+          }
         });
     }, 180);
 
     return () => window.clearTimeout(timeoutId);
-  }, [auth.user, open, query, teamsById]);
+  }, [auth.user, baseTeams, open, query]);
 
   useEffect(() => {
     setActiveIndex(0);
@@ -154,13 +167,15 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     }
   };
 
-  const teamsStatus = teamsLoading
-    ? 'Loading teams...'
-    : teamsError
-      ? teamsError
-      : results.teams.length === 0
-        ? 'No matching teams'
-        : '';
+  const teamsStatus = query.trim().length >= 2
+    ? teamsLoading
+      ? 'Searching teams...'
+      : teamsError
+        ? teamsError
+        : results.teams.length === 0
+          ? 'No matching teams'
+          : ''
+    : teamsError;
   const helpStatus = query.trim().length >= 2 && helpResults.length === 0
     ? helpRoleFilter === 'all'
       ? 'No matching help articles'
@@ -400,6 +415,14 @@ function SearchResultRow({ item, active, onOpen, onHover }: {
       </span>
     </button>
   );
+}
+
+function mergeSearchTeams(...teamLists: AppSearchTeam[][]) {
+  const teamsById = new Map<string, AppSearchTeam>();
+  teamLists.flat().forEach((team) => {
+    if (team?.id) teamsById.set(team.id, team);
+  });
+  return Array.from(teamsById.values());
 }
 
 function getPlayerSearchError(error: any) {
