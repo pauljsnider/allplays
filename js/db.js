@@ -555,11 +555,37 @@ function normalizePublicTeamSearchInput(value) {
     return String(value || '').trim();
 }
 
-function buildPublicTeamSearchStrategies(searchText = '') {
+function buildPublicTeamSearchDescriptor(searchText = '') {
     const trimmed = normalizePublicTeamSearchInput(searchText);
-    if (!trimmed) return [];
+    if (!trimmed) return null;
 
     if (/^\d{1,5}$/.test(trimmed)) {
+        return {
+            type: 'zip',
+            normalized: trimmed
+        };
+    }
+
+    if (/^[A-Za-z]{2}$/.test(trimmed) && !trimmed.includes(',')) {
+        return {
+            type: 'state',
+            normalized: trimmed.toLowerCase(),
+            state: trimmed.toUpperCase()
+        };
+    }
+
+    return {
+        type: 'location',
+        normalized: trimmed.toLowerCase()
+    };
+}
+
+function buildPublicTeamSearchStrategies(searchText = '') {
+    const descriptor = buildPublicTeamSearchDescriptor(searchText);
+    const trimmed = descriptor?.normalized || normalizePublicTeamSearchInput(searchText);
+    if (!descriptor) return [];
+
+    if (descriptor.type === 'zip') {
         return [
             { field: 'publicSearchZip', start: trimmed, end: `${trimmed}\uf8ff` },
             { field: 'zip', start: trimmed, end: `${trimmed}\uf8ff` }
@@ -567,10 +593,9 @@ function buildPublicTeamSearchStrategies(searchText = '') {
     }
 
     const [rawCityPart, rawStatePart = ''] = trimmed.split(',').map((part) => part.trim()).filter((part, index, parts) => index === 0 || part || parts.length > 1);
-    const stateOnlySearch = /^[A-Za-z]{2}$/.test(trimmed) && !trimmed.includes(',');
 
-    if (stateOnlySearch) {
-        const normalizedState = trimmed.toUpperCase();
+    if (descriptor.type === 'state') {
+        const normalizedState = descriptor.state;
         return [
             { field: 'publicSearchState', start: normalizedState, end: `${normalizedState}\uf8ff` },
             { field: 'state', start: normalizedState, end: `${normalizedState}\uf8ff` }
@@ -592,6 +617,44 @@ function buildPublicTeamSearchStrategies(searchText = '') {
 
 function sortTeamsByName(teams = []) {
     return [...teams].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+function matchesResolvedPublicTeamLocation(resolvedLocation, searchDescriptor) {
+    const normalizedLocation = String(resolvedLocation || '').trim();
+    if (!normalizedLocation || !searchDescriptor) return false;
+
+    if (searchDescriptor.type === 'state') {
+        const [, statePart = ''] = normalizedLocation.split(',');
+        return statePart.trim().toUpperCase().startsWith(searchDescriptor.state);
+    }
+
+    return normalizedLocation.toLowerCase().includes(searchDescriptor.normalized);
+}
+
+async function appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById) {
+    if (!searchDescriptor || searchDescriptor.type === 'zip') {
+        return;
+    }
+
+    const publicTeamsSnapshot = await getDocs(query(teamsRef, where('isPublic', '==', true)));
+    const zipToLocationCache = new Map();
+
+    await Promise.all(publicTeamsSnapshot.docs.map(async (teamDoc) => {
+        const team = { id: teamDoc.id, ...teamDoc.data() };
+        if (teamsById.has(team.id) || !team.zip || (team.city && team.state)) {
+            return;
+        }
+
+        let resolvedLocation = zipToLocationCache.get(team.zip);
+        if (resolvedLocation === undefined) {
+            resolvedLocation = await resolveZip(team.zip);
+            zipToLocationCache.set(team.zip, resolvedLocation);
+        }
+
+        if (matchesResolvedPublicTeamLocation(resolvedLocation, searchDescriptor)) {
+            teamsById.set(team.id, team);
+        }
+    }));
 }
 
 export async function discoverPublicTeams(options = {}) {
@@ -617,6 +680,7 @@ export async function discoverPublicTeams(options = {}) {
         };
     }
 
+    const searchDescriptor = buildPublicTeamSearchDescriptor(searchText);
     const strategies = buildPublicTeamSearchStrategies(searchText);
     if (!strategies.length) {
         return { teams: [], nextCursor: null };
@@ -642,6 +706,8 @@ export async function discoverPublicTeams(options = {}) {
             teamsById.set(team.id, team);
         });
     });
+
+    await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);
 
     return {
         teams: filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())).slice(0, pageSize), false),

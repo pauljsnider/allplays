@@ -21,6 +21,27 @@ describe('public teams visibility', () => {
         expect(source).not.toContain('const q = includePrivate');
     });
 
+    it('adds Firestore indexes for public discovery queries and preserves zip-only city matches', () => {
+        const source = readRepoFile('js/db.js');
+        const indexes = JSON.parse(readRepoFile('firestore.indexes.json'));
+        const teamIndexes = indexes.indexes
+            .filter((index) => index.collectionGroup === 'teams' && index.queryScope === 'COLLECTION')
+            .map((index) => index.fields.map((field) => field.fieldPath).join(','));
+
+        expect(source).toContain('async function appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById)');
+        expect(source).toContain("const publicTeamsSnapshot = await getDocs(query(teamsRef, where('isPublic', '==', true)));");
+        expect(source).toContain('resolvedLocation = await resolveZip(team.zip);');
+        expect(source).toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
+        expect(teamIndexes).toEqual(expect.arrayContaining([
+            'isPublic,publicSearchCity',
+            'isPublic,city',
+            'isPublic,publicSearchState',
+            'isPublic,state',
+            'isPublic,publicSearchZip',
+            'isPublic,zip'
+        ]));
+    });
+
     it('wires Browse Teams to the public-only helper path and keeps a defensive client filter', () => {
         const source = readRepoFile('teams.html');
 
