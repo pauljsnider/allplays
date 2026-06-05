@@ -616,6 +616,38 @@ describe('React app messages integration', () => {
         expect(scroller.scrollTop).toBe(700);
     });
 
+    it('forces the initial latest scroll even when the thread already fits in view', async () => {
+        let emitMessages = () => {};
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((_teamId, _conversationId, onMessages) => {
+            emitMessages = onMessages;
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+        const scrollIntoView = window.HTMLElement.prototype.scrollIntoView;
+        const scroller = container.querySelector('.chat-messages-scroll');
+        const content = container.querySelector('.chat-messages-content');
+
+        Object.defineProperties(scroller, {
+            scrollHeight: { configurable: true, writable: true, value: 240 },
+            clientHeight: { configurable: true, value: 300 },
+            scrollTop: { configurable: true, writable: true, value: 0 }
+        });
+        Object.defineProperty(content, 'scrollHeight', { configurable: true, writable: true, value: 240 });
+
+        scrollIntoView.mockClear();
+
+        await act(async () => {
+            emitMessages([
+                chatMessage({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+                chatMessage({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:02:00Z') })
+            ], { id: 'cursor' });
+        });
+        await flush();
+
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end', behavior: 'auto' });
+    });
+
     it('coalesces auto-scroll scheduling, no-ops bounded follow-up retries, and only re-arms after height growth while pinned', async () => {
         let emitMessages = () => {};
         chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
