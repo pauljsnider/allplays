@@ -637,7 +637,7 @@ test('app schedule loads agenda filters, player select, calendar, export, and ga
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'Games, practices, RSVP' })).toBeVisible();
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Games, practices, RSVP' }));
     await expect(page.locator('.schedule-header').getByText('RSVP Needed', { exact: true })).toBeVisible();
     await expect(page.getByText('Family agenda')).toBeVisible();
     await expect(page.getByText('Parent queue')).toBeVisible();
