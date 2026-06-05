@@ -419,6 +419,7 @@ function ChatWindow({
   const mountedRef = useRef(true);
   const scheduledScrollFrameRef = useRef<number | null>(null);
   const scheduledScrollBehaviorRef = useRef<ScrollBehavior>('auto');
+  const scheduledScrollTimeoutsRef = useRef<number[]>([]);
   const lastObservedScrollHeightRef = useRef(0);
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
   const selectedConversation = useMemo(() => (
@@ -491,16 +492,42 @@ function ChatWindow({
     }, 80);
   }, []);
 
+  const clearScheduledScrollTimeouts = useCallback(() => {
+    scheduledScrollTimeoutsRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    scheduledScrollTimeoutsRef.current = [];
+  }, []);
+
+  const maybeScrollToLatest = useCallback((behavior: ScrollBehavior = 'auto') => {
+    if (!mountedRef.current) return false;
+    const container = messagesRef.current;
+    if (!container) return false;
+
+    const nextHeight = Math.max(
+      container.scrollHeight,
+      messagesContentRef.current?.scrollHeight || 0
+    );
+    const distanceFromBottom = Math.max(0, nextHeight - container.clientHeight - container.scrollTop);
+    if (distanceFromBottom <= 4) {
+      lastObservedScrollHeightRef.current = nextHeight;
+      return false;
+    }
+
+    scrollToLatest(behavior);
+    return true;
+  }, [scrollToLatest]);
+
   const clearScheduledScrollToLatest = useCallback(() => {
     if (scheduledScrollFrameRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
       window.cancelAnimationFrame(scheduledScrollFrameRef.current);
     }
     scheduledScrollFrameRef.current = null;
     scheduledScrollBehaviorRef.current = 'auto';
-  }, []);
+    clearScheduledScrollTimeouts();
+  }, [clearScheduledScrollTimeouts]);
 
   const scheduleScrollToLatest = useCallback((behavior: ScrollBehavior = 'auto') => {
     if (!mountedRef.current) return;
+    clearScheduledScrollTimeouts();
     if (behavior === 'smooth' || scheduledScrollBehaviorRef.current !== 'smooth') {
       scheduledScrollBehaviorRef.current = behavior;
     }
@@ -511,10 +538,23 @@ function ChatWindow({
         scheduledScrollFrameRef.current = null;
         const nextBehavior = scheduledScrollBehaviorRef.current;
         scheduledScrollBehaviorRef.current = 'auto';
-        scrollToLatest(nextBehavior);
+        maybeScrollToLatest(nextBehavior);
+
+        [120, 300, 700].forEach((delay) => {
+          const timerId = window.setTimeout(() => {
+            scheduledScrollTimeoutsRef.current = scheduledScrollTimeoutsRef.current.filter((id) => id !== timerId);
+            if (!mountedRef.current) return;
+            const container = messagesRef.current;
+            if (!container) return;
+            if (stickToLatestRef.current || pendingScrollRef.current || isNearBottom(container)) {
+              maybeScrollToLatest('auto');
+            }
+          }, delay);
+          scheduledScrollTimeoutsRef.current.push(timerId);
+        });
       });
     });
-  }, [scrollToLatest]);
+  }, [clearScheduledScrollTimeouts, maybeScrollToLatest]);
 
   useEffect(() => {
     let cancelled = false;

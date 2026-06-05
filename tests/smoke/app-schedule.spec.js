@@ -677,7 +677,9 @@ test('calendar day selection opens a visible event picker for multiple events', 
     await mockScheduleModules(page, { practiceDate: '2030-05-28T19:00:00Z' });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Calendar', exact: true }).click();
+    const calendarToggle = page.getByRole('button', { name: 'Calendar', exact: true });
+    await expect(calendarToggle).toBeVisible();
+    await calendarToggle.click();
     await page.getByRole('button', { name: /May 2030 28, 2 events/ }).click();
 
     const picker = page.getByRole('dialog', { name: /Tuesday, May 28/ });

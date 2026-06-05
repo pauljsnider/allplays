@@ -616,7 +616,7 @@ describe('React app messages integration', () => {
         expect(scroller.scrollTop).toBe(700);
     });
 
-    it('coalesces auto-scroll scheduling and only re-arms after height growth while pinned', async () => {
+    it('coalesces auto-scroll scheduling, no-ops bounded follow-up retries, and only re-arms after height growth while pinned', async () => {
         let emitMessages = () => {};
         chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
             emitMessages = onMessages;
