@@ -581,11 +581,12 @@ service cloud.firestore {
              isRegistrationPaymentPlanValid(data.paymentPlan) &&
              data.keys().hasAny(['feeSnapshot']) &&
              isRegistrationFeeSnapshotValid(data.feeSnapshot) &&
+             data.paymentSettings.onlineCheckoutEnabled == get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) &&
              (
-               (data.paymentSettings.onlineCheckoutEnabled == true &&
+               (get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) == true &&
                 data.checkoutAttemptToken is string &&
                 data.checkoutAttemptToken.matches('^[A-Za-z0-9_-]{16,128}$')) ||
-               (data.paymentSettings.onlineCheckoutEnabled != true &&
+               (get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) != true &&
                 (!data.keys().hasAny(['checkoutAttemptToken']) || (data.checkoutAttemptToken is string && data.checkoutAttemptToken.matches('^[A-Za-z0-9_-]{16,128}$'))))
              ) &&
              (!data.keys().hasAny(['selectedOption']) || isRegistrationSelectedOptionPayloadValid(data.selectedOption)) &&

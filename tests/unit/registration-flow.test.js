@@ -759,12 +759,13 @@ describe('public registration flow', () => {
         expect(selectedOptionIndex).toBeGreaterThan(relaxedOpenCheckoutGuardIndex);
     });
 
-    it('requires checkout attempt tokens on online pending registrations in rules', () => {
+    it('derives checkout attempt requirements from the stored form in rules', () => {
         const rules = fs.readFileSync('firestore.rules', 'utf8');
 
-        expect(rules).toContain("data.paymentSettings.onlineCheckoutEnabled == true");
+        expect(rules).toContain("data.paymentSettings.onlineCheckoutEnabled == get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false)");
+        expect(rules).toContain("get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) == true");
+        expect(rules).toContain("get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) != true");
         expect(rules).toContain("data.checkoutAttemptToken is string");
-        expect(rules).toContain("data.paymentSettings.onlineCheckoutEnabled != true");
     });
 
     it('does not write cancellation state before returning for paid registrations', () => {
