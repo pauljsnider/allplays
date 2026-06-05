@@ -111,8 +111,31 @@ service firebase.storage {
       allow update: if false;
     }
 
+    match /stat-sheets/team-games/{teamId}/{userId}/{fileName} {
+      allow get: if canAccessTeamMedia(teamId);
+      allow list: if false;
+      allow create: if canAccessTeamMedia(teamId) &&
+        request.auth.uid == userId &&
+        request.resource.size > 0 &&
+        request.resource.size <= 20 * 1024 * 1024;
+      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow update: if false;
+    }
+
+    match /stat-sheets/drills/{teamId}/{drillId}/{userId}/{fileName} {
+      allow get: if canAccessTeamMedia(teamId);
+      allow list: if false;
+      allow create: if canAccessTeamMedia(teamId) &&
+        drillId.size() > 0 &&
+        request.auth.uid == userId &&
+        request.resource.size > 0 &&
+        request.resource.size <= 20 * 1024 * 1024;
+      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow update: if false;
+    }
+
     match /stat-sheets/{fileName} {
-      allow get, create, delete: if isSignedIn();
+      allow get, create, delete: if false;
       allow list, update: if false;
     }
 

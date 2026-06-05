@@ -35,8 +35,8 @@ import {
 } from './firebase.js?v=17';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=6';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
-import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=1';
-import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath } from './fallback-media-paths.js?v=1';
+import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
+import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from './fallback-media-paths.js?v=2';
 import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
@@ -550,7 +550,7 @@ export async function uploadGameClip(teamId, gameId, file) {
     }
 }
 
-export async function uploadStatSheetPhoto(file) {
+export async function uploadStatSheetPhoto(teamId, file) {
     console.log('Starting stat sheet upload...', {
         fileName: file.name,
         fileSize: file.size,
@@ -570,7 +570,11 @@ export async function uploadStatSheetPhoto(file) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
             console.warn('Image storage denied upload, falling back to main storage:', error?.message || error);
-            const fallbackRef = ref(storage, `stat-sheets/${Date.now()}_${file.name}`);
+            const userId = auth.currentUser?.uid;
+            if (!teamId || !userId) {
+                throw new Error('Team-scoped stat sheet fallback upload requires a signed-in team user.');
+            }
+            const fallbackRef = ref(storage, buildStatSheetFallbackPath(teamId, userId, file.name, Date.now()));
             const snapshot = await uploadBytes(fallbackRef, file);
             const downloadURL = await getDownloadURL(snapshot.ref);
             console.log('Stat sheet URL (main storage):', downloadURL);
@@ -6397,9 +6401,10 @@ export async function deleteDrill(drillId) {
 // Drill Diagrams
 // ============================================
 
-export async function uploadDrillDiagram(drillId, file) {
+export async function uploadDrillDiagram(teamId, drillId, file) {
     await ensureImageAuth();
-    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(drillId, file?.name, Date.now());
+    const userId = auth.currentUser?.uid;
+    const { imagePath, fallbackPath } = buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now());
     try {
         const storageRef = ref(imageStorage, imagePath);
         const snapshot = await uploadBytes(storageRef, file);
@@ -6408,6 +6413,9 @@ export async function uploadDrillDiagram(drillId, file) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated' || code === 'storage/unknown') {
             // Match fallback behavior used by chat/stat-sheet uploads.
+            if (!teamId || !userId) {
+                throw new Error('Team-scoped drill fallback upload requires a signed-in team user.');
+            }
             const fallbackRef = ref(storage, fallbackPath);
             const snapshot = await uploadBytes(fallbackRef, file);
             return await getDownloadURL(snapshot.ref);

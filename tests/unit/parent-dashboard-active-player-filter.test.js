@@ -33,6 +33,6 @@ describe('parent dashboard active player filtering', () => {
         expect(functionSource).toContain('activeChildren.push(child);');
         expect(functionSource).toContain('childName: child.playerName');
         expect(functionSource).not.toContain('const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);');
-        expect(dashboardSource).toContain("./js/db.js?v=38");
+        expect(dashboardSource).toContain("./js/db.js?v=39");
     });
 });
