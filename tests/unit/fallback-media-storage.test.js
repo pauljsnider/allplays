@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { buildChatAttachmentFallbackPath, buildGameClipFallbackPath } from '../../js/fallback-media-paths.js';
+import { buildChatAttachmentFallbackPath, buildDrillDiagramFallbackPath, buildGameClipFallbackPath, buildStatSheetFallbackPath } from '../../js/fallback-media-paths.js';
 
 const rules = readFileSync(new URL('../../storage.rules', import.meta.url), 'utf8');
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
@@ -13,6 +13,8 @@ function extractRuleBlock(startMarker) {
 }
 
 const chatFallbackRules = extractRuleBlock('match /stat-sheets/team-chat/{teamId}/{userId}/{fileName}');
+const statSheetFallbackRules = extractRuleBlock('match /stat-sheets/team-games/{teamId}/{userId}/{fileName}');
+const drillFallbackRules = extractRuleBlock('match /stat-sheets/drills/{teamId}/{drillId}/{userId}/{fileName}');
 const clipFallbackRules = extractRuleBlock('match /game-clips/{teamId}/{gameId}/{userId}/{fileName}');
 const legacyStatSheetRules = extractRuleBlock('match /stat-sheets/{fileName}');
 const legacyGameClipRules = extractRuleBlock('match /game-clips/{fileName}');
@@ -33,9 +35,15 @@ describe('fallback media paths and Storage rules', () => {
     it('builds team-scoped fallback paths with uploader context', () => {
         expect(buildChatAttachmentFallbackPath('team/alpha', 'user 42', 'my photo (1).png', 1700000000000))
             .toBe('stat-sheets/team-chat/team_alpha/user_42/1700000000000_my_photo_1_.png');
+        expect(buildStatSheetFallbackPath('team/alpha', 'user 42', 'box score (1).png', 1700000000001))
+            .toBe('stat-sheets/team-games/team_alpha/user_42/1700000000001_box_score_1_.png');
+        expect(buildDrillDiagramFallbackPath('team/alpha', 'drill 7', 'user 42', 'diagram #1.png', 1700000000002))
+            .toBe('stat-sheets/drills/team_alpha/drill_7/user_42/1700000000002_diagram_1.png');
         expect(buildGameClipFallbackPath('team/alpha', 'game 7', 'user 42', 'clip #1.mp4', 1700000000001))
             .toBe('game-clips/team_alpha/game_7/user_42/1700000000001_clip_1.mp4');
         expect(dbSource).toContain('buildChatAttachmentFallbackPath(teamId, userId, file.name, ts)');
+        expect(dbSource).toContain('buildStatSheetFallbackPath(teamId, userId, file.name, Date.now())');
+        expect(dbSource).toContain('buildDrillDiagramUploadPaths(teamId, drillId, userId, file?.name, Date.now())');
         expect(dbSource).toContain('buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts)');
     });
 
@@ -65,9 +73,25 @@ describe('fallback media paths and Storage rules', () => {
         expect(canDeleteScopedFallback({ authUid: 'outsider-1', pathUserId: 'uploader-1' })).toBe(false);
     });
 
-    it('uses single-segment legacy fallback rules so flat uploads stay available without path wildcard string checks', () => {
+    it('limits stat sheet and drill fallback access to team-scoped readers and uploader/admin writes', () => {
+        expect(statSheetFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
+        expect(statSheetFallbackRules).toContain('request.auth.uid == userId');
+        expect(statSheetFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+
+        expect(drillFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
+        expect(drillFallbackRules).toContain('drillId.size() > 0');
+        expect(drillFallbackRules).toContain('request.auth.uid == userId');
+        expect(drillFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+
+        expect(canAccessTeamMedia({ authUid: 'coach-1', isTeamAdmin: true })).toBe(true);
+        expect(canAccessTeamMedia({ authUid: 'outsider-1' })).toBe(false);
+        expect(canCreateScopedFallback({ authUid: 'scorekeeper-1', pathUserId: 'scorekeeper-1', isTeamParent: true })).toBe(true);
+        expect(canCreateScopedFallback({ authUid: 'outsider-1', pathUserId: 'scorekeeper-1' })).toBe(false);
+    });
+
+    it('hard-denies new legacy flat stat sheet writes and reads', () => {
         expect(legacyStatSheetRules).toContain('match /stat-sheets/{fileName} {');
-        expect(legacyStatSheetRules).toContain('allow get, create, delete: if isSignedIn();');
+        expect(legacyStatSheetRules).toContain('allow get, create, delete: if false;');
         expect(legacyGameClipRules).toContain('match /game-clips/{fileName} {');
         expect(legacyGameClipRules).toContain('allow get, create, delete: if isSignedIn();');
     });

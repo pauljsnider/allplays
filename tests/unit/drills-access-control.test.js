@@ -20,4 +20,9 @@ describe('drills planning access control', () => {
         expect(drillsHtml).toContain("document.getElementById('btn-new-drill').classList.add('hidden');");
         expect(drillsHtml).toContain("document.getElementById('session-meta-bar').classList.add('hidden');");
     });
+
+    it('passes the active team id into drill diagram uploads', () => {
+        expect(drillsHtml).toContain("uploadDrillDiagram(state.teamId, drillId, file)");
+        expect(drillsHtml).not.toContain("uploadDrillDiagram(state.currentTeamId, drillId, file)");
+    });
 });

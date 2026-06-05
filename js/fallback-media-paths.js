@@ -14,6 +14,23 @@ export function buildChatAttachmentFallbackPath(teamId, userId, fileName, ts = D
     return `stat-sheets/team-chat/${safeTeamId}/${safeUserId}/${ts}_${safeName}`;
 }
 
+export function buildStatSheetFallbackPath(teamId, userId, fileName, ts = Date.now()) {
+    const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
+    const safeUserId = sanitizePathSegment(userId, 'unknown-user');
+    const safeName = sanitizePathSegment(fileName, 'stat-sheet');
+
+    return `stat-sheets/team-games/${safeTeamId}/${safeUserId}/${ts}_${safeName}`;
+}
+
+export function buildDrillDiagramFallbackPath(teamId, drillId, userId, fileName, ts = Date.now()) {
+    const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
+    const safeDrillId = sanitizePathSegment(drillId, 'unknown-drill');
+    const safeUserId = sanitizePathSegment(userId, 'unknown-user');
+    const safeName = sanitizePathSegment(fileName, 'diagram');
+
+    return `stat-sheets/drills/${safeTeamId}/${safeDrillId}/${safeUserId}/${ts}_${safeName}`;
+}
+
 export function buildGameClipFallbackPath(teamId, gameId, userId, fileName, ts = Date.now()) {
     const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
     const safeGameId = sanitizePathSegment(gameId, 'unknown-game');
