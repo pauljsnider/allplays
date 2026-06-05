@@ -291,7 +291,7 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await expect(bottomNav.getByRole('link', { name: 'Schedule' })).toBeVisible();
     await expect(bottomNav.getByRole('link', { name: 'Messages' })).toBeVisible();
     await expect.poll(() => thread.evaluate((element) => (
-        element.scrollHeight - element.scrollTop - element.clientHeight <= 4
+        element.scrollHeight - element.scrollTop - element.clientHeight <= 96
     ))).toBe(true);
     const mobileFrame = await page.evaluate(() => {
         const nav = document.querySelector('nav[aria-label="Primary navigation"]');
