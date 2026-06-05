@@ -12,14 +12,19 @@ async function gotoAppRoute(page, baseURL, hashPath) {
     await page.goto(appUrl(baseURL, hashPath), { waitUntil: 'domcontentloaded' });
 }
 
+async function waitForAppShell(page) {
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
+}
+
 async function waitForSearchTrigger(page) {
     const trigger = page.getByRole('button', { name: 'Search', exact: true }).first();
 
-    await expect(async () => {
-        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
-        await expect(trigger).toBeVisible({ timeout: 1000 });
-        await expect(trigger).toBeEnabled({ timeout: 1000 });
-    }).toPass({ timeout: 30000 });
+    await waitForAppShell(page);
+    await expect(trigger).toBeVisible({ timeout: 5000 });
+    await expect(trigger).toBeEnabled({ timeout: 5000 });
 
     return trigger;
 }
@@ -46,7 +51,7 @@ async function openSearch(page) {
 
 async function openDesktopSearch(page) {
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
-    await waitForSearchTrigger(page);
+    await waitForAppShell(page);
 
     await expect(async () => {
         if (await searchDialog.isVisible().catch(() => false)) {
