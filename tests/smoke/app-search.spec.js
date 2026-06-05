@@ -12,9 +12,19 @@ async function gotoAppRoute(page, baseURL, hashPath) {
     await page.goto(appUrl(baseURL, hashPath), { waitUntil: 'domcontentloaded' });
 }
 
+async function waitForSearchTrigger(page) {
+    const trigger = page.getByRole('button', { name: 'Search', exact: true }).first();
+
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(trigger).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 20000 });
+
+    return trigger;
+}
+
 async function clickSearchTrigger(page) {
-    const trigger = page.locator('button[aria-label="Search"], button[title*="Search"]').first();
-    await expect(trigger).toBeVisible({ timeout: 10000 });
+    const trigger = await waitForSearchTrigger(page);
     await trigger.click();
 }
 
