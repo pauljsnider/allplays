@@ -530,7 +530,9 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Alerts' }).click();
     await expect(page.getByText('Notification preferences')).toBeVisible();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
-    await page.getByRole('button', { name: 'Turn on game-day alerts' }).click();
+    const gameDayAlertsButton = page.getByRole('button', { name: 'Turn on game-day alerts' });
+    await expect(gameDayAlertsButton).toBeEnabled();
+    await gameDayAlertsButton.click();
     await expect(page.getByText('Game-day alerts are on for this team.')).toBeVisible();
     await page.getByText('Customize alerts').click();
     await expect(page.getByLabel('Live Chat')).toBeChecked();
