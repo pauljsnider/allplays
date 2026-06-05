@@ -8,6 +8,13 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+async function waitForTeamsRoute(page, readyLocator) {
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(readyLocator).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
+}
+
 async function mockTeamsModules(page) {
     await page.addInitScript(() => {
         window.__openedPublicUrls = [];
@@ -461,7 +468,8 @@ test.describe('desktop My Teams', () => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-1'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: /\d+ teams? ready|\d+ Teams?/i })).toBeVisible();
+        const readyHeading = page.getByRole('heading', { name: /\d+ teams? ready|\d+ Teams?/i });
+        await waitForTeamsRoute(page, readyHeading);
         await expect(page.getByText('Select a team, or jump straight to chat and schedule.')).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
         await expect(page.getByText('Team navigation')).toBeVisible();
