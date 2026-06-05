@@ -1055,6 +1055,7 @@ test('schedule failure states show errors without trapping users in spinners', a
     await expect(page.getByText('Loading schedule')).toHaveCount(0);
 
     const errorPage = await page.context().newPage();
+    await errorPage.setViewportSize({ width: 390, height: 844 });
     await mockScheduleModules(errorPage, {
         rideshareLoadError: 'Rideshare unavailable.',
         assignmentClaimError: 'Slot already taken.'
