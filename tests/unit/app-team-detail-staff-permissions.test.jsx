@@ -244,6 +244,25 @@ describe('React app TeamDetail staff permissions overview', () => {
         expect(publicActionMocks.copyPublicText).toHaveBeenCalledWith('https://allplays.ai/accept-invite?code=CODE123&type=admin');
     });
 
+    it('keeps the screening block message visible when a helper grant is rejected', async () => {
+        teamDetailMocks.grantScorekeeperAccessForApp.mockRejectedValueOnce(new Error('Screening must be cleared before volunteer or staff access can be granted.'));
+        const { container } = await renderTeamDetail({
+            staff: [{ label: 'owner@example.com', role: 'Owner' }],
+            pendingInvites: [],
+            helperPermissions: [],
+            scorekeeperGrantTargets: [
+                { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Sam Wing'], isGranted: false }
+            ],
+            videographerGrantTargets: [],
+            hasAnyStaff: true
+        });
+
+        await clickButton(container, 'More');
+        await clickButton(container, 'Grant scorekeeper');
+
+        expect(container.textContent).toContain('Screening must be cleared before volunteer or staff access can be granted.');
+    });
+
     it('grants scorekeeper access to an existing linked team member and refreshes staff state', async () => {
         const { container } = await renderTeamDetail({
             staff: [{ label: 'owner@example.com', role: 'Owner' }],
