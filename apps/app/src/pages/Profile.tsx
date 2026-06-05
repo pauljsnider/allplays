@@ -131,6 +131,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const alertsLoading = activeProfileSection === 'alerts' && !notificationTeamsLoaded;
   const alertsEmpty = activeProfileSection === 'alerts' && notificationTeamsLoaded && notificationTeams.length === 0;
   const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && Boolean(selectedNotificationTeam);
+  const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && loadedNotificationTeamId === selectedTeamId;
 
   const selectProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
@@ -553,7 +554,9 @@ export function Profile({ auth }: { auth: AuthState }) {
     setNotificationStatus(null);
 
     try {
-      const currentPreferences = await loadNotificationPreferences(user.uid, teamId);
+      const currentPreferences = loadedNotificationTeamId === teamId
+        ? notificationPreferences
+        : await loadNotificationPreferences(user.uid, teamId);
       const nextPreferences = normalizeNotificationPreferences({
         ...currentPreferences,
         ...gameDayDefaultPreferences
@@ -930,7 +933,7 @@ export function Profile({ auth }: { auth: AuthState }) {
               <div className="rounded-2xl border border-primary-100 bg-primary-50 p-3">
                 <div className="text-sm font-black text-primary-900">Game-day alerts</div>
                 <p className="mt-1 text-sm font-semibold leading-6 text-primary-800">One tap enables push on this device and turns on schedule changes and live score updates for the selected team.</p>
-                <button type="button" className="primary-button mt-3" onClick={turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId}>
+                <button type="button" className="primary-button mt-3" onClick={turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
                   {busy === 'game-day-alerts' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
                   Turn on game-day alerts
                 </button>
