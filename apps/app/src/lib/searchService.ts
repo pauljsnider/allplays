@@ -410,7 +410,7 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
     }
   }
 
-  const playerSearchPromise = loadPlayerSearchDocs(rawQuery, prefixes, isNumeric)
+  const playerSearchPromise = loadPlayerSearchDocs(rawQuery, prefixes, isNumeric, Array.from(teamsById.keys()))
     .then(({ docs, exhaustiveForNarrowerQueries }) => {
       const players = buildAppSearchPlayersFromDocs(docs, teamsById, user, tokens);
       playerSearchCache.set(cacheKey, {
@@ -815,28 +815,7 @@ function canReusePlayerSearchPrefixes(cachedQuery: string, nextQuery: string) {
   return cachedTokens.every((token, index) => nextTokens[index]?.startsWith(token));
 }
 
-async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean) {
-  const playersRef = collectionGroup(db, 'players');
-  const nameQueryCount = prefixes.length;
-  const playerQueries = prefixes.map((prefix) => getDocs(query(
-    playersRef,
-    orderBy('name'),
-    where('name', '>=', prefix),
-    where('name', '<=', `${prefix}\uf8ff`),
-    limit(playerSearchQueryLimit)
-  )));
-
-  if (isNumeric) {
-    playerQueries.push(getDocs(query(
-      playersRef,
-      orderBy('number'),
-      where('number', '>=', rawQuery),
-      where('number', '<=', `${rawQuery}\uf8ff`),
-      limit(playerSearchQueryLimit)
-    )));
-  }
-
-  const snapshots = await Promise.allSettled(playerQueries);
+function buildPlayerSearchDocsFromSnapshots(snapshots: any[], nameQueryCount: number, isNumeric: boolean) {
   const rejected = snapshots.filter((snapshot) => snapshot.status === 'rejected').map((snapshot: any) => snapshot.reason).filter(Boolean);
   const hasFulfilled = snapshots.some((snapshot) => snapshot.status === 'fulfilled');
 
@@ -858,8 +837,88 @@ async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNume
 
   return {
     docs: Array.from(byPath.values()),
-    exhaustiveForNarrowerQueries
+    exhaustiveForNarrowerQueries,
+    rejected
   };
+}
+
+async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], isNumeric: boolean, teamIds: string[]) {
+  const normalizedTeamIds = Array.from(new Set((Array.isArray(teamIds) ? teamIds : [])
+    .map((teamId) => cleanString(teamId))
+    .filter(Boolean)));
+  if (normalizedTeamIds.length === 0) {
+    return { docs: [], exhaustiveForNarrowerQueries: false, rejected: [] };
+  }
+
+  const nameQueryCount = prefixes.length * normalizedTeamIds.length;
+  const snapshots = await Promise.allSettled(normalizedTeamIds.flatMap((teamId) => {
+    const playersRef = collection(db, `teams/${teamId}/players`);
+    const scopedQueries = prefixes.map((prefix) => getDocs(query(
+      playersRef,
+      orderBy('name'),
+      where('name', '>=', prefix),
+      where('name', '<=', `${prefix}\uf8ff`),
+      limit(playerSearchQueryLimit)
+    )));
+
+    if (isNumeric) {
+      scopedQueries.push(getDocs(query(
+        playersRef,
+        orderBy('number'),
+        where('number', '>=', rawQuery),
+        where('number', '<=', `${rawQuery}\uf8ff`),
+        limit(playerSearchQueryLimit)
+      )));
+    }
+
+    return scopedQueries;
+  }));
+
+  return buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric);
+}
+
+async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean, teamIds: string[] = []) {
+  const playersRef = collectionGroup(db, 'players');
+  const nameQueryCount = prefixes.length;
+  const playerQueries = prefixes.map((prefix) => getDocs(query(
+    playersRef,
+    orderBy('name'),
+    where('name', '>=', prefix),
+    where('name', '<=', `${prefix}\uf8ff`),
+    limit(playerSearchQueryLimit)
+  )));
+
+  if (isNumeric) {
+    playerQueries.push(getDocs(query(
+      playersRef,
+      orderBy('number'),
+      where('number', '>=', rawQuery),
+      where('number', '<=', `${rawQuery}\uf8ff`),
+      limit(playerSearchQueryLimit)
+    )));
+  }
+
+  const snapshots = await Promise.allSettled(playerQueries);
+  const rejected = snapshots
+    .filter((snapshot: any) => snapshot.status === 'rejected')
+    .map((snapshot: any) => snapshot.reason)
+    .filter(Boolean);
+  const onlyPermissionDeniedFailures = rejected.length > 0
+    && snapshots.every((snapshot: any) => snapshot.status === 'rejected')
+    && rejected.every((error: any) => error?.code === 'permission-denied');
+  if (onlyPermissionDeniedFailures) {
+    return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamIds);
+  }
+
+  const result = buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric);
+  const onlyEmptyPermissionDeniedFailures = result.docs.length === 0
+    && result.rejected.length > 0
+    && result.rejected.every((error: any) => error?.code === 'permission-denied');
+  if (onlyEmptyPermissionDeniedFailures) {
+    return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamIds);
+  }
+
+  return result;
 }
 
 function buildAppSearchPlayersFromDocs(docs: any[], teamsById: Map<string, AppSearchTeam>, user: AuthUser | null, tokens: string[]) {

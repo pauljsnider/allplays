@@ -197,9 +197,15 @@ function getRsvpPlayerIds(rsvp) {
     return uniqueNonEmptyStrings([rsvp?.playerId, rsvp?.childId]);
 }
 
+function getPlayerRosterParents(player) {
+    const privateParents = Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : [];
+    if (privateParents.length > 0) return privateParents;
+    return Array.isArray(player?.parents) ? player.parents : [];
+}
+
 function getPlayerParentUserIds(player) {
     return uniqueNonEmptyStrings([
-        ...(Array.isArray(player?.parents) ? player.parents.map((parent) => parent?.userId) : []),
+        ...getPlayerRosterParents(player).map((parent) => parent?.userId),
         player?.parentUserId,
         player?.guardianUserId
     ]);
@@ -235,11 +241,11 @@ export function buildAvailabilityReminderRecipients(players, rsvps) {
         getPlayerParentUserIds(player)
     )));
     const parentEmails = uniqueNonEmptyStrings(nonRespondingPlayers.flatMap((player) => (
-        Array.isArray(player?.parents) ? player.parents.map((parent) => parent?.email) : []
+        getPlayerRosterParents(player).map((parent) => parent?.email)
     )));
     const rosterDirectRecipientCount = playerIds.filter((playerId) => {
         const player = nonRespondingPlayers.find((candidate) => String(candidate.id) === playerId);
-        return !Array.isArray(player?.parents) || player.parents.length === 0;
+        return getPlayerRosterParents(player).length === 0;
     }).length;
 
     return {
@@ -259,7 +265,7 @@ export function buildAvailabilityReminderEmailPreview(players, rsvps, notRespond
         : getNonRespondingAvailabilityPlayers(players, rsvps);
     const playerPreviews = nonRespondingPlayers.map((player) => {
         const parentEmails = uniqueEligibleEmails(
-            Array.isArray(player?.parents) ? player.parents.map((parent) => parent?.email) : []
+            getPlayerRosterParents(player).map((parent) => parent?.email)
         );
         return {
             playerId: String(player.id),

@@ -253,6 +253,24 @@ describe('schedule notification helpers', () => {
         });
     });
 
+    it('uses private-profile parent contacts when public roster docs are redacted', () => {
+        const players = [
+            { id: 'p1', name: 'A', privateProfileParents: [{ userId: 'u1', email: 'one@example.com' }] },
+            { id: 'p2', name: 'B', privateProfileParents: [{ userId: 'u2', email: 'two@example.com' }] }
+        ];
+        const rsvps = [
+            { userId: 'u1', response: 'going' }
+        ];
+
+        expect(buildAvailabilityReminderRecipients(players, rsvps)).toMatchObject({
+            playerIds: ['p2'],
+            parentIds: ['u2'],
+            parentEmails: ['two@example.com'],
+            playerCount: 1,
+            recipientCount: 1
+        });
+    });
+
     it('counts roster players without guardians as direct recipients', () => {
         const recipients = buildAvailabilityReminderRecipients([
             { id: 'p1', parents: [] },
@@ -307,7 +325,7 @@ describe('schedule notification helpers', () => {
     it('builds parent email preview for no-response players', () => {
         const preview = buildAvailabilityReminderEmailPreview([
             { id: 'p1', name: 'A', parents: [{ userId: 'u1', email: 'one@example.com' }] },
-            { id: 'p2', name: 'B', parents: [{ userId: 'u2', email: 'pending' }] },
+            { id: 'p2', name: 'B', privateProfileParents: [{ userId: 'u2', email: 'pending' }] },
             { id: 'p3', name: 'C', parents: [{ userId: 'u3', email: 'three@example.com' }] }
         ], [
             { userId: 'u3', playerIds: ['p3'], response: 'going' }

@@ -2244,10 +2244,7 @@ function assertStaffRsvpReminderEvent(event: ParentScheduleEvent, user: AuthUser
 }
 
 async function loadStaffRsvpReminderData(event: ParentScheduleEvent) {
-  const [players, rsvps] = await Promise.all([
-    loadPlayers(event.teamId),
-    loadRsvps(event.teamId, event.id)
-  ]);
+  const { players, rsvps } = await getRsvpBreakdownByPlayer(event.teamId, event.id);
   return { players, rsvps };
 }
 

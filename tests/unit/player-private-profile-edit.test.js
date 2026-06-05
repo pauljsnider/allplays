@@ -97,6 +97,29 @@ function buildDbProfileUpdateHelpers() {
     };
 }
 
+function buildPrivateParentMergeHelpers() {
+    const source = readDbSource();
+    const hasContactsSource = extractFunction(source, 'function playerHasRosterContactFields(');
+    const mergeSource = extractFunction(source, 'async function mergePlayerPrivateProfileParents(')
+        .replace('async function mergePlayerPrivateProfileParents', 'async function mergePlayerPrivateProfileParents');
+
+    const factory = new Function('deps', `
+        const { getPlayerPrivateProfile } = deps;
+        ${hasContactsSource}
+        ${mergeSource}
+        return { playerHasRosterContactFields, mergePlayerPrivateProfileParents };
+    `);
+
+    const deps = {
+        getPlayerPrivateProfile: vi.fn()
+    };
+
+    return {
+        deps,
+        ...factory(deps)
+    };
+}
+
 describe('player private-profile edit payload', () => {
     it('omits untouched private fields when a photo-only save follows a private-profile load failure', () => {
         const payload = buildPlayerProfileUpdatePayload({
@@ -163,6 +186,19 @@ describe('player profile private doc writes', () => {
         })).toThrow('Do not write sensitive fields to public player doc');
     });
 
+    it('rejects parent, guardian, and household contact fields on the public player helper', () => {
+        const source = readDbSource();
+        const fnSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
+        const factory = new Function(`${fnSource}; return assertNoSensitivePlayerFields;`);
+        const assertNoSensitivePlayerFields = factory();
+
+        expect(() => assertNoSensitivePlayerFields({
+            parents: [{ email: 'pat@example.com', relation: 'Mother' }],
+            guardianEmail: 'guardian@example.com',
+            householdContacts: [{ email: 'house@example.com' }]
+        })).toThrow('Do not write sensitive fields to public player doc');
+    });
+
     it('rejects sensitive fields passed to the public player document helper', async () => {
         const { updatePlayerProfile } = buildDbProfileUpdateHelpers();
 
@@ -210,5 +246,50 @@ describe('player profile private doc writes', () => {
         expect(source).toContain('const { emergencyContact, medicalInfo, ...publicData } = data;');
         expect(source).toContain('await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);');
         expect(source).toContain('await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);');
+    });
+
+    it('stores parent invite contact details on the private player profile document', () => {
+        const source = readDbSource();
+        const parentInviteSource = extractFunction(source, 'export async function redeemParentInvite(');
+        const householdInviteSource = extractFunction(source, 'export async function redeemHouseholdInvite(');
+
+        expect(parentInviteSource).toContain('teams/${codeData.teamId}/players/${codeData.playerId}/private/profile');
+        expect(parentInviteSource).toContain('await setDoc(privateProfileRef, {');
+        expect(parentInviteSource).not.toContain('await updateDoc(playerRef, {\n                parents: arrayUnion({');
+
+        expect(householdInviteSource).toContain('teams/${codeData.teamId}/players/${codeData.playerId}/private/profile');
+        expect(householdInviteSource).toContain('await setDoc(privateProfileRef, {');
+    });
+
+    it('hydrates RSVP roster players with private-profile parent contacts when public docs are redacted', async () => {
+        const { deps, mergePlayerPrivateProfileParents } = buildPrivateParentMergeHelpers();
+        deps.getPlayerPrivateProfile.mockImplementation(async (_teamId, playerId) => {
+            if (playerId === 'player-private') {
+                return {
+                    parents: [{ userId: 'parent-1', email: 'private@example.com' }]
+                };
+            }
+            return null;
+        });
+
+        const players = await mergePlayerPrivateProfileParents('team-1', [
+            { id: 'player-private', name: 'Private Contact' },
+            { id: 'player-public', name: 'Public Contact', parents: [{ userId: 'parent-2', email: 'public@example.com' }] }
+        ]);
+
+        expect(players).toEqual([
+            {
+                id: 'player-private',
+                name: 'Private Contact',
+                privateProfileParents: [{ userId: 'parent-1', email: 'private@example.com' }]
+            },
+            {
+                id: 'player-public',
+                name: 'Public Contact',
+                parents: [{ userId: 'parent-2', email: 'public@example.com' }]
+            }
+        ]);
+        expect(deps.getPlayerPrivateProfile).toHaveBeenCalledTimes(1);
+        expect(deps.getPlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-private');
     });
 });

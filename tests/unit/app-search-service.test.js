@@ -879,6 +879,69 @@ describe('React app search service', () => {
         }]);
     });
 
+    it('falls back to team-scoped player queries when collection-group reads are denied', async () => {
+        const visibleTeams = new Map([
+            ['team-1', { id: 'team-1', name: 'Bears', sport: 'Basketball', fromAppAccess: true }]
+        ]);
+        const error = Object.assign(new Error('permission denied'), { code: 'permission-denied' });
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const ref = request.parts?.[0] || request || {};
+            const collectionName = ref.collectionName || '';
+            if (collectionName === 'players') {
+                throw error;
+            }
+            if (collectionName.endsWith('/players')) {
+                return {
+                    docs: [firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Bear', number: '4' })]
+                };
+            }
+            return { docs: [] };
+        });
+
+        await expect(searchAppPlayers('pat', visibleTeams, auth.user)).resolves.toEqual([{
+            id: 'player:team-1:player-1',
+            kind: 'player',
+            title: '#4 Pat Bear',
+            subtitle: 'Bears',
+            route: '/players/team-1/player-1',
+            teamId: 'team-1',
+            playerId: 'player-1'
+        }]);
+    });
+
+    it('falls back to team-scoped player queries when every collection-group prefix query is denied', async () => {
+        const visibleTeams = new Map([
+            ['team-1', { id: 'team-1', name: 'Bears', sport: 'Basketball', fromAppAccess: true }]
+        ]);
+        const error = Object.assign(new Error('permission denied'), { code: 'permission-denied' });
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const ref = request.parts?.[0] || request || {};
+            const collectionName = ref.collectionName || '';
+            const nameLowerBound = request.parts?.find((part) => part?.type === 'where' && part.field === 'name' && part.op === '>=')?.value;
+            if (collectionName === 'players') {
+                throw error;
+            }
+            if (collectionName.endsWith('/players') && (nameLowerBound === 'pat' || nameLowerBound === 'Pat' || nameLowerBound === 'st' || nameLowerBound === 'St')) {
+                return {
+                    docs: [firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '4' })]
+                };
+            }
+            return { docs: [] };
+        });
+
+        await expect(searchAppPlayers('pat st', visibleTeams, auth.user)).resolves.toEqual([
+            {
+                id: 'player:team-1:player-1',
+                kind: 'player',
+                title: '#4 Pat Star',
+                subtitle: 'Bears',
+                route: '/players/team-1/player-1',
+                teamId: 'team-1',
+                playerId: 'player-1'
+            }
+        ]);
+    });
+
     it('surfaces Firestore player search errors when every player query fails', async () => {
         const visibleTeams = new Map([
             ['team-1', { id: 'team-1', name: 'Bears', sport: 'Basketball', fromAppAccess: true }]
