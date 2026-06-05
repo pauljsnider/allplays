@@ -174,7 +174,7 @@ import {
     normalizeRegistrationStatus,
     summarizeRegistration
 } from './registration-review.js?v=2';
-import { assertVolunteerScreeningCleared } from './volunteer-screening-access.js?v=1';
+import { assertVolunteerScreeningCleared, loadVolunteerScreeningTargetRegistrations } from './volunteer-screening-access.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=3';
 import { getApp } from './vendor/firebase-app.js';
@@ -1542,27 +1542,22 @@ export async function createVenueBlackout(teamId, blackoutData = {}) {
     return docRef.id;
 }
 
-async function listRegistrationRecordsForTeam(teamId) {
-    if (!teamId) return [];
+async function queryVolunteerScreeningRegistrationsByField(teamId, fieldPath, value) {
+    const normalizedTeamId = String(teamId || '').trim();
+    const normalizedValue = typeof value === 'string' ? value.trim() : value;
+    if (!normalizedTeamId || !fieldPath || normalizedValue === '' || normalizedValue == null) return [];
 
-    try {
-        const formsSnapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms`));
-        const registrationSnapshots = await Promise.all(formsSnapshot.docs.map(async (formDoc) => {
-            const form = { id: formDoc.id, ...(formDoc.data() || {}) };
-            const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms/${formDoc.id}/registrations`));
-            return snapshot.docs.map((registrationDoc) => ({
-                id: registrationDoc.id,
-                formId: formDoc.id,
-                programName: form.programName || form.title || '',
-                ...(registrationDoc.data() || {})
-            }));
-        }));
+    const snapshot = await getDocs(query(
+        collectionGroup(db, 'registrations'),
+        where('teamId', '==', normalizedTeamId),
+        where(fieldPath, '==', normalizedValue)
+    ));
 
-        return registrationSnapshots.flat();
-    } catch (error) {
-        console.error('Failed to access registration records for volunteer screening:', error);
-        throw error;
-    }
+    return snapshot.docs.map((registrationDoc) => ({
+        id: registrationDoc.id,
+        refPath: registrationDoc.ref.path,
+        ...(registrationDoc.data() || {})
+    }));
 }
 
 async function assertVolunteerScreeningClearedForTeamGrant(teamId, target = {}) {
@@ -1575,9 +1570,15 @@ async function assertVolunteerScreeningClearedForTeamGrant(teamId, target = {}) 
         const profile = await getUserProfile(normalizedTarget.userId);
         normalizedTarget.email = String(profile?.email || '').trim().toLowerCase();
     }
-
-    const registrations = await listRegistrationRecordsForTeam(teamId);
-    assertVolunteerScreeningCleared(registrations, normalizedTarget);
+    try {
+        const registrations = await loadVolunteerScreeningTargetRegistrations(normalizedTarget, ({ fieldPath, value }) => (
+            queryVolunteerScreeningRegistrationsByField(teamId, fieldPath, value)
+        ));
+        assertVolunteerScreeningCleared(registrations, normalizedTarget);
+    } catch (error) {
+        console.error('Failed to access registration records for volunteer screening:', error);
+        throw error;
+    }
 }
 
 export async function grantScorekeeperAccess(teamId, memberUserId) {

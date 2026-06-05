@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { VOLUNTEER_SCREENING_BLOCK_MESSAGE } from '../../js/volunteer-screening-access.js';
 import {
     processPendingAdminInvites,
     buildAdminInviteFollowUp,
@@ -99,6 +100,22 @@ describe('edit team admin invite processing', () => {
             teamName: 'Tigers',
             reason: 'missing_invite_code'
         });
+    });
+
+    it('preserves screening enforcement errors on the admin invite path', async () => {
+        const addTeamAdminEmail = vi.fn().mockResolvedValue(undefined);
+        const sendInviteEmail = vi.fn();
+
+        await expect(inviteExistingTeamAdmin({
+            teamId: 'team-123',
+            email: 'Coach@Example.com',
+            inviteAdmin: vi.fn().mockRejectedValue(new Error(VOLUNTEER_SCREENING_BLOCK_MESSAGE)),
+            addTeamAdminEmail,
+            sendInviteEmail
+        })).rejects.toThrow(VOLUNTEER_SCREENING_BLOCK_MESSAGE);
+
+        expect(addTeamAdminEmail).not.toHaveBeenCalled();
+        expect(sendInviteEmail).not.toHaveBeenCalled();
     });
 
     it('hydrates pending invite emails from active team access codes', async () => {
