@@ -316,11 +316,9 @@ describe('Profile invites', () => {
     expect(screen.getByRole('link', { name: 'Go to My Teams' }).getAttribute('href')).toBe('/teams');
   });
 
-  it('refreshes alert preferences before saving game-day alerts', async () => {
+  it('uses hydrated alert preferences before saving game-day alerts', async () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
-    profileServiceMocks.loadNotificationPreferences
-      .mockResolvedValueOnce({ liveChat: false, liveScore: false, schedule: false })
-      .mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false });
+    profileServiceMocks.loadNotificationPreferences.mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false });
     profileServiceMocks.saveNotificationPreferences.mockImplementation(async (_userId, _teamId, preferences) => preferences);
 
     renderProfile();
@@ -330,17 +328,53 @@ describe('Profile invites', () => {
     await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Turn on game-day alerts' }));
+    const gameDayButton = await screen.findByRole('button', { name: 'Turn on game-day alerts' });
+    expect((gameDayButton as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(gameDayButton);
 
     await waitFor(() => expect(pushServiceMocks.enablePushNotificationsForUser).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledTimes(1));
-    expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2);
+    expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1);
     expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', {
       liveChat: true,
       liveScore: true,
       schedule: true
     });
     expect(await screen.findByText('Game-day alerts are on for this team.')).toBeTruthy();
+  });
+
+  it('keeps game-day alerts disabled until the selected team preferences finish hydrating', async () => {
+    const secondTeamPreferences = createDeferred<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Blue Team' },
+      { id: 'team-2', name: 'Gold Team' }
+    ]);
+    profileServiceMocks.loadNotificationPreferences
+      .mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false })
+      .mockReturnValueOnce(secondTeamPreferences.promise);
+    profileServiceMocks.saveNotificationPreferences.mockImplementation(async (_userId, _teamId, preferences) => preferences);
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
+    const teamSelect = await screen.findByLabelText('Team');
+    const gameDayButton = await screen.findByRole('button', { name: 'Turn on game-day alerts' });
+    expect((gameDayButton as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
+    expect((gameDayButton as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(gameDayButton);
+    expect(pushServiceMocks.enablePushNotificationsForUser).not.toHaveBeenCalled();
+    expect(profileServiceMocks.saveNotificationPreferences).not.toHaveBeenCalled();
+
+    secondTeamPreferences.resolve({ liveChat: false, liveScore: false, schedule: false });
+
+    await waitFor(() => expect((gameDayButton as HTMLButtonElement).disabled).toBe(false));
   });
 
   it('uploads the normalized profile photo instead of the original selection', async () => {
