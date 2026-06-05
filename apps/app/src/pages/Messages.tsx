@@ -479,13 +479,14 @@ function ChatWindow({
     const container = messagesRef.current;
     if (!container) return;
 
+    const nextHeight = Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0);
     lastObservedViewportSignatureRef.current = buildChatViewportSignature(
-      Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0),
+      nextHeight,
       container.clientHeight,
       container.scrollTop
     );
     programmaticScrollRef.current = true;
-    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    container.scrollTop = Math.max(0, nextHeight - container.clientHeight);
     messagesEndRef.current?.scrollIntoView({ block: 'end', behavior });
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);

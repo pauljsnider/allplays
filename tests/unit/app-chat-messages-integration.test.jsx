@@ -616,7 +616,7 @@ describe('React app messages integration', () => {
         expect(scroller.scrollTop).toBe(700);
     });
 
-    it('forces the initial latest scroll even when the thread already fits in view', async () => {
+    it('forces the initial latest scroll using the rendered content height when the thread grows after layout', async () => {
         let emitMessages = () => {};
         chatMocks.subscribeToTeamChatMessages.mockImplementation((_teamId, _conversationId, onMessages) => {
             emitMessages = onMessages;
@@ -633,7 +633,7 @@ describe('React app messages integration', () => {
             clientHeight: { configurable: true, value: 300 },
             scrollTop: { configurable: true, writable: true, value: 0 }
         });
-        Object.defineProperty(content, 'scrollHeight', { configurable: true, writable: true, value: 240 });
+        Object.defineProperty(content, 'scrollHeight', { configurable: true, writable: true, value: 420 });
 
         scrollIntoView.mockClear();
 
@@ -646,6 +646,7 @@ describe('React app messages integration', () => {
         await flush();
 
         expect(scrollIntoView).toHaveBeenCalledWith({ block: 'end', behavior: 'auto' });
+        expect(scroller.scrollTop).toBe(120);
     });
 
     it('coalesces auto-scroll scheduling, no-ops bounded follow-up retries, and only re-arms after height growth while pinned', async () => {
