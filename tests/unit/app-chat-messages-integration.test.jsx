@@ -95,6 +95,15 @@ const voiceMocks = vi.hoisted(() => {
     };
 });
 
+const resizeObserverState = vi.hoisted(() => ({
+    instances: []
+}));
+
+const animationFrameState = vi.hoisted(() => ({
+    nextId: 1,
+    callbacks: new Map()
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: () => nativeMocks.isNativePlatform
@@ -167,11 +176,19 @@ async function renderMessages(initialEntry) {
     });
 
     await flush();
+    await flush();
     return { container, root };
 }
 
 async function flush() {
     await act(async () => {
+        while (animationFrameState.callbacks.size) {
+            const pending = Array.from(animationFrameState.callbacks.entries());
+            animationFrameState.callbacks.clear();
+            pending.forEach(([, callback]) => {
+                callback(0);
+            });
+        }
         await new Promise((resolve) => setTimeout(resolve, 0));
     });
 }
@@ -249,10 +266,17 @@ beforeEach(() => {
         configurable: true,
         value: 'en-US'
     });
-    window.requestAnimationFrame = (callback) => {
-        callback(0);
-        return 0;
-    };
+    animationFrameState.nextId = 1;
+    animationFrameState.callbacks.clear();
+    window.requestAnimationFrame = vi.fn((callback) => {
+        const id = animationFrameState.nextId;
+        animationFrameState.nextId += 1;
+        animationFrameState.callbacks.set(id, callback);
+        return id;
+    });
+    window.cancelAnimationFrame = vi.fn((id) => {
+        animationFrameState.callbacks.delete(id);
+    });
     window.setTimeout = vi.fn((callback) => {
         callback();
         return 0;
@@ -260,6 +284,20 @@ beforeEach(() => {
     window.confirm = vi.fn(() => true);
     URL.createObjectURL = vi.fn(() => 'blob:chat-upload');
     URL.revokeObjectURL = vi.fn();
+    resizeObserverState.instances.length = 0;
+    global.ResizeObserver = class MockResizeObserver {
+        constructor(callback) {
+            this.callback = callback;
+            resizeObserverState.instances.push(this);
+        }
+
+        observe = vi.fn();
+        disconnect = vi.fn();
+
+        trigger() {
+            this.callback([], this);
+        }
+    };
 
     chatMocks.loadChatInbox.mockResolvedValue({
         teams: [
@@ -574,7 +612,104 @@ describe('React app messages integration', () => {
 
         expect(container.textContent).toContain('Latest');
         await click(container, 'Latest');
+        await flush();
         expect(scroller.scrollTop).toBe(700);
+    });
+
+    it('coalesces auto-scroll scheduling and only re-arms after height growth while pinned', async () => {
+        let emitMessages = () => {};
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            emitMessages = onMessages;
+            onMessages([
+                chatMessage({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+                chatMessage({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:02:00Z') })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+        const scrollIntoView = window.HTMLElement.prototype.scrollIntoView;
+        const scroller = container.querySelector('.chat-messages-scroll');
+        const content = container.querySelector('.chat-messages-content');
+
+        Object.defineProperties(scroller, {
+            scrollHeight: { configurable: true, writable: true, value: 1000 },
+            clientHeight: { configurable: true, value: 300 },
+            scrollTop: { configurable: true, writable: true, value: 700 }
+        });
+        Object.defineProperty(content, 'scrollHeight', { configurable: true, writable: true, value: 1000 });
+
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        scrollIntoView.mockClear();
+
+        await act(async () => {
+            emitMessages([
+                chatMessage({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+                chatMessage({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:02:00Z') }),
+                chatMessage({ id: 'msg-3', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bus leaves in 10.', createdAt: new Date('2026-05-21T14:03:00Z') })
+            ], { id: 'cursor' });
+        });
+        await flush();
+        await flush();
+
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            resizeObserverState.instances.forEach((instance) => instance.trigger());
+        });
+        await flush();
+        expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+        content.scrollHeight = 1120;
+        scroller.scrollHeight = 1120;
+        await act(async () => {
+            resizeObserverState.instances.forEach((instance) => instance.trigger());
+        });
+        await flush();
+
+        expect(scrollIntoView.mock.calls.length).toBeLessThanOrEqual(2);
+    });
+
+    it('preserves scroll position and shows Latest when new messages arrive while scrolled up', async () => {
+        let emitMessages = () => {};
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            emitMessages = onMessages;
+            onMessages([
+                chatMessage({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+                chatMessage({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:02:00Z') })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+        const scrollIntoView = window.HTMLElement.prototype.scrollIntoView;
+        const scroller = container.querySelector('.chat-messages-scroll');
+
+        Object.defineProperties(scroller, {
+            scrollHeight: { configurable: true, value: 1000 },
+            clientHeight: { configurable: true, value: 300 },
+            scrollTop: { configurable: true, writable: true, value: 0 }
+        });
+
+        await act(async () => {
+            scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+        });
+        await flush();
+
+        scrollIntoView.mockClear();
+
+        await act(async () => {
+            emitMessages([
+                chatMessage({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+                chatMessage({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:02:00Z') }),
+                chatMessage({ id: 'msg-3', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bus leaves in 10.', createdAt: new Date('2026-05-21T14:03:00Z') })
+            ], { id: 'cursor' });
+        });
+        await flush();
+
+        expect(scrollIntoView).not.toHaveBeenCalled();
+        expect(container.textContent).toContain('Latest');
+        expect(scroller.scrollTop).toBe(0);
     });
 
     it('keeps staff targeting contextual and sends the selected audience metadata', async () => {
