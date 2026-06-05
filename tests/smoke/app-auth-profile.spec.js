@@ -534,7 +534,8 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(gameDayAlertsButton).toBeEnabled();
     await gameDayAlertsButton.click();
     await expect(page.getByText('Game-day alerts are on for this team.')).toBeVisible();
-    await page.getByText('Customize alerts').click();
+    await expect(page.getByText('Customize alerts')).toBeVisible();
+    await expect(page.getByLabel('Live Chat')).toBeVisible();
     await expect(page.getByLabel('Live Chat')).toBeChecked();
     await expect(page.getByLabel('Live Score')).toBeChecked();
     await expect(page.getByLabel('Schedule Changes')).toBeChecked();

@@ -132,6 +132,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const alertsEmpty = activeProfileSection === 'alerts' && notificationTeamsLoaded && notificationTeams.length === 0;
   const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && Boolean(selectedNotificationTeam);
   const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && loadedNotificationTeamId === selectedTeamId;
+  const selectedTeamPreferencesLoading = alertsReady && Boolean(selectedTeamId) && !selectedTeamPreferencesHydrated;
 
   const selectProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
@@ -269,7 +270,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         console.warn('[profile] Unable to load notification preferences:', error);
         if (!cancelled) {
           setNotificationPreferences(emptyPreferences);
-          setLoadedNotificationTeamId('');
+          setLoadedNotificationTeamId(selectedTeamId);
           setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
         }
       }
@@ -506,6 +507,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   const saveNotifications = async () => {
     if (!user || !selectedTeamId) {
       setNotificationStatus({ message: 'Select a team first.', tone: 'error' });
+      return;
+    }
+    if (!selectedTeamPreferencesHydrated) {
+      setNotificationStatus({ message: 'Wait for this team’s alert preferences to finish loading.', tone: 'error' });
       return;
     }
 
@@ -940,15 +945,25 @@ export function Profile({ auth }: { auth: AuthState }) {
               </div>
             </div>
 
-            <details className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
+            <details className="mt-3 rounded-2xl border border-gray-200 bg-white p-3" open>
               <summary className="cursor-pointer text-sm font-black text-gray-700">Customize alerts</summary>
-              <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                <PreferenceToggle label="Live Chat" checked={notificationPreferences.liveChat} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveChat: checked }))} />
-                <PreferenceToggle label="Live Score" checked={notificationPreferences.liveScore} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveScore: checked }))} />
-                <PreferenceToggle label="Schedule Changes" checked={notificationPreferences.schedule} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, schedule: checked }))} />
-              </div>
+              {selectedTeamPreferencesLoading ? (
+                <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" role="status" aria-live="polite">
+                  <div className="flex items-center gap-2 text-sm font-black text-gray-900">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    Loading alerts for {selectedNotificationTeam?.name || 'this team'}…
+                  </div>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Team-specific alert toggles will unlock as soon as the selected team’s saved preferences finish loading.</p>
+                </div>
+              ) : (
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <PreferenceToggle label="Live Chat" checked={notificationPreferences.liveChat} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveChat: checked }))} />
+                  <PreferenceToggle label="Live Score" checked={notificationPreferences.liveScore} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveScore: checked }))} />
+                  <PreferenceToggle label="Schedule Changes" checked={notificationPreferences.schedule} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, schedule: checked }))} />
+                </div>
+              )}
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId}>
+                <button type="button" className="primary-button" onClick={saveNotifications} disabled={busy === 'notifications' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
                   {busy === 'notifications' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
                   Save preferences
                 </button>

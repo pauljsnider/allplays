@@ -343,7 +343,7 @@ describe('Profile invites', () => {
     expect(await screen.findByText('Game-day alerts are on for this team.')).toBeTruthy();
   });
 
-  it('keeps game-day alerts disabled until the selected team preferences finish hydrating', async () => {
+  it('hides stale team toggles and disables team actions until the new team preferences finish hydrating', async () => {
     const secondTeamPreferences = createDeferred<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([
       { id: 'team-1', name: 'Blue Team' },
@@ -361,20 +361,69 @@ describe('Profile invites', () => {
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
     const teamSelect = await screen.findByLabelText('Team');
     const gameDayButton = await screen.findByRole('button', { name: 'Turn on game-day alerts' });
+    const saveButton = screen.getByRole('button', { name: 'Save preferences' });
+    expect(screen.getByLabelText('Live Chat')).toBeTruthy();
     expect((gameDayButton as HTMLButtonElement).disabled).toBe(false);
+    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.change(teamSelect, { target: { value: 'team-2' } });
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('Loading alerts for Gold Team…')).toBeTruthy();
+    expect(screen.queryByLabelText('Live Chat')).toBeNull();
     expect((gameDayButton as HTMLButtonElement).disabled).toBe(true);
+    expect((saveButton as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(gameDayButton);
+    fireEvent.click(saveButton);
     expect(pushServiceMocks.enablePushNotificationsForUser).not.toHaveBeenCalled();
     expect(profileServiceMocks.saveNotificationPreferences).not.toHaveBeenCalled();
 
     secondTeamPreferences.resolve({ liveChat: false, liveScore: false, schedule: false });
 
-    await waitFor(() => expect((gameDayButton as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(screen.getByLabelText('Live Chat')).toBeTruthy());
+    expect((gameDayButton as HTMLButtonElement).disabled).toBe(false);
+    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('renders fallback toggles and re-enables team actions when preference loading fails', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Blue Team' },
+      { id: 'team-2', name: 'Gold Team' }
+    ]);
+    profileServiceMocks.loadNotificationPreferences
+      .mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false })
+      .mockRejectedValueOnce(new Error('temporary outage'));
+    profileServiceMocks.saveNotificationPreferences.mockImplementation(async (_userId, _teamId, preferences) => preferences);
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
+    const teamSelect = await screen.findByLabelText('Team');
+    const gameDayButton = await screen.findByRole('button', { name: 'Turn on game-day alerts' });
+    const saveButton = screen.getByRole('button', { name: 'Save preferences' });
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Unable to load notification preferences.')).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Loading alerts for Gold Team…')).toBeNull());
+    expect(screen.getByLabelText('Live Chat')).toBeTruthy();
+    expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(true);
+    expect((gameDayButton as HTMLButtonElement).disabled).toBe(false);
+    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-2', {
+      liveChat: true,
+      liveScore: false,
+      schedule: true
+    }));
   });
 
   it('uploads the normalized profile photo instead of the original selection', async () => {
