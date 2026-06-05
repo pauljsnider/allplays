@@ -38,12 +38,16 @@ async function openSearch(page) {
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
 
     await expect(async () => {
-        try {
-            await page.keyboard.press('Control+K');
-            await expect(searchDialog).toBeVisible({ timeout: 1000 });
+        if (await searchDialog.isVisible().catch(() => false)) {
             return;
+        }
+
+        await clickSearchTrigger(page);
+
+        try {
+            await expect(searchDialog).toBeVisible({ timeout: 1000 });
         } catch {
-            await clickSearchTrigger(page);
+            await page.keyboard.press('Control+K');
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
     }).toPass({ timeout: 15000 });
