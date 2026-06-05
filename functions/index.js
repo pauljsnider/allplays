@@ -3663,7 +3663,10 @@ function publicRsvpUserCanManageTeam({ team, user, uid, email }) {
 }
 
 function getPublicRsvpParentContacts(player) {
-  const parents = Array.isArray(player?.parents) ? player.parents : [];
+  const privateParents = Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : [];
+  const parents = privateParents.length > 0
+    ? privateParents
+    : (Array.isArray(player?.parents) ? player.parents : []);
   const contacts = parents.map((parent) => ({
     name: normalizePublicRsvpText(parent?.name || parent?.displayName || parent?.relation),
     email: normalizePublicRsvpEmail(parent?.email),
@@ -3847,8 +3850,22 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
     batchWriteCount = 0;
   };
 
-  playersSnap.forEach((docSnap) => {
+  const players = await Promise.all(playersSnap.docs.map(async (docSnap) => {
     const player = { id: docSnap.id, ...(docSnap.data() || {}) };
+    if (player.active === false || respondedPlayerIds.has(player.id)) return player;
+    const hasPublicContacts = (Array.isArray(player.parents) && player.parents.length > 0)
+      || normalizePublicRsvpEmail(player.parentEmail || player.guardianEmail)
+      || normalizePublicRsvpText(player.parentUserId || player.guardianUserId);
+    if (hasPublicContacts) return player;
+    const privateProfileSnap = await firestore.doc(`teams/${teamId}/players/${player.id}/private/profile`).get();
+    const privateProfile = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
+    const privateParents = Array.isArray(privateProfile.parents) ? privateProfile.parents : [];
+    return privateParents.length > 0
+      ? { ...player, privateProfileParents: privateParents }
+      : player;
+  }));
+
+  players.forEach((player) => {
     if (player.active === false || respondedPlayerIds.has(player.id)) return;
     getPublicRsvpParentContacts(player).forEach((contact) => {
       ensurePublicRsvpEmailBatchCapacity();

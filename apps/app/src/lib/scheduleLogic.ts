@@ -327,9 +327,15 @@ function getRsvpPlayerIds(rsvp: any) {
   return uniqueNonEmptyStrings([...playerIds, rsvp?.playerId, rsvp?.childId]);
 }
 
+function getPlayerRosterParents(player: any) {
+  const privateParents = Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : [];
+  if (privateParents.length > 0) return privateParents;
+  return Array.isArray(player?.parents) ? player.parents : [];
+}
+
 export function getPlayerParentUserIds(player: any) {
   return uniqueNonEmptyStrings([
-    ...(Array.isArray(player?.parents) ? player.parents.map((parent: any) => parent?.userId) : []),
+    ...getPlayerRosterParents(player).map((parent: any) => parent?.userId),
     player?.parentUserId,
     player?.guardianUserId
   ]);
@@ -337,7 +343,7 @@ export function getPlayerParentUserIds(player: any) {
 
 function getPlayerParentEmails(player: any) {
   return uniqueEligibleEmails([
-    ...(Array.isArray(player?.parents) ? player.parents.map((parent: any) => parent?.email) : []),
+    ...getPlayerRosterParents(player).map((parent: any) => parent?.email),
     player?.parentEmail,
     player?.guardianEmail
   ]);

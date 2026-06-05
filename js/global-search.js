@@ -110,6 +110,66 @@ function parseTeamAndPlayerIdFromPath(path) {
     return { teamId: parts[tIdx + 1] || '', playerId: parts[pIdx + 1] || '' };
 }
 
+function buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric) {
+    const rejected = snaps.filter(s => s.status === 'rejected').map(s => s.reason).filter(Boolean);
+    const hasFulfilled = snaps.some(s => s.status === 'fulfilled');
+
+    if (!hasFulfilled && rejected.length) {
+        throw rejected[0];
+    }
+
+    const byPath = new Map();
+    for (const s of snaps) {
+        if (s.status !== 'fulfilled') continue;
+        for (const d of s.value.docs || []) {
+            byPath.set(d.ref.path, d);
+        }
+    }
+
+    const exhaustiveForNarrowerQueries = !isNumeric
+        && rejected.length === 0
+        && snaps.slice(0, nameQueryCount).every(s => s.status === 'fulfilled' && (s.value.docs || []).length < 20);
+
+    return {
+        docs: Array.from(byPath.values()),
+        exhaustiveForNarrowerQueries,
+        rejected
+    };
+}
+
+async function loadPlayerSearchDocsByTeam(prefixes, rawQuery, isNumeric, teamsById) {
+    const teamIds = Array.from(teamsById.keys()).map((teamId) => String(teamId || '').trim()).filter(Boolean);
+    if (teamIds.length === 0) {
+        return { docs: [], exhaustiveForNarrowerQueries: false, rejected: [] };
+    }
+
+    const nameQueryCount = prefixes.length * teamIds.length;
+    const snaps = await Promise.allSettled(teamIds.flatMap((teamId) => {
+        const playersRef = collection(db, `teams/${teamId}/players`);
+        const scopedQueries = prefixes.map((prefix) => getDocs(query(
+            playersRef,
+            orderBy('name'),
+            where('name', '>=', prefix),
+            where('name', '<=', `${prefix}\uf8ff`),
+            limit(20)
+        )));
+
+        if (isNumeric) {
+            scopedQueries.push(getDocs(query(
+                playersRef,
+                orderBy('number'),
+                where('number', '>=', rawQuery),
+                where('number', '<=', `${rawQuery}\uf8ff`),
+                limit(20)
+            )));
+        }
+
+        return scopedQueries;
+    }));
+
+    return buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric);
+}
+
 function renderResultRow(item, isActive) {
     const activeCls = isActive ? 'bg-primary-50 border-primary-200' : 'bg-white border-gray-200 hover:bg-gray-50';
     const title = escapeHtml(item.title || '');
@@ -436,23 +496,21 @@ function openModal({ initialQuery = '' } = {}) {
             }
 
             const snaps = await Promise.allSettled(queries);
+            const baseResult = buildPlayerSearchDocsFromSnapshots(snaps, prefixes.length, isNumeric);
+            const onlyPermissionDeniedFailures = baseResult.docs.length === 0
+                && baseResult.rejected.length > 0
+                && baseResult.rejected.every((error) => (error?.code || '') === 'permission-denied');
+            const result = onlyPermissionDeniedFailures
+                ? await loadPlayerSearchDocsByTeam(prefixes, q, isNumeric, modalState.teamsById)
+                : baseResult;
             if (!modalState || reqId !== modalState.playersReqId) return;
 
-            const rejected = snaps.filter(s => s.status === 'rejected').map(s => s.reason).filter(Boolean);
-            const hasFulfilled = snaps.some(s => s.status === 'fulfilled');
+            const rejected = result.rejected;
             const anyPermDenied = rejected.some(e => (e?.code || '') === 'permission-denied');
             const anyFailedPre = rejected.some(e => (e?.code || '') === 'failed-precondition');
             const anyIndexBuilding = rejected.some(e => (e?.code || '') === 'failed-precondition' && String(e?.message || '').toLowerCase().includes('not ready yet'));
 
-            const byPath = new Map();
-            for (const s of snaps) {
-                if (s.status !== 'fulfilled') continue;
-                for (const d of s.value.docs || []) {
-                    byPath.set(d.ref.path, d);
-                }
-            }
-
-            if (!hasFulfilled && (anyPermDenied || anyFailedPre)) {
+            if (result.docs.length === 0 && (anyPermDenied || anyFailedPre)) {
                 modalState.players = [];
                 modalState.loadingPlayers = false;
                 modalState.playersError = anyPermDenied
@@ -464,7 +522,7 @@ function openModal({ initialQuery = '' } = {}) {
                 return;
             }
 
-            const items = Array.from(byPath.values()).flatMap((d) => {
+            const items = result.docs.flatMap((d) => {
                 const data = d.data() || {};
                 const name = data.name || 'Player';
                 const number = data.number || '';

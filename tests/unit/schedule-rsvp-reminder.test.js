@@ -12,9 +12,9 @@ describe('staff RSVP reminder helpers', () => {
   it('counts only active no-response players and de-duplicates eligible emails', () => {
     const players = [
       { id: 'p1', name: 'One', active: true, parents: [{ userId: 'u1', email: 'one@example.com' }] },
-      { id: 'p2', name: 'Two', active: true, parents: [{ userId: 'u2', email: 'shared@example.com' }, { email: 'shared@example.com' }] },
+      { id: 'p2', name: 'Two', active: true, privateProfileParents: [{ userId: 'u2', email: 'shared@example.com' }, { email: 'shared@example.com' }] },
       { id: 'p3', name: 'Three', active: false, parents: [{ email: 'inactive@example.com' }] },
-      { id: 'p4', name: 'Four', active: true, parents: [{ email: 'shared@example.com' }] }
+      { id: 'p4', name: 'Four', active: true, privateProfileParents: [{ email: 'shared@example.com' }] }
     ];
     const rsvps = [
       { playerId: 'p1', response: 'going' },
@@ -80,6 +80,7 @@ describe('staff RSVP reminder service wiring', () => {
 
     expect(serviceSource).toContain('function isPublicRsvpReminderManager');
     expect(serviceSource).toContain('if (!event.isTeamRsvpReminderManager)');
+    expect(serviceSource).toContain('const { players, rsvps } = await getRsvpBreakdownByPlayer(event.teamId, event.id);');
     expect(detailSource).toContain('event.isTeamRsvpReminderManager');
     expect(detailSource).not.toContain('event.isTeamStaff && event.isDbGame');
   });

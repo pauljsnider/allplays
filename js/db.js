@@ -1928,6 +1928,35 @@ export async function getPlayers(teamId, options = {}) {
     }
 }
 
+function playerHasRosterContactFields(player = {}) {
+    return Boolean(
+        (Array.isArray(player?.parents) && player.parents.length > 0) ||
+        String(player?.parentEmail || '').trim() ||
+        String(player?.guardianEmail || '').trim() ||
+        String(player?.parentUserId || '').trim() ||
+        String(player?.guardianUserId || '').trim()
+    );
+}
+
+async function mergePlayerPrivateProfileParents(teamId, players = []) {
+    const rosterPlayers = Array.isArray(players) ? players : [];
+    return Promise.all(rosterPlayers.map(async (player) => {
+        if (!player?.id || playerHasRosterContactFields(player)) return player;
+        try {
+            const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
+            const privateParents = Array.isArray(privateProfile?.parents) ? privateProfile.parents : [];
+            if (privateParents.length === 0) return player;
+            return {
+                ...player,
+                privateProfileParents: privateParents
+            };
+        } catch (error) {
+            if (error?.code === 'permission-denied') return player;
+            throw error;
+        }
+    }));
+}
+
 export async function addPlayer(teamId, playerData) {
     assertNoSensitivePlayerFields(playerData);
     playerData.createdAt = Timestamp.now();
@@ -7526,9 +7555,10 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
         getPlayers(teamId, { includeInactive: true }),
         getRsvps(teamId, gameId)
     ]);
+    const playersWithPrivateContacts = await mergePlayerPrivateProfileParents(teamId, players);
     const fallbackByUser = await buildFallbackPlayerIdsByUser(teamId, rsvps);
-    const breakdown = buildGameDayRsvpBreakdown({ players, rsvps, fallbackByUser });
-    return { ...breakdown, players, rsvps };
+    const breakdown = buildGameDayRsvpBreakdown({ players: playersWithPrivateContacts, rsvps, fallbackByUser });
+    return { ...breakdown, players: playersWithPrivateContacts, rsvps };
 }
 
 export async function getPublicTrackingItems(teamId) {
