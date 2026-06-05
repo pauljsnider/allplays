@@ -2969,7 +2969,7 @@ ${text}
                         showToast('Uploading diagrams...', 'success');
                         const uploaded = [];
                         for (const file of toUpload) {
-                            const url = await uploadDrillDiagram(state.currentTeamId, drillId, file);
+                            const url = await uploadDrillDiagram(state.teamId, drillId, file);
                             uploaded.push(url);
                         }
                         const allUrls = [...existingUrls, ...uploaded];
