@@ -19,13 +19,12 @@ import {
   Ticket,
   Users
 } from 'lucide-react';
-import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
+import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { redeemSignedInInvite } from '../lib/inviteRedemption';
 import {
   buildParentScheduleIcs,
   createParentFamilyShare,
   createParentHouseholdMemberInvite,
-  downloadIcs,
   getAppleCalendarFeedUrl,
   getGoogleCalendarFeedUrl,
   getPrivateTeamCalendarFeedUrl,
@@ -467,6 +466,7 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
   const [teams, setTeams] = useState<ParentCalendarTeam[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyTeamId, setBusyTeamId] = useState('');
+  const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -490,13 +490,22 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, refreshVersion]);
 
-  const download = () => {
+  const download = async () => {
     if (!events.length) {
       setMessage('No events to export yet.');
       return;
     }
-    downloadIcs('all-plays-family-schedule.ics', buildParentScheduleIcs(events));
-    setMessage('Calendar download started.');
+    setExporting(true);
+    setError('');
+    setMessage('');
+    try {
+      await exportCalendarIcsFile('all-plays-family-schedule.ics', buildParentScheduleIcs(events));
+      setMessage('Calendar file ready to share.');
+    } catch (downloadError: any) {
+      setError(downloadError?.message || 'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const copyAgenda = async () => {
@@ -534,9 +543,9 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
         {error ? <Status tone="error" message={error} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          <button type="button" className="secondary-button justify-center" onClick={download} disabled={loading}>
-            <Download className="h-4 w-4" aria-hidden="true" />
-            Download .ics
+          <button type="button" className="secondary-button justify-center" onClick={() => { void download(); }} disabled={loading || exporting}>
+            {exporting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+            {exporting ? 'Preparing .ics' : 'Download .ics'}
           </button>
           <button type="button" className="secondary-button justify-center" onClick={copyAgenda} disabled={loading}>
             <Copy className="h-4 w-4" aria-hidden="true" />

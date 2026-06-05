@@ -11,7 +11,12 @@ const browserMocks = vi.hoisted(() => ({
 }));
 
 const shareMocks = vi.hoisted(() => ({
+    canShare: vi.fn(),
     share: vi.fn()
+}));
+
+const filesystemMocks = vi.hoisted(() => ({
+    writeFile: vi.fn()
 }));
 
 vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => ({
@@ -27,6 +32,12 @@ vi.mock('../../apps/app/node_modules/@capacitor/browser/dist/plugin.cjs.js', () 
 
 vi.mock('../../apps/app/node_modules/@capacitor/share/dist/plugin.cjs.js', () => ({
     Share: shareMocks
+}));
+
+vi.mock('../../apps/app/node_modules/@capacitor/filesystem/dist/plugin.cjs.js', () => ({
+    Directory: { Cache: 'CACHE' },
+    Encoding: { UTF8: 'utf8' },
+    Filesystem: filesystemMocks
 }));
 
 async function loadPublicActions() {
@@ -57,7 +68,9 @@ beforeEach(() => {
     nativeState.isNative = false;
     nativeState.plugins = new Set();
     browserMocks.open.mockResolvedValue(undefined);
+    shareMocks.canShare.mockResolvedValue({ value: true });
     shareMocks.share.mockResolvedValue(undefined);
+    filesystemMocks.writeFile.mockResolvedValue({ uri: 'file:///cache/calendar.ics' });
     Object.defineProperty(navigator, 'share', {
         configurable: true,
         value: undefined
@@ -199,6 +212,70 @@ describe('React app public URL actions', () => {
             url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true',
             dialogTitle: 'Bears vs Falcons replay'
         });
+    });
+
+    it('writes and shares a native .ics file in Capacitor', async () => {
+        installNativeCapacitor(['Filesystem', 'Share']);
+        const { exportCalendarIcsFile } = await loadPublicActions();
+
+        const result = await exportCalendarIcsFile('Family Schedule.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR');
+
+        expect(result).toBe('shared');
+        expect(filesystemMocks.writeFile).toHaveBeenCalledWith(expect.objectContaining({
+            path: expect.stringMatching(/^calendar-exports\/\d+-Family-Schedule\.ics$/),
+            data: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR',
+            directory: 'CACHE',
+            encoding: 'utf8',
+            recursive: true
+        }));
+        expect(shareMocks.share).toHaveBeenCalledWith({
+            title: 'ALL PLAYS calendar export',
+            text: 'Share this .ics file with Calendar, Files, Gmail, or another app.',
+            files: ['file:///cache/calendar.ics'],
+            dialogTitle: 'Export calendar'
+        });
+    });
+
+    it('keeps the web anchor download path for browser .ics exports', async () => {
+        const { exportCalendarIcsFile } = await loadPublicActions();
+        const originalCreateElement = document.createElement.bind(document);
+        const linkClick = vi.fn();
+        const linkRemove = vi.fn();
+        const appendChild = vi.spyOn(document.body, 'appendChild');
+        let createdLink;
+
+        vi.spyOn(document, 'createElement').mockImplementation((tagName, options) => {
+            if (String(tagName).toLowerCase() === 'a') {
+                createdLink = originalCreateElement('a');
+                createdLink.click = linkClick;
+                createdLink.remove = linkRemove;
+                return createdLink;
+            }
+            return originalCreateElement(tagName, options);
+        });
+
+        URL.createObjectURL = vi.fn(() => 'blob:test-calendar');
+        URL.revokeObjectURL = vi.fn();
+
+        const result = await exportCalendarIcsFile('Family Schedule.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR');
+
+        expect(result).toBe('downloaded');
+        expect(createdLink.download).toBe('Family-Schedule.ics');
+        expect(createdLink.href).toBe('blob:test-calendar');
+        expect(appendChild).toHaveBeenCalledWith(createdLink);
+        expect(linkClick).toHaveBeenCalled();
+        expect(linkRemove).toHaveBeenCalled();
+
+        document.createElement.mockRestore();
+        appendChild.mockRestore();
+    });
+
+    it('throws when the native .ics handoff fails', async () => {
+        installNativeCapacitor(['Filesystem', 'Share']);
+        shareMocks.share.mockRejectedValueOnce(new Error('Native share failed.'));
+        const { exportCalendarIcsFile } = await loadPublicActions();
+
+        await expect(exportCalendarIcsFile('family.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR')).rejects.toThrow('Native share failed.');
     });
 
     it('reports native share cancellation without showing a false failure', async () => {

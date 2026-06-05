@@ -1,5 +1,6 @@
 import { Browser } from '@capacitor/browser';
 import { Capacitor } from '@capacitor/core';
+import { Directory, Encoding, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 
 export type SharePublicUrlInput = {
@@ -12,6 +13,8 @@ export type SharePublicUrlInput = {
 export type SharePublicUrlResult = 'shared' | 'copied' | 'failed' | 'cancelled';
 
 export type CopyPublicTextResult = 'copied' | 'failed';
+
+export type ExportCalendarIcsResult = 'shared' | 'downloaded';
 
 function isNativePluginAvailable(pluginName: string) {
   return Capacitor.isNativePlatform() && Boolean((Capacitor as any).isPluginAvailable?.(pluginName));
@@ -102,4 +105,54 @@ export async function sharePublicUrl(input: SharePublicUrlInput): Promise<ShareP
   }
 
   return 'failed';
+}
+
+export async function exportCalendarIcsFile(filename: string, icsText: string): Promise<ExportCalendarIcsResult> {
+  const safeFilename = sanitizeFileName(filename || 'all-plays-schedule.ics');
+  const calendarText = String(icsText || '');
+  if (!calendarText.trim()) throw new Error('Calendar export is empty.');
+
+  if (isNativePluginAvailable('Filesystem') && isNativePluginAvailable('Share')) {
+    const canShare = await Share.canShare?.();
+    if (canShare && canShare.value === false) {
+      throw new Error('Sharing is not available on this device. Try the Apple or Google calendar links instead.');
+    }
+
+    const writeResult = await Filesystem.writeFile({
+      path: `calendar-exports/${Date.now()}-${safeFilename}`,
+      data: calendarText,
+      directory: Directory.Cache,
+      encoding: Encoding.UTF8,
+      recursive: true
+    });
+
+    await Share.share({
+      title: 'ALL PLAYS calendar export',
+      text: 'Share this .ics file with Calendar, Files, Gmail, or another app.',
+      files: [writeResult.uri],
+      dialogTitle: 'Export calendar'
+    });
+
+    return 'shared';
+  }
+
+  downloadBlobFile(safeFilename, calendarText, 'text/calendar;charset=utf-8');
+  return 'downloaded';
+}
+
+function downloadBlobFile(filename: string, fileText: string, contentType: string) {
+  const blob = new Blob([fileText], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+function sanitizeFileName(value: string) {
+  const clean = String(value || 'all-plays-schedule.ics').trim().replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '');
+  return clean.toLowerCase().endsWith('.ics') ? clean : `${clean || 'all-plays-schedule'}.ics`;
 }
