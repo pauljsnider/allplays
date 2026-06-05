@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
@@ -665,11 +665,12 @@ function ChatWindow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, selectedConversationId, team, teamId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!pendingScrollRef.current) return;
+    scrollToLatest('auto');
     pendingScrollRef.current = false;
     scheduleScrollToLatest('auto', true);
-  }, [messages.length, aiThinking, scheduleScrollToLatest, selectedConversationId]);
+  }, [messages.length, aiThinking, scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
 
   useEffect(() => {
     const container = messagesRef.current;
