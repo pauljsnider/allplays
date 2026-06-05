@@ -33,6 +33,7 @@ const serviceMocks = vi.hoisted(() => ({
 }));
 
 const publicActionMocks = vi.hoisted(() => ({
+    exportCalendarIcsFile: vi.fn().mockResolvedValue('downloaded'),
     openPublicUrl: vi.fn(),
     sharePublicUrl: vi.fn().mockResolvedValue('shared')
 }));
@@ -286,7 +287,8 @@ describe('React app parent tools integration', () => {
         await clickButton(container, 'Calendar');
         await waitForText(container, 'Calendar tools');
         await clickButton(container, 'Download .ics');
-        expect(serviceMocks.downloadIcs).toHaveBeenCalledWith('all-plays-family-schedule.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR');
+        expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledWith('all-plays-family-schedule.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR');
+        expect(container.textContent).toContain('Calendar file ready to share.');
         await clickButton(container, 'Copy agenda');
         expect(navigator.clipboard.writeText).toHaveBeenCalledWith('Bears Practice');
         await clickButton(container, 'Apple');
@@ -581,6 +583,38 @@ describe('React app parent tools integration', () => {
 
         expect(container.textContent).toContain('Stripe session failed.');
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+    });
+
+    it('shows calendar export success only after the handoff resolves', async () => {
+        let resolveExport;
+        const pendingExport = new Promise((resolve) => {
+            resolveExport = resolve;
+        });
+        publicActionMocks.exportCalendarIcsFile.mockImplementationOnce(() => pendingExport);
+
+        const { container } = await renderParentTools('/parent-tools/calendar');
+        await waitForText(container, 'Calendar tools');
+
+        await clickButton(container, 'Download .ics');
+
+        expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledWith('all-plays-family-schedule.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR');
+        expect(container.textContent).not.toContain('Calendar file ready to share.');
+
+        await act(async () => {
+            resolveExport('shared');
+        });
+        await waitForText(container, 'Calendar file ready to share.');
+    });
+
+    it('shows an actionable calendar export error when native handoff fails', async () => {
+        publicActionMocks.exportCalendarIcsFile.mockRejectedValueOnce(new Error('Sharing is not available on this device. Try the Apple or Google calendar links instead.'));
+
+        const { container } = await renderParentTools('/parent-tools/calendar');
+        await waitForText(container, 'Calendar tools');
+        await clickButton(container, 'Download .ics');
+
+        await waitForText(container, 'Sharing is not available on this device. Try the Apple or Google calendar links instead.');
+        expect(container.textContent).not.toContain('Calendar file ready to share.');
     });
 
     it('filters team media albums by media type in the app', async () => {
