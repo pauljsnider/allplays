@@ -899,11 +899,22 @@ async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNume
   }
 
   const snapshots = await Promise.allSettled(playerQueries);
+  const rejected = snapshots
+    .filter((snapshot: any) => snapshot.status === 'rejected')
+    .map((snapshot: any) => snapshot.reason)
+    .filter(Boolean);
+  const onlyPermissionDeniedFailures = rejected.length > 0
+    && snapshots.every((snapshot: any) => snapshot.status === 'rejected')
+    && rejected.every((error: any) => error?.code === 'permission-denied');
+  if (onlyPermissionDeniedFailures) {
+    return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamIds);
+  }
+
   const result = buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric);
-  const onlyPermissionDeniedFailures = result.docs.length === 0
+  const onlyEmptyPermissionDeniedFailures = result.docs.length === 0
     && result.rejected.length > 0
     && result.rejected.every((error: any) => error?.code === 'permission-denied');
-  if (onlyPermissionDeniedFailures) {
+  if (onlyEmptyPermissionDeniedFailures) {
     return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamIds);
   }
 
