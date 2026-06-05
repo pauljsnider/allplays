@@ -420,7 +420,7 @@ function ChatWindow({
   const scheduledScrollFrameRef = useRef<number | null>(null);
   const scheduledScrollBehaviorRef = useRef<ScrollBehavior>('auto');
   const scheduledScrollTimeoutsRef = useRef<number[]>([]);
-  const lastObservedScrollHeightRef = useRef(0);
+  const lastObservedViewportSignatureRef = useRef('');
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
   const selectedConversation = useMemo(() => (
     conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null
@@ -478,9 +478,10 @@ function ChatWindow({
     const container = messagesRef.current;
     if (!container) return;
 
-    lastObservedScrollHeightRef.current = Math.max(
-      container.scrollHeight,
-      messagesContentRef.current?.scrollHeight || 0
+    lastObservedViewportSignatureRef.current = buildChatViewportSignature(
+      Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0),
+      container.clientHeight,
+      container.scrollTop
     );
     programmaticScrollRef.current = true;
     container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -508,7 +509,7 @@ function ChatWindow({
     );
     const distanceFromBottom = Math.max(0, nextHeight - container.clientHeight - container.scrollTop);
     if (distanceFromBottom <= 4) {
-      lastObservedScrollHeightRef.current = nextHeight;
+      lastObservedViewportSignatureRef.current = buildChatViewportSignature(nextHeight, container.clientHeight, container.scrollTop);
       return false;
     }
 
@@ -541,7 +542,8 @@ function ChatWindow({
         maybeScrollToLatest(nextBehavior);
 
         [120, 300, 700].forEach((delay) => {
-          const timerId = window.setTimeout(() => {
+          let timerId = 0;
+          timerId = window.setTimeout(() => {
             scheduledScrollTimeoutsRef.current = scheduledScrollTimeoutsRef.current.filter((id) => id !== timerId);
             if (!mountedRef.current) return;
             const container = messagesRef.current;
@@ -668,9 +670,17 @@ function ChatWindow({
 
     const observer = new ResizeObserver(() => {
       const nextHeight = Math.max(container.scrollHeight, content.scrollHeight);
-      if (nextHeight === lastObservedScrollHeightRef.current) return;
-      lastObservedScrollHeightRef.current = nextHeight;
-      if (stickToLatestRef.current || pendingScrollRef.current || isNearBottom(container)) {
+      const distanceFromBottom = Math.max(0, nextHeight - container.clientHeight - container.scrollTop);
+      const nextSignature = buildChatViewportSignature(nextHeight, container.clientHeight, container.scrollTop);
+      if (nextSignature === lastObservedViewportSignatureRef.current) return;
+      lastObservedViewportSignatureRef.current = nextSignature;
+      if (stickToLatestRef.current) {
+        if (distanceFromBottom > 4) {
+          scrollToLatest('auto');
+        }
+        return;
+      }
+      if (pendingScrollRef.current || isNearBottom(container)) {
         scheduleScrollToLatest('auto');
       }
     });
@@ -678,7 +688,7 @@ function ChatWindow({
     observer.observe(container);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [scheduleScrollToLatest, selectedConversationId]);
+  }, [scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -729,7 +739,7 @@ function ChatWindow({
 
   useEffect(() => {
     mountedRef.current = true;
-    lastObservedScrollHeightRef.current = 0;
+    lastObservedViewportSignatureRef.current = '';
 
     return () => {
       mountedRef.current = false;
@@ -1562,6 +1572,11 @@ function ChatWindow({
       ) : null}
     </div>
   );
+}
+
+export function buildChatViewportSignature(scrollHeight: number, clientHeight: number, scrollTop: number) {
+  const distanceFromBottom = Math.max(0, scrollHeight - clientHeight - scrollTop);
+  return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
 }
 
 function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {
