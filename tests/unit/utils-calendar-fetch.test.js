@@ -54,6 +54,7 @@ describe('fetchAndParseCalendar', () => {
   it('uses Firebase function first and returns parsed events when function succeeds', async () => {
     const fetchMock = vi.fn(async (url) => {
       expect(url).toContain('example.com/fetchCalendarIcs');
+      expect(String(url)).not.toContain('forceRefresh=true');
       return makeJsonResponse({
         ok: true,
         icsText: sampleIcs('from-function')
@@ -66,6 +67,24 @@ describe('fetchAndParseCalendar', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0].uid).toBe('from-function');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes forceRefresh only when explicitly requested', async () => {
+    const fetchMock = vi.fn(async (url) => {
+      expect(String(url)).toContain('forceRefresh=true');
+      return makeJsonResponse({
+        ok: true,
+        icsText: sampleIcs('force-refresh')
+      });
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const events = await fetchAndParseCalendar('http://ical-cdn.teamsnap.com/team_schedule/test.ics', { forceRefresh: true });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].uid).toBe('force-refresh');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

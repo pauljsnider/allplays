@@ -290,8 +290,9 @@ export function renderFooter(container) {
  * @param {string} url - URL to the .ics file
  * @returns {Promise<Array>} Array of parsed calendar events
  */
-export async function fetchAndParseCalendar(url) {
+export async function fetchAndParseCalendar(url, options = {}) {
   const timeoutMs = 5000;
+  const forceRefresh = options?.forceRefresh === true;
   const cleanedUrl = url.trim();
   const normalizedUrl = cleanedUrl
     .replace(/^webcals?:\/\//i, 'https://')
@@ -332,7 +333,11 @@ export async function fetchAndParseCalendar(url) {
     if (!calendarFetchFunctionUrl) {
       throw new Error('Calendar fetch function URL is not configured');
     }
-    const functionUrl = `${calendarFetchFunctionUrl}?url=${encodeURIComponent(targetUrl)}&forceRefresh=true`;
+    const params = new URLSearchParams({ url: targetUrl });
+    if (forceRefresh) {
+      params.set('forceRefresh', 'true');
+    }
+    const functionUrl = `${calendarFetchFunctionUrl}?${params.toString()}`;
     const response = await fetchWithTimeout(functionUrl);
     if (!response.ok) {
       throw new Error(`Function fetch failed: ${response.status} ${response.statusText}`);

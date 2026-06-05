@@ -29,7 +29,7 @@ const TeamMedia = lazy(() => import('./pages/TeamMedia').then((module) => ({ def
 const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
 const VerifyPending = lazy(() => import('./pages/VerifyPending').then((module) => ({ default: module.VerifyPending })));
 
-const protectedRouteBootstrapGraceMs = 1200;
+const protectedRouteBootstrapGraceMs = 3000;
 
 export default function App() {
   const auth = useAuth();

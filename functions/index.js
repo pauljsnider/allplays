@@ -3,6 +3,7 @@ const admin = require('firebase-admin');
 const Stripe = require('stripe');
 const crypto = require('node:crypto');
 const { isPrivateIpAddress, isBlockedHostname, assertPublicHost, normalizeTargetUrl, fetchWithTimeout } = require('./utils/security-utils');
+const { createCalendarIcsCache, fetchCalendarIcsWithCache } = require('./calendar-ics-fetch-core.cjs');
 const {
   normalizeTeamPassCheckoutInput,
   isEligibleTeamPassPurchaser,
@@ -2473,6 +2474,9 @@ const calendarServiceAccount =
 const fetchCalendarRuntime = calendarServiceAccount
   ? { serviceAccount: calendarServiceAccount }
   : {};
+const calendarIcsCache = createCalendarIcsCache({
+  ttlMs: process.env.CALENDAR_ICS_CACHE_TTL_MS
+});
 
 exports.publicTeamGamesIcs = functions
   .runWith(fetchCalendarRuntime)
@@ -2636,34 +2640,44 @@ exports.fetchCalendarIcs = functions
     try {
       const rawUrl = req.query.url;
       const normalizedUrl = await normalizeTargetUrl(rawUrl);
+      const forceRefresh = String(req.query.forceRefresh || '').toLowerCase() === 'true';
 
-      const response = await fetchWithTimeout(normalizedUrl.url, normalizedUrl.hostname, normalizedUrl.publicIps);
-      if (!response.ok) {
-        res.status(502).json({
-          ok: false,
-          error: `Calendar fetch failed: ${response.status} ${response.statusText}`
-        });
-        return;
-      }
+      const result = await fetchCalendarIcsWithCache({
+        cache: calendarIcsCache,
+        cacheKey: normalizedUrl.url,
+        forceRefresh,
+        fetchIcs: async () => {
+          const response = await fetchWithTimeout(normalizedUrl.url, normalizedUrl.hostname, normalizedUrl.publicIps);
+          if (!response.ok) {
+            const upstreamError = new Error(`Calendar fetch failed: ${response.status} ${response.statusText}`);
+            upstreamError.statusCode = 502;
+            throw upstreamError;
+          }
 
-      const rawText = await response.text();
-      const icsText = normalizeIcsText(rawText);
+          const rawText = await response.text();
+          const icsText = normalizeIcsText(rawText);
 
-      if (!icsText.includes('BEGIN:VCALENDAR')) {
-        res.status(502).json({ ok: false, error: 'Response was not valid ICS' });
-        return;
-      }
+          if (!icsText.includes('BEGIN:VCALENDAR')) {
+            const invalidIcsError = new Error('Response was not valid ICS');
+            invalidIcsError.statusCode = 502;
+            throw invalidIcsError;
+          }
 
-      const fetchedAt = new Date().toISOString();
+          return {
+            fetchedAt: new Date().toISOString(),
+            icsText
+          };
+        }
+      });
 
       res.status(200).json({
         ok: true,
-        source: 'live',
-        fetchedAt,
-        icsText
+        source: result.source,
+        fetchedAt: result.fetchedAt,
+        icsText: result.icsText
       });
     } catch (error) {
-      res.status(400).json({
+      res.status(error?.statusCode || 400).json({
         ok: false,
         error: error?.message || 'Unknown error'
       });
