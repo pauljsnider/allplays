@@ -85,7 +85,7 @@ describe('AppSearchDialog', () => {
     preloadSearchRouteMock.mockImplementation(async () => true);
   });
 
-  it('captures the open time on mount so the opening tap cannot immediately close the backdrop', async () => {
+  it('keeps the opening tap guard active long enough for slower mobile pointer sequences', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
     let now = 1_000;
@@ -101,8 +101,13 @@ describe('AppSearchDialog', () => {
     fireEvent.mouseDown(dialog);
     expect(onClose).not.toHaveBeenCalled();
 
-    now = 1_400;
-    await vi.advanceTimersByTimeAsync(350);
+    now = 1_600;
+    await vi.advanceTimersByTimeAsync(600);
+    fireEvent.mouseDown(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+
+    now = 1_900;
+    await vi.advanceTimersByTimeAsync(300);
     fireEvent.mouseDown(dialog);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -123,7 +128,7 @@ describe('AppSearchDialog', () => {
     const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
     expect(screen.getByRole('heading', { name: 'Search teams, players, actions, and help' }).className).toContain('sr-only');
 
-    await vi.advanceTimersByTimeAsync(350);
+    await vi.advanceTimersByTimeAsync(800);
     fireEvent.mouseDown(dialog);
     expect(onClose).toHaveBeenCalledTimes(1);
   });

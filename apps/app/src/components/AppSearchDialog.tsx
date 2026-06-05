@@ -23,7 +23,7 @@ type AppSearchDialogProps = {
   onClose: () => void;
 };
 
-const backdropCloseGuardMs = 300;
+const backdropCloseGuardMs = 750;
 
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
