@@ -2936,6 +2936,22 @@
             button.hidden = !canExposePublicFanFeed(team, games);
         }
 
+        function escapeIcsText(value) {
+            return String(value || '')
+                .replace(/\\/g, '\\\\')
+                .replace(/;/g, '\\;')
+                .replace(/,/g, '\\,')
+                .replace(/\r?\n/g, '\\n');
+        }
+
+        function getIcsEventSummary(event, teamName) {
+            const isPractice = event?.type === 'practice' || event?.isPractice;
+            if (isPractice) {
+                return event.title?.trim() || 'Practice';
+            }
+            return `${teamName} vs ${event.opponent || 'TBD'}`;
+        }
+
         function buildIcs(games) {
             const teamName = currentTeam?.name || 'Team';
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
@@ -2945,7 +2961,7 @@
                 const start = formatIcsDate(date);
                 const endDate = new Date(date.getTime() + 60 * 60 * 1000); // default 1 hour
                 const end = formatIcsDate(endDate);
-                const summary = `${teamName} vs ${game.opponent || 'TBD'}`;
+                const summary = getIcsEventSummary(game, teamName);
                 const uid = `${game.id || summary}-${currentTeamId}@gameflow`;
                 lines.push(
                     'BEGIN:VEVENT',
@@ -2953,9 +2969,9 @@
                     `DTSTAMP:${formatIcsDate(new Date())}`,
                     `DTSTART:${start}`,
                     `DTEND:${end}`,
-                    `SUMMARY:${summary}`,
-                    `LOCATION:${(game.location || 'TBD').replace(/,/g, '\\,')}`,
-                    `DESCRIPTION:Status: ${game.status || 'scheduled'}`,
+                    `SUMMARY:${escapeIcsText(summary)}`,
+                    `LOCATION:${escapeIcsText(game.location || 'TBD')}`,
+                    `DESCRIPTION:${escapeIcsText(`Status: ${game.status || 'scheduled'}`)}`,
                     'END:VEVENT'
                 );
             });
