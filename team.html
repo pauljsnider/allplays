@@ -2936,6 +2936,14 @@
             button.hidden = !canExposePublicFanFeed(team, games);
         }
 
+        function escapeIcsText(value) {
+            return String(value || '')
+                .replace(/\\/g, '\\\\')
+                .replace(/;/g, '\\;')
+                .replace(/,/g, '\\,')
+                .replace(/\r?\n/g, '\\n');
+        }
+
         function getIcsEventSummary(event, teamName) {
             const isPractice = event?.type === 'practice' || event?.isPractice;
             if (isPractice) {
@@ -2961,9 +2969,9 @@
                     `DTSTAMP:${formatIcsDate(new Date())}`,
                     `DTSTART:${start}`,
                     `DTEND:${end}`,
-                    `SUMMARY:${summary}`,
-                    `LOCATION:${(game.location || 'TBD').replace(/,/g, '\\,')}`,
-                    `DESCRIPTION:Status: ${game.status || 'scheduled'}`,
+                    `SUMMARY:${escapeIcsText(summary)}`,
+                    `LOCATION:${escapeIcsText(game.location || 'TBD')}`,
+                    `DESCRIPTION:${escapeIcsText(`Status: ${game.status || 'scheduled'}`)}`,
                     'END:VEVENT'
                 );
             });

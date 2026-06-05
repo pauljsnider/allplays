@@ -29,6 +29,7 @@ function extractFunction(source, name) {
 function createTeamIcsHooks() {
     const source = readTeamPageSource();
     const formatIcsDateSource = extractFunction(source, 'formatIcsDate');
+    const escapeIcsTextSource = extractFunction(source, 'escapeIcsText');
     const getIcsEventSummarySource = extractFunction(source, 'getIcsEventSummary');
     const buildIcsSource = extractFunction(source, 'buildIcs');
 
@@ -36,9 +37,10 @@ function createTeamIcsHooks() {
 let currentTeam = { name: 'Wildcats' };
 let currentTeamId = 'team-1';
 ${formatIcsDateSource}
+${escapeIcsTextSource}
 ${getIcsEventSummarySource}
 ${buildIcsSource}
-return { buildIcs, getIcsEventSummary };
+return { buildIcs, getIcsEventSummary, escapeIcsText };
 `)();
 }
 
@@ -70,5 +72,25 @@ describe('team ICS export', () => {
         expect(ics).toContain('SUMMARY:Pitching practice');
         expect(ics).not.toContain('SUMMARY:Wildcats vs TBD');
         expect(ics).toContain('SUMMARY:Wildcats vs Lions');
+    });
+
+    it('escapes ICS control characters in practice titles', () => {
+        const { buildIcs, escapeIcsText } = createTeamIcsHooks();
+        const title = 'Pitching\\Practice;Plan, A\nLOCATION:Injected';
+        const ics = buildIcs([
+            {
+                id: 'practice-2',
+                type: 'practice',
+                title,
+                opponent: null,
+                date: new Date('2026-06-12T18:00:00Z'),
+                location: 'Main Field',
+                status: 'scheduled'
+            }
+        ]);
+
+        expect(escapeIcsText(title)).toBe('Pitching\\\\Practice\\;Plan\\, A\\nLOCATION:Injected');
+        expect(ics).toContain('SUMMARY:Pitching\\\\Practice\\;Plan\\, A\\nLOCATION:Injected');
+        expect(ics).not.toContain('\r\nLOCATION:Injected\r\nLOCATION:Main Field');
     });
 });
