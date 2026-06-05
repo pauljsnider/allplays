@@ -109,6 +109,54 @@ describe('parent scope normalization', () => {
         });
     });
 
+    it('preserves legacy parent links when roster reads are blocked during key repair', async () => {
+        const getTeam = vi.fn(async (teamId) => ({
+            'team-active': { id: 'team-active', name: 'Active Team', active: true }
+        }[teamId] || null));
+        const getDoc = vi.fn(async (ref) => {
+            if (ref.path === 'teams/team-active/players/player-blocked') {
+                const error = new Error('blocked');
+                error.code = 'permission-denied';
+                throw error;
+            }
+            return makeSnap('missing', null);
+        });
+        const doc = vi.fn((_db, collectionPath, playerId) => ({ path: `${collectionPath}/${playerId}` }));
+        const normalizeParentScopeLinks = buildNormalizeParentScopeLinks({
+            getTeam,
+            getDoc,
+            doc,
+            db: {},
+            isTeamActive: (team) => team?.active !== false
+        });
+
+        const result = await normalizeParentScopeLinks([
+            {
+                teamId: 'team-active',
+                playerId: 'player-blocked',
+                teamName: 'Legacy Team',
+                playerName: 'Legacy Player',
+                playerNumber: '12',
+                playerPhotoUrl: 'https://example.com/player.png'
+            }
+        ]);
+
+        expect(result).toEqual({
+            activeLinks: [
+                {
+                    teamId: 'team-active',
+                    playerId: 'player-blocked',
+                    teamName: 'Active Team',
+                    playerName: 'Legacy Player',
+                    playerNumber: '12',
+                    playerPhotoUrl: 'https://example.com/player.png'
+                }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-blocked']
+        });
+    });
+
     it('backfills cleaned parent access scope fields instead of raw parentOf links', async () => {
         const getUserProfile = vi.fn().mockResolvedValue({
             parentOf: [

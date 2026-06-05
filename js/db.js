@@ -117,13 +117,26 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
                 playerSnap = await getDoc(doc(db, `teams/${teamId}/players`, playerId));
             } catch (error) {
                 if (error?.code === 'permission-denied') {
-                    console.warn('[parent-scope] Skipping player blocked by roster permissions:', error);
-                    playerCache.set(playerKey, null);
-                    continue;
+                    console.warn('[parent-scope] Preserving legacy player link while roster permissions are being repaired:', error);
+                    playerSnap = { blockedByPermissions: true };
+                } else {
+                    throw error;
                 }
-                throw error;
             }
             playerCache.set(playerKey, playerSnap);
+        }
+
+        if (playerSnap?.blockedByPermissions) {
+            activeLinks.push({
+                ...link,
+                teamId,
+                playerId,
+                teamName: team.name || link.teamName || '',
+                playerName: link.playerName || '',
+                playerNumber: link.playerNumber ?? '',
+                playerPhotoUrl: link.playerPhotoUrl || null
+            });
+            continue;
         }
 
         if (!playerSnap?.exists()) continue;
