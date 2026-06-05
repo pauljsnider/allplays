@@ -8,7 +8,7 @@ function appUrl(baseURL, hashPath) {
 }
 
 async function openPrivateAi(page) {
-    const trigger = page.getByRole('button', { name: 'Private AI' }).first();
+    const trigger = page.getByTitle('Private AI').first();
 
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
@@ -178,7 +178,7 @@ test.describe('private AI chat', () => {
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await page.getByTitle('Private AI').click();
+        await page.getByTitle('Private AI').first().click();
         await expect(page).toHaveURL(/#\/ai$/);
         await expect(page.getByRole('heading', { name: 'Ask ALL PLAYS' })).toBeVisible();
         await expect(page.locator('.chat-message-html').getByText('I can look up your ALL PLAYS schedule and messages.')).toBeVisible();

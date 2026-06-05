@@ -615,7 +615,7 @@ function ChatWindow({
     return () => {
       cancelled = true;
     };
-  }, [auth.user, teamId]);
+  }, [auth.user?.uid, teamId]);
 
   useEffect(() => {
     if (!team || !auth.user) return undefined;

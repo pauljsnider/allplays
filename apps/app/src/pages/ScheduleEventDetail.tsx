@@ -81,6 +81,13 @@ import type { AuthState } from '../lib/types';
 type EventDetailSectionId = 'availability' | 'rideshare' | 'assignments' | 'game';
 type GameReportSectionId = 'summary' | 'players' | 'plays' | 'opponent' | 'insights' | 'media';
 
+function cloneScheduleAssignments(assignments: ScheduleAssignment[] = []) {
+  return assignments.map((assignment) => ({
+    ...assignment,
+    claim: assignment.claim ? { ...assignment.claim } : null
+  }));
+}
+
 const gameReportSections: Array<{ id: GameReportSectionId; label: string }> = [
   { id: 'summary', label: 'Summary' },
   { id: 'players', label: 'Players' },
@@ -1534,7 +1541,7 @@ function AssignmentsSection({ auth, event, onAssignmentsChanged }: {
   event: ParentScheduleEvent;
   onAssignmentsChanged: (assignments: ScheduleAssignment[]) => void;
 }) {
-  const [assignments, setAssignments] = useState<ScheduleAssignment[]>(event.assignments);
+  const [assignments, setAssignments] = useState<ScheduleAssignment[]>(() => cloneScheduleAssignments(event.assignments));
   const [loading, setLoading] = useState(true);
   const [busyRole, setBusyRole] = useState<string | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
@@ -1544,12 +1551,12 @@ function AssignmentsSection({ auth, event, onAssignmentsChanged }: {
     if (showLoading) setLoading(true);
     setAssignmentError(null);
     try {
-      const loaded = await loadParentScheduleAssignments(event);
+      const loaded = cloneScheduleAssignments(await loadParentScheduleAssignments(event));
       setAssignments(loaded);
       onAssignmentsChanged(loaded);
     } catch (error: any) {
       setAssignmentError(error?.message || 'Unable to load assignments.');
-      setAssignments(event.assignments);
+      setAssignments(cloneScheduleAssignments(event.assignments));
     } finally {
       if (showLoading) setLoading(false);
     }

@@ -109,6 +109,82 @@ function renderScheduleEventDetail() {
   );
 }
 
+describe('ScheduleEventDetail assignments', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('refreshes assignment cards after claim and release actions mutate the loaded array in place', async () => {
+    const assignments = [
+      { role: 'Snacks', value: '', claimable: true, claim: null },
+      { role: 'Drinks', value: '', claimable: true, claim: { id: 'Drinks', claimedByUserId: 'coach-1', claimedByName: 'Coach Carter' } },
+      { role: 'Setup', value: '', claimable: true, claim: { id: 'Setup', claimedByUserId: 'other-parent', claimedByName: 'Taylor' } },
+      { role: 'Scorebook', value: 'Jamie', claimable: false, claim: null }
+    ];
+
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleAssignments.mockImplementation(async () => assignments);
+    scheduleServiceMocks.claimParentScheduleAssignmentSlot.mockImplementation(async (_event, user, role) => {
+      const assignment = assignments.find((item) => item.role === role);
+      if (!assignment) throw new Error('Assignment not found');
+      assignment.claim = { id: role, claimedByUserId: user.uid, claimedByName: user.displayName || user.email || 'Parent' };
+    });
+    scheduleServiceMocks.releaseParentScheduleAssignmentClaim.mockImplementation(async (_event, role) => {
+      const assignment = assignments.find((item) => item.role === role);
+      if (assignment) assignment.claim = null;
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Assignments' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Assignments' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
+    });
+
+    const snacksCard = screen.getByText('Snacks').closest('article');
+    expect(snacksCard).toBeTruthy();
+    fireEvent.click(within(snacksCard as HTMLElement).getByRole('button', { name: 'Sign up' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Snacks claimed.')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('4 posted · 0 open')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(within(snacksCard as HTMLElement).getByText('You')).toBeTruthy();
+    });
+
+    fireEvent.click(within(snacksCard as HTMLElement).getByRole('button', { name: 'Release' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Snacks released.')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(within(snacksCard as HTMLElement).getByRole('button', { name: 'Sign up' })).toBeTruthy();
+    });
+  });
+});
+
 describe('ScheduleEventDetail staff RSVP overrides', () => {
   beforeEach(() => {
     vi.clearAllMocks();
