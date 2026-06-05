@@ -23,7 +23,7 @@ type AppSearchDialogProps = {
   onClose: () => void;
 };
 
-const backdropCloseGuardMs = 300;
+const backdropCloseGuardMs = 750;
 
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
@@ -37,7 +37,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [helpRoleFilter, setHelpRoleFilter] = useState<AppSearchHelpRoleFilter>('all');
   const searchRequestId = useRef(0);
-  const openedAtRef = useRef(0);
+  const openedAtRef = useRef(Date.now());
   const navigate = useNavigate();
 
   const results = useMemo(
@@ -49,7 +49,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     if (!open) return;
-    openedAtRef.current = Date.now();
     setQuery('');
     setPlayers([]);
     setPlayersError('');

@@ -1072,7 +1072,9 @@ test('schedule failure states show errors without trapping users in spinners', a
     });
     await errorPage.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    await errorPage.getByRole('button', { name: 'Rideshare', exact: true }).click();
+    const rideshareTab = errorPage.getByRole('button', { name: 'Rideshare', exact: true });
+    await waitForScheduleRoute(errorPage, rideshareTab);
+    await rideshareTab.click();
     await expect(errorPage.getByText('Rideshare unavailable.')).toBeVisible({ timeout: 15000 });
     await expect(errorPage.getByText('Loading rideshare offers')).toHaveCount(0);
 
