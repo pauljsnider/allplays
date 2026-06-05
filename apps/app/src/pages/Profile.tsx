@@ -270,7 +270,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         console.warn('[profile] Unable to load notification preferences:', error);
         if (!cancelled) {
           setNotificationPreferences(emptyPreferences);
-          setLoadedNotificationTeamId('');
+          setLoadedNotificationTeamId(selectedTeamId);
           setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
         }
       }
