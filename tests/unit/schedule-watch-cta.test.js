@@ -56,11 +56,13 @@ describe('schedule watch CTA resolver', () => {
 
         expect(parentDashboard).toContain("import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';");
         expect(parentDashboard).toContain('const watchCta = resolveScheduleWatchCta(game);');
+        expect(parentDashboard).toContain('liveStatus: game.liveStatus || null,');
         expect(parentDashboard).toContain('View Details');
 
         expect(familyPage).toContain("import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';");
         expect(familyPage).toContain('const watchCta = resolveScheduleWatchCta(ev);');
         expect(familyPage).toContain('const watchCta = resolveScheduleWatchCta(game);');
+        expect(familyPage).toContain('liveStatus: game.liveStatus || null,');
         expect(familyPage).toContain('View Game Details');
         expect(familyPage).toContain('>\n                  View\n');
     });
