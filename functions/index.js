@@ -236,7 +236,8 @@ function getRegistrationCheckoutAttemptToken(registration = {}) {
 
 function registrationCheckoutAttemptMatches(registration = {}, input = {}) {
   const registrationToken = getRegistrationCheckoutAttemptToken(registration);
-  return !registrationToken || registrationToken === input.checkoutAttemptToken;
+  const inputToken = normalizeCheckoutAttemptToken(input.checkoutAttemptToken);
+  return Boolean(registrationToken && inputToken && registrationToken === inputToken);
 }
 
 function registrationCheckoutAttemptStrictlyMatches(registration = {}, input = {}) {

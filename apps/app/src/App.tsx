@@ -146,7 +146,13 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
     return <Navigate to="/auth" replace />;
   }
 
-  return <AppShell auth={auth}>{children}</AppShell>;
+  return (
+    <AppShell auth={auth}>
+      <Suspense fallback={<ProtectedRouteLoadingState />}>
+        {children}
+      </Suspense>
+    </AppShell>
+  );
 }
 
 function LoadingScreen() {
@@ -156,6 +162,17 @@ function LoadingScreen() {
         <img src="./logo_small.png" alt="" className="mx-auto h-12 w-12 rounded-xl" />
         <div className="mt-3 text-lg font-black text-gray-950">Loading ALL PLAYS</div>
         <div className="mt-1 text-sm font-semibold text-gray-500">Checking your account...</div>
+      </div>
+    </div>
+  );
+}
+
+function ProtectedRouteLoadingState() {
+  return (
+    <div className="app-card flex min-h-[240px] items-center justify-center p-5 text-center">
+      <div>
+        <div className="text-base font-black text-gray-950">Loading page</div>
+        <div className="mt-1 text-sm font-semibold text-gray-500">Preparing your ALL PLAYS workspace...</div>
       </div>
     </div>
   );

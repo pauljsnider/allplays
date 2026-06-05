@@ -22,6 +22,14 @@ describe('registration payment reminder helpers', () => {
         })).toBe('https://allplays.ai/registration.html?teamId=team_123&formId=form_456&registrationId=reg_789&retryPayment=1&checkoutAttemptToken=attempt-token-123456');
     });
 
+    it('does not build a retry URL when the checkout attempt token is missing', () => {
+        expect(buildRegistrationPaymentRetryUrl('https://allplays.ai/', {
+            teamId: 'team_123',
+            formId: 'form_456',
+            registrationId: 'reg_789'
+        })).toBe('');
+    });
+
     it('builds failed payment reminder content with the program, amount due, and retry link', () => {
         const message = buildRegistrationPaymentReminderMessage({
             programName: 'Summer Skills Camp',

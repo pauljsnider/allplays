@@ -9,17 +9,18 @@ function normalizeFirestoreId(value, label) {
 }
 
 function buildRegistrationPaymentRetryUrl(appUrl, input = {}) {
+  const checkoutAttemptToken = String(input.checkoutAttemptToken || '').trim();
+  if (!checkoutAttemptToken) {
+    return '';
+  }
   const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
   const params = new URLSearchParams({
     teamId: normalizeFirestoreId(input.teamId, 'teamId'),
     formId: normalizeFirestoreId(input.formId, 'formId'),
     registrationId: normalizeFirestoreId(input.registrationId, 'registrationId'),
-    retryPayment: '1'
+    retryPayment: '1',
+    checkoutAttemptToken
   });
-  const checkoutAttemptToken = String(input.checkoutAttemptToken || '').trim();
-  if (checkoutAttemptToken) {
-    params.set('checkoutAttemptToken', checkoutAttemptToken);
-  }
   return `${baseUrl}/registration.html?${params.toString()}`;
 }
 

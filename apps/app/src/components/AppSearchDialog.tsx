@@ -23,6 +23,8 @@ type AppSearchDialogProps = {
   onClose: () => void;
 };
 
+const backdropCloseGuardMs = 300;
+
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
   const [baseTeams, setBaseTeams] = useState<AppSearchTeam[]>([]);
@@ -35,6 +37,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [helpRoleFilter, setHelpRoleFilter] = useState<AppSearchHelpRoleFilter>('all');
   const searchRequestId = useRef(0);
+  const openedAtRef = useRef(0);
   const navigate = useNavigate();
 
   const results = useMemo(
@@ -46,6 +49,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     if (!open) return;
+    openedAtRef.current = Date.now();
     setQuery('');
     setPlayers([]);
     setPlayersError('');
@@ -199,7 +203,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       aria-labelledby="app-search-dialog-title"
       onKeyDown={onKeyDown}
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        if (event.target !== event.currentTarget) return;
+        if (Date.now() - openedAtRef.current < backdropCloseGuardMs) return;
+        onClose();
       }}
     >
       <div className="app-search-panel mx-auto flex w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-app-lg" data-testid="app-search-panel">

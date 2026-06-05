@@ -731,6 +731,7 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain('normalizeCheckoutAttemptToken');
         expect(functionsSource).toContain('registrationCheckoutAttemptMatches(registration, input)');
         expect(functionsSource).toContain('registrationCheckoutAttemptStrictlyMatches(registration, input)');
+        expect(functionsSource).toContain('return Boolean(registrationToken && inputToken && registrationToken === inputToken);');
         expect(functionsSource).toContain('Registration checkout attempt does not match.');
         expect(functionsSource).toContain('Registration checkout attempt is required to release this reservation.');
         expect(functionsSource).toContain('checkoutAttemptToken: input.checkoutAttemptToken ||');
@@ -756,6 +757,15 @@ describe('public registration flow', () => {
         expect(preCheckoutGuardIndex).toBeGreaterThanOrEqual(0);
         expect(relaxedOpenCheckoutGuardIndex).toBeGreaterThan(preCheckoutGuardIndex);
         expect(selectedOptionIndex).toBeGreaterThan(relaxedOpenCheckoutGuardIndex);
+    });
+
+    it('derives checkout attempt requirements from the stored form in rules', () => {
+        const rules = fs.readFileSync('firestore.rules', 'utf8');
+
+        expect(rules).toContain("data.paymentSettings.onlineCheckoutEnabled == get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false)");
+        expect(rules).toContain("get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) == true");
+        expect(rules).toContain("get(registrationFormPath(teamId, formId)).data.get('paymentSettings', {}).get('onlineCheckoutEnabled', false) != true");
+        expect(rules).toContain("data.checkoutAttemptToken is string");
     });
 
     it('does not write cancellation state before returning for paid registrations', () => {
