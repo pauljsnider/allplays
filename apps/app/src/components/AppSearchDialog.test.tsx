@@ -73,6 +73,7 @@ const auth: AuthState = {
 describe('AppSearchDialog', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     cleanup();
   });
 
@@ -84,9 +85,11 @@ describe('AppSearchDialog', () => {
     preloadSearchRouteMock.mockImplementation(async () => true);
   });
 
-  it('ignores the opening tap on the backdrop but still closes after the guard window', async () => {
+  it('captures the open time on mount so the opening tap cannot immediately close the backdrop', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
+    let now = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
 
     render(
       <MemoryRouter>
@@ -98,6 +101,7 @@ describe('AppSearchDialog', () => {
     fireEvent.mouseDown(dialog);
     expect(onClose).not.toHaveBeenCalled();
 
+    now = 1_400;
     await vi.advanceTimersByTimeAsync(350);
     fireEvent.mouseDown(dialog);
     expect(onClose).toHaveBeenCalledTimes(1);
