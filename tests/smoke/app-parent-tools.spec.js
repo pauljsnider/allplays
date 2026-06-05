@@ -78,6 +78,10 @@ async function mockParentToolsModules(page) {
                     window.__sharedUrls.push(input);
                     return 'shared';
                 }
+                export async function exportCalendarIcsFile(filename, text) {
+                    window.__downloads.push({ filename, text });
+                    return 'downloaded';
+                }
             `
         });
     });
