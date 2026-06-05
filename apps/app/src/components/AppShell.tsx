@@ -126,6 +126,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   type="button"
                   className={`ghost-button !h-10 !min-h-10 ${isAiRoute ? '!border-primary-200 !bg-primary-50 !text-primary-700' : ''}`}
                   onClick={() => navigate('/ai')}
+                  aria-label="Private AI"
                   title="Private AI"
                 >
                   <Sparkles className="h-5 w-5" aria-hidden="true" />
