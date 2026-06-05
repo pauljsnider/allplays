@@ -9,6 +9,13 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+async function waitForAuthRoute(page, readyLocator) {
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+        await expect(readyLocator).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 30000 });
+}
+
 async function mockAppModules(page, { user = null, emailLink = false } = {}) {
     await page.addInitScript(({ mockUser, mockEmailLink }) => {
         window.__mockAuthState = {
@@ -486,6 +493,7 @@ test('signed-in invite and account action routes process existing site flows', a
     ]);
 
     await page.goto(appUrl(baseURL, '/reset-password?mode=resetPassword&oobCode=valid-code'), { waitUntil: 'domcontentloaded' });
+    await waitForAuthRoute(page, page.locator('input[placeholder="New password"]'));
     await expect(page.getByRole('heading', { name: 'Reset password' })).toBeVisible();
     await page.locator('input[placeholder="New password"]').fill('better-password');
     await page.locator('input[placeholder="Confirm password"]').fill('better-password');

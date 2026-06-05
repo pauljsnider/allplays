@@ -9,6 +9,13 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+async function waitForScheduleRoute(page, readyLocator) {
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(readyLocator).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
+}
+
 async function mockScheduleModules(page, options = {}) {
     const gameDate = options.gameDate || '2030-05-28T18:00:00Z';
     const practiceDate = options.practiceDate || '2030-05-29T19:00:00Z';
@@ -630,7 +637,7 @@ test('app schedule loads agenda filters, player select, calendar, export, and ga
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'Games, practices, RSVP' })).toBeVisible();
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Games, practices, RSVP' }));
     await expect(page.locator('.schedule-header').getByText('RSVP Needed', { exact: true })).toBeVisible();
     await expect(page.getByText('Family agenda')).toBeVisible();
     await expect(page.getByText('Parent queue')).toBeVisible();
@@ -677,7 +684,9 @@ test('calendar day selection opens a visible event picker for multiple events', 
     await mockScheduleModules(page, { practiceDate: '2030-05-28T19:00:00Z' });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Calendar', exact: true }).click();
+    const calendarToggle = page.getByRole('button', { name: 'Calendar', exact: true });
+    await expect(calendarToggle).toBeVisible();
+    await calendarToggle.click();
     await page.getByRole('button', { name: /May 2030 28, 2 events/ }).click();
 
     const picker = page.getByRole('dialog', { name: /Tuesday, May 28/ });
@@ -715,6 +724,7 @@ test('web schedule desktop layout stays dense and keeps schedule workflows visib
     await mockScheduleModules(page, { extraUpcomingEvents: 4 });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Games, practices, RSVP' }));
     await expect(page.locator('.schedule-web-sidebar')).toBeVisible();
     await expect(page.getByText('Family agenda')).toBeVisible();
     await expect(page.getByText('Parent queue')).toBeVisible();
@@ -768,7 +778,8 @@ test('Android-sized schedule smoke covers practice packet and More workflow with
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'Practice' })).toBeVisible();
+    const practiceHeading = page.getByRole('heading', { name: 'Practice' });
+    await waitForScheduleRoute(page, practiceHeading);
     await expect(page.getByRole('button', { name: 'Practice packet ready, review packet' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Practice packet ready, review packet' }).click();
@@ -1049,10 +1060,12 @@ test('schedule failure states show errors without trapping users in spinners', a
     await mockScheduleModules(page, { scheduleLoadError: 'Schedule unavailable.' });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByText('Schedule unavailable.')).toBeVisible({ timeout: 15000 });
+    const scheduleError = page.getByText('Schedule unavailable.');
+    await waitForScheduleRoute(page, scheduleError);
     await expect(page.getByText('Loading schedule')).toHaveCount(0);
 
     const errorPage = await page.context().newPage();
+    await errorPage.setViewportSize({ width: 390, height: 844 });
     await mockScheduleModules(errorPage, {
         rideshareLoadError: 'Rideshare unavailable.',
         assignmentClaimError: 'Slot already taken.'

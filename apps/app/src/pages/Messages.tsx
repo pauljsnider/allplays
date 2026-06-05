@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
@@ -417,6 +417,11 @@ function ChatWindow({
   const stickToLatestRef = useRef(true);
   const programmaticScrollRef = useRef(false);
   const mountedRef = useRef(true);
+  const scheduledScrollFrameRef = useRef<number | null>(null);
+  const scheduledScrollBehaviorRef = useRef<ScrollBehavior>('auto');
+  const scheduledScrollForceRef = useRef(false);
+  const scheduledScrollTimeoutsRef = useRef<number[]>([]);
+  const lastObservedViewportSignatureRef = useRef('');
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
   const selectedConversation = useMemo(() => (
     conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null
@@ -474,8 +479,14 @@ function ChatWindow({
     const container = messagesRef.current;
     if (!container) return;
 
+    const nextHeight = Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0);
+    lastObservedViewportSignatureRef.current = buildChatViewportSignature(
+      nextHeight,
+      container.clientHeight,
+      container.scrollTop
+    );
     programmaticScrollRef.current = true;
-    container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    container.scrollTop = Math.max(0, nextHeight - container.clientHeight);
     messagesEndRef.current?.scrollIntoView({ block: 'end', behavior });
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);
@@ -484,15 +495,76 @@ function ChatWindow({
     }, 80);
   }, []);
 
-  const scheduleScrollToLatest = useCallback((behavior: ScrollBehavior = 'auto') => {
-    window.requestAnimationFrame(() => {
-      scrollToLatest(behavior);
-      window.requestAnimationFrame(() => scrollToLatest(behavior));
-      window.setTimeout(() => scrollToLatest(behavior), 120);
-      window.setTimeout(() => scrollToLatest(behavior), 300);
-      window.setTimeout(() => scrollToLatest(behavior), 700);
-    });
+  const clearScheduledScrollTimeouts = useCallback(() => {
+    scheduledScrollTimeoutsRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    scheduledScrollTimeoutsRef.current = [];
+  }, []);
+
+  const maybeScrollToLatest = useCallback((behavior: ScrollBehavior = 'auto', force = false) => {
+    if (!mountedRef.current) return false;
+    const container = messagesRef.current;
+    if (!container) return false;
+
+    const nextHeight = Math.max(
+      container.scrollHeight,
+      messagesContentRef.current?.scrollHeight || 0
+    );
+    const distanceFromBottom = Math.max(0, nextHeight - container.clientHeight - container.scrollTop);
+    if (!force && distanceFromBottom <= 4) {
+      lastObservedViewportSignatureRef.current = buildChatViewportSignature(nextHeight, container.clientHeight, container.scrollTop);
+      return false;
+    }
+
+    scrollToLatest(behavior);
+    return true;
   }, [scrollToLatest]);
+
+  const clearScheduledScrollToLatest = useCallback(() => {
+    if (scheduledScrollFrameRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(scheduledScrollFrameRef.current);
+    }
+    scheduledScrollFrameRef.current = null;
+    scheduledScrollBehaviorRef.current = 'auto';
+    scheduledScrollForceRef.current = false;
+    clearScheduledScrollTimeouts();
+  }, [clearScheduledScrollTimeouts]);
+
+  const scheduleScrollToLatest = useCallback((behavior: ScrollBehavior = 'auto', force = false) => {
+    if (!mountedRef.current) return;
+    clearScheduledScrollTimeouts();
+    if (behavior === 'smooth' || scheduledScrollBehaviorRef.current !== 'smooth') {
+      scheduledScrollBehaviorRef.current = behavior;
+    }
+    if (force) {
+      scheduledScrollForceRef.current = true;
+    }
+    if (scheduledScrollFrameRef.current !== null) return;
+
+    scheduledScrollFrameRef.current = window.requestAnimationFrame(() => {
+      scheduledScrollFrameRef.current = window.requestAnimationFrame(() => {
+        scheduledScrollFrameRef.current = null;
+        const nextBehavior = scheduledScrollBehaviorRef.current;
+        const nextForce = scheduledScrollForceRef.current;
+        scheduledScrollBehaviorRef.current = 'auto';
+        scheduledScrollForceRef.current = false;
+        maybeScrollToLatest(nextBehavior, nextForce);
+
+        [120, 300, 700, 1500, 2500].forEach((delay) => {
+          let timerId = 0;
+          timerId = window.setTimeout(() => {
+            scheduledScrollTimeoutsRef.current = scheduledScrollTimeoutsRef.current.filter((id) => id !== timerId);
+            if (!mountedRef.current) return;
+            const container = messagesRef.current;
+            if (!container) return;
+            if (stickToLatestRef.current || pendingScrollRef.current || isNearBottom(container)) {
+              maybeScrollToLatest('auto');
+            }
+          }, delay);
+          scheduledScrollTimeoutsRef.current.push(timerId);
+        });
+      });
+    });
+  }, [clearScheduledScrollTimeouts, maybeScrollToLatest]);
 
   useEffect(() => {
     let cancelled = false;
@@ -593,11 +665,12 @@ function ChatWindow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, selectedConversationId, team, teamId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!pendingScrollRef.current) return;
+    scrollToLatest('auto');
     pendingScrollRef.current = false;
     scheduleScrollToLatest('auto');
-  }, [messages.length, aiThinking, scheduleScrollToLatest, selectedConversationId]);
+  }, [messages.length, aiThinking, scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -605,7 +678,18 @@ function ChatWindow({
     if (!container || !content || typeof ResizeObserver === 'undefined') return undefined;
 
     const observer = new ResizeObserver(() => {
-      if (stickToLatestRef.current || pendingScrollRef.current || isNearBottom(container)) {
+      const nextHeight = Math.max(container.scrollHeight, content.scrollHeight);
+      const distanceFromBottom = Math.max(0, nextHeight - container.clientHeight - container.scrollTop);
+      const nextSignature = buildChatViewportSignature(nextHeight, container.clientHeight, container.scrollTop);
+      if (nextSignature === lastObservedViewportSignatureRef.current) return;
+      lastObservedViewportSignatureRef.current = nextSignature;
+      if (stickToLatestRef.current) {
+        if (distanceFromBottom > 4) {
+          scrollToLatest('auto');
+        }
+        return;
+      }
+      if (pendingScrollRef.current || isNearBottom(container)) {
         scheduleScrollToLatest('auto');
       }
     });
@@ -613,7 +697,7 @@ function ChatWindow({
     observer.observe(container);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [scheduleScrollToLatest, selectedConversationId]);
+  }, [scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -664,14 +748,16 @@ function ChatWindow({
 
   useEffect(() => {
     mountedRef.current = true;
+    lastObservedViewportSignatureRef.current = '';
 
     return () => {
       mountedRef.current = false;
+      clearScheduledScrollToLatest();
       filePreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
       stopVoiceCapture();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [clearScheduledScrollToLatest]);
 
   const reloadConversations = async () => {
     if (!auth.user || !team) return;
@@ -1495,6 +1581,11 @@ function ChatWindow({
       ) : null}
     </div>
   );
+}
+
+export function buildChatViewportSignature(scrollHeight: number, clientHeight: number, scrollTop: number) {
+  const distanceFromBottom = Math.max(0, scrollHeight - clientHeight - scrollTop);
+  return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
 }
 
 function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {
