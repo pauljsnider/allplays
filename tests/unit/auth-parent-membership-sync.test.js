@@ -28,11 +28,12 @@ const dbMocks = vi.hoisted(() => ({
     getUserByEmail: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
-    listMyParentMembershipRequests: vi.fn()
+    listMyParentMembershipRequests: vi.fn(),
+    normalizeParentScopeLinks: vi.fn()
 }));
 
 vi.mock('../../js/firebase.js?v=17', () => firebaseMocks);
-vi.mock('../../js/db.js?v=36', () => dbMocks);
+vi.mock('../../js/db.js?v=37', () => dbMocks);
 vi.mock('../../js/signup-flow.js?v=3', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
@@ -47,6 +48,11 @@ describe('auth parent membership sync', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         firebaseMocks.auth.currentUser = null;
+        dbMocks.normalizeParentScopeLinks.mockResolvedValue({
+            activeLinks: [],
+            parentTeamIds: [],
+            parentPlayerKeys: []
+        });
     });
 
     it('preserves team media upload grants on the signed-in user profile', async () => {
@@ -64,6 +70,11 @@ describe('auth parent membership sync', () => {
             mediaUploadTeamIds: ['legacy-team', null]
         });
         dbMocks.listMyParentMembershipRequests.mockResolvedValue([]);
+        dbMocks.normalizeParentScopeLinks.mockResolvedValue({
+            activeLinks: [{ teamId: 'team-1', playerId: 'player-9' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-9']
+        });
         dbMocks.getUserTeams.mockResolvedValue([]);
         firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => {
             await handler(user);
@@ -80,6 +91,56 @@ describe('auth parent membership sync', () => {
         expect(canContributeTeamMedia(hydratedUser, { id: 'team-1', ownerId: 'coach-1', adminEmails: [] })).toBe(true);
         expect(canContributeTeamMedia(hydratedUser, { id: 'legacy-team', ownerId: 'coach-1', adminEmails: [] })).toBe(true);
         expect(canContributeTeamMedia(hydratedUser, { id: 'other-team', ownerId: 'coach-1', adminEmails: [] })).toBe(false);
+    });
+
+    it('filters parent scope migrations down to active team and player links', async () => {
+        const user = {
+            uid: 'parent-1',
+            email: 'parent@example.com'
+        };
+        const callback = vi.fn();
+
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            roles: ['parent'],
+            parentOf: [
+                { teamId: 'team-active', playerId: 'player-active' },
+                { teamId: 'team-inactive', playerId: 'player-inactive' },
+                { teamId: 'team-missing', playerId: 'player-missing' }
+            ],
+            parentTeamIds: ['team-active', 'team-inactive', 'team-missing'],
+            parentPlayerKeys: ['team-active::player-active', 'team-inactive::player-inactive', 'team-missing::player-missing']
+        });
+        dbMocks.listMyParentMembershipRequests.mockResolvedValue([]);
+        dbMocks.normalizeParentScopeLinks.mockResolvedValue({
+            activeLinks: [{ teamId: 'team-active', playerId: 'player-active' }],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-active']
+        });
+        dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        dbMocks.getUserTeams.mockResolvedValue([]);
+        firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => {
+            await handler(user);
+            return vi.fn();
+        });
+
+        await checkAuth(callback);
+
+        expect(dbMocks.normalizeParentScopeLinks).toHaveBeenCalledWith([
+            { teamId: 'team-active', playerId: 'player-active' },
+            { teamId: 'team-inactive', playerId: 'player-inactive' },
+            { teamId: 'team-missing', playerId: 'player-missing' }
+        ]);
+        expect(dbMocks.updateUserProfile).toHaveBeenCalledWith('parent-1', {
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-active']
+        });
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+            parentOf: expect.arrayContaining([
+                expect.objectContaining({ teamId: 'team-active', playerId: 'player-active' }),
+                expect.objectContaining({ teamId: 'team-inactive', playerId: 'player-inactive' })
+            ])
+        }));
     });
 
     it('self-syncs approved parent membership requests into the signed-in user profile', async () => {
@@ -107,6 +168,11 @@ describe('auth parent membership sync', () => {
             }
         ]);
         dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        dbMocks.normalizeParentScopeLinks.mockResolvedValue({
+            activeLinks: [{ teamId: 'team-1', playerId: 'player-9' }],
+            parentTeamIds: ['team-1'],
+            parentPlayerKeys: ['team-1::player-9']
+        });
         dbMocks.getUserTeams.mockResolvedValue([]);
         firebaseMocks.onAuthStateChanged.mockImplementation(async (_auth, handler) => {
             await handler(user);

@@ -17,24 +17,22 @@ function getFunctionSource(source, functionName) {
 }
 
 describe('parent dashboard active player filtering', () => {
-    it('verifies parent links against the player document before rendering children or schedules', () => {
+    it('normalizes parent scope links before backfilling access fields or rendering children', () => {
         const source = readDbSource();
         const dashboardSource = readParentDashboardSource();
         const functionSource = getFunctionSource(source, 'getParentDashboardData');
 
-        expect(functionSource).toContain('const expectedParentPlayerKeys = [...new Set(children');
+        expect(source).toContain('export async function normalizeParentScopeLinks(parentLinks = [])');
+        expect(functionSource).toContain('const normalizedParentScope = await normalizeParentScopeLinks(userProfile.parentOf);');
+        expect(functionSource).toContain('const children = normalizedParentScope.activeLinks;');
+        expect(functionSource).toContain('const normalizedParentTeamIds = normalizedParentScope.parentTeamIds;');
+        expect(functionSource).toContain('const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys;');
         expect(functionSource).toContain('await updateUserProfile(userId, {');
+        expect(functionSource).toContain('parentTeamIds: normalizedParentTeamIds');
         expect(functionSource).toContain('parentPlayerKeys: expectedParentPlayerKeys');
-        expect(functionSource.indexOf('await updateUserProfile(userId, {')).toBeLessThan(functionSource.indexOf('const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);'));
-        expect(functionSource).toContain('const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);');
-        expect(functionSource).toContain('playerSnap = await getDoc(playerRef);');
-        expect(functionSource).toContain("if (error?.code === 'permission-denied') {");
-        expect(functionSource).toContain('continue;');
-        expect(functionSource).toContain('if (!playerSnap.exists()) continue;');
-        expect(functionSource).toContain('if (player.active === false) continue;');
-        expect(functionSource).toContain('activeChildren.push(activeChild);');
-        expect(functionSource).toContain('childName: activeChild.playerName');
-        expect(functionSource).not.toContain('activeChildren.push(child);');
-        expect(dashboardSource).toContain("./js/db.js?v=36");
+        expect(functionSource).toContain('activeChildren.push(child);');
+        expect(functionSource).toContain('childName: child.playerName');
+        expect(functionSource).not.toContain('const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);');
+        expect(dashboardSource).toContain("./js/db.js?v=37");
     });
 });
