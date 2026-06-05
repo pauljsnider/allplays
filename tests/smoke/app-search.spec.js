@@ -428,7 +428,9 @@ test.describe('desktop app global search', () => {
         await page.keyboard.press('Enter');
         await expect(page).toHaveURL(/#\/teams$/);
 
-        await gotoAppRoute(page, baseURL, '/home');
+        await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Home' }).click();
+        await expect(page).toHaveURL(/#\/home$/);
+
         await openDesktopSearch(page);
         await page.keyboard.press('ArrowDown');
         await page.keyboard.press('ArrowDown');
