@@ -724,6 +724,7 @@ test('web schedule desktop layout stays dense and keeps schedule workflows visib
     await mockScheduleModules(page, { extraUpcomingEvents: 4 });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Games, practices, RSVP' }));
     await expect(page.locator('.schedule-web-sidebar')).toBeVisible();
     await expect(page.getByText('Family agenda')).toBeVisible();
     await expect(page.getByText('Parent queue')).toBeVisible();
