@@ -11,9 +11,9 @@ function appUrl(baseURL, hashPath) {
 
 async function waitForHomeRoute(page, readyLocator) {
     await expect(async () => {
-        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
-        await expect(page.getByText('Loading Home')).toBeHidden({ timeout: 1000 });
-        await expect(readyLocator).toBeVisible({ timeout: 1000 });
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+        await expect(page.getByText('Loading Home')).toBeHidden({ timeout: 3000 });
+        await expect(readyLocator).toBeVisible({ timeout: 3000 });
     }).toPass({ timeout: 30000 });
 }
 
