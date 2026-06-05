@@ -227,7 +227,13 @@ service cloud.firestore {
     }
 
     function hasRestrictedRosterFieldValues(data) {
-      let restrictedKeys = ['medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes', 'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone'];
+      let restrictedKeys = [
+        'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
+        'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
+        'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
+        'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
+      ];
       return data.keys().hasAny(restrictedKeys) ||
              hasRestrictedRosterMap(data, 'rosterFieldValues', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'customFields', restrictedKeys) ||
@@ -1278,9 +1284,10 @@ service cloud.firestore {
     }
 
     // Collection group rule for players - enables collectionGroup('players') queries.
-    // SECURITY: deny reads of any player doc that still contains sensitive fields.
+    // SECURITY: deny cross-team player collectionGroup reads. Team-scoped reads
+    // below enforce public-team visibility plus private-profile safeguards.
     match /{path=**}/players/{playerId} {
-      allow read: if !hasRestrictedRosterFieldValues(resource.data);
+      allow read: if false;
     }
     // Collection group rule for registrations - allows parent dashboard to query own applications.
     match /{path=**}/registrations/{registrationId} {
@@ -1421,7 +1428,8 @@ service cloud.firestore {
 	        // Team owner/admin/parent-of-player may still read legacy docs that contain sensitive fields.
 	        allow read: if isTeamOwnerOrAdmin(teamId) ||
 	                      isParentForPlayer(teamId, playerId) ||
-	                      !hasRestrictedRosterFieldValues(resource.data);
+	                      (get(/databases/$(database)/documents/teams/$(teamId)).data.isPublic == true &&
+	                       !hasRestrictedRosterFieldValues(resource.data));
 
 	        // Writes: never allow sensitive fields on the public player doc.
 	        // Coaches/admins can create/update/delete, but must keep the doc "public-safe".
@@ -1435,9 +1443,6 @@ service cloud.firestore {
 	        // - Public player doc: photo only
 	        allow update: if isParentForPlayer(teamId, playerId) &&
 	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoUrl', 'updatedAt']);
-	        allow update: if isParentForPlayer(teamId, playerId) &&
-	                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['parents']);
-
         // Private player profile (sensitive fields)
         match /private/profile {
           allow read: if isTeamOwnerOrAdmin(teamId) || isParentForPlayer(teamId, playerId);
@@ -1447,9 +1452,9 @@ service cloud.firestore {
 
           // Parents can only write specific sensitive fields for their linked player.
           allow create: if isParentForPlayer(teamId, playerId) &&
-                           request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt']);
+                           request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt']);
           allow update: if isParentForPlayer(teamId, playerId) &&
-                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt']);
+                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt']);
 
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }

@@ -1797,7 +1797,13 @@ export async function deleteTeam(teamId) {
 // Players
 function assertNoSensitivePlayerFields(playerData) {
     if (!playerData || typeof playerData !== 'object') return;
-    const forbidden = ['medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes', 'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone'];
+    const forbidden = [
+        'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
+        'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
+        'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
+        'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
+        'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
+    ];
     const present = forbidden.filter(k => Object.prototype.hasOwnProperty.call(playerData, k));
     const rosterFieldSources = ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'];
     rosterFieldSources.forEach((sourceKey) => {
@@ -3947,44 +3953,44 @@ export async function redeemParentInvite(userId, code) {
             throw new Error('Unable to link parent (profile). ' + (err?.message || ''));
         }
 
-        // 5. Update Player Doc (parents list)
+        // 5. Update private player profile (household contact list)
         try {
-            const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
+            const privateProfileRef = doc(db, `teams/${codeData.teamId}/players/${codeData.playerId}/private/profile`);
 
-            // Log current parents state for debugging
+            // Log current private parents state for debugging
             try {
-                const snap = await getDoc(playerRef);
+                const snap = await getDoc(privateProfileRef);
                 if (snap.exists()) {
                     const data = snap.data() || {};
-                    console.log('[redeemParentInvite] current player parents before update', {
+                    console.log('[redeemParentInvite] current private player parents before update', {
                         teamId: codeData.teamId,
                         playerId: codeData.playerId,
                         parents: data.parents || []
                     });
                 } else {
-                    console.log('[redeemParentInvite] player doc not found before parents update', {
+                    console.log('[redeemParentInvite] private player profile not found before parents update', {
                         teamId: codeData.teamId,
                         playerId: codeData.playerId
                     });
                 }
             } catch (innerErr) {
-                console.warn('[redeemParentInvite] failed to read player before update (non-fatal)', innerErr);
+                console.warn('[redeemParentInvite] failed to read private player profile before update (non-fatal)', innerErr);
             }
 
-            await updateDoc(playerRef, {
+            await setDoc(privateProfileRef, {
                 parents: arrayUnion({
                     userId,
                     email: codeData.email || 'pending', // Will be updated if email not provided in invite
                     relation: codeData.relation,
                     addedAt: Timestamp.now()
                 })
-            });
-            console.log('[redeemParentInvite] player parents updated');
+            }, { merge: true });
+            console.log('[redeemParentInvite] private player parents updated');
         } catch (err) {
             // If this fails (e.g., due to stricter live rules), we still
             // consider the parent linked via their user profile. Coaches
             // simply won't see the connection until rules are updated.
-            console.error('redeemParentInvite: error updating player parents (non-fatal)', {
+            console.error('redeemParentInvite: error updating private player parents (non-fatal)', {
                 message: err?.message,
                 code: err?.code,
                 name: err?.name
@@ -4092,13 +4098,13 @@ async function rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rol
 
     if (playerWasUpdated && teamId && playerId) {
         try {
-            const playerRef = doc(db, `teams/${teamId}/players`, playerId);
-            const playerSnap = await getDoc(playerRef);
+            const privateProfileRef = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
+            const playerSnap = await getDoc(privateProfileRef);
             if (playerSnap.exists()) {
                 const playerData = playerSnap.data() || {};
                 const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
                 const filteredParents = parents.filter(parent => parent?.userId !== userId);
-                await updateDoc(playerRef, { parents: filteredParents });
+                await setDoc(privateProfileRef, { parents: filteredParents }, { merge: true });
             }
         } catch (rollbackErr) {
             console.error('redeemHouseholdInvite: failed to rollback player parent updates', rollbackErr);
@@ -4200,8 +4206,8 @@ export async function redeemHouseholdInvite(userId, code) {
         await syncPublicUserProfile(userId);
         rollbackState.userWasUpdated = true;
 
-        const playerRef = doc(db, `teams/${codeData.teamId}/players`, codeData.playerId);
-        await updateDoc(playerRef, {
+        const privateProfileRef = doc(db, `teams/${codeData.teamId}/players/${codeData.playerId}/private/profile`);
+        await setDoc(privateProfileRef, {
             parents: arrayUnion({
                 userId,
                 email: codeData.email || 'pending',
@@ -4210,7 +4216,7 @@ export async function redeemHouseholdInvite(userId, code) {
                 acceptedAt: Timestamp.now(),
                 addedAt: Timestamp.now()
             })
-        });
+        }, { merge: true });
         rollbackState.playerWasUpdated = true;
 
         if (codeData.organizerUserId && codeData.familyMembershipId) {
@@ -4304,13 +4310,13 @@ export async function rollbackParentInviteRedemption(userId, code) {
 
     if (teamId && playerId) {
         try {
-            const playerRef = doc(db, `teams/${teamId}/players`, playerId);
-            const playerSnap = await getDoc(playerRef);
+            const privateProfileRef = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
+            const playerSnap = await getDoc(privateProfileRef);
             if (playerSnap.exists()) {
                 const playerData = playerSnap.data() || {};
                 const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
                 const filteredParents = parents.filter(parent => parent?.userId !== userId);
-                await updateDoc(playerRef, { parents: filteredParents });
+                await setDoc(privateProfileRef, { parents: filteredParents }, { merge: true });
             }
         } catch (error) {
             console.warn('[rollbackParentInviteRedemption] failed to rollback player parent link (non-fatal)', error);

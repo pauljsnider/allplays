@@ -163,6 +163,19 @@ describe('player profile private doc writes', () => {
         })).toThrow('Do not write sensitive fields to public player doc');
     });
 
+    it('rejects parent, guardian, and household contact fields on the public player helper', () => {
+        const source = readDbSource();
+        const fnSource = extractFunction(source, 'function assertNoSensitivePlayerFields(');
+        const factory = new Function(`${fnSource}; return assertNoSensitivePlayerFields;`);
+        const assertNoSensitivePlayerFields = factory();
+
+        expect(() => assertNoSensitivePlayerFields({
+            parents: [{ email: 'pat@example.com', relation: 'Mother' }],
+            guardianEmail: 'guardian@example.com',
+            householdContacts: [{ email: 'house@example.com' }]
+        })).toThrow('Do not write sensitive fields to public player doc');
+    });
+
     it('rejects sensitive fields passed to the public player document helper', async () => {
         const { updatePlayerProfile } = buildDbProfileUpdateHelpers();
 
@@ -210,5 +223,18 @@ describe('player profile private doc writes', () => {
         expect(source).toContain('const { emergencyContact, medicalInfo, ...publicData } = data;');
         expect(source).toContain('await updatePlayerProfile(currentTeamId, currentPlayer.id, publicData);');
         expect(source).toContain('await updatePlayerPrivateProfile(currentTeamId, currentPlayer.id, privateData);');
+    });
+
+    it('stores parent invite contact details on the private player profile document', () => {
+        const source = readDbSource();
+        const parentInviteSource = extractFunction(source, 'export async function redeemParentInvite(');
+        const householdInviteSource = extractFunction(source, 'export async function redeemHouseholdInvite(');
+
+        expect(parentInviteSource).toContain('teams/${codeData.teamId}/players/${codeData.playerId}/private/profile');
+        expect(parentInviteSource).toContain('await setDoc(privateProfileRef, {');
+        expect(parentInviteSource).not.toContain('await updateDoc(playerRef, {\n                parents: arrayUnion({');
+
+        expect(householdInviteSource).toContain('teams/${codeData.teamId}/players/${codeData.playerId}/private/profile');
+        expect(householdInviteSource).toContain('await setDoc(privateProfileRef, {');
     });
 });
