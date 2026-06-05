@@ -156,28 +156,36 @@ function chatMessage(overrides = {}) {
     };
 }
 
-async function renderMessages(initialEntry) {
+async function renderMessages(initialEntry, authState = auth) {
     const { Messages } = await import('../../apps/app/src/pages/Messages.tsx');
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
 
-    await act(async () => {
-        root.render(React.createElement(
-            MemoryRouter,
-            { initialEntries: [initialEntry] },
-            React.createElement(
-                Routes,
-                null,
-                React.createElement(Route, { path: '/messages', element: React.createElement(Messages, { auth }) }),
-                React.createElement(Route, { path: '/messages/:teamId', element: React.createElement(Messages, { auth }) })
-            )
-        ));
-    });
+    const renderWithAuth = async (nextAuthState) => {
+        await act(async () => {
+            root.render(React.createElement(
+                MemoryRouter,
+                { initialEntries: [initialEntry] },
+                React.createElement(
+                    Routes,
+                    null,
+                    React.createElement(Route, { path: '/messages', element: React.createElement(Messages, { auth: nextAuthState }) }),
+                    React.createElement(Route, { path: '/messages/:teamId', element: React.createElement(Messages, { auth: nextAuthState }) })
+                )
+            ));
+        });
 
-    await flush();
-    await flush();
-    return { container, root };
+        await flush();
+        await flush();
+    };
+
+    await renderWithAuth(authState);
+    return {
+        container,
+        root,
+        rerender: renderWithAuth
+    };
 }
 
 async function flush() {
@@ -1252,6 +1260,29 @@ describe('React app messages integration', () => {
         const { container } = await renderMessages('/messages/team-1');
 
         expect(container.querySelector('button[aria-label="Voice to text"]')).toBeNull();
+    });
+
+    it('does not reload team context when the auth object identity changes but the user id stays the same', async () => {
+        const firstAuth = {
+            ...auth,
+            user: {
+                ...auth.user
+            }
+        };
+        const secondAuth = {
+            ...auth,
+            user: {
+                ...auth.user
+            }
+        };
+
+        const { rerender } = await renderMessages('/messages/team-1', firstAuth);
+
+        expect(chatMocks.loadChatTeamContext).toHaveBeenCalledTimes(1);
+
+        await rerender(secondAuth);
+
+        expect(chatMocks.loadChatTeamContext).toHaveBeenCalledTimes(1);
     });
 
     it('uses the browser locale for web voice dictation and returns to the compact toolbar state', async () => {
