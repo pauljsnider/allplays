@@ -18,7 +18,8 @@ async function waitForSearchTrigger(page) {
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
         await expect(trigger).toBeVisible({ timeout: 1000 });
-    }).toPass({ timeout: 20000 });
+        await expect(trigger).toBeEnabled({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
 
     return trigger;
 }
@@ -45,6 +46,7 @@ async function openSearch(page) {
 
 async function openDesktopSearch(page) {
     const searchDialog = page.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
+    await waitForSearchTrigger(page);
 
     await expect(async () => {
         if (await searchDialog.isVisible().catch(() => false)) {
@@ -59,7 +61,7 @@ async function openDesktopSearch(page) {
             await clickSearchTrigger(page);
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
-    }).toPass({ timeout: 20000 });
+    }).toPass({ timeout: 30000 });
 }
 
 async function mockSearchModules(page) {

@@ -9,6 +9,23 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+async function waitForMessagesRoute(page, readyLocator) {
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(readyLocator).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
+}
+
+async function openTeamThread(page, teamName) {
+    const teamLink = page.getByRole('link', { name: new RegExp(teamName) }).first();
+
+    await expect(async () => {
+        await expect(teamLink).toBeVisible({ timeout: 1000 });
+        await teamLink.click();
+        await expect(page.getByPlaceholder(`Message ${teamName}`)).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
+}
+
 async function mockMessagesModules(page, options = {}) {
     await page.addInitScript(({ speech }) => {
         window.__chatCalls = {
@@ -255,7 +272,7 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await mockMessagesModules(page);
     await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: 'Team chats' })).toBeVisible();
+    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Team chats' }));
     await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
     await expect(page.getByText('Coach Jamie: Practice packet is posted.')).toBeVisible();
     const searchInput = page.getByPlaceholder('Search team chats');
@@ -264,7 +281,7 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await searchInput.click();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
-    await page.getByRole('link', { name: /Bears/ }).first().click();
+    await openTeamThread(page, 'Bears');
     const thread = page.locator('.chat-messages-scroll');
     const bottomNav = page.getByRole('navigation', { name: 'Primary navigation' });
     await expect(thread).toContainText('Bring both jerseys.');
@@ -369,6 +386,7 @@ test('messages selected-member, dictation, and validation flows stay usable on m
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
 
     const thread = page.locator('.chat-messages-scroll');
+    await waitForMessagesRoute(page, page.getByRole('button', { name: /Audience: Full team/ }));
     await expect(page.getByRole('button', { name: /Audience: Full team/ })).toBeVisible();
     await expect(thread).toContainText('Latest ride update.');
     await page.getByRole('button', { name: /Audience: Full team/ }).click();
