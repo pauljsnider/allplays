@@ -9,6 +9,14 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+async function waitForHomeRoute(page, readyLocator) {
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(page.getByText('Loading Home')).toBeHidden({ timeout: 1000 });
+        await expect(readyLocator).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
+}
+
 async function mockHomePlayerModules(page) {
     await page.addInitScript(() => {
         window.__playerLoads = [];
@@ -641,7 +649,7 @@ test.describe('desktop Home workspace', () => {
         await mockHomePlayerModules(page);
         await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'Today for your players' })).toBeVisible({ timeout: 10000 });
+        await waitForHomeRoute(page, page.getByRole('heading', { name: 'Today for your players' }));
         await expect(page.getByRole('button', { name: 'Today' })).toHaveAttribute('aria-pressed', 'true');
         await expect(page.getByRole('button', { name: 'Feed' })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Players' })).toBeVisible();
