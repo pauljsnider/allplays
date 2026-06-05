@@ -50,7 +50,7 @@ describe('schedule watch CTA resolver', () => {
         expect(resolveScheduleWatchCta(game({ id: '', gameId: '', liveStatus: 'completed' }))).toBeNull();
     });
 
-    it('is wired into parent and family schedule renderers without removing details links', () => {
+    it('wires the CTA only into parent dashboard schedule renderers and preserves details links', () => {
         const parentDashboard = readRepoFile('parent-dashboard.html');
         const familyPage = readRepoFile('family.html');
 
@@ -59,9 +59,9 @@ describe('schedule watch CTA resolver', () => {
         expect(parentDashboard).toContain('liveStatus: game.liveStatus || null,');
         expect(parentDashboard).toContain('View Details');
 
-        expect(familyPage).toContain("import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';");
-        expect(familyPage).toContain('const watchCta = resolveScheduleWatchCta(ev);');
-        expect(familyPage).toContain('const watchCta = resolveScheduleWatchCta(game);');
+        expect(familyPage).not.toContain("import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';");
+        expect(familyPage).not.toContain('const watchCta = resolveScheduleWatchCta(ev);');
+        expect(familyPage).not.toContain('const watchCta = resolveScheduleWatchCta(game);');
         expect(familyPage).toContain('liveStatus: game.liveStatus || null,');
         expect(familyPage).toContain('View Game Details');
         expect(familyPage).toContain('>\n                  View\n');
