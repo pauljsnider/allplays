@@ -72,6 +72,7 @@ const auth: AuthState = {
 
 describe('AppSearchDialog', () => {
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
   });
 
@@ -83,7 +84,27 @@ describe('AppSearchDialog', () => {
     preloadSearchRouteMock.mockImplementation(async () => true);
   });
 
-  it('closes from a backdrop mousedown but not from pressing inside the search panel', () => {
+  it('ignores the opening tap on the backdrop but still closes after the guard window', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
+    fireEvent.mouseDown(dialog);
+    expect(onClose).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(350);
+    fireEvent.mouseDown(dialog);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes from a backdrop mousedown after the guard window but not from pressing inside the search panel', async () => {
+    vi.useFakeTimers();
     const onClose = vi.fn();
 
     render(
@@ -97,6 +118,8 @@ describe('AppSearchDialog', () => {
 
     const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
     expect(screen.getByRole('heading', { name: 'Search teams, players, actions, and help' }).className).toContain('sr-only');
+
+    await vi.advanceTimersByTimeAsync(350);
     fireEvent.mouseDown(dialog);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
