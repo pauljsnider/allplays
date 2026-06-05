@@ -44,5 +44,6 @@ describe('admin invite signup cache busting', () => {
         const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
 
         expect(utilsSource).toContain("const { logout } = await import('./auth.js?v=19');");
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=18');");
     });
 });
