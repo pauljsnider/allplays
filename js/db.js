@@ -43,7 +43,7 @@ import {
     buildParentMembershipRequestUpdate,
     hasParentLink,
     mergeApprovedParentLinkState
-} from './parent-membership-utils.js?v=1';
+} from './parent-membership-utils.js?v=2';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
@@ -88,6 +88,79 @@ import {
     shouldIncludeTeamInLiveOrUpcoming,
     shouldIncludeTeamInReplay
 } from './team-visibility.js?v=2';
+
+export async function normalizeParentScopeLinks(parentLinks = []) {
+    const activeLinks = [];
+    const teamCache = new Map();
+    const playerCache = new Map();
+    const seenKeys = new Set();
+
+    for (const link of (Array.isArray(parentLinks) ? parentLinks : [])) {
+        const teamId = String(link?.teamId || '').trim();
+        const playerId = String(link?.playerId || '').trim();
+        if (!teamId || !playerId) continue;
+
+        const playerKey = `${teamId}::${playerId}`;
+        if (seenKeys.has(playerKey)) continue;
+        seenKeys.add(playerKey);
+
+        let team = teamCache.get(teamId);
+        if (team === undefined) {
+            team = await getTeam(teamId, { includeInactive: true });
+            teamCache.set(teamId, team || null);
+        }
+        if (!team || !isTeamActive(team)) continue;
+
+        let playerSnap = playerCache.get(playerKey);
+        if (playerSnap === undefined) {
+            try {
+                playerSnap = await getDoc(doc(db, `teams/${teamId}/players`, playerId));
+            } catch (error) {
+                if (error?.code === 'permission-denied') {
+                    console.warn('[parent-scope] Preserving legacy player link while roster permissions are being repaired:', error);
+                    playerSnap = { blockedByPermissions: true };
+                } else {
+                    throw error;
+                }
+            }
+            playerCache.set(playerKey, playerSnap);
+        }
+
+        if (playerSnap?.blockedByPermissions) {
+            activeLinks.push({
+                ...link,
+                teamId,
+                playerId,
+                teamName: team.name || link.teamName || '',
+                playerName: link.playerName || '',
+                playerNumber: link.playerNumber ?? '',
+                playerPhotoUrl: link.playerPhotoUrl || null
+            });
+            continue;
+        }
+
+        if (!playerSnap?.exists()) continue;
+
+        const player = { id: playerSnap.id, ...playerSnap.data() };
+        if (player.active === false) continue;
+
+        activeLinks.push({
+            ...link,
+            teamId,
+            playerId,
+            teamName: team.name || link.teamName || '',
+            playerName: player.name || link.playerName || '',
+            playerNumber: player.number ?? link.playerNumber ?? '',
+            playerPhotoUrl: player.photoUrl || link.playerPhotoUrl || null
+        });
+    }
+
+    return {
+        activeLinks,
+        parentTeamIds: [...new Set(activeLinks.map((link) => link.teamId))],
+        parentPlayerKeys: [...new Set(activeLinks.map((link) => `${link.teamId}::${link.playerId}`))]
+    };
+}
 import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
 import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
@@ -4519,20 +4592,19 @@ export async function getParentDashboardData(userId) {
         return { upcomingGames: [], children: [], registrationApplications };
     }
 
-    const children = userProfile.parentOf;
-    const parentTeamIds = [...new Set(children.map(child => child?.teamId).filter(Boolean))];
-    const expectedParentPlayerKeys = [...new Set(children
-        .map(child => (child?.teamId && child?.playerId ? `${child.teamId}::${child.playerId}` : null))
-        .filter(Boolean))];
+    const normalizedParentScope = await normalizeParentScopeLinks(userProfile.parentOf);
+    const children = normalizedParentScope.activeLinks;
     const existingParentTeamIds = Array.isArray(userProfile.parentTeamIds) ? userProfile.parentTeamIds : [];
     const existingParentPlayerKeys = Array.isArray(userProfile.parentPlayerKeys) ? userProfile.parentPlayerKeys : [];
-    const mergedParentTeamIds = [...new Set([...existingParentTeamIds, ...parentTeamIds])];
-    const needsParentAccessBackfill = mergedParentTeamIds.length !== existingParentTeamIds.length ||
+    const normalizedParentTeamIds = normalizedParentScope.parentTeamIds;
+    const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys;
+    const needsParentAccessBackfill =
+        JSON.stringify(normalizedParentTeamIds.slice().sort()) !== JSON.stringify(existingParentTeamIds.slice().sort()) ||
         JSON.stringify(expectedParentPlayerKeys.slice().sort()) !== JSON.stringify(existingParentPlayerKeys.slice().sort());
     if (needsParentAccessBackfill) {
         try {
             await updateUserProfile(userId, {
-                parentTeamIds: mergedParentTeamIds,
+                parentTeamIds: normalizedParentTeamIds,
                 parentPlayerKeys: expectedParentPlayerKeys
             });
         } catch (error) {
@@ -4552,32 +4624,9 @@ export async function getParentDashboardData(userId) {
     now.setHours(0, 0, 0, 0);
 
     for (const child of children) {
-        if (!child.teamId || !child.playerId) continue;
         const team = await getTeam(child.teamId);
         if (!team) continue;
-
-        const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);
-        let playerSnap;
-        try {
-            playerSnap = await getDoc(playerRef);
-        } catch (error) {
-            if (error?.code === 'permission-denied') {
-                console.warn('[parent-dashboard] Skipping player blocked by roster permissions:', error);
-                continue;
-            }
-            throw error;
-        }
-        if (!playerSnap.exists()) continue;
-        const player = { id: playerSnap.id, ...playerSnap.data() };
-        if (player.active === false) continue;
-
-        const activeChild = {
-            ...child,
-            playerName: player.name || child.playerName || '',
-            playerNumber: player.number ?? child.playerNumber ?? '',
-            playerPhotoUrl: player.photoUrl || child.playerPhotoUrl || null
-        };
-        activeChildren.push(activeChild);
+        activeChildren.push(child);
 
         let events = eventsByTeam.get(child.teamId);
         if (!events) {
@@ -4593,8 +4642,8 @@ export async function getParentDashboardData(userId) {
             .map(e => ({
                 ...e,
                 teamId: child.teamId,
-                teamName: activeChild.teamName,
-                childName: activeChild.playerName
+                teamName: child.teamName,
+                childName: child.playerName
             }));
 
         upcomingGames.push(...futureEvents);

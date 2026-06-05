@@ -15,10 +15,10 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=17';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests } from './db.js?v=36';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=37';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=3';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';
-import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=1';
+import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
 
 async function cleanupFailedNewUser(user, context) {
     if (!user) {
@@ -361,14 +361,11 @@ export function checkAuth(callback, options = {}) {
                     if (teamMediaUploadTeamIds) user.teamMediaUploadTeamIds = teamMediaUploadTeamIds;
                     if (mediaUploadTeamIds) user.mediaUploadTeamIds = mediaUploadTeamIds;
 
-                    // Auto-migrate: ensure parentTeamIds and parentPlayerKeys are in sync with parentOf
-                    if (Array.isArray(profile.parentOf) && profile.parentOf.length > 0) {
-                        const expectedTeamIds = [...new Set(profile.parentOf.map(p => p.teamId).filter(Boolean))].sort();
-                        const expectedParentPlayerKeys = [...new Set(
-                            profile.parentOf
-                                .map(p => (p?.teamId && p?.playerId ? `${p.teamId}::${p.playerId}` : null))
-                                .filter(Boolean)
-                        )].sort();
+                    // Auto-migrate: ensure parent scope fields only reflect active team/player links
+                    if (Array.isArray(profile.parentOf) || Array.isArray(profile.parentTeamIds) || Array.isArray(profile.parentPlayerKeys)) {
+                        const normalizedParentScope = await normalizeParentScopeLinks(profile.parentOf || []);
+                        const expectedTeamIds = normalizedParentScope.parentTeamIds.slice().sort();
+                        const expectedParentPlayerKeys = normalizedParentScope.parentPlayerKeys.slice().sort();
                         const currentTeamIds = (profile.parentTeamIds || []).slice().sort();
                         const currentParentPlayerKeys = (profile.parentPlayerKeys || []).slice().sort();
                         if (JSON.stringify(expectedTeamIds) !== JSON.stringify(currentTeamIds) ||
