@@ -669,7 +669,7 @@ function ChatWindow({
     if (!pendingScrollRef.current) return;
     scrollToLatest('auto');
     pendingScrollRef.current = false;
-    scheduleScrollToLatest('auto', true);
+    scheduleScrollToLatest('auto');
   }, [messages.length, aiThinking, scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
 
   useEffect(() => {
