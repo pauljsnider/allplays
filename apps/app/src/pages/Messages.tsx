@@ -549,7 +549,7 @@ function ChatWindow({
         scheduledScrollForceRef.current = false;
         maybeScrollToLatest(nextBehavior, nextForce);
 
-        [120, 300, 700, 1500].forEach((delay) => {
+        [120, 300, 700, 1500, 2500].forEach((delay) => {
           let timerId = 0;
           timerId = window.setTimeout(() => {
             scheduledScrollTimeoutsRef.current = scheduledScrollTimeoutsRef.current.filter((id) => id !== timerId);
