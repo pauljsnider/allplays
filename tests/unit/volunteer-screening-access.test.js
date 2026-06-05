@@ -107,12 +107,14 @@ describe('volunteer screening access guard', () => {
     it('wires role grant actions through the screening guard', () => {
         const dbSource = fs.readFileSync('js/db.js', 'utf8');
 
-        expect(dbSource).toContain("import { assertVolunteerScreeningCleared, loadVolunteerScreeningTargetRegistrations } from './volunteer-screening-access.js?v=2';");
+        expect(dbSource).toContain("import { assertVolunteerScreeningCleared } from './volunteer-screening-access.js?v=2';");
         expect(dbSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: normalizedUserId });');
         expect(dbSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { email: normalizedEmail });');
         expect(dbSource).toContain('function assertVolunteerScreeningClearedForTeamGrant');
-        expect(dbSource).toContain("collectionGroup(db, 'registrations')");
-        expect(dbSource).not.toContain('async function listRegistrationRecordsForTeam');
+        expect(dbSource).toContain('async function listVolunteerScreeningRegistrationsForTeam(teamId)');
+        expect(dbSource).toContain('const forms = await listTeamRegistrationForms(normalizedTeamId);');
+        expect(dbSource).toContain('getDocs(collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`))');
+        expect(dbSource).toContain('const registrations = await listVolunteerScreeningRegistrationsForTeam(teamId);');
         expect(dbSource).toContain("console.error('Failed to access registration records for volunteer screening:', error);");
     });
 });
