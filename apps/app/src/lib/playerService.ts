@@ -73,6 +73,13 @@ export type ParentAthleteProfileData = {
   profile: Record<string, any> | null;
   shareUrl: string;
   builderUrl: string;
+  seasonOptions: Array<{
+    seasonKey: string;
+    teamId: string;
+    teamName: string;
+    playerId: string;
+    playerName: string;
+  }>;
 };
 
 export type ParentPlayerDetailData = {
@@ -198,6 +205,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     }),
     athleteProfile: buildAthleteProfileData({
       profiles: Array.isArray(athleteProfiles) ? athleteProfiles : [],
+      parentLinks: Array.isArray(user.parentOf) ? user.parentOf : [],
       teamId: resolvedTeamId,
       playerId: resolvedPlayerId
     })
@@ -331,6 +339,9 @@ export async function saveParentAthleteProfileDraft({
 }) {
   assertLinkedParent(user, teamId, playerId);
   const seasonKey = buildParentSeasonKey(teamId, playerId);
+  const selectedSeasonKeys = Array.isArray(draft.selectedSeasonKeys) && draft.selectedSeasonKeys.length
+    ? draft.selectedSeasonKeys
+    : [seasonKey];
   const workingProfileId = profileId || createLocalId('profile');
   let uploadedProfilePhoto: Record<string, any> | null = null;
   let uploadedHighlightClip: Record<string, any> | null = null;
@@ -372,7 +383,7 @@ export async function saveParentAthleteProfileDraft({
       ...draft,
       profilePhoto,
       clips,
-      selectedSeasonKeys: [seasonKey]
+      selectedSeasonKeys
     }, { profileId: workingProfileId });
   } catch (error) {
     if (uploadedProfilePhoto?.storagePath) {
@@ -451,16 +462,45 @@ function buildPlayerIncentiveData({
   };
 }
 
-function buildAthleteProfileData({ profiles, teamId, playerId }: { profiles: Array<Record<string, any>>; teamId: string; playerId: string }): ParentAthleteProfileData {
+function buildAthleteProfileData({
+  profiles,
+  parentLinks,
+  teamId,
+  playerId
+}: {
+  profiles: Array<Record<string, any>>;
+  parentLinks: Array<Record<string, any>>;
+  teamId: string;
+  playerId: string;
+}): ParentAthleteProfileData {
   const profile = profiles.find((candidate) => (
     Array.isArray(candidate?.seasons) &&
     candidate.seasons.some((season: any) => season?.teamId === teamId && season?.playerId === playerId)
   )) || null;
   const profileId = profile?.id || '';
+  const seen = new Set<string>();
+  const seasonOptions = (Array.isArray(parentLinks) ? parentLinks : [])
+    .map((link) => {
+      const optionTeamId = String(link?.teamId || '').trim();
+      const optionPlayerId = String(link?.playerId || link?.childId || '').trim();
+      if (!optionTeamId || !optionPlayerId) return null;
+      const seasonKey = buildParentSeasonKey(optionTeamId, optionPlayerId);
+      if (seen.has(seasonKey)) return null;
+      seen.add(seasonKey);
+      return {
+        seasonKey,
+        teamId: optionTeamId,
+        teamName: String(link?.teamName || '').trim() || 'Team',
+        playerId: optionPlayerId,
+        playerName: String(link?.playerName || link?.childName || link?.name || '').trim() || 'Athlete'
+      };
+    })
+    .filter(Boolean) as ParentAthleteProfileData['seasonOptions'];
   return {
     profile,
     shareUrl: profileId ? buildAthleteProfileShareUrl(getLegacyOrigin(), profileId) : '',
-    builderUrl: buildLegacyUrl('athlete-profile-builder.html', { teamId, playerId, ...(profileId ? { profileId } : {}) })
+    builderUrl: buildLegacyUrl('athlete-profile-builder.html', { teamId, playerId, ...(profileId ? { profileId } : {}) }),
+    seasonOptions
   };
 }
 
