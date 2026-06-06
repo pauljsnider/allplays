@@ -133,7 +133,7 @@ describe('AppSearchDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('navigates search results immediately while preloading the route in the background', async () => {
+  it('preloads a keyboard-highlighted route before Enter and reuses it on navigation', async () => {
     const onClose = vi.fn();
     let releasePreload!: () => void;
     preloadSearchRouteMock.mockImplementationOnce(() => new Promise<boolean>((resolve) => {
@@ -149,13 +149,39 @@ describe('AppSearchDialog', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: /Rockets/ }));
+    const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
+    fireEvent.keyDown(dialog, { key: 'ArrowDown' });
 
     await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledWith('/teams/team-2'));
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(dialog, { key: 'Enter' });
     expect(navigateMock).toHaveBeenCalledWith('/teams/team-2');
 
     releasePreload();
     await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('dedupes repeated hover preloads for the same route within one dialog session', async () => {
+    const onClose = vi.fn();
+    getKnownAppSearchTeamsMock.mockReturnValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="*" element={<AppSearchDialog auth={auth} open={true} onClose={onClose} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const rocketsResult = await screen.findByRole('button', { name: /Rockets/ });
+    fireEvent.mouseEnter(rocketsResult);
+    fireEvent.mouseEnter(rocketsResult);
+    fireEvent.click(rocketsResult);
+
+    await waitFor(() => expect(preloadSearchRouteMock).toHaveBeenCalledWith('/teams/team-2'));
+    expect(preloadSearchRouteMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/teams/team-2');
   });
 
   it('does not load teams on open and waits for typing before bounded team search queries', async () => {
