@@ -153,7 +153,7 @@ service firebase.storage {
     }
 
     match /game-clips/{fileName} {
-      allow get, create, delete: if isSignedIn();
+      allow get, create, delete: if false;
       allow list, update: if false;
     }
 

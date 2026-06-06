@@ -31,6 +31,10 @@ function canDeleteScopedFallback({ authUid, pathUserId, isTeamAdmin = false }) {
     return authUid !== null && (isTeamAdmin || authUid === pathUserId);
 }
 
+function canAccessLegacyGameClipFallback({ authUid }) {
+    return authUid !== null && false;
+}
+
 describe('fallback media paths and Storage rules', () => {
     it('builds team-scoped fallback paths with uploader context', () => {
         expect(buildChatAttachmentFallbackPath('team/alpha', 'user 42', 'my photo (1).png', 1700000000000))
@@ -89,10 +93,13 @@ describe('fallback media paths and Storage rules', () => {
         expect(canCreateScopedFallback({ authUid: 'outsider-1', pathUserId: 'scorekeeper-1' })).toBe(false);
     });
 
-    it('hard-denies new legacy flat stat sheet writes and reads', () => {
+    it('hard-denies legacy flat stat sheet and game clip access', () => {
         expect(legacyStatSheetRules).toContain('match /stat-sheets/{fileName} {');
         expect(legacyStatSheetRules).toContain('allow get, create, delete: if false;');
         expect(legacyGameClipRules).toContain('match /game-clips/{fileName} {');
-        expect(legacyGameClipRules).toContain('allow get, create, delete: if isSignedIn();');
+        expect(legacyGameClipRules).toContain('allow get, create, delete: if false;');
+
+        expect(canAccessLegacyGameClipFallback({ authUid: 'signed-in-user' })).toBe(false);
+        expect(canAccessLegacyGameClipFallback({ authUid: null })).toBe(false);
     });
 });
