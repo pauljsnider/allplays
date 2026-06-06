@@ -1370,6 +1370,43 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Tipoff');
     });
 
+    it('keeps inline videos on preload=none when a thread first opens', async () => {
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: 'msg-video-initial',
+                    text: '',
+                    attachments: [
+                        {
+                            type: 'video',
+                            url: 'https://media.example.test/warmups.mp4',
+                            name: 'Warmups.mp4'
+                        },
+                        {
+                            type: 'video',
+                            url: 'https://media.example.test/huddle.mp4',
+                            name: 'Huddle.mp4'
+                        }
+                    ]
+                })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+        const videos = Array.from(container.querySelectorAll('video'));
+        expect(videos).toHaveLength(2);
+        videos.forEach((video) => {
+            expect(video.getAttribute('preload')).toBe('none');
+        });
+        expect(intersectionObserverState.instances).toHaveLength(2);
+
+        await flush();
+        videos.forEach((video) => {
+            expect(video.getAttribute('preload')).toBe('none');
+        });
+    });
+
     it('defers inline video metadata until the attachment is visible or hovered', async () => {
         chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
             onMessages([
