@@ -341,12 +341,16 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes } from './js/db.js?v=40';",
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes } = deps.db;'
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getAllUsers,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=40';/,
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
+        )
+        .replace(
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=1';",
+            'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
             "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';",
@@ -454,6 +458,16 @@ async function bootEditTeam(initialState, overrides = {}) {
             },
             async getTeamAccessCodes(teamId) {
                 return (env.state.teamAccessCodes || []).filter((code) => code.teamId === teamId);
+            },
+            async getConfigs() {
+                return deepClone(env.state.configs || []);
+            },
+            async getGames() {
+                return deepClone(env.state.games || []);
+            },
+            async updateGame(teamId, gameId, gameData) {
+                env.state.updateGameCalls = env.state.updateGameCalls || [];
+                env.state.updateGameCalls.push({ teamId, gameId, gameData: deepClone(gameData) });
             }
         },
         utils: {
@@ -494,6 +508,16 @@ async function bootEditTeam(initialState, overrides = {}) {
         statConfigPresets: {
             getDefaultStatConfigForSport() {
                 return null;
+            }
+        },
+        teamStatConfigMigration: {
+            buildTeamSportConfigMigrationPlan() {
+                return {
+                    sportChanged: false,
+                    needsNewConfig: false,
+                    targetConfigId: null,
+                    gameIdsToUpdate: []
+                };
             }
         },
         teamAccess: await import('../../js/team-access.js'),
