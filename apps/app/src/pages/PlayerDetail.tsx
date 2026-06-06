@@ -526,6 +526,41 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
 
 function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const existing = data.athleteProfile.profile;
+  const currentSeasonKey = `${data.child.teamId || ''}::${data.child.playerId || ''}`;
+  const seasonOptions = useMemo(() => {
+    if (Array.isArray(data.athleteProfile.seasonOptions) && data.athleteProfile.seasonOptions.length) {
+      return data.athleteProfile.seasonOptions;
+    }
+    if (!data.child.teamId || !data.child.playerId) {
+      return [];
+    }
+    return [{
+      seasonKey: currentSeasonKey,
+      teamId: data.child.teamId,
+      teamName: data.child.teamName || data.team?.name || 'Team',
+      playerId: data.child.playerId,
+      playerName: data.child.playerName || data.player.name || 'Athlete'
+    }];
+  }, [currentSeasonKey, data.athleteProfile.seasonOptions, data.child.playerId, data.child.playerName, data.child.teamId, data.child.teamName, data.player.name, data.team?.name]);
+  const initialSelectedSeasonKeys = useMemo(() => {
+    const existingKeys = Array.isArray(existing?.seasons)
+      ? existing.seasons
+        .map((season: any) => {
+          const seasonKey = String(season?.seasonKey || '').trim();
+          if (seasonKey) {
+            return seasonKey;
+          }
+          const seasonTeamId = String(season?.teamId || '').trim();
+          const seasonPlayerId = String(season?.playerId || '').trim();
+          return seasonTeamId && seasonPlayerId ? `${seasonTeamId}::${seasonPlayerId}` : '';
+        })
+        .filter(Boolean)
+      : [];
+    if (existingKeys.length) {
+      return [...new Set(existingKeys)];
+    }
+    return currentSeasonKey ? [currentSeasonKey] : [];
+  }, [currentSeasonKey, existing]);
   const [name, setName] = useState(existing?.athlete?.name || data.player.name || data.child.playerName || '');
   const [headline, setHeadline] = useState(existing?.athlete?.headline || '');
   const [position, setPosition] = useState(existing?.bio?.position || '');
@@ -534,6 +569,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const [dominantHand, setDominantHand] = useState(existing?.bio?.dominantHand || '');
   const [achievements, setAchievements] = useState(existing?.bio?.achievements || '');
   const [privacy, setPrivacy] = useState(existing?.privacy === 'public' ? 'public' : 'private');
+  const [selectedSeasonKeys, setSelectedSeasonKeys] = useState<string[]>(initialSelectedSeasonKeys);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [shareUrl, setShareUrl] = useState(data.athleteProfile.shareUrl || '');
@@ -559,9 +595,25 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     };
   }, [headshotPreviewUrl]);
 
+  useEffect(() => {
+    setSelectedSeasonKeys(initialSelectedSeasonKeys);
+  }, [initialSelectedSeasonKeys]);
+
+  const toggleSeasonKey = (seasonKey: string) => {
+    setSelectedSeasonKeys((current) => (
+      current.includes(seasonKey)
+        ? current.filter((key) => key !== seasonKey)
+        : [...current, seasonKey]
+    ));
+  };
+
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (headshotError || highlightClipError) return;
+    if (!selectedSeasonKeys.length) {
+      setStatus({ tone: 'error', message: 'Select at least one linked season to build an athlete profile.' });
+      return;
+    }
     setSaving(true);
     setStatus(null);
     try {
@@ -574,6 +626,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
           athlete: { name, headline },
           bio: { position, graduationYear, hometown, dominantHand, achievements },
           privacy,
+          selectedSeasonKeys,
           clips: existing?.clips || [],
           profilePhoto: existing?.profilePhotoUrl ? {
             url: existing.profilePhotoUrl,
@@ -731,6 +784,30 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             placeholder="Captains, honors, goals, recruiting notes"
           />
         </label>
+        <div className="rounded-2xl border border-gray-200 bg-white p-3">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Selected seasons</div>
+          <p className="mt-1 text-sm font-semibold text-gray-700">Choose which linked seasons roll into the public athlete profile.</p>
+          <div className="mt-3 space-y-2">
+            {seasonOptions.map((option) => {
+              const checked = selectedSeasonKeys.includes(option.seasonKey);
+              return (
+                <label key={option.seasonKey} className={`flex items-start gap-3 rounded-xl border p-3 ${checked ? 'border-primary-300 bg-primary-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <input
+                    type="checkbox"
+                    aria-label={`${option.playerName} ${option.teamName}`}
+                    checked={checked}
+                    onChange={() => toggleSeasonKey(option.seasonKey)}
+                    className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-black text-gray-900">{option.playerName}</span>
+                    <span className="block text-xs font-semibold text-gray-500">{option.teamName}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
         <div className="athlete-profile-privacy grid grid-cols-2 gap-2">
           {(['private', 'public'] as const).map((option) => (
             <button
