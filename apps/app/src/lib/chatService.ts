@@ -70,6 +70,7 @@ export type ChatTeam = {
   canModerate: boolean;
   unreadCount: number;
   lastMessage: ChatMessage | null;
+  preferredConversationId?: string | null;
 };
 
 export type ChatConversation = {
@@ -511,7 +512,7 @@ async function getLatestConversationMessage(teamId: string, conversationId: stri
   }
 }
 
-async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<ChatMessage | null> {
+async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<{ message: ChatMessage | null; conversationId: string | null }> {
   let conversations: ChatConversation[] = [buildDefaultTeamConversation(team)];
   try {
     const loadedConversations = await withTimeout(
@@ -551,20 +552,33 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
         .map((conversation) => [conversation.id, conversation])
     ).values());
 
-  const messages = await Promise.all(previewCandidates.map((conversation) => (
-    getLatestConversationMessage(teamId, conversation.id)
-  )));
-  const previewMessage = getNewestChatMessage(messages);
-  if (previewMessage) return previewMessage;
+  const messages = await Promise.all(previewCandidates.map(async (conversation) => ({
+    conversationId: conversation.id,
+    message: await getLatestConversationMessage(teamId, conversation.id)
+  })));
+  const previewMessage = messages.reduce<{ message: ChatMessage | null; conversationId: string | null }>((newest, candidate) => (
+    getMessageTime(candidate.message) > getMessageTime(newest.message)
+      ? candidate
+      : newest
+  ), { message: null, conversationId: null });
+  if (previewMessage.message) return previewMessage;
 
   const attemptedConversationIds = new Set(previewCandidates.map((conversation) => conversation.id));
   for (const { conversation } of rankedConversations) {
     if (!conversation?.id || attemptedConversationIds.has(conversation.id)) continue;
     const fallbackMessage = await getLatestConversationMessage(teamId, conversation.id);
-    if (fallbackMessage) return fallbackMessage;
+    if (fallbackMessage) {
+      return {
+        message: fallbackMessage,
+        conversationId: conversation.id
+      };
+    }
   }
 
-  return null;
+  return {
+    message: null,
+    conversationId: null
+  };
 }
 
 export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
@@ -606,12 +620,14 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     return {
       team,
       canModerate,
-      lastMessage: includeLastMessages ? await getLatestMessagePreview(team.id, userWithProfile, team, canModerate) : null
+      preview: includeLastMessages
+        ? await getLatestMessagePreview(team.id, userWithProfile, team, canModerate)
+        : { message: null, conversationId: null }
     };
   }));
 
   return {
-    teams: previews.map(({ team, canModerate, lastMessage }) => ({
+    teams: previews.map(({ team, canModerate, preview }) => ({
       id: team.id,
       name: team.name || 'Team',
       sport: team.sport || null,
@@ -620,7 +636,10 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       role: getTeamRole(user, team, profile),
       canModerate,
       unreadCount: Number(unreadCounts[team.id] || 0),
-      lastMessage
+      lastMessage: preview.message,
+      preferredConversationId: preview.conversationId && !isDefaultTeamConversation(preview.conversationId)
+        ? preview.conversationId
+        : null
     })).sort((a, b) => {
       const unreadDiff = Number(b.unreadCount > 0) - Number(a.unreadCount > 0);
       if (unreadDiff) return unreadDiff;

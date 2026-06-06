@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
   Bot,
@@ -115,6 +115,7 @@ const allTargetOptions: Array<{ value: ChatTargetType; label: string; descriptio
 
 export function Messages({ auth }: { auth: AuthState }) {
   const { teamId } = useParams();
+  const location = useLocation();
   const { isDesktopWeb } = useShellLayout();
   const [teams, setTeams] = useState<ChatTeam[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,6 +152,8 @@ export function Messages({ auth }: { auth: AuthState }) {
     ].join(' ').toLowerCase().includes(normalized));
   }, [query, teams]);
 
+  const preferredConversationId = useMemo(() => getPreferredConversationIdFromSearch(location.search), [location.search]);
+
   const activeTeamId = teamId || (isDesktopWeb ? filteredTeams[0]?.id : undefined);
 
   if (isDesktopWeb) {
@@ -166,7 +169,13 @@ export function Messages({ auth }: { auth: AuthState }) {
           </aside>
           <div className="messages-chat-pane min-w-0">
             {activeTeamId ? (
-              <ChatWindow auth={auth} teamId={activeTeamId} inboxTeam={teams.find((team) => team.id === activeTeamId)} embedded />
+              <ChatWindow
+                auth={auth}
+                teamId={activeTeamId}
+                inboxTeam={teams.find((team) => team.id === activeTeamId)}
+                preferredConversationId={teamId === activeTeamId ? preferredConversationId : ''}
+                embedded
+              />
             ) : (
               <EmptyChatSelection />
             )}
@@ -177,7 +186,14 @@ export function Messages({ auth }: { auth: AuthState }) {
   }
 
   if (activeTeamId) {
-    return <ChatWindow auth={auth} teamId={activeTeamId} inboxTeam={teams.find((team) => team.id === activeTeamId)} />;
+    return (
+      <ChatWindow
+        auth={auth}
+        teamId={activeTeamId}
+        inboxTeam={teams.find((team) => team.id === activeTeamId)}
+        preferredConversationId={preferredConversationId}
+      />
+    );
   }
 
   return (
@@ -278,10 +294,11 @@ function InboxList({
 function InboxRow({ team, active, compact }: { team: ChatTeam; active: boolean; compact: boolean }) {
   const preview = getChatInboxPreview(team.lastMessage);
   const timeLabel = formatInboxTime(team.lastMessage?.createdAt);
+  const route = buildMessagesRoute(team.id, team.preferredConversationId);
 
   return (
     <Link
-      to={`/messages/${team.id}`}
+      to={route}
       className={`message-row app-card flex items-center gap-3 p-3 transition hover:border-primary-200 hover:shadow-app-lg ${
         active ? '!border-primary-200 bg-primary-50/50' : ''
       }`}
@@ -341,11 +358,13 @@ function ChatWindow({
   auth,
   teamId,
   inboxTeam,
+  preferredConversationId = '',
   embedded = false
 }: {
   auth: AuthState;
   teamId: string;
   inboxTeam?: ChatTeam;
+  preferredConversationId?: string;
   embedded?: boolean;
 }) {
   const navigate = useNavigate();
@@ -574,7 +593,7 @@ function ChatWindow({
       setLoadingContext(true);
       setError(null);
       setStatus(null);
-      setSelectedConversationId(DEFAULT_TEAM_CONVERSATION_ID);
+      setSelectedConversationId(preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID);
       setOlderMessages([]);
       setLiveMessages([]);
       initialSnapshotLoadedRef.current = false;
@@ -591,11 +610,15 @@ function ChatWindow({
         const loadedConversations = await loadChatConversations(teamId, auth.user, context.team, context.canModerate);
         if (cancelled) return;
         setConversations(loadedConversations);
-        setSelectedConversationId((current: string) => (
-          loadedConversations.some((conversation) => conversation.id === current)
-            ? current
-            : DEFAULT_TEAM_CONVERSATION_ID
-        ));
+        setSelectedConversationId((current: string) => {
+          if (loadedConversations.some((conversation) => conversation.id === current)) {
+            return current;
+          }
+          if (preferredConversationId && loadedConversations.some((conversation) => conversation.id === preferredConversationId)) {
+            return preferredConversationId;
+          }
+          return DEFAULT_TEAM_CONVERSATION_ID;
+        });
         if (context.canModerate) {
           const options = await loadChatRecipientOptions(teamId);
           if (!cancelled) setRecipientOptions(options);
@@ -615,7 +638,7 @@ function ChatWindow({
     return () => {
       cancelled = true;
     };
-  }, [auth.user?.uid, teamId]);
+  }, [auth.user?.uid, preferredConversationId, teamId]);
 
   useEffect(() => {
     if (!team || !auth.user) return undefined;
@@ -1586,6 +1609,20 @@ function ChatWindow({
 export function buildChatViewportSignature(scrollHeight: number, clientHeight: number, scrollTop: number) {
   const distanceFromBottom = Math.max(0, scrollHeight - clientHeight - scrollTop);
   return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
+}
+
+function getPreferredConversationIdFromSearch(search: string) {
+  const params = new URLSearchParams(search || '');
+  return String(params.get('conversationId') || '').trim();
+}
+
+function buildMessagesRoute(teamId: string, preferredConversationId?: string | null) {
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!normalizedTeamId) return '/messages';
+  const route = `/messages/${encodeURIComponent(normalizedTeamId)}`;
+  const normalizedConversationId = String(preferredConversationId || '').trim();
+  if (!normalizedConversationId) return route;
+  return `${route}?conversationId=${encodeURIComponent(normalizedConversationId)}`;
 }
 
 function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {
