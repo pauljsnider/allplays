@@ -171,7 +171,16 @@ export function Messages({ auth }: { auth: AuthState }) {
           <aside className="messages-list-pane">
             <InboxSearch query={query} onChange={setQuery} />
             <div className="messages-list-scroll">
-              <InboxList teams={filteredTeams} loading={loading} error={error} activeTeamId={activeTeamId || ''} compact />
+              <InboxList
+                teams={filteredTeams}
+                loading={loading}
+                error={error}
+                activeTeamId={activeTeamId || ''}
+                searchQuery={query}
+                totalTeamsCount={teams.length}
+                onClearSearch={() => setQuery('')}
+                compact
+              />
             </div>
           </aside>
           <div className="messages-chat-pane min-w-0">
@@ -207,7 +216,15 @@ export function Messages({ auth }: { auth: AuthState }) {
     <div className="messages-page space-y-4">
       <MessagesHeader teams={teams} loading={loading} onRefresh={refreshInbox} />
       <InboxSearch query={query} onChange={setQuery} />
-      <InboxList teams={filteredTeams} loading={loading} error={error} activeTeamId="" />
+      <InboxList
+        teams={filteredTeams}
+        loading={loading}
+        error={error}
+        activeTeamId=""
+        searchQuery={query}
+        totalTeamsCount={teams.length}
+        onClearSearch={() => setQuery('')}
+      />
     </div>
   );
 }
@@ -254,14 +271,22 @@ function InboxList({
   loading,
   error,
   activeTeamId,
+  searchQuery,
+  totalTeamsCount,
+  onClearSearch,
   compact = false
 }: {
   teams: ChatTeam[];
   loading: boolean;
   error: string | null;
   activeTeamId: string;
+  searchQuery: string;
+  totalTeamsCount: number;
+  onClearSearch: () => void;
   compact?: boolean;
 }) {
+  const trimmedQuery = searchQuery.trim();
+
   if (loading) {
     return (
       <section className="app-card flex min-h-44 items-center justify-center p-5 text-sm font-bold text-gray-500">
@@ -280,6 +305,19 @@ function InboxList({
   }
 
   if (!teams.length) {
+    if (trimmedQuery && totalTeamsCount > 0) {
+      return (
+        <section className="app-card p-6 text-center">
+          <Search className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
+          <div className="mt-3 text-base font-black text-gray-950">No team chats match “{trimmedQuery}”</div>
+          <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">Try a different search or clear it to see all team chats.</div>
+          <button type="button" className="secondary-button mx-auto mt-4" onClick={onClearSearch}>
+            Clear search
+          </button>
+        </section>
+      );
+    }
+
     return (
       <section className="app-card p-6 text-center">
         <MessageCircle className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
