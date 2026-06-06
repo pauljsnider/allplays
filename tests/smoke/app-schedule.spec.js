@@ -37,6 +37,8 @@ async function mockScheduleModules(page, options = {}) {
     }).join(',\n                            ');
 
     await page.addInitScript(() => {
+        window.localStorage.clear();
+        window.sessionStorage.clear();
         const RealDate = Date;
         const fixedNow = new RealDate('2026-05-20T12:00:00Z').getTime();
         class FixedDate extends RealDate {
