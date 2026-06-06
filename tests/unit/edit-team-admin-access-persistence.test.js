@@ -341,12 +341,16 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            "import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes } from './js/db.js?v=40';",
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes } = deps.db;'
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getAllUsers,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=40';/,
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
             'const { getDefaultStatConfigForSport } = deps.statConfigPresets;'
+        )
+        .replace(
+            "import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=1';",
+            'const { buildTeamSportConfigMigrationPlan } = deps.teamStatConfigMigration;'
         )
         .replace(
             "import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';",
@@ -385,7 +389,7 @@ function extractEditTeamModule() {
 const editTeamModuleSource = extractEditTeamModule();
 const runEditTeamModule = new AsyncFunction('deps', editTeamModuleSource);
 
-async function bootEditTeam(initialState, overrides = {}) {
+async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = {}) {
     const env = createEnvironment(initialState, overrides);
     const previousGlobals = new Map();
     const globalOverrides = {
@@ -410,7 +414,7 @@ async function bootEditTeam(initialState, overrides = {}) {
         });
     }
 
-    const deps = {
+    const baseDeps = {
         db: {
             async createTeam(teamData) {
                 env.state.createCalls = env.state.createCalls || [];
@@ -454,6 +458,16 @@ async function bootEditTeam(initialState, overrides = {}) {
             },
             async getTeamAccessCodes(teamId) {
                 return (env.state.teamAccessCodes || []).filter((code) => code.teamId === teamId);
+            },
+            async getConfigs() {
+                return deepClone(env.state.configs || []);
+            },
+            async getGames() {
+                return deepClone(env.state.games || []);
+            },
+            async updateGame(teamId, gameId, gameData) {
+                env.state.updateGameCalls = env.state.updateGameCalls || [];
+                env.state.updateGameCalls.push({ teamId, gameId, gameData: deepClone(gameData) });
             }
         },
         utils: {
@@ -496,6 +510,16 @@ async function bootEditTeam(initialState, overrides = {}) {
                 return null;
             }
         },
+        teamStatConfigMigration: {
+            buildTeamSportConfigMigrationPlan() {
+                return {
+                    sportChanged: false,
+                    needsNewConfig: false,
+                    targetConfigId: null,
+                    gameIdsToUpdate: []
+                };
+            }
+        },
         teamAccess: await import('../../js/team-access.js'),
         rolloverAccess: await import('../../js/rollover-access.js'),
         rosterRolloverPreview: await import('../../js/roster-rollover-preview.js'),
@@ -510,6 +534,55 @@ async function bootEditTeam(initialState, overrides = {}) {
             async inviteExistingTeamAdmin({ email }) {
                 return { status: 'sent', email, code: '' };
             }
+        }
+    };
+
+    const deps = {
+        ...baseDeps,
+        ...dependencyOverrides,
+        db: {
+            ...baseDeps.db,
+            ...(dependencyOverrides.db || {})
+        },
+        utils: {
+            ...baseDeps.utils,
+            ...(dependencyOverrides.utils || {})
+        },
+        auth: {
+            ...baseDeps.auth,
+            ...(dependencyOverrides.auth || {})
+        },
+        teamAdminBanner: {
+            ...baseDeps.teamAdminBanner,
+            ...(dependencyOverrides.teamAdminBanner || {})
+        },
+        liveStreamUtils: {
+            ...baseDeps.liveStreamUtils,
+            ...(dependencyOverrides.liveStreamUtils || {})
+        },
+        statConfigPresets: {
+            ...baseDeps.statConfigPresets,
+            ...(dependencyOverrides.statConfigPresets || {})
+        },
+        teamStatConfigMigration: {
+            ...baseDeps.teamStatConfigMigration,
+            ...(dependencyOverrides.teamStatConfigMigration || {})
+        },
+        teamAccess: {
+            ...baseDeps.teamAccess,
+            ...(dependencyOverrides.teamAccess || {})
+        },
+        rolloverAccess: {
+            ...baseDeps.rolloverAccess,
+            ...(dependencyOverrides.rolloverAccess || {})
+        },
+        rosterRolloverPreview: {
+            ...baseDeps.rosterRolloverPreview,
+            ...(dependencyOverrides.rosterRolloverPreview || {})
+        },
+        editTeamAdminInvites: {
+            ...baseDeps.editTeamAdminInvites,
+            ...(dependencyOverrides.editTeamAdminInvites || {})
         }
     };
 
@@ -602,6 +675,89 @@ describe('edit team admin access persistence', () => {
                 ownerEmail: 'owner@example.com'
             });
             expect(env.state.createCalls[0].teamData.registrationSource).toBeNull();
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('runs sport migration before saving the new team sport so failed migrations can be retried', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: []
+            },
+            configs: [
+                { id: 'cfg-basketball', baseType: 'Basketball', columns: ['PTS'] }
+            ],
+            games: [
+                { id: 'game-1', status: 'scheduled', statTrackerConfigId: 'cfg-basketball' }
+            ],
+            updateCalls: [],
+            updateGameCalls: [],
+            operationOrder: []
+        };
+
+        const env = await bootEditTeam(initialState, undefined, {
+            teamStatConfigMigration: {
+                buildTeamSportConfigMigrationPlan() {
+                    return {
+                        sportChanged: true,
+                        shouldCreateTargetConfig: true,
+                        targetConfigId: null,
+                        targetConfigData: { baseType: 'Soccer', columns: ['GOALS'] },
+                        gameIdsToUpdate: ['game-1']
+                    };
+                }
+            },
+            db: {
+                async getConfigs() {
+                    initialState.operationOrder.push('getConfigs');
+                    return deepClone(initialState.configs || []);
+                },
+                async getGames() {
+                    initialState.operationOrder.push('getGames');
+                    return deepClone(initialState.games || []);
+                },
+                async addConfig() {
+                    initialState.operationOrder.push('addConfig');
+                    return 'cfg-soccer';
+                },
+                async updateGame(teamId, gameId, gameData) {
+                    initialState.operationOrder.push(`updateGame:${gameId}`);
+                    initialState.updateGameCalls.push({ teamId, gameId, gameData: deepClone(gameData) });
+                    throw new Error('game migration failed');
+                },
+                async updateTeam(teamId, teamData) {
+                    initialState.operationOrder.push('updateTeam');
+                    initialState.updateCalls.push({ teamId, teamData: deepClone(teamData) });
+                    initialState.team = { ...initialState.team, ...deepClone(teamData), id: teamId };
+                }
+            }
+        });
+        try {
+            env.elements.get('sport').value = 'Soccer';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(initialState.operationOrder).toEqual([
+                'getConfigs',
+                'getGames',
+                'addConfig',
+                'updateGame:game-1'
+            ]);
+            expect(initialState.updateCalls).toEqual([]);
+            expect(initialState.team.sport).toBe('Basketball');
+            expect(env.alerts.at(-1)).toContain('game migration failed');
         } finally {
             env.cleanup();
         }

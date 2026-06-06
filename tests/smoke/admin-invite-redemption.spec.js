@@ -62,6 +62,18 @@ export async function getTeamAccessCodes() {
     return [];
 }
 
+export async function getConfigs() {
+    return [];
+}
+
+export async function getGames() {
+    return [];
+}
+
+export async function updateGame() {
+    return undefined;
+}
+
 export async function inviteAdmin(teamId, email) {
     window.__lastAdminInvite = { teamId, email };
     return {

@@ -555,8 +555,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes } from './js/db.js?v=40';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame } from './js/db.js?v=40';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
+        import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=19';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -590,6 +591,7 @@
         let rolloverAccessPreview = null;
         let currentRegistrationSource = null;
         let currentTeamPassConfig = {};
+        let currentTeamSport = '';
         let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
         let selectedRegistrationTeam = null;
@@ -1264,6 +1266,7 @@
                 document.getElementById('name').value = team.name || '';
                 document.getElementById('description').value = team.description || '';
                 document.getElementById('sport').value = team.sport || '';
+                currentTeamSport = team.sport || '';
                 document.getElementById('teamColorPrimary').value = getTeamColorValue(team, 'primary', '#5ec9c5');
                 document.getElementById('teamColorSecondary').value = getTeamColorValue(team, 'secondary', '#d32f3a');
                 document.getElementById('notificationEmail').value = team.notificationEmail || '';
@@ -1812,7 +1815,32 @@
                 }
 
                 if (currentTeamId) {
+                    const [existingConfigs, existingGames] = await Promise.all([
+                        getConfigs(currentTeamId),
+                        getGames(currentTeamId)
+                    ]);
+                    const migrationPlan = buildTeamSportConfigMigrationPlan({
+                        previousSport: currentTeamSport,
+                        nextSport: teamData.sport,
+                        configs: existingConfigs,
+                        games: existingGames
+                    });
+
+                    if (migrationPlan.sportChanged) {
+                        let targetConfigId = migrationPlan.targetConfigId;
+                        if (!targetConfigId && migrationPlan.shouldCreateTargetConfig) {
+                            targetConfigId = await addConfig(currentTeamId, migrationPlan.targetConfigData);
+                        }
+                        if (targetConfigId && migrationPlan.gameIdsToUpdate.length > 0) {
+                            await Promise.all(migrationPlan.gameIdsToUpdate.map((gameId) => updateGame(currentTeamId, gameId, {
+                                sport: teamData.sport,
+                                statTrackerConfigId: targetConfigId
+                            })));
+                        }
+                    }
+
                     await updateTeam(currentTeamId, teamData);
+                    currentTeamSport = teamData.sport;
                 } else {
                     const newTeamId = await createTeam(teamData);
                     currentTeamId = newTeamId;
