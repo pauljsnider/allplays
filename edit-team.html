@@ -1815,13 +1815,15 @@
                 }
 
                 if (currentTeamId) {
-                    await updateTeam(currentTeamId, teamData);
-
+                    const [existingConfigs, existingGames] = await Promise.all([
+                        getConfigs(currentTeamId),
+                        getGames(currentTeamId)
+                    ]);
                     const migrationPlan = buildTeamSportConfigMigrationPlan({
                         previousSport: currentTeamSport,
                         nextSport: teamData.sport,
-                        configs: await getConfigs(currentTeamId),
-                        games: await getGames(currentTeamId)
+                        configs: existingConfigs,
+                        games: existingGames
                     });
 
                     if (migrationPlan.sportChanged) {
@@ -1836,6 +1838,8 @@
                             })));
                         }
                     }
+
+                    await updateTeam(currentTeamId, teamData);
                     currentTeamSport = teamData.sport;
                 } else {
                     const newTeamId = await createTeam(teamData);
