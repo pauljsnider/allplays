@@ -196,7 +196,21 @@ export type TeamDetailSponsorsPayload = {
   sponsors: TeamDetailSponsor[];
 };
 
+type TeamDetailBaseSnapshot = {
+  teamId: string;
+  team: any;
+  players: any[];
+  games: any[];
+  configs: any[];
+};
+
 type FirestoreDocument = Record<string, any> & { id: string };
+
+const teamDetailBaseSnapshotCache = new Map<string, TeamDetailBaseSnapshot>();
+
+export function __resetTeamDetailBaseSnapshotCacheForTests() {
+  teamDetailBaseSnapshotCache.clear();
+}
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
   let timeoutId: number | undefined;
@@ -217,6 +231,39 @@ function getProjectId() {
   const projectId = firebaseAuth.app?.options?.projectId;
   if (!projectId) throw new Error('Firebase project ID is missing.');
   return projectId;
+}
+
+function cacheTeamDetailBaseSnapshot(snapshot: TeamDetailBaseSnapshot) {
+  teamDetailBaseSnapshotCache.set(cleanString(snapshot.teamId), {
+    teamId: cleanString(snapshot.teamId),
+    team: snapshot.team,
+    players: Array.isArray(snapshot.players) ? snapshot.players : [],
+    games: Array.isArray(snapshot.games) ? snapshot.games : [],
+    configs: Array.isArray(snapshot.configs) ? snapshot.configs : []
+  });
+}
+
+async function loadTeamDetailBaseSnapshot(teamId: string): Promise<TeamDetailBaseSnapshot> {
+  const normalizedTeamId = cleanString(teamId);
+  const cachedSnapshot = teamDetailBaseSnapshotCache.get(normalizedTeamId);
+  if (cachedSnapshot?.team) return cachedSnapshot;
+
+  const [team, players, games, configs] = await Promise.all([
+    loadTeamDocument(normalizedTeamId),
+    loadTeamPlayers(normalizedTeamId),
+    loadTeamGames(normalizedTeamId),
+    loadTeamConfigs(normalizedTeamId)
+  ]);
+
+  const snapshot = {
+    teamId: normalizedTeamId,
+    team,
+    players: Array.isArray(players) ? players : [],
+    games: Array.isArray(games) ? games : [],
+    configs: Array.isArray(configs) ? configs : []
+  };
+  cacheTeamDetailBaseSnapshot(snapshot);
+  return snapshot;
 }
 
 function getFirestoreBaseUrl() {
@@ -540,12 +587,7 @@ export async function loadParentTeamDetail(
   options: { includeDeferredData?: boolean } = {}
 ): Promise<TeamDetailModel> {
   const includeDeferredData = options.includeDeferredData === true;
-  const [team, players, games, configs] = await Promise.all([
-    loadTeamDocument(teamId),
-    loadTeamPlayers(teamId),
-    loadTeamGames(teamId),
-    loadTeamConfigs(teamId)
-  ]);
+  const { team, players, games, configs } = await loadTeamDetailBaseSnapshot(teamId);
 
   if (!team) throw new Error('Team not found.');
 
@@ -588,12 +630,7 @@ export async function loadParentTeamDetail(
 }
 
 export async function loadTeamDetailInsights(teamId: string, user: AuthUser | null): Promise<TeamDetailInsightsPayload> {
-  const [team, players, games, configs] = await Promise.all([
-    loadTeamDocument(teamId),
-    loadTeamPlayers(teamId),
-    loadTeamGames(teamId),
-    loadTeamConfigs(teamId)
-  ]);
+  const { team, players, games, configs } = await loadTeamDetailBaseSnapshot(teamId);
 
   if (!team) throw new Error('Team not found.');
 
@@ -628,10 +665,7 @@ export async function loadTeamDetailSponsors(teamId: string): Promise<TeamDetail
 }
 
 export async function loadTeamStaffPermissions(teamId: string, user: AuthUser | null): Promise<TeamStaffPermissionsSummary | null> {
-  const [team, players] = await Promise.all([
-    loadTeamDocument(teamId),
-    loadTeamPlayers(teamId)
-  ]);
+  const { team, players } = await loadTeamDetailBaseSnapshot(teamId);
 
   if (!team || !hasFullTeamAccess(user, team)) return null;
 
