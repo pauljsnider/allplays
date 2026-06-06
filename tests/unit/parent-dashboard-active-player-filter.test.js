@@ -31,8 +31,11 @@ describe('parent dashboard active player filtering', () => {
         expect(functionSource).toContain('parentTeamIds: normalizedParentTeamIds');
         expect(functionSource).toContain('parentPlayerKeys: expectedParentPlayerKeys');
         expect(functionSource).toContain('activeChildren.push(child);');
+        expect(functionSource).not.toContain('const team = await getTeam(child.teamId);');
         expect(functionSource).toContain('childName: child.playerName');
         expect(functionSource).not.toContain('const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);');
-        expect(dashboardSource).toContain("./js/db.js?v=40");
+        expect(functionSource).toContain("dashboardState.kind = 'degraded';");
+        expect(dashboardSource).toContain('renderPlayers(data.children, data.dashboardState || null);');
+        expect(dashboardSource).toContain("./js/db.js?v=41");
     });
 });

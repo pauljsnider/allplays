@@ -105,7 +105,9 @@ describe('parent scope normalization', () => {
                 }
             ],
             parentTeamIds: ['team-active'],
-            parentPlayerKeys: ['team-active::player-active']
+            parentPlayerKeys: ['team-active::player-active'],
+            blockedLinkCount: 0,
+            staleLinkCount: 3
         });
     });
 
@@ -153,7 +155,9 @@ describe('parent scope normalization', () => {
                 }
             ],
             parentTeamIds: ['team-active'],
-            parentPlayerKeys: ['team-active::player-blocked']
+            parentPlayerKeys: ['team-active::player-blocked'],
+            blockedLinkCount: 1,
+            staleLinkCount: 0
         });
     });
 
@@ -180,7 +184,9 @@ describe('parent scope normalization', () => {
                 }
             ],
             parentTeamIds: ['team-active'],
-            parentPlayerKeys: ['team-active::player-active']
+            parentPlayerKeys: ['team-active::player-active'],
+            blockedLinkCount: 0,
+            staleLinkCount: 1
         });
         const getTeam = vi.fn().mockResolvedValue({ id: 'team-active', name: 'Active Team', active: true });
         const getEvents = vi.fn().mockResolvedValue([]);
@@ -213,5 +219,72 @@ describe('parent scope normalization', () => {
                 playerPhotoUrl: null
             }
         ]);
+        expect(result.dashboardState).toEqual({
+            kind: 'ready',
+            blockedLinkCount: 0,
+            staleLinkCount: 1,
+            teamEventErrors: 0
+        });
+    });
+
+    it('keeps player cards visible when team event reads fail during parent access repair', async () => {
+        const getUserProfile = vi.fn().mockResolvedValue({
+            parentOf: [
+                { teamId: 'team-active', playerId: 'player-active', teamName: 'Active Team', playerName: 'Avery Lee' }
+            ],
+            parentTeamIds: [],
+            parentPlayerKeys: []
+        });
+        const updateUserProfile = vi.fn().mockResolvedValue(undefined);
+        const listParentRegistrationApplicationsForProfile = vi.fn().mockResolvedValue([]);
+        const normalizeParentScopeLinks = vi.fn().mockResolvedValue({
+            activeLinks: [
+                {
+                    teamId: 'team-active',
+                    playerId: 'player-active',
+                    teamName: 'Active Team',
+                    playerName: 'Avery Lee',
+                    playerNumber: '9',
+                    playerPhotoUrl: null
+                }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-active'],
+            blockedLinkCount: 1,
+            staleLinkCount: 0
+        });
+        const getEvents = vi.fn(async () => {
+            const error = new Error('blocked');
+            error.code = 'permission-denied';
+            throw error;
+        });
+        const getParentDashboardData = buildGetParentDashboardData({
+            getUserProfile,
+            updateUserProfile,
+            listParentRegistrationApplicationsForProfile,
+            normalizeParentScopeLinks,
+            getTeam: vi.fn(),
+            getEvents
+        });
+
+        const result = await getParentDashboardData('parent-1');
+
+        expect(result.children).toEqual([
+            {
+                teamId: 'team-active',
+                playerId: 'player-active',
+                teamName: 'Active Team',
+                playerName: 'Avery Lee',
+                playerNumber: '9',
+                playerPhotoUrl: null
+            }
+        ]);
+        expect(result.upcomingGames).toEqual([]);
+        expect(result.dashboardState).toEqual({
+            kind: 'degraded',
+            blockedLinkCount: 1,
+            staleLinkCount: 0,
+            teamEventErrors: 1
+        });
     });
 });
