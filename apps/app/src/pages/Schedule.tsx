@@ -565,9 +565,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <Segment active={view === 'calendar'} onClick={() => setView('calendar')} icon={CalendarDays} label="Calendar" />
             <Segment active={view === 'packets'} onClick={() => setView('packets')} icon={ClipboardCheck} label="Packets" />
             <label className="sm:hidden">
-              <span className="sr-only">Desktop schedule filter</span>
+              <span className="sr-only">Schedule filter</span>
               <select
-                aria-label="Desktop schedule filter"
+                aria-label="Schedule filter"
                 className="auth-input min-h-9 truncate !px-3 !py-2 text-xs font-black"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value as ParentScheduleFilter)}

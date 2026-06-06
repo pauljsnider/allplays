@@ -24,6 +24,7 @@ const {
   shouldApplyTeamFeeCheckoutSession,
   shouldMarkTeamFeePaidFromEvent,
   shouldRecordTeamFeeCheckoutNotPaidFromEvent,
+  getTeamFeeStripePaymentRefs,
   buildTeamFeePaidUpdate,
   buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
@@ -116,6 +117,53 @@ function buildTeamPassCheckoutUrls(appUrl, teamId) {
 
 function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
   return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
+}
+
+function buildTeamFeeAdminBillingRef(recipientRef, id) {
+  const safeId = String(id || 'latest').trim().replace(/[^\w.-]+/g, '_').slice(0, 120);
+  return recipientRef.collection('adminBilling').doc(safeId || 'latest');
+}
+
+function withTeamFeeParentBillingClears(update = {}) {
+  return {
+    ...update,
+    stripePaymentIntentId: null,
+    stripeCustomerId: null,
+    stripeChargeId: null,
+    stripeLastRefundId: null,
+    stripeEventId: null,
+    ...(update.receiptMetadata ? {
+      receiptMetadata: {
+        ...update.receiptMetadata,
+        checkoutSessionId: null,
+        paymentIntentId: null,
+        receiptEmail: null,
+        eventId: null
+      }
+    } : {})
+  };
+}
+
+async function fetchTeamFeePaymentAdminBilling(recipientRef) {
+  const latestSnap = await buildTeamFeeAdminBillingRef(recipientRef, 'latest').get();
+  const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+  const latestRefs = getTeamFeeStripePaymentRefs(latest);
+  if (latestRefs.paymentIntentId || latestRefs.chargeId) {
+    return latest;
+  }
+
+  const querySnap = await recipientRef.collection('adminBilling')
+    .where('type', '==', 'stripe_checkout_paid')
+    .limit(10)
+    .get();
+  for (const doc of querySnap.docs) {
+    const data = doc.data() || {};
+    const refs = getTeamFeeStripePaymentRefs(data);
+    if (refs.paymentIntentId || refs.chargeId) {
+      return data;
+    }
+  }
+  return {};
 }
 
 function buildTeamFeeRefundRequestId(input, uid) {
@@ -1556,9 +1604,10 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid team fee refund request.');
   }
 
+  const recipientRef = buildTeamFeeRecipientRef(input);
   const [teamSnap, recipientSnap, user] = await Promise.all([
     firestore.doc(`teams/${input.teamId}`).get(),
-    buildTeamFeeRecipientRef(input).get(),
+    recipientRef.get(),
     getUserForEligibility(context.auth.uid)
   ]);
 
@@ -1583,8 +1632,8 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('failed-precondition', 'Only Stripe team fee payments can be refunded online.');
   }
 
-  const paymentIntentId = String(recipient.stripePaymentIntentId || '').trim();
-  const chargeId = String(recipient.stripeChargeId || recipient.stripeLatestChargeId || '').trim();
+  const paymentAdminBilling = await fetchTeamFeePaymentAdminBilling(recipientRef);
+  const { paymentIntentId, chargeId } = getTeamFeeStripePaymentRefs(recipient, paymentAdminBilling);
   if (!paymentIntentId && !chargeId) {
     throw new functions.https.HttpsError('failed-precondition', 'This payment is missing a Stripe payment intent or charge reference.');
   }
@@ -1594,7 +1643,6 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount.');
   }
 
-  const recipientRef = buildTeamFeeRecipientRef(input);
   const refundRequestId = buildTeamFeeRefundRequestId(input, context.auth.uid);
   const refundIntentRef = recipientRef.collection('refundIntents').doc(refundRequestId);
   let existingRefundResult = null;
@@ -1709,12 +1757,14 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   try {
     await firestore.runTransaction(async (transaction) => {
       const latestSnap = await transaction.get(recipientRef);
+      const refundAdminBillingRef = buildTeamFeeAdminBillingRef(recipientRef, refund.id || refundRequestId);
+      const refundAdminBillingSnap = await transaction.get(refundAdminBillingRef);
       if (!latestSnap.exists) {
         throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
       }
 
       const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
-      if (hasStripeRefundLedgerEntry(latestRecipient, refund.id)) {
+      if (refundAdminBillingSnap.exists || hasStripeRefundLedgerEntry(latestRecipient, refund.id)) {
         transaction.set(refundIntentRef, {
           status: 'recorded',
           stripeRefundId: refund.id || null,
@@ -1729,8 +1779,8 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount.');
       }
 
-      const { ledgerEntries = [], ...update } = buildTeamFeeStripeRefundUpdate({
-        recipient: latestRecipient,
+      const { ledgerEntries = [], adminBilling, ...update } = buildTeamFeeStripeRefundUpdate({
+        recipient: { ...latestRecipient, adminBilling: paymentAdminBilling },
         refund,
         amountCents: actualRefundAmount,
         actorId: context.auth.uid,
@@ -1739,9 +1789,12 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         ledgerRefundedAt
       });
       transaction.set(recipientRef, {
-        ...update,
+        ...withTeamFeeParentBillingClears(update),
         paymentLedger: admin.firestore.FieldValue.arrayUnion(...ledgerEntries)
       }, { merge: true });
+      if (adminBilling) {
+        transaction.set(refundAdminBillingRef, adminBilling, { merge: true });
+      }
       transaction.set(refundIntentRef, {
         status: 'recorded',
         stripeRefundId: refund.id || null,
@@ -2086,21 +2139,37 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           : getTeamFeeCheckoutGuardFailure({ recipient, session });
 
         if (shouldMarkTeamFeePaidFromEvent(event) && shouldApplyCheckoutEvent) {
-          transaction.set(recipientRef, buildTeamFeePaidUpdate({
+          const { adminBilling, ...recipientUpdate } = buildTeamFeePaidUpdate({
             recipient,
             session,
             eventId: event.id,
             receivedAt
-          }), { merge: true });
+          });
+          transaction.set(recipientRef, withTeamFeeParentBillingClears(recipientUpdate), { merge: true });
+          if (adminBilling) {
+            transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), adminBilling, { merge: true });
+            transaction.set(buildTeamFeeAdminBillingRef(recipientRef, 'latest'), adminBilling, { merge: true });
+          }
         } else if (shouldRecordTeamFeeCheckoutNotPaidFromEvent(event) && shouldApplyCheckoutEvent) {
           transaction.set(recipientRef, {
             checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
-            stripeCheckoutSessionId: session.id || null,
+            stripeCheckoutSessionId: null,
+            stripePaymentIntentId: null,
+            stripeCustomerId: null,
+            stripeEventId: null,
             checkoutAttemptToken: null,
             checkoutUrl: null,
             paymentLink: null,
             checkoutAmountCents: null,
+            updatedAt: receivedAt
+          }, { merge: true });
+          transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), {
+            type: event.type,
+            provider: 'stripe',
+            stripeCheckoutSessionId: session.id || null,
             stripeEventId: event.id,
+            paymentStatus: session.payment_status || null,
+            recordedAt: receivedAt,
             updatedAt: receivedAt
           }, { merge: true });
         }

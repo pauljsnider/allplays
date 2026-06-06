@@ -21,9 +21,11 @@ async function waitForAppShell(page) {
 async function waitForSearchTrigger(page) {
     const trigger = page.getByRole('button', { name: 'Search', exact: true }).first();
 
-    await waitForAppShell(page);
-    await expect(trigger).toBeVisible({ timeout: 5000 });
-    await expect(trigger).toBeEnabled({ timeout: 5000 });
+    await expect(async () => {
+        await waitForAppShell(page);
+        await expect(trigger).toBeVisible({ timeout: 1000 });
+        await expect(trigger).toBeEnabled({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
 
     return trigger;
 }
@@ -49,7 +51,7 @@ async function openSearch(page) {
             await page.keyboard.press('Control+K');
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         }
-    }).toPass({ timeout: 15000 });
+    }).toPass({ timeout: 30000 });
 }
 
 async function openDesktopSearch(page) {

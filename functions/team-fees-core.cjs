@@ -239,6 +239,38 @@ function getTeamFeeStripePaidAmountCents({ recipient = {}, session = {} } = {}) 
     return 0;
 }
 
+function buildTeamFeeAdminBillingMetadata({ type, provider = 'stripe', data = {} } = {}) {
+    return {
+        type,
+        provider,
+        ...data
+    };
+}
+
+function getTeamFeeStripePaymentRefs(...sources) {
+    const pending = [...sources];
+    while (pending.length > 0) {
+        const source = pending.shift();
+        if (!source) continue;
+        if (Array.isArray(source)) {
+            pending.unshift(...source);
+            continue;
+        }
+        if (typeof source !== 'object') continue;
+
+        const paymentIntentId = normalizeString(source.stripePaymentIntentId || source.paymentIntentId);
+        const chargeId = normalizeString(source.stripeChargeId || source.chargeId || source.stripeLatestChargeId);
+        if (paymentIntentId || chargeId) {
+            return { paymentIntentId, chargeId };
+        }
+
+        if (source.adminBilling) pending.unshift(source.adminBilling);
+        if (Array.isArray(source.adminBillingEntries)) pending.unshift(...source.adminBillingEntries);
+    }
+
+    return { paymentIntentId: '', chargeId: '' };
+}
+
 function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
     const refundAmountCents = Math.round(Number(amountCents || refund.amount || 0));
     const previousPaidCents = getTeamFeePaidCents(recipient);
@@ -248,6 +280,7 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
     const balanceDueCents = Math.max(0, getTeamFeeTotalCents(recipient) - paidAmountCents);
     const status = paidAmountCents <= 0 ? 'unpaid' : balanceDueCents > 0 ? 'partial' : 'paid';
     const refundStatus = normalizeString(refund.status || 'pending').toLowerCase() || 'pending';
+    const paymentRefs = getTeamFeeStripePaymentRefs(recipient);
 
     return {
         status,
@@ -266,20 +299,29 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
         stripeCheckoutSessionId: null,
         checkoutAmountCents: null,
         paymentProvider: 'stripe',
-        stripeLastRefundId: refund.id || null,
+        hasAdminBilling: true,
         stripeLastRefundStatus: refundStatus,
         ledgerEntries: [{
             type: 'stripe_refund',
             amountCents: refundAmountCents,
             refundAmountCents,
             status: refundStatus,
-            stripeRefundId: refund.id || null,
-            stripePaymentIntentId: typeof refund.payment_intent === 'string' ? refund.payment_intent : (recipient.stripePaymentIntentId || null),
-            stripeChargeId: typeof refund.charge === 'string' ? refund.charge : (recipient.stripeChargeId || null),
-            reason: normalizeString(reason),
-            refundedBy: actorId || null,
             refundedAt: ledgerRefundedAt
-        }]
+        }],
+        adminBilling: buildTeamFeeAdminBillingMetadata({
+            type: 'stripe_refund',
+            data: {
+                stripeRefundId: refund.id || null,
+                stripePaymentIntentId: typeof refund.payment_intent === 'string' ? refund.payment_intent : (paymentRefs.paymentIntentId || null),
+                stripeChargeId: typeof refund.charge === 'string' ? refund.charge : (paymentRefs.chargeId || null),
+                refundAmountCents,
+                status: refundStatus,
+                reason: normalizeString(reason),
+                refundedBy: actorId || null,
+                refundedAt: ledgerRefundedAt,
+                updatedAt: refundedAt
+            }
+        })
     };
 }
 
@@ -299,24 +341,34 @@ function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receive
         checkoutUrl: null,
         paymentLink: null,
         paymentProvider: 'stripe',
-        stripeCheckoutSessionId: session.id || null,
-        stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : null,
-        stripeCustomerId: typeof session.customer === 'string' ? session.customer : null,
+        stripeCheckoutSessionId: null,
         stripePaymentAmountCents: stripePaidAmountCents,
-        stripeEventId: eventId,
+        hasAdminBilling: true,
         paidAt: receivedAt,
         updatedAt: receivedAt,
         receiptMetadata: {
             provider: 'stripe',
-            checkoutSessionId: session.id || null,
-            paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : null,
             amountPaidCents: stripePaidAmountCents,
             totalPaidCents: paidAmountCents,
             balanceDueCents,
-            currency: session.currency || 'usd',
-            receiptEmail: session.customer_details?.email || session.customer_email || null,
-            eventId
-        }
+            currency: session.currency || 'usd'
+        },
+        adminBilling: buildTeamFeeAdminBillingMetadata({
+            type: 'stripe_checkout_paid',
+            data: {
+                stripeCheckoutSessionId: session.id || null,
+                stripePaymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : null,
+                stripeCustomerId: typeof session.customer === 'string' ? session.customer : null,
+                receiptEmail: session.customer_details?.email || session.customer_email || null,
+                stripeEventId: eventId,
+                amountPaidCents: stripePaidAmountCents,
+                totalPaidCents: paidAmountCents,
+                balanceDueCents,
+                currency: session.currency || 'usd',
+                paidAt: receivedAt,
+                updatedAt: receivedAt
+            }
+        })
     };
 }
 
@@ -339,6 +391,8 @@ module.exports = {
     shouldMarkTeamFeePaidFromEvent,
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
     getTeamFeeStripePaidAmountCents,
+    buildTeamFeeAdminBillingMetadata,
+    getTeamFeeStripePaymentRefs,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 };
