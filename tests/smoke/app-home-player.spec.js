@@ -17,6 +17,14 @@ async function waitForHomeRoute(page, readyLocator) {
     }).toPass({ timeout: 30000 });
 }
 
+async function waitForTeamsRoute(page, readyLocator) {
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+        await expect(page.getByText('Loading teams')).toHaveCount(0, { timeout: 3000 });
+        await expect(readyLocator).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 30000 });
+}
+
 async function mockHomePlayerModules(page) {
     await page.addInitScript(() => {
         window.__playerLoads = [];
@@ -389,6 +397,17 @@ async function mockHomePlayerModules(page) {
                     return null;
                 }
 
+                export async function loadTeamDetailInsights() {
+                    return {
+                        leaderboards: [{ id: 'pts', label: 'Points', leaders: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: 'https://img.example.test/player.png', rank: 1, formattedValue: '88' }] }],
+                        trackingSummaries: [{ playerId: 'player-1', playerName: 'Pat Star', photoUrl: 'https://img.example.test/player.png', items: [{ id: 'item-1', title: 'Bring ball', description: '', isComplete: false }] }]
+                    };
+                }
+
+                export async function loadTeamDetailSponsors() {
+                    return { sponsors: [{ id: 'sponsor-1', name: 'Pizza Place', description: 'After the game', imageUrl: 'https://img.example.test/pizza.png', websiteUrl: 'https://pizza.example.test' }] };
+                }
+
                 export function buildPublicTeamGamesIcsUrl(teamId) {
                     return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
                 }
@@ -614,7 +633,7 @@ test('my teams opens from Home data with selected team, player, and chat routes'
     await mockHomePlayerModules(page);
     await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-1&from=home'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('heading', { name: '1 team ready' })).toBeVisible();
+    await waitForTeamsRoute(page, page.getByRole('heading', { name: '1 team ready' }));
     await expect(page.getByText('Choose a team')).toBeVisible();
     await expect(page.getByRole('link', { name: /Chat/ })).toHaveAttribute('href', '#/messages/team-1');
     await expect(page.getByText('Team navigation')).toBeVisible();
@@ -634,7 +653,11 @@ test('my teams opens from Home data with selected team, player, and chat routes'
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.locator('a[href="#/teams/team-1"]').first().click();
-    await expect(page.getByRole('heading', { name: 'Bears' })).toBeVisible();
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(page.getByText('Loading team')).toHaveCount(0, { timeout: 1000 });
+        await expect(page.getByRole('heading', { name: 'Bears' })).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
     await expect(page.locator('img[src="https://img.example.test/bears.png"]').first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Roster' })).toBeVisible();
     await page.getByRole('button', { name: 'Roster' }).click();

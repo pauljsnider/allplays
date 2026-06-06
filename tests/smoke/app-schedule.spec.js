@@ -919,9 +919,12 @@ test('app practice more tab uses hub cards and shares event details without a li
     await expect(page.locator('.event-summary-card')).toContainText('Practice');
     await expect(page.getByRole('button', { name: 'Practice packet ready, review packet' })).toBeVisible();
     await page.getByRole('button', { name: 'Practice packet ready, review packet' }).click();
-    await expect(page.getByRole('heading', { name: 'Practice hub' })).toBeVisible();
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(page.getByRole('heading', { name: 'Practice hub' })).toBeVisible({ timeout: 1000 });
+        await expect(page.getByText('2 drills · 20 min · Main Gym')).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
     const practiceHub = page.locator('.app-card').filter({ has: page.getByRole('heading', { name: 'Practice hub' }) });
-    await expect(page.getByText('2 drills · 20 min · Main Gym')).toBeVisible();
     await expect(practiceHub.locator('article').first().getByRole('heading', { name: 'Share practice' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Open packet' })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Open team' })).toBeVisible();
