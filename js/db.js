@@ -628,41 +628,6 @@ function buildPublicTeamSearchFields(teamData = {}) {
     return searchFields;
 }
 
-function parseResolvedZipLocation(resolvedLocation) {
-    const normalizedLocation = String(resolvedLocation || '').trim();
-    if (!normalizedLocation) return null;
-
-    const [cityPart, statePart = ''] = normalizedLocation.split(',').map((part) => part.trim());
-    if (!cityPart || !statePart) return null;
-
-    return {
-        city: cityPart,
-        state: statePart.toUpperCase()
-    };
-}
-
-async function buildMaterializedPublicTeamSearchFields(teamData = {}, existingTeamData = null) {
-    const mergedTeamData = existingTeamData
-        ? { ...existingTeamData, ...teamData }
-        : { ...teamData };
-    const searchFields = buildPublicTeamSearchFields(teamData);
-    const isPublicTeam = mergedTeamData.isPublic === true;
-    const hasCity = normalizePublicTeamSearchInput(mergedTeamData.city);
-    const hasState = normalizePublicTeamSearchInput(mergedTeamData.state);
-    const zip = normalizePublicTeamSearchInput(mergedTeamData.zip);
-
-    if (isPublicTeam && zip && !hasCity && !hasState) {
-        const resolvedLocation = parseResolvedZipLocation(await resolveZip(zip));
-        if (resolvedLocation) {
-            searchFields.publicSearchCity = normalizePublicTeamSearchValue(resolvedLocation.city);
-            searchFields.publicSearchState = normalizePublicTeamSearchValue(resolvedLocation.state, { uppercase: true });
-            searchFields.publicSearchCityState = `${searchFields.publicSearchCity}, ${searchFields.publicSearchState.toLowerCase()}`;
-        }
-    }
-
-    return searchFields;
-}
-
 function normalizePublicTeamSearchInput(value) {
     return String(value || '').trim();
 }
@@ -718,7 +683,7 @@ function buildPublicTeamSearchStrategies(searchText = '') {
     const legacyCitySearch = toTitleCase(rawCityPart || trimmed);
     const normalizedState = rawStatePart ? rawStatePart.toUpperCase() : '';
     const filterByState = normalizedState
-        ? (team) => String(team.state || '').trim().toUpperCase().startsWith(normalizedState)
+        ? (team) => String(team.publicSearchState || team.state || '').trim().toUpperCase().startsWith(normalizedState)
         : null;
 
     return [
@@ -1430,7 +1395,7 @@ export async function getUserByEmail(email) {
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
-    Object.assign(teamData, await buildMaterializedPublicTeamSearchFields(teamData));
+    Object.assign(teamData, buildPublicTeamSearchFields(teamData));
     if (!Object.prototype.hasOwnProperty.call(teamData, 'active')) {
         teamData.active = true;
     }
@@ -1447,9 +1412,7 @@ export async function createTeam(teamData) {
 export async function updateTeam(teamId, teamData) {
     teamData.updatedAt = Timestamp.now();
     const docRef = doc(db, "teams", teamId);
-    const existingTeamSnapshot = await getDoc(docRef);
-    const existingTeamData = existingTeamSnapshot.exists() ? existingTeamSnapshot.data() : null;
-    Object.assign(teamData, await buildMaterializedPublicTeamSearchFields(teamData, existingTeamData));
+    Object.assign(teamData, buildPublicTeamSearchFields(teamData));
     await updateDoc(docRef, teamData);
 }
 

@@ -42,16 +42,24 @@ describe('public teams visibility', () => {
         ]));
     });
 
-    it('materializes public search fields for zip-only public teams and ships a backfill script', () => {
+    it('keeps zip-backed state filters on indexed fields and avoids blocking saves on ZIP resolution', () => {
         const source = readRepoFile('js/db.js');
+
+        expect(source).toContain("String(team.publicSearchState || team.state || '').trim().toUpperCase().startsWith(normalizedState)");
+        expect(source).toContain('Object.assign(teamData, buildPublicTeamSearchFields(teamData));');
+        expect(source).not.toContain('buildMaterializedPublicTeamSearchFields');
+    });
+
+    it('ships a batched backfill script with retry and concurrency guards for zip-only public teams', () => {
         const backfillScript = readRepoFile('_migration/backfill-public-team-search-fields.js');
 
-        expect(source).toContain('async function buildMaterializedPublicTeamSearchFields(teamData = {}, existingTeamData = null)');
-        expect(source).toContain('const resolvedLocation = parseResolvedZipLocation(await resolveZip(zip));');
-        expect(source).toContain('Object.assign(teamData, await buildMaterializedPublicTeamSearchFields(teamData));');
-        expect(source).toContain('Object.assign(teamData, await buildMaterializedPublicTeamSearchFields(teamData, existingTeamData));');
         expect(backfillScript).toContain("where('isPublic', '==', true)");
-        expect(backfillScript).toContain('await teamDoc.ref.update(buildSearchFieldPatch(resolvedLocation));');
+        expect(backfillScript).toContain('const ZIP_RESOLVE_CONCURRENCY = 10;');
+        expect(backfillScript).toContain('const ZIP_RESOLVE_MAX_ATTEMPTS = 3;');
+        expect(backfillScript).toContain('let batch = db.batch();');
+        expect(backfillScript).toContain('batch.update(teamDoc.ref, buildSearchFieldPatch(resolvedLocation));');
+        expect(backfillScript).toContain('updatedCount += await commitBatch(batch, pendingBatchCount);');
+        expect(backfillScript).toContain('await mapWithConcurrency(uniqueZips, ZIP_RESOLVE_CONCURRENCY, async (zip) => {');
     });
 
     it('wires Browse Teams to the public-only helper path and keeps a defensive client filter', () => {
