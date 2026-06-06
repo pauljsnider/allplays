@@ -36,6 +36,59 @@ function getFirstDefined(...values) {
     return values.find((value) => value !== undefined && value !== null && value !== '' && !(Array.isArray(value) && value.length === 0));
 }
 
+const PARENT_FEE_PRIVATE_FIELDS = [
+    'stripeCheckoutSessionId',
+    'stripePaymentIntentId',
+    'stripeCustomerId',
+    'stripeChargeId',
+    'stripeRefundId',
+    'stripeLastRefundId',
+    'stripeEventId',
+    'receiptEmail',
+    'refundedBy',
+    'recordedBy',
+    'internalNote',
+    'adminNote',
+    'reason'
+];
+
+const PARENT_FEE_PRIVATE_RECEIPT_FIELDS = [
+    'checkoutSessionId',
+    'paymentIntentId',
+    'receiptEmail',
+    'eventId'
+];
+
+function omitPrivateFields(value, fields) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const safe = { ...value };
+    fields.forEach((field) => {
+        delete safe[field];
+    });
+    return safe;
+}
+
+function sanitizeParentFeeLedgerEntry(entry) {
+    const safe = omitPrivateFields(entry, PARENT_FEE_PRIVATE_FIELDS);
+    if (isRefundLedgerEntry(safe)) {
+        delete safe.note;
+    }
+    return safe;
+}
+
+export function sanitizeParentFeeRecipientRecord(fee) {
+    const safe = omitPrivateFields(fee || {}, PARENT_FEE_PRIVATE_FIELDS);
+    if (safe.receiptMetadata) {
+        safe.receiptMetadata = omitPrivateFields(safe.receiptMetadata, PARENT_FEE_PRIVATE_RECEIPT_FIELDS);
+    }
+    ['ledgerEntries', 'paymentLedger', 'activity', 'receipts', 'payments', 'adjustments'].forEach((field) => {
+        if (Array.isArray(safe[field])) {
+            safe[field] = safe[field].filter(Boolean).map(sanitizeParentFeeLedgerEntry);
+        }
+    });
+    return safe;
+}
+
 function getFeeLineItems(fee) {
     const rawItems = getFirstDefined(fee?.lineItems, fee?.invoiceLineItems, fee?.invoiceItems, fee?.items);
     return Array.isArray(rawItems) ? rawItems.filter(Boolean) : [];
@@ -319,23 +372,24 @@ export function formatParentFeeDueDate(value) {
 }
 
 export function normalizeParentFeeRecord(fee) {
+    const safeFee = sanitizeParentFeeRecipientRecord(fee);
     return {
-        ...fee,
-        title: fee?.title || fee?.feeTitle || fee?.name || 'Team fee',
-        teamName: fee?.teamName || 'Team',
-        playerName: fee?.playerName || fee?.childName || '',
-        status: normalizeParentFeeStatus(fee?.status),
-        dueDate: fee?.dueDate || fee?.dueAt || null,
-        notes: fee?.notes || fee?.feeNotes || '',
-        offlinePaymentInstructions: fee?.offlinePaymentInstructions || fee?.paymentInstructions || '',
-        collectionMode: fee?.collectionMode || '',
-        totalAmountCents: getFeeTotalCents(fee),
-        paidAmountCents: getFeePaidCents(fee),
-        balanceDueCents: getFeeBalanceCents(fee),
-        checkoutUrl: getFeeCheckoutUrl(fee),
-        teamId: fee?.teamId || '',
-        batchId: fee?.batchId || fee?.feeBatchId || '',
-        recipientId: getFeeRecipientId(fee) || ''
+        ...safeFee,
+        title: safeFee?.title || safeFee?.feeTitle || safeFee?.name || 'Team fee',
+        teamName: safeFee?.teamName || 'Team',
+        playerName: safeFee?.playerName || safeFee?.childName || '',
+        status: normalizeParentFeeStatus(safeFee?.status),
+        dueDate: safeFee?.dueDate || safeFee?.dueAt || null,
+        notes: safeFee?.notes || safeFee?.feeNotes || '',
+        offlinePaymentInstructions: safeFee?.offlinePaymentInstructions || safeFee?.paymentInstructions || '',
+        collectionMode: safeFee?.collectionMode || '',
+        totalAmountCents: getFeeTotalCents(safeFee),
+        paidAmountCents: getFeePaidCents(safeFee),
+        balanceDueCents: getFeeBalanceCents(safeFee),
+        checkoutUrl: getFeeCheckoutUrl(safeFee),
+        teamId: safeFee?.teamId || '',
+        batchId: safeFee?.batchId || safeFee?.feeBatchId || '',
+        recipientId: getFeeRecipientId(safeFee) || ''
     };
 }
 

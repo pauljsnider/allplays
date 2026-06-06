@@ -118,6 +118,31 @@ function buildTeamFeeRecipientRef({ teamId, batchId, recipientId }) {
   return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/feeRecipients/${recipientId}`);
 }
 
+function buildTeamFeeAdminBillingRef(recipientRef, id) {
+  const safeId = String(id || 'latest').trim().replace(/[^\w.-]+/g, '_').slice(0, 120);
+  return recipientRef.collection('adminBilling').doc(safeId || 'latest');
+}
+
+function withTeamFeeParentBillingClears(update = {}) {
+  return {
+    ...update,
+    stripePaymentIntentId: null,
+    stripeCustomerId: null,
+    stripeChargeId: null,
+    stripeLastRefundId: null,
+    stripeEventId: null,
+    ...(update.receiptMetadata ? {
+      receiptMetadata: {
+        ...update.receiptMetadata,
+        checkoutSessionId: null,
+        paymentIntentId: null,
+        receiptEmail: null,
+        eventId: null
+      }
+    } : {})
+  };
+}
+
 function buildTeamFeeRefundRequestId(input, uid) {
   const requested = String(input.refundRequestId || '').trim();
   if (requested) return requested;
@@ -1709,12 +1734,14 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
   try {
     await firestore.runTransaction(async (transaction) => {
       const latestSnap = await transaction.get(recipientRef);
+      const refundAdminBillingRef = buildTeamFeeAdminBillingRef(recipientRef, refund.id || refundRequestId);
+      const refundAdminBillingSnap = await transaction.get(refundAdminBillingRef);
       if (!latestSnap.exists) {
         throw new functions.https.HttpsError('not-found', 'Fee recipient not found.');
       }
 
       const latestRecipient = { id: input.recipientId, ...(latestSnap.data() || {}) };
-      if (hasStripeRefundLedgerEntry(latestRecipient, refund.id)) {
+      if (refundAdminBillingSnap.exists || hasStripeRefundLedgerEntry(latestRecipient, refund.id)) {
         transaction.set(refundIntentRef, {
           status: 'recorded',
           stripeRefundId: refund.id || null,
@@ -1729,7 +1756,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount.');
       }
 
-      const { ledgerEntries = [], ...update } = buildTeamFeeStripeRefundUpdate({
+      const { ledgerEntries = [], adminBilling, ...update } = buildTeamFeeStripeRefundUpdate({
         recipient: latestRecipient,
         refund,
         amountCents: actualRefundAmount,
@@ -1739,9 +1766,12 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
         ledgerRefundedAt
       });
       transaction.set(recipientRef, {
-        ...update,
+        ...withTeamFeeParentBillingClears(update),
         paymentLedger: admin.firestore.FieldValue.arrayUnion(...ledgerEntries)
       }, { merge: true });
+      if (adminBilling) {
+        transaction.set(refundAdminBillingRef, adminBilling, { merge: true });
+      }
       transaction.set(refundIntentRef, {
         status: 'recorded',
         stripeRefundId: refund.id || null,
@@ -2086,21 +2116,36 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           : getTeamFeeCheckoutGuardFailure({ recipient, session });
 
         if (shouldMarkTeamFeePaidFromEvent(event) && shouldApplyCheckoutEvent) {
-          transaction.set(recipientRef, buildTeamFeePaidUpdate({
+          const { adminBilling, ...recipientUpdate } = buildTeamFeePaidUpdate({
             recipient,
             session,
             eventId: event.id,
             receivedAt
-          }), { merge: true });
+          });
+          transaction.set(recipientRef, withTeamFeeParentBillingClears(recipientUpdate), { merge: true });
+          if (adminBilling) {
+            transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), adminBilling, { merge: true });
+          }
         } else if (shouldRecordTeamFeeCheckoutNotPaidFromEvent(event) && shouldApplyCheckoutEvent) {
           transaction.set(recipientRef, {
             checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',
-            stripeCheckoutSessionId: session.id || null,
+            stripeCheckoutSessionId: null,
+            stripePaymentIntentId: null,
+            stripeCustomerId: null,
+            stripeEventId: null,
             checkoutAttemptToken: null,
             checkoutUrl: null,
             paymentLink: null,
             checkoutAmountCents: null,
+            updatedAt: receivedAt
+          }, { merge: true });
+          transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), {
+            type: event.type,
+            provider: 'stripe',
+            stripeCheckoutSessionId: session.id || null,
             stripeEventId: event.id,
+            paymentStatus: session.payment_status || null,
+            recordedAt: receivedAt,
             updatedAt: receivedAt
           }, { merge: true });
         }
