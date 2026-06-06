@@ -212,6 +212,10 @@ export function __resetTeamDetailBaseSnapshotCacheForTests() {
   teamDetailBaseSnapshotCache.clear();
 }
 
+function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
+  teamDetailBaseSnapshotCache.delete(cleanString(teamId));
+}
+
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
   let timeoutId: number | undefined;
   const timeout = new Promise<T>((_, reject) => {
@@ -464,6 +468,7 @@ export async function grantScorekeeperAccessForApp(teamId: string, memberUserId:
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedUserId) throw new Error('Team member user ID is required.');
   await grantScorekeeperAccess(normalizedTeamId, normalizedUserId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
 export async function revokeScorekeeperAccessForApp(teamId: string, memberUserId: string) {
@@ -472,6 +477,7 @@ export async function revokeScorekeeperAccessForApp(teamId: string, memberUserId
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedUserId) throw new Error('Team member user ID is required.');
   await revokeScorekeeperAccess(normalizedTeamId, normalizedUserId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
 export async function grantVideographerAccessForApp(teamId: string, memberUserId: string) {
@@ -480,6 +486,7 @@ export async function grantVideographerAccessForApp(teamId: string, memberUserId
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedUserId) throw new Error('Team member user ID is required.');
   await grantVideographerAccess(normalizedTeamId, normalizedUserId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
 export async function revokeVideographerAccessForApp(teamId: string, memberUserId: string) {
@@ -488,6 +495,7 @@ export async function revokeVideographerAccessForApp(teamId: string, memberUserI
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedUserId) throw new Error('Team member user ID is required.');
   await revokeVideographerAccess(normalizedTeamId, normalizedUserId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
 export async function saveTeamScheduleNotificationsForApp(teamId: string, settings: Partial<TeamScheduleNotificationSettings>) {

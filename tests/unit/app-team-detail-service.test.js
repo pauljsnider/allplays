@@ -128,6 +128,51 @@ describe('React app team detail model', () => {
         expect(grantVideographerAccess).not.toHaveBeenCalled();
     });
 
+    it('invalidates cached team detail snapshots after scorekeeper mutations so refreshed permissions reflect the write', async () => {
+        getTeam
+            .mockResolvedValueOnce({
+                id: 'team-1',
+                name: 'Bears',
+                ownerId: 'owner-1',
+                adminEmails: ['coach@example.com'],
+                teamPermissions: { scorekeeping: { mode: 'selected', memberIds: [] } }
+            })
+            .mockResolvedValueOnce({
+                id: 'team-1',
+                name: 'Bears',
+                ownerId: 'owner-1',
+                adminEmails: ['coach@example.com'],
+                teamPermissions: { scorekeeping: { mode: 'selected', memberIds: ['parent-1'] } }
+            });
+        getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Pat Star',
+                parents: [{ userId: 'parent-1', name: 'Parent One', email: 'parent@example.com' }]
+            }
+        ]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getAllUsers.mockResolvedValue([]);
+        getDocs.mockResolvedValue({ docs: [] });
+        grantScorekeeperAccess.mockResolvedValue(undefined);
+
+        const managerUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        const beforeGrant = await loadTeamStaffPermissions('team-1', managerUser);
+        expect(beforeGrant.scorekeeperGrantTargets).toEqual([
+            { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Pat Star'], isGranted: false }
+        ]);
+
+        await grantScorekeeperAccessForApp('team-1', 'parent-1');
+
+        const afterGrant = await loadTeamStaffPermissions('team-1', managerUser);
+        expect(afterGrant.scorekeeperGrantTargets).toEqual([
+            { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Pat Star'], isGranted: true }
+        ]);
+        expect(getTeam).toHaveBeenCalledTimes(2);
+    });
+
     it('normalizes and saves team schedule reminder defaults with the legacy payload', async () => {
         updateTeam.mockResolvedValue(undefined);
         getEvents.mockResolvedValue([
