@@ -15,11 +15,12 @@ const pages = {
     { id: 'current', name: 'Kansas City Current', sport: 'Soccer', description: 'Midwest club', isPublic: true, city: 'Kansas City', state: 'MO' }
   ],
   kansas: [
-    { id: 'current', name: 'Kansas City Current', sport: 'Soccer', description: 'Midwest club', isPublic: true, city: 'Kansas City', state: 'MO' }
+    { id: 'current', name: 'Kansas City Current', sport: 'Soccer', description: 'Midwest club', isPublic: true, zip: '64102', city: 'Kansas City', state: 'MO' }
   ]
 };
 
 window.__teamSearchCalls = [];
+window.__runtimeZipFallbackCalls = 0;
 
 export async function discoverPublicTeams(options = {}) {
   window.__teamSearchCalls.push(options);
@@ -62,6 +63,7 @@ export function getSafeImageUrl(value) {
 }
 
 export async function resolveZip() {
+  window.__runtimeZipFallbackCalls += 1;
   return null;
 }
 `;
@@ -88,6 +90,7 @@ test('browse teams location search uses bounded discovery and clear restores bro
     await expect(page.getByText('Kansas City Current')).toBeVisible();
     await expect(page.getByText('Alpha Soccer')).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ searchText: 'Kansas', pageSize: 24 });
+    await expect.poll(() => page.evaluate(() => window.__runtimeZipFallbackCalls)).toBe(0);
     expect(new URL(page.url()).pathname).toMatch(/\/teams\.html$/);
 
     await page.locator('#clear-search-button').click();

@@ -21,17 +21,17 @@ describe('public teams visibility', () => {
         expect(source).not.toContain('const q = includePrivate');
     });
 
-    it('adds Firestore indexes for public discovery queries and preserves zip-only city matches', () => {
+    it('keeps discovery on indexed queries and removes the runtime zip-resolution fallback', () => {
         const source = readRepoFile('js/db.js');
         const indexes = JSON.parse(readRepoFile('firestore.indexes.json'));
         const teamIndexes = indexes.indexes
             .filter((index) => index.collectionGroup === 'teams' && index.queryScope === 'COLLECTION')
             .map((index) => index.fields.map((field) => field.fieldPath).join(','));
 
-        expect(source).toContain('async function appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById)');
-        expect(source).toContain("const publicTeamsSnapshot = await getDocs(query(teamsRef, where('isPublic', '==', true)));");
-        expect(source).toContain('resolvedLocation = await resolveZip(team.zip);');
-        expect(source).toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
+        expect(source).not.toContain('appendResolvedZipPublicTeamMatches');
+        expect(source).not.toContain("const publicTeamsSnapshot = await getDocs(query(teamsRef, where('isPublic', '==', true)));");
+        expect(source).not.toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
+        expect(source).toContain('const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(');
         expect(teamIndexes).toEqual(expect.arrayContaining([
             'isPublic,publicSearchCity',
             'isPublic,city',
@@ -42,10 +42,22 @@ describe('public teams visibility', () => {
         ]));
     });
 
+    it('materializes public search fields for zip-only public teams and ships a backfill script', () => {
+        const source = readRepoFile('js/db.js');
+        const backfillScript = readRepoFile('_migration/backfill-public-team-search-fields.js');
+
+        expect(source).toContain('async function buildMaterializedPublicTeamSearchFields(teamData = {}, existingTeamData = null)');
+        expect(source).toContain('const resolvedLocation = parseResolvedZipLocation(await resolveZip(zip));');
+        expect(source).toContain('Object.assign(teamData, await buildMaterializedPublicTeamSearchFields(teamData));');
+        expect(source).toContain('Object.assign(teamData, await buildMaterializedPublicTeamSearchFields(teamData, existingTeamData));');
+        expect(backfillScript).toContain("where('isPublic', '==', true)");
+        expect(backfillScript).toContain('await teamDoc.ref.update(buildSearchFieldPatch(resolvedLocation));');
+    });
+
     it('wires Browse Teams to the public-only helper path and keeps a defensive client filter', () => {
         const source = readRepoFile('teams.html');
 
-        expect(source).toContain("import { discoverPublicTeams } from './js/db.js?v=40';");
+        expect(source).toContain("import { discoverPublicTeams } from './js/db.js?v=41';");
         expect(source).toContain('discoverPublicTeams(locationFilter');
         expect(source).toContain("{ cursor, pageSize: 24 }");
         expect(source).toContain('allTeams.filter(t => t.isPublic === true)');
