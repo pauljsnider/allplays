@@ -13,6 +13,9 @@ async function waitForTeamsRoute(page, readyLocator) {
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
         await expect(searchInput).toBeVisible({ timeout: 1000 });
+        if (readyLocator) {
+            await expect(readyLocator).toBeVisible({ timeout: 1000 });
+        }
     }).toPass({ timeout: 30000 });
 }
 
@@ -360,7 +363,9 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-staff&from=home'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: '3 teams ready' })).toBeVisible();
+        const teamsReadyHeading = page.getByRole('heading', { name: '3 teams ready' });
+        await waitForTeamsRoute(page, teamsReadyHeading);
+        await expect(teamsReadyHeading).toBeVisible();
         await expect(page.getByText('Choose a team')).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
         await page.getByPlaceholder('Search teams or players').fill('Riley');
