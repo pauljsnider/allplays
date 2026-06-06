@@ -532,6 +532,7 @@ test('messages defer offscreen media requests until scroll or video interaction'
         '/deferred-huddle-2.jpg',
         '/deferred-lineup-1.jpg'
     ]);
+    expect(mediaRequests).not.toContain('/deferred-warmups.mp4');
 
     await page.evaluate(() => {
         const video = document.querySelector('video[src="https://media.example.test/deferred-warmups.mp4"]');
