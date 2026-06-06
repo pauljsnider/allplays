@@ -6,8 +6,10 @@ function createIcon(name: string) {
   };
 }
 
+export const AlertCircle = createIcon('AlertCircle');
 export const Bell = createIcon('Bell');
 export const ChevronDown = createIcon('ChevronDown');
+export const ChevronLeft = createIcon('ChevronLeft');
 export const ChevronUp = createIcon('ChevronUp');
 export const CheckCircle2 = createIcon('CheckCircle2');
 export const Clipboard = createIcon('Clipboard');

@@ -9,7 +9,10 @@ const scheduleServiceMocks = vi.hoisted(() => ({
     resolveParentGameRoute: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/scheduleService', () => scheduleServiceMocks);
+vi.mock('../../apps/app/src/lib/scheduleService', async (importOriginal) => ({
+    ...(await importOriginal()),
+    ...scheduleServiceMocks
+}));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
