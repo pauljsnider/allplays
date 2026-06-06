@@ -44,6 +44,7 @@ const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
 
 export function TeamDetail({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
+  const authUserId = auth.user?.uid || '';
   const [model, setModel] = useState<TeamDetailModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -97,7 +98,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth.user, teamId]);
+  }, [authUserId, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -121,7 +122,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, auth.user, model?.canManageTeam, model?.staffPermissions, teamId]);
+  }, [activeTab, authUserId, model?.canManageTeam, model?.staffPermissions, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -146,7 +147,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, auth.user, insightsLoaded, Boolean(model), teamId]);
+  }, [activeTab, authUserId, insightsLoaded, Boolean(model), teamId]);
 
   useEffect(() => {
     let cancelled = false;
