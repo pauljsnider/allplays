@@ -31,6 +31,7 @@ import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-permissions.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { buildAppAcceptInviteUrl } from './inviteUrls';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -538,14 +539,7 @@ export async function saveTeamScheduleNotificationsForApp(teamId: string, settin
 }
 
 export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseUrl()) {
-  const inviteCode = cleanString(code);
-  if (!inviteCode) return null;
-  const url = new URL('/app', baseUrl);
-  const searchParams = new URLSearchParams();
-  searchParams.set('code', inviteCode);
-  searchParams.set('type', 'admin');
-  url.hash = `/accept-invite?${searchParams.toString()}`;
-  return url.toString();
+  return buildAppAcceptInviteUrl(code, 'admin', baseUrl) || null;
 }
 
 export function buildPublicTeamGamesIcsUrl(teamId: string) {

@@ -191,9 +191,10 @@ describe('Profile invites', () => {
     await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenCalledWith(expect.objectContaining({
       title: 'ALL PLAYS invite for coach@example.com',
       text: 'Use this ALL PLAYS invite link for coach@example.com.',
-      url: expect.stringContaining('/login.html?code=NEWMVP42'),
-      clipboardText: expect.stringContaining('/login.html?code=NEWMVP42')
+      url: expect.stringContaining('/app#/accept-invite?code=NEWMVP42'),
+      clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42')
     })));
+    expect(screen.getByText(/\/app#\/accept-invite\?code=NEWMVP42/)).toBeTruthy();
     expect(screen.getByText('Share sheet opened.')).toBeTruthy();
   });
 
@@ -222,9 +223,17 @@ describe('Profile invites', () => {
     expect(within(usedCard).queryByRole('button', { name: /Copy saved invite link/ })).toBeNull();
 
     fireEvent.click(within(activeCard).getByRole('button', { name: /Share saved invite link/ }));
+    await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123'),
+      clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123')
+    })));
     expect(await screen.findByText('Link copied.')).toBeTruthy();
 
     fireEvent.click(within(activeCard).getByRole('button', { name: /Share saved invite link/ }));
+    await waitFor(() => expect(publicActionsMocks.sharePublicUrl).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123'),
+      clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123')
+    })));
     expect(await screen.findByText('Share cancelled.')).toBeTruthy();
   });
 

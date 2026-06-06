@@ -59,6 +59,7 @@ export type AccessCodeRecord = {
   code: string;
   email?: string | null;
   phone?: string | null;
+  type?: string | null;
   used?: boolean;
   createdAt?: unknown;
   usedAt?: unknown;
