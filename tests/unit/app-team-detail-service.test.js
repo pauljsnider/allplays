@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
@@ -51,10 +51,15 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
 import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
+
+beforeEach(() => {
+    __resetTeamDetailBaseSnapshotCacheForTests();
+    vi.clearAllMocks();
+});
 
 describe('React app team detail model', () => {
 
@@ -121,6 +126,51 @@ describe('React app team detail model', () => {
         await expect(grantVideographerAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
         expect(grantScorekeeperAccess).not.toHaveBeenCalled();
         expect(grantVideographerAccess).not.toHaveBeenCalled();
+    });
+
+    it('invalidates cached team detail snapshots after scorekeeper mutations so refreshed permissions reflect the write', async () => {
+        getTeam
+            .mockResolvedValueOnce({
+                id: 'team-1',
+                name: 'Bears',
+                ownerId: 'owner-1',
+                adminEmails: ['coach@example.com'],
+                teamPermissions: { scorekeeping: { mode: 'selected', memberIds: [] } }
+            })
+            .mockResolvedValueOnce({
+                id: 'team-1',
+                name: 'Bears',
+                ownerId: 'owner-1',
+                adminEmails: ['coach@example.com'],
+                teamPermissions: { scorekeeping: { mode: 'selected', memberIds: ['parent-1'] } }
+            });
+        getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Pat Star',
+                parents: [{ userId: 'parent-1', name: 'Parent One', email: 'parent@example.com' }]
+            }
+        ]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getAllUsers.mockResolvedValue([]);
+        getDocs.mockResolvedValue({ docs: [] });
+        grantScorekeeperAccess.mockResolvedValue(undefined);
+
+        const managerUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        const beforeGrant = await loadTeamStaffPermissions('team-1', managerUser);
+        expect(beforeGrant.scorekeeperGrantTargets).toEqual([
+            { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Pat Star'], isGranted: false }
+        ]);
+
+        await grantScorekeeperAccessForApp('team-1', 'parent-1');
+
+        const afterGrant = await loadTeamStaffPermissions('team-1', managerUser);
+        expect(afterGrant.scorekeeperGrantTargets).toEqual([
+            { userId: 'parent-1', name: 'Parent One', email: 'parent@example.com', playerNames: ['Pat Star'], isGranted: true }
+        ]);
+        expect(getTeam).toHaveBeenCalledTimes(2);
     });
 
     it('normalizes and saves team schedule reminder defaults with the legacy payload', async () => {
@@ -470,6 +520,59 @@ describe('React app team detail model', () => {
         expect(parentModel.staffPermissions).toBeNull();
         expect(getDocs).not.toHaveBeenCalled();
         expect(getAllUsers).not.toHaveBeenCalled();
+    });
+
+    it('reuses the initial base snapshot for deferred insights and staff permissions', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            sport: 'Basketball',
+            ownerId: 'owner-1',
+            adminEmails: ['coach@example.com'],
+            teamPermissions: { videography: { mode: 'selected', memberIds: ['video-1'] } }
+        });
+        getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', photoUrl: 'https://img.example.test/player.png' }]);
+        getGames.mockResolvedValue([
+            { id: 'game-1', opponent: 'Falcons', date: new Date('2026-05-01T18:00:00Z'), status: 'completed', homeScore: 42, awayScore: 35, isHome: true }
+        ]);
+        getConfigs.mockResolvedValue([{
+            id: 'basketball',
+            name: 'Basketball',
+            columns: ['pts'],
+            statDefinitions: [{ id: 'pts', label: 'Points', acronym: 'PTS', topStat: true, visibility: 'public', scope: 'player' }]
+        }]);
+        getAggregatedStatsForGames.mockResolvedValue({ 'player-1': { pts: 88 } });
+        getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball', public: true }]);
+        getPlayerTrackingStatuses.mockResolvedValue([{ itemId: 'item-1', playerId: 'player-1', status: 'complete', public: true }]);
+        getAllUsers.mockResolvedValue([{ id: 'video-1', fullName: 'Video Parent', email: 'video@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }]);
+        const future = Date.now() + 60_000;
+        getDocs.mockResolvedValue({
+            docs: [
+                { id: 'invite-1', data: () => ({ email: 'pending@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) }
+            ]
+        });
+
+        const user = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'], parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] };
+        await loadParentTeamDetail('team-1', user, { includeDeferredData: false });
+        const insights = await loadTeamDetailInsights('team-1', user);
+        const staffPermissions = await loadTeamStaffPermissions('team-1', user);
+        const sponsors = await loadTeamDetailSponsors('team-1');
+
+        expect(getTeam).toHaveBeenCalledTimes(1);
+        expect(getPlayers).toHaveBeenCalledTimes(1);
+        expect(getGames).toHaveBeenCalledTimes(1);
+        expect(getConfigs).toHaveBeenCalledTimes(1);
+        expect(getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['game-1']);
+        expect(getPublicTrackingItems).toHaveBeenCalledWith('team-1');
+        expect(getPlayerTrackingStatuses).toHaveBeenCalledWith('team-1', ['player-1']);
+        expect(insights.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
+        expect(staffPermissions.pendingInvites).toEqual(['pending@example.com']);
+        expect(staffPermissions.videographerGrantTargets).toEqual([
+            { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: true }
+        ]);
+        expect(getLocalAttractionSponsors).toHaveBeenCalledWith('team-1');
+        expect(getAdSpaceSponsors).toHaveBeenCalledWith('team-1');
+        expect(sponsors.sponsors).toEqual([]);
     });
 
     it('loads deferred insights and sponsors only when requested', async () => {

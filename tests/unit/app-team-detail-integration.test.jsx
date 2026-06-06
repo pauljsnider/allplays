@@ -540,23 +540,28 @@ describe('React app TeamDetail page', () => {
     it('loads deferred insights and sponsors once, then reuses them across tab switches', async () => {
         const { container } = await renderTeamDetail();
 
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         expect(teamDetailMocks.loadTeamDetailSponsors).not.toHaveBeenCalled();
 
         await clickButton(container, 'Insights');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
         expect(container.textContent).toContain('Bring ball');
 
         await clickButton(container, 'Overview');
         await clickButton(container, 'Insights');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
 
         await clickButton(container, 'More');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1);
         expect(container.textContent).toContain('Pizza Place');
 
         await clickButton(container, 'Schedule');
         await clickButton(container, 'More');
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1);
     });
 
