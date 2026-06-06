@@ -18,6 +18,7 @@ function assertMatches(text, pattern, label) {
 
 const firebaseJson = JSON.parse(readText('firebase.json'));
 const firestoreRules = readText('firestore.rules');
+const storageRules = readText('storage.rules');
 const deployProd = readText('.github/workflows/deploy-prod.yml');
 const deployPreview = readText('.github/workflows/deploy-preview.yml');
 const regressionGuards = readText('.github/workflows/regression-guards.yml');
@@ -28,6 +29,10 @@ if (firebaseJson.firestore?.rules !== 'firestore.rules') {
 
 if (firebaseJson.firestore?.indexes !== 'firestore.indexes.json') {
     throw new Error('firebase.json must deploy firestore.indexes.json.');
+}
+
+if (firebaseJson.storage?.rules !== 'storage.rules') {
+    throw new Error('firebase.json must deploy storage.rules.');
 }
 
 assertIncludes(firestoreRules, 'match /mediaFolders/{folderId}', 'Firestore media folder rules');
@@ -46,6 +51,14 @@ assertIncludes(deployProd, 'firestore:indexes', 'Production deploy');
 assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 
 assertMatches(deployPreview, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Preview deploy gate');
+
+assertIncludes(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}', 'Scoped Storage game clip rules');
+assertIncludes(storageRules, 'allow get: if canAccessTeamMedia(teamId);', 'Scoped Storage game clip read rules');
+assertIncludes(storageRules, 'allow create: if canAccessTeamMedia(teamId) &&', 'Scoped Storage game clip create rules');
+assertIncludes(storageRules, 'request.auth.uid == userId', 'Scoped Storage uploader match rules');
+assertIncludes(storageRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
+assertIncludes(storageRules, 'match /game-clips/{fileName} {', 'Legacy Storage game clip rules');
+assertIncludes(storageRules, 'allow get, create, delete: if false;', 'Legacy Storage deny-all rule');
 
 assertIncludes(regressionGuards, 'npm run ci:firebase-rules', 'Regression guard workflow');
 assertIncludes(regressionGuards, 'npm run test:smoke:team-fallback', 'Regression guard workflow');
