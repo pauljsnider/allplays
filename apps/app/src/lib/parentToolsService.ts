@@ -32,7 +32,7 @@ import {
   normalizeParentFeeRecord,
   sortParentFeeRecords
 } from '../../../../js/parent-dashboard-fees.js';
-import { initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
+import { cancelStripeRegistrationCheckout, initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
 import {
   buildPendingRegistrationRecord,
   calculateRegistrationFeeSnapshot,
@@ -308,6 +308,7 @@ export async function submitOfflineRegistration(teamId: string, formId: string, 
       selectedPaymentPlanId: submission.selectedPaymentPlanId,
       status,
       feeSnapshot,
+      checkoutAttemptToken: submission.checkoutAttemptToken,
       now: serverTimestamp()
     });
 
@@ -933,21 +934,63 @@ export async function initiateRegistrationCheckout(
   paymentPlanId: string,
   quantity: number,
   amountCents: number,
-  currency: string
+  currency: string,
+  options: { checkoutAttemptToken?: string, returnToApp?: boolean } = {}
 ): Promise<{ success: true, checkoutUrl: string }> {
   if (!teamId || !formId || !registrationId || !paymentPlanId || !quantity || !amountCents || !currency) {
     throw new Error('Missing required fields for checkout.');
+  }
+
+  const result = options.checkoutAttemptToken
+    ? await createRegistrationCheckoutSession(
+      teamId,
+      formId,
+      registrationId,
+      selectedOptionId,
+      paymentPlanId,
+      quantity,
+      amountCents,
+      currency,
+      options
+    )
+    : await createRegistrationCheckoutSession(
+      teamId,
+      formId,
+      registrationId,
+      selectedOptionId,
+      paymentPlanId,
+      quantity,
+      amountCents,
+      currency
+    );
+
+  if (!result?.checkoutUrl) {
+    throw new Error('Failed to get checkout URL.');
+  }
+
+  return { success: true, checkoutUrl: result.checkoutUrl };
+}
+
+export async function retryRegistrationCheckout(
+  teamId: string,
+  formId: string,
+  registrationId: string,
+  checkoutAttemptToken: string
+): Promise<{ success: true, checkoutUrl: string }> {
+  if (!teamId || !formId || !registrationId || !checkoutAttemptToken) {
+    throw new Error('Missing required fields for payment retry.');
   }
 
   const result = await createRegistrationCheckoutSession(
     teamId,
     formId,
     registrationId,
-    selectedOptionId,
-    paymentPlanId,
-    quantity,
-    amountCents,
-    currency
+    '',
+    '',
+    1,
+    undefined,
+    '',
+    { checkoutAttemptToken, retryPayment: true, returnToApp: true }
   );
 
   if (!result?.checkoutUrl) {
@@ -955,6 +998,16 @@ export async function initiateRegistrationCheckout(
   }
 
   return { success: true, checkoutUrl: result.checkoutUrl };
+}
+
+export async function releaseCancelledRegistrationCheckout(
+  teamId: string,
+  formId: string,
+  registrationId: string,
+  checkoutAttemptToken: string
+) {
+  if (!teamId || !formId || !registrationId) return { released: false };
+  return cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken });
 }
 
 export function getCalendarEventShareText(event: ParentScheduleEvent) {

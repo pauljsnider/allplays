@@ -223,7 +223,8 @@ function normalizeRegistrationCheckoutInput(data = {}) {
     amountCents,
     currency,
     checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken),
-    retryPayment: data.retryPayment === true || String(data.retryPayment || '').trim() === '1'
+    retryPayment: data.retryPayment === true || String(data.retryPayment || '').trim() === '1',
+    returnToApp: data.returnToApp === true || String(data.returnToApp || '').trim() === '1'
   };
 }
 
@@ -250,6 +251,7 @@ function buildRegistrationReminderMailRef(mailDocId) {
 
 function buildRegistrationCheckoutUrls(appUrl, input) {
   const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
+  const route = input.returnToApp ? '/app/#/registration' : '/registration.html';
   const params = new URLSearchParams({
     teamId: input.teamId,
     formId: input.formId,
@@ -262,8 +264,8 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
     params.set('retryPayment', '1');
   }
   return {
-    successUrl: `${baseUrl}/registration.html?${params.toString()}&status=success`,
-    cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
+    successUrl: `${baseUrl}${route}?${params.toString()}&status=success`,
+    cancelUrl: `${baseUrl}${route}?${params.toString()}&status=cancelled`
   };
 }
 

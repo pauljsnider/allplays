@@ -48,6 +48,14 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
   const [selectedPaymentPlanId, setSelectedPaymentPlanId] = useState('pay_full');
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const releaseAttemptRef = useRef('');
+  const retryRegistrationId = String(searchParams.get('registrationId') || '').trim();
+  const retryCheckoutAttemptToken = String(searchParams.get('checkoutAttemptToken') || '').trim();
+  const stripeReturnStatus = String(searchParams.get('status') || '').trim().toLowerCase();
+  const retryPaymentRequested = searchParams.get('retryPayment') === '1' && Boolean(retryRegistrationId);
+  const retryCheckoutReady = Boolean(retryRegistrationId) && (retryPaymentRequested || stripeReturnStatus === 'cancelled');
+  const stripeSuccessReturn = Boolean(retryRegistrationId) && stripeReturnStatus === 'success';
+  const stripeCancelledReturn = Boolean(retryRegistrationId) && stripeReturnStatus === 'cancelled';
 
   useEffect(() => {
     let cancelled = false;
@@ -83,6 +91,19 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
       cancelled = true;
     };
   }, [auth.user?.uid, teamId, formId, publicAccess, reloadKey]);
+
+  useEffect(() => {
+    if (!stripeCancelledReturn) return;
+    const releaseKey = `${teamId}:${formId}:${retryRegistrationId}:${retryCheckoutAttemptToken}`;
+    if (!teamId || !formId || releaseAttemptRef.current === releaseKey) return;
+    releaseAttemptRef.current = releaseKey;
+    void Promise.resolve(parentToolsService.releaseCancelledRegistrationCheckout(
+      teamId,
+      formId,
+      retryRegistrationId,
+      retryCheckoutAttemptToken
+    )).catch(() => undefined);
+  }, [teamId, formId, retryRegistrationId, retryCheckoutAttemptToken, stripeCancelledReturn]);
 
   const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
   const paymentPlanChoices: any[] = useMemo(() => form ? ((Array.isArray(form.paymentPlans) && form.paymentPlans.length) ? form.paymentPlans : getPaymentPlanChoices(form)) : [], [form]);
@@ -131,7 +152,24 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
 
     setSaving(true);
     try {
+      if (retryCheckoutReady) {
+        if (!retryCheckoutAttemptToken) {
+          setError('This payment retry link is missing its secure checkout token. Please use the latest payment link from the organizer.');
+          return;
+        }
+        const checkout = await parentToolsService.retryRegistrationCheckout(
+          form.teamId,
+          form.id,
+          retryRegistrationId,
+          retryCheckoutAttemptToken
+        );
+        await openPublicUrl(checkout.checkoutUrl);
+        setMessage('Opening Stripe checkout for your existing registration.');
+        return;
+      }
+
       const currentFeeSnapshot = calculateRegistrationFeeSnapshot(form, { quantity: currentQuantity, now: new Date() }); // currentQuantity is already effective
+      const checkoutAttemptToken = form.onlineCheckout ? createCheckoutAttemptToken() : '';
       const result = await parentToolsService.submitOfflineRegistration(form.teamId, form.id, {
         participant: currentParticipant,
         guardian: currentGuardian,
@@ -140,7 +178,8 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
         selectedOptionId: currentSelectedOptionId,
         selectedPaymentPlanId: currentSelectedPaymentPlanId,
         quantity: currentQuantity,
-        feeSnapshot: currentFeeSnapshot
+        feeSnapshot: currentFeeSnapshot,
+        checkoutAttemptToken
       });
       if (result.status === 'waitlisted') {
         setMessage('Registration submitted. You have been added to the waitlist.');
@@ -158,7 +197,8 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
             currentSelectedPaymentPlanId,
             currentQuantity, // currentQuantity is already effective
             checkoutFeeSnapshot.finalAmountDueCents,
-            checkoutFeeSnapshot.currency || form.currency || 'USD'
+            checkoutFeeSnapshot.currency || form.currency || 'USD',
+            { checkoutAttemptToken, returnToApp: publicAccess }
           );
           await openPublicUrl(checkout.checkoutUrl);
           setMessage('Registration submitted. Opening Stripe checkout.');
@@ -206,9 +246,21 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
       </section>
 
       {message ? <Status tone="success" message={message} /> : null}
+      {stripeCancelledReturn ? <Status tone="error" message="Stripe payment was canceled. You can retry payment for your existing registration." /> : null}
       {error ? <Status tone="error" message={error} /> : null}
       {placement ? <Status tone={placement.status === 'blocked' ? 'error' : 'success'} message={placement.status === 'waitlisted' ? 'This option is full. Submitting will add you to the waitlist.' : placement.status === 'pending' ? 'This option has capacity. Submitting creates a pending registration.' : placement.message || 'This option is not available.'} /> : null}
 
+      {stripeSuccessReturn ? (
+        <section className="app-card p-5">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-600" aria-hidden="true" />
+            <div>
+              <h2 className="text-base font-black text-gray-950">Payment successful</h2>
+              <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Your registration payment was received. The program organizer will follow up with next steps.</p>
+            </div>
+          </div>
+        </section>
+      ) : (
       <section className="app-card p-4">
         <form ref={formRef} className="grid gap-4" onSubmit={submit}>
           <FieldGroup title="Participant information" fields={form.participantFields || []} values={participant} errors={fieldErrors} prefix="participant" onChange={updateParticipant} disabled={saving} />
@@ -282,10 +334,11 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
 
           <button type="button" className="primary-button" onClick={submit} disabled={saving || Boolean(message)}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
-            {saving ? (form.onlineCheckout ? 'Opening checkout...' : 'Submitting registration...') : (form.onlineCheckout ? 'Pay registration with Stripe' : 'Submit registration')}
+            {saving ? (form.onlineCheckout ? 'Opening checkout...' : 'Submitting registration...') : retryCheckoutReady ? 'Retry payment with Stripe' : (form.onlineCheckout ? 'Pay registration with Stripe' : 'Submit registration')}
           </button>
         </form>
       </section>
+      )}
     </div>
   );
 }
@@ -298,6 +351,15 @@ function collectFieldValues(formElement: HTMLFormElement | null, group: string, 
     if (fieldId) values[fieldId] = input.value;
   });
   return values;
+}
+
+function createCheckoutAttemptToken() {
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
 }
 
 function validate(form: ParentRegistrationCard, participant: Record<string, string>, guardian: Record<string, string>, waiverAccepted: boolean, selectedOptionId: string, quantity: number, selectedPaymentPlanId: string, hasQuantityDiscount: boolean) {

@@ -5593,10 +5593,11 @@ export async function createRegistrationCheckoutSession(
     paymentPlanId,
     quantity,
     amountCents,
-    currency
+    currency,
+    options = {}
 ) {
     const callable = httpsCallable(functions, 'createStripeRegistrationCheckout');
-    const result = await callable({
+    const payload = {
         teamId,
         formId,
         registrationId,
@@ -5605,7 +5606,18 @@ export async function createRegistrationCheckoutSession(
         quantity,
         amountCents,
         currency
-    });
+    };
+    const checkoutAttemptToken = String(options.checkoutAttemptToken || '').trim();
+    if (checkoutAttemptToken) {
+        payload.checkoutAttemptToken = checkoutAttemptToken;
+    }
+    if (options.retryPayment === true) {
+        payload.retryPayment = true;
+    }
+    if (options.returnToApp === true) {
+        payload.returnToApp = true;
+    }
+    const result = await callable(payload);
     return result.data;
 }
 

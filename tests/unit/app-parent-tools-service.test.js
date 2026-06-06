@@ -74,6 +74,7 @@ const registrationMocks = vi.hoisted(() => ({
         paymentPlan: { id: submission.selectedPaymentPlanId || 'pay_full' },
         status: submission.status || 'pending',
         feeSnapshot: submission.feeSnapshot,
+        checkoutAttemptToken: submission.checkoutAttemptToken,
         submittedAt: submission.now
     })),
     calculateRegistrationFeeSnapshot: vi.fn((form) => ({ finalAmountDueCents: form.finalAmountDueCents ?? 0 })),
@@ -125,6 +126,7 @@ const scheduleMocks = vi.hoisted(() => ({
 }));
 
 const stripeMocks = vi.hoisted(() => ({
+    cancelStripeRegistrationCheckout: vi.fn(),
     initiateTeamFeeCheckout: vi.fn()
 }));
 
@@ -172,6 +174,8 @@ import {
     updateTeamMediaItemForApp,
     initiateRegistrationCheckout,
     initiateParentTeamFeeCheckout,
+    releaseCancelledRegistrationCheckout,
+    retryRegistrationCheckout,
     canInitiateParentTeamFeeCheckout,
     isParentTeamFeePayActionAllowed
 } from '../../apps/app/src/lib/parentToolsService.ts';
@@ -248,6 +252,7 @@ describe('React app parent tools service', () => {
             waiverAccepted: true,
             selectedOption: { id: 'opt-1', countKey: 'opt-1-key' },
             selectedPaymentPlanId: 'pay_full',
+            checkoutAttemptToken: 'attempt-token-123456',
             submittedAt: new Date(),
         };
 
@@ -316,6 +321,7 @@ describe('React app parent tools service', () => {
                 waiverAccepted: true,
                 selectedOption: expect.objectContaining({ id: 'opt-1' }),
                 status: 'pending',
+                checkoutAttemptToken: 'attempt-token-123456',
             })
         );
     });
@@ -796,6 +802,66 @@ describe('React app parent tools service', () => {
             currency
         );
         expect(result).toEqual({ success: true, checkoutUrl: mockCheckoutUrl });
+    });
+
+    it('passes checkout attempt token options for app registration checkout retries', async () => {
+        const mockCheckoutUrl = 'https://checkout.stripe.com/retry-session';
+        dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: mockCheckoutUrl });
+
+        await expect(initiateRegistrationCheckout(
+            'team-1',
+            'form-reg-1',
+            'reg-abc',
+            'option-xyz',
+            'plan-123',
+            1,
+            7500,
+            'USD',
+            { checkoutAttemptToken: 'attempt-token-123456', returnToApp: true }
+        )).resolves.toEqual({ success: true, checkoutUrl: mockCheckoutUrl });
+
+        expect(dbMocks.createRegistrationCheckoutSession).toHaveBeenCalledWith(
+            'team-1',
+            'form-reg-1',
+            'reg-abc',
+            'option-xyz',
+            'plan-123',
+            1,
+            7500,
+            'USD',
+            { checkoutAttemptToken: 'attempt-token-123456', returnToApp: true }
+        );
+
+        dbMocks.createRegistrationCheckoutSession.mockResolvedValueOnce({ checkoutUrl: 'https://checkout.stripe.com/existing-session' });
+
+        await expect(retryRegistrationCheckout('team-1', 'form-reg-1', 'reg-abc', 'attempt-token-123456'))
+            .resolves.toEqual({ success: true, checkoutUrl: 'https://checkout.stripe.com/existing-session' });
+
+        expect(dbMocks.createRegistrationCheckoutSession).toHaveBeenLastCalledWith(
+            'team-1',
+            'form-reg-1',
+            'reg-abc',
+            '',
+            '',
+            1,
+            undefined,
+            '',
+            { checkoutAttemptToken: 'attempt-token-123456', retryPayment: true, returnToApp: true }
+        );
+    });
+
+    it('releases canceled registration checkout attempts through Stripe service', async () => {
+        stripeMocks.cancelStripeRegistrationCheckout.mockResolvedValue({ released: true });
+
+        await expect(releaseCancelledRegistrationCheckout('team-1', 'form-reg-1', 'reg-abc', 'attempt-token-123456'))
+            .resolves.toEqual({ released: true });
+
+        expect(stripeMocks.cancelStripeRegistrationCheckout).toHaveBeenCalledWith({
+            teamId: 'team-1',
+            formId: 'form-reg-1',
+            registrationId: 'reg-abc',
+            checkoutAttemptToken: 'attempt-token-123456'
+        });
     });
 
     it('throws error if required fields are missing for checkout', async () => {
