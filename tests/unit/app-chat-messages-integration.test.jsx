@@ -1330,7 +1330,7 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Media link copied.');
     });
 
-    it('renders team media photo posts inline and includes them in the gallery', async () => {
+    it('renders team media photo posts inline with native lazy-loading and includes them in the gallery', async () => {
         chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
             onMessages([
                 chatMessage({
@@ -1350,8 +1350,12 @@ describe('React app messages integration', () => {
         const { container } = await renderMessages('/messages/team-1');
 
         const inlinePhoto = container.querySelector('img[alt="Tipoff"]');
+        const inlinePhotoLink = container.querySelector('a[href="https://media.example.test/tipoff.jpg"]');
         expect(inlinePhoto).toBeTruthy();
         expect(inlinePhoto.getAttribute('src')).toBe('https://media.example.test/tipoff.jpg');
+        expect(inlinePhoto.getAttribute('loading')).toBe('lazy');
+        expect(inlinePhoto.getAttribute('decoding')).toBe('async');
+        expect(inlinePhotoLink).toBeTruthy();
 
         await click(container, 'Open photos and videos');
         expect(container.textContent).toContain('Photos & videos');

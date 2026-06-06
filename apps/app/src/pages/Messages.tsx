@@ -2283,7 +2283,13 @@ function MessageAttachments({ attachments, isOwn }: { attachments: any[]; isOwn:
         }
         return (
           <a key={`${attachment.url}-${index}`} href={attachment.url} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-xl border border-gray-200">
-            <img src={attachment.url} alt={label} className={`max-h-72 w-full object-cover ${isOwn ? 'bg-primary-500' : 'bg-white'}`} />
+            <img
+              src={attachment.url}
+              alt={label}
+              loading="lazy"
+              decoding="async"
+              className={`max-h-72 w-full object-cover ${isOwn ? 'bg-primary-500' : 'bg-white'}`}
+            />
           </a>
         );
       })}
