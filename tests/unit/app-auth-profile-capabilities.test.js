@@ -447,6 +447,7 @@ describe('React app auth/profile capability parity', () => {
             'Upcoming Games',
             'Upcoming Practices',
             'Past Events',
+            'Schedule filter',
             'All Players',
             '.ics',
             'RSVP needed',
