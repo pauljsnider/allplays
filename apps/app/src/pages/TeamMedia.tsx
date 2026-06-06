@@ -260,7 +260,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     let uploaded = 0;
     let failed = 0;
     try {
-      await Promise.all(queueItems.map(async (queueItem, index) => {
+      await runWithConcurrency(queueItems, PHOTO_UPLOAD_CONCURRENCY, async (queueItem, index) => {
         const file = files[index];
         if (!isSupportedPhotoUpload(file)) {
           failed += 1;
@@ -275,7 +275,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           failed += 1;
           updateUploadQueueItem(queueItem.id, 'error', 'Upload failed.');
         }
-      }));
+      });
 
       if (uploaded > 0) {
         const resultMessage = getPhotoUploadMessage(uploaded, failed);
@@ -636,6 +636,7 @@ const MEDIA_TYPE_FILTERS: { id: MediaTypeFilter; label: string }[] = [
   { id: 'files', label: 'Files' }
 ];
 const MAX_PHOTO_UPLOAD_BYTES = 10 * 1024 * 1024;
+const PHOTO_UPLOAD_CONCURRENCY = 3;
 
 function isSupportedPhotoUpload(file: File) {
   return Boolean(file?.type?.startsWith('image/')) && Number(file.size || 0) > 0 && Number(file.size || 0) <= MAX_PHOTO_UPLOAD_BYTES;
@@ -661,6 +662,22 @@ function createUploadQueueItem(file: File, kind: 'photo' | 'file', index: number
     status: 'uploading',
     errorMessage: ''
   };
+}
+
+async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<void>) {
+  const maxConcurrency = Math.max(1, Math.floor(concurrency) || 1);
+  let nextIndex = 0;
+
+  const runWorker = async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      await worker(items[currentIndex], currentIndex);
+    }
+  };
+
+  const workers = Array.from({ length: Math.min(maxConcurrency, items.length) }, () => runWorker());
+  await Promise.all(workers);
 }
 
 function isPhotoMediaItem(item: TeamMediaItem) {
