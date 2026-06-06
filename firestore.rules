@@ -1959,24 +1959,29 @@ service cloud.firestore {
 
       // Chat messages subcollection
       match /chatMessages/{messageId} {
-        // List queries are unfiltered by target metadata in existing clients.
-        // Direct document reads still enforce targeted-message recipient checks.
+        // Legacy team-wide chat stays query-safe because this collection only accepts
+        // full-team messages. Targeted traffic belongs under chatConversations.
         allow list: if canAccessTeamChat(teamId);
-        allow get: if canReadChatMessage(teamId, resource.data);
+        allow get: if isFullTeamChatMessage(resource.data) &&
+                      canReadChatMessage(teamId, resource.data);
 
-        // Create: any team member, must be their own senderId and valid target metadata.
+        // Create: any team member, but the legacy path only accepts full-team messages.
         allow create: if canAccessTeamChat(teamId) &&
                          request.resource.data.senderId == request.auth.uid &&
-                         isValidChatMessageTarget(teamId, request.resource.data);
+                         isFullTeamChatMessage(request.resource.data);
 
         // Update for editing: only message sender, only text and editedAt fields
         allow update: if canAccessTeamChat(teamId) &&
+                         isFullTeamChatMessage(resource.data) &&
+                         isFullTeamChatMessage(request.resource.data) &&
                          resource.data.senderId == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys()
                              .hasOnly(['text', 'editedAt']);
 
         // Update for soft-delete: sender OR team owner/admin/global admin
         allow update: if canAccessTeamChat(teamId) &&
+                         isFullTeamChatMessage(resource.data) &&
+                         isFullTeamChatMessage(request.resource.data) &&
                          request.resource.data.diff(resource.data).affectedKeys()
                              .hasOnly(['deleted']) &&
                          request.resource.data.deleted == true &&
@@ -1985,6 +1990,8 @@ service cloud.firestore {
 
         // Update for reactions: any team member can add/remove reactions only
         allow update: if canAccessTeamChat(teamId) &&
+                         isFullTeamChatMessage(resource.data) &&
+                         isFullTeamChatMessage(request.resource.data) &&
                          (
                            // Current client writes nested reaction keys.
                            request.resource.data.diff(resource.data).affectedKeys()

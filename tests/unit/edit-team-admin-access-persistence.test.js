@@ -341,7 +341,7 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getAllUsers,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=40';/,
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getAllUsers,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
             'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame } = deps.db;'
         )
         .replace(

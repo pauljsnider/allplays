@@ -5666,6 +5666,9 @@ export async function postChatMessage(teamId, {
     const effectiveTargetType = normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0
         ? 'full_team'
         : normalizedTargetType;
+    if (isDefaultTeamConversation(conversationId) && effectiveTargetType !== 'full_team') {
+        throw new Error('Targeted team chat messages must use a non-default conversation.');
+    }
     const docRef = await addDoc(messagesRef, {
         text,
         senderId,

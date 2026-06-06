@@ -12,10 +12,19 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isFullTeamChatMessage(data) ||');
     });
 
-    it('keeps chat collection queries query-safe while direct reads enforce targeting', () => {
+    it('keeps legacy team chat queries open for members while limiting stored docs to full-team messages', () => {
         expect(rules).toContain('allow list: if canAccessTeamChat(teamId);');
-        expect(rules).toContain('allow get: if canReadChatMessage(teamId, resource.data);');
+        expect(rules).toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
+        expect(rules).toContain('allow create: if canAccessTeamChat(teamId) &&');
+        expect(rules).toContain('isFullTeamChatMessage(request.resource.data);');
         expect(rules).not.toContain('allow read: if canReadChatMessage(teamId, resource.data);');
+    });
+
+    it('keeps targeted conversation traffic under conversation-scoped rules', () => {
+        expect(rules).toContain('match /chatConversations/{conversationId} {');
+        expect(rules).toContain('match /chatMessages/{messageId} {');
+        expect(rules).toContain('allow create: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&');
+        expect(rules).toContain("request.resource.data.senderId == request.auth.uid;");
     });
 
     it('restricts staff/group messages to sender and team staff/admin roles', () => {
@@ -41,7 +50,7 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('data.recipientIds.size() > 0');
         expect(rules).toContain('data.recipientIds.size() <= 50');
         expect(rules).toContain('data.recipientIds.hasOnly(teamChatRecipientIds(teamId))');
-        expect(rules).toContain('isValidChatMessageTarget(teamId, request.resource.data)');
+        expect(rules).toContain('isValidChatMessageTarget(teamId, data)');
     });
 
     it('rejects unauthorized senders by requiring senderId to match auth uid', () => {
