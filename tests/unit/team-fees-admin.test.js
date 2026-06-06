@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('team fees admin page routing', () => {
     it('reinitializes when same-page manage links update the hash', () => {
@@ -236,16 +236,17 @@ describe('online team fee refunds', () => {
     it('detects eligible Stripe payments and remaining refundable amount', () => {
         const recipient = {
             paymentProvider: 'stripe',
-            stripePaymentIntentId: 'pi_123',
             amountPaidCents: 10000,
-            refundedAmountCents: 2500
+            refundedAmountCents: 2500,
+            hasAdminBilling: true
         };
 
         expect(getRecipientRefundableCents(recipient)).toBe(10000);
+        expect(getRecipientStripePaymentRefs(recipient)).toEqual({ paymentIntentId: '', chargeId: '' });
         expect(isOnlineRefundEligible(recipient)).toBe(true);
-        expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', hasAdminBilling: true })).toBe(true);
-        expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', adminBilling: { stripePaymentIntentId: 'pi_private' } })).toBe(true);
-        expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', stripeChargeId: '', adminBilling: {} })).toBe(false);
+        expect(isOnlineRefundEligible({ ...recipient, hasAdminBilling: false, stripePaymentIntentId: 'pi_root' })).toBe(true);
+        expect(isOnlineRefundEligible({ ...recipient, hasAdminBilling: false, stripePaymentIntentId: '', stripeChargeId: '', adminBilling: { stripePaymentIntentId: 'pi_private' } })).toBe(true);
+        expect(isOnlineRefundEligible({ ...recipient, hasAdminBilling: false, stripePaymentIntentId: '', stripeChargeId: '', adminBilling: {} })).toBe(false);
         expect(isOnlineRefundEligible({ ...recipient, paymentProvider: 'manual' })).toBe(false);
     });
 });

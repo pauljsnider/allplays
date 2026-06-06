@@ -195,8 +195,9 @@ export function getRecipientStripePaymentRefs(recipient) {
 
 export function isOnlineRefundEligible(recipient) {
     const { paymentIntentId, chargeId } = getRecipientStripePaymentRefs(recipient);
+    const hasPrivateAdminBilling = recipient?.hasAdminBilling === true;
     return recipient?.paymentProvider === 'stripe'
-        && Boolean(paymentIntentId || chargeId)
+        && Boolean(paymentIntentId || chargeId || hasPrivateAdminBilling)
         && getRecipientRefundableCents(recipient) > 0;
 }
 
