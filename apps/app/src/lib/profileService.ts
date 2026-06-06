@@ -262,7 +262,9 @@ export async function acquireProfilePhoto(source: ProfilePhotoSource): Promise<F
       quality: 85,
       resultType: CameraResultType.Uri,
       source: source === 'camera' ? CameraSource.Camera : CameraSource.Photos,
-      correctOrientation: true
+      correctOrientation: true,
+      width: profilePhotoMaxDimensionPx,
+      height: profilePhotoMaxDimensionPx
     });
 
     if (!photo.webPath) {
