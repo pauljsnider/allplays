@@ -31,6 +31,9 @@ describe('teams page HTML escaping', () => {
         expect(source).toContain('event.preventDefault();');
         expect(source).toContain('await loadTeams(getLocationSearchValue());');
         expect(source).toContain('discoverPublicTeams(locationFilter');
+        expect(source).toContain('function getStoredLocationLabel(team)');
+        expect(source).toContain('.filter((team) => !getStoredLocationLabel(team))');
+        expect(source).toContain('const location = getTeamLocationLabel(team, zipToLocation);');
         expect(source).toContain("renderLoadMoreButton(container");
         expect(source).toContain("clearSearchButton.addEventListener('click'");
         expect(source).toContain("locationSearchInput.value = '';");

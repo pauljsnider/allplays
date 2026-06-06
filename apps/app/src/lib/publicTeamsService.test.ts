@@ -66,4 +66,27 @@ describe('getPublicTeamsByLocation', () => {
         ]);
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: '60601', cursor: null, pageSize: 24 });
     });
+
+    it('keeps city searches on the bounded helper contract for zip-backed public teams', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                {
+                    id: 'team-kc-1',
+                    name: 'Kansas City Current',
+                    city: 'Kansas City',
+                    state: 'MO',
+                    zip: '64102'
+                }
+            ],
+            nextCursor: null
+        });
+
+        await expect(getPublicTeamsByLocation('Kansas City')).resolves.toEqual([
+            expect.objectContaining({
+                teamId: 'team-kc-1',
+                location: 'Kansas City, MO'
+            })
+        ]);
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'Kansas City', cursor: null, pageSize: 24 });
+    });
 });
