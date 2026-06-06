@@ -73,6 +73,7 @@ function renderParentTools() {
 describe('ParentTools access', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         parentToolsServiceMocks.loadParentAccessModel.mockResolvedValue({
             teams: [{ id: 'team-1', name: 'Bears', sport: 'Soccer' }],
             requests: []
@@ -89,6 +90,7 @@ describe('ParentTools access', () => {
     });
 
     afterEach(() => {
+        delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         cleanup();
     });
 
@@ -255,6 +257,58 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Register' }));
         expect(await screen.findByText('Summer Camp')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not rerender inactive visited panels when only the active tab changes', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-1',
+                title: 'Team dues',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                statusLabel: 'Open',
+                balanceDueCents: 10000,
+                canPay: false,
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: []
+        });
+
+        const renderCounts: Record<string, number> = {};
+        globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__ = (toolId) => {
+            renderCounts[toolId] = (renderCounts[toolId] || 0) + 1;
+        };
+
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        expect(renderCounts.access).toBe(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        await screen.findByText('Team dues');
+        expect(renderCounts.fees).toBe(1);
+        expect(renderCounts.access).toBe(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        await screen.findByText('No team schedules');
+        expect(renderCounts.calendar).toBe(1);
+        expect(renderCounts.fees).toBe(1);
+        expect(renderCounts.access).toBe(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        await screen.findByText('Team dues');
+        expect(renderCounts.fees).toBe(1);
+        expect(renderCounts.calendar).toBe(1);
+        expect(renderCounts.access).toBe(1);
     });
 
     it('defers hidden fees refresh after access changes until fees is reopened', async () => {
