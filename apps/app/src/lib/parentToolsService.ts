@@ -386,7 +386,10 @@ export async function initiateParentTeamFeeCheckout(teamId: string, batchId: str
 
 export async function loadParentCalendarTools(user: AuthUser | null) {
   if (!user?.uid) return { events: [], teams: [] };
-  const schedule = await loadParentSchedule(user);
+  const schedule = await loadParentSchedule(user, {
+    hydrateDetails: false,
+    expandStaffPlayers: false
+  });
   const teamsById = new Map<string, ParentCalendarTeam>();
   (schedule.events || []).forEach((event) => {
     if (!event.teamId) return;
