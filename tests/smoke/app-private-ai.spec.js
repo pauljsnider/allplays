@@ -181,7 +181,7 @@ test.describe('private AI chat', () => {
         await page.getByTitle('Private AI').first().click();
         await expect(page).toHaveURL(/#\/ai$/);
         await expect(page.getByRole('heading', { name: 'Ask ALL PLAYS' })).toBeVisible();
-        await expect(page.locator('.chat-message-html').getByText('I can look up your ALL PLAYS schedule and messages.')).toBeVisible();
+        await expect(page.locator('.private-ai-card')).toContainText(/I can look up your ALL PLAYS schedule and messages\.|Ask about your teams, schedule, messages, fees, player development, coaching ideas, registrations, and profile\./);
         await expect.poll(() => page.locator('.private-ai-rail').evaluate((element) => window.getComputedStyle(element).overflowY)).toBe('auto');
         await expect.poll(() => page.locator('.private-ai-composer').evaluate((element) => window.getComputedStyle(element).paddingBottom)).toBe('6px');
 

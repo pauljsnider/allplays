@@ -67,6 +67,10 @@ async function openDesktopSearch(page) {
             await expect(searchDialog).toBeVisible({ timeout: 1000 });
         } catch {
             const trigger = page.getByRole('button', { name: 'Search', exact: true }).first();
+            if (!await trigger.isVisible().catch(() => false)) {
+                await page.reload({ waitUntil: 'domcontentloaded' });
+                throw new Error('Search trigger was not ready; reloaded app shell');
+            }
             await expect(trigger).toBeVisible({ timeout: 1000 });
             await trigger.click();
             await expect(searchDialog).toBeVisible({ timeout: 1000 });

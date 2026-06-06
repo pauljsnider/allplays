@@ -382,6 +382,60 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Coach Jamie: Practice packet posted.');
     });
 
+    it('keeps the previewed conversation id on inbox links and opens that conversation on first load', async () => {
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    preferredConversationId: 'staff-conversation',
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Staff follow-up', conversationId: 'staff-conversation' })
+                }
+            ]
+        });
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+        ]);
+
+        const { container } = await renderMessages('/messages');
+        const inboxLink = container.querySelector('a[href="/messages/team-1?conversationId=staff-conversation"]');
+        expect(inboxLink).toBeTruthy();
+
+        await act(async () => {
+            inboxLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+
+        expect(container.textContent).toContain('Staff only');
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            'staff-conversation',
+            expect.any(Function),
+            expect.any(Function)
+        );
+    });
+
+    it('falls back to the default team conversation when the requested conversation is unavailable', async () => {
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
+        ]);
+
+        const { container } = await renderMessages('/messages/team-1?conversationId=missing-conversation');
+
+        expect(container.textContent).toContain('Bears Team Chat');
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            'team',
+            expect.any(Function),
+            expect.any(Function)
+        );
+    });
+
     it('refreshes the inbox and keeps the latest preview copy visible', async () => {
         chatMocks.loadChatInbox
             .mockResolvedValueOnce({

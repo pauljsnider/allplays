@@ -4,6 +4,7 @@ type PushPayload = {
     appRoute?: string;
     category?: string;
     teamId?: string;
+    conversationId?: string;
     gameId?: string;
     eventId?: string;
     link?: string;
@@ -15,6 +16,19 @@ function normalizeValue(value: unknown) {
 
 function encodeRouteParam(value: string) {
     return encodeURIComponent(value);
+}
+
+function buildMessagesRoute(teamId: string, conversationId?: string) {
+    const normalizedTeamId = normalizeValue(teamId);
+    if (!normalizedTeamId) {
+        return '';
+    }
+    const route = `/messages/${encodeRouteParam(normalizedTeamId)}`;
+    const normalizedConversationId = normalizeValue(conversationId);
+    if (!normalizedConversationId) {
+        return route;
+    }
+    return `${route}?conversationId=${encodeRouteParam(normalizedConversationId)}`;
 }
 
 function normalizeAppRoute(route: unknown) {
@@ -40,11 +54,12 @@ function buildLegacyLinkFallback(link: string) {
     try {
         const url = new URL(link);
         const teamId = normalizeValue(url.searchParams.get('teamId'));
+        const conversationId = normalizeValue(url.searchParams.get('conversationId'));
         const gameId = normalizeValue(url.searchParams.get('gameId'));
         const path = url.pathname.toLowerCase();
 
         if (path.endsWith('/team-chat.html') && teamId) {
-            return `/messages/${encodeRouteParam(teamId)}`;
+            return buildMessagesRoute(teamId, conversationId);
         }
         if (path.endsWith('/live-game.html') && gameId) {
             if (teamId) {
@@ -73,17 +88,21 @@ function buildLegacyLinkFallback(link: string) {
 export function resolvePushNotificationRoute(input: unknown) {
     const payload = readPayload(input);
     const appRoute = normalizeAppRoute(payload.appRoute);
+    const category = normalizeValue(payload.category);
+    const teamId = normalizeValue(payload.teamId);
+    const conversationId = normalizeValue(payload.conversationId);
+    const gameId = normalizeValue(payload.gameId);
+    const eventId = normalizeValue(payload.eventId) || gameId;
+
+    if (category === 'liveChat' && teamId && conversationId) {
+        return buildMessagesRoute(teamId, conversationId);
+    }
     if (appRoute) {
         return appRoute;
     }
 
-    const category = normalizeValue(payload.category);
-    const teamId = normalizeValue(payload.teamId);
-    const gameId = normalizeValue(payload.gameId);
-    const eventId = normalizeValue(payload.eventId) || gameId;
-
     if (category === 'liveChat' && teamId) {
-        return `/messages/${encodeRouteParam(teamId)}`;
+        return buildMessagesRoute(teamId, conversationId);
     }
     if (category === 'liveScore' && gameId) {
         if (teamId) {
