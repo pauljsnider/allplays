@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
+import { preserveHelpBackLinkContext } from '../../js/help-context.js';
 
 function readRepoFile(relativePath) {
     return readFileSync(path.join(process.cwd(), relativePath), 'utf8');
@@ -27,6 +28,20 @@ function bootHelpPage(search = '') {
 
 function readWorkflowLinks(document) {
     return Array.from(document.querySelectorAll('#help-grid article a')).map((link) => new URL(link.href));
+}
+
+function bootStaticPage(relativePath, search = '') {
+    const html = readRepoFile(relativePath);
+    const dom = new JSDOM(html, {
+        url: `https://allplays.test/${relativePath}${search}`,
+        runScripts: 'outside-only'
+    });
+
+    return {
+        html,
+        document: dom.window.document,
+        window: dom.window
+    };
 }
 
 describe('help team-context deep links', () => {
@@ -71,5 +86,31 @@ describe('help team-context deep links', () => {
         expect(firstLink.searchParams.get('context')).toBe('team');
         expect(firstLink.searchParams.get('teamId')).toBe('TEAM123');
         expect(firstLink.searchParams.get('role')).toBe('parent');
+    });
+
+    it('preserves team context on workflow back links', () => {
+        const { document } = bootStaticPage('workflow-schedule.html', '?context=team&teamId=TEAM123&role=coach');
+
+        preserveHelpBackLinkContext(document, '?context=team&teamId=TEAM123&role=coach');
+
+        const link = new URL(document.querySelector('[data-help-back-link]').href);
+        expect(link.pathname).toBe('/help.html');
+        expect(link.searchParams.get('context')).toBe('team');
+        expect(link.searchParams.get('teamId')).toBe('TEAM123');
+        expect(link.searchParams.get('role')).toBe('coach');
+    });
+
+    it('wires help context preservation into every workflow back link', () => {
+        const repoRoot = process.cwd();
+        const htmlPages = readdirSync(repoRoot)
+            .filter((file) => /^workflow-.*\.html$/.test(file) || file === 'help-team-operations.html')
+            .sort();
+
+        expect(htmlPages.length).toBeGreaterThan(0);
+        htmlPages.forEach((file) => {
+            const html = readRepoFile(file);
+            expect(html).toContain('data-help-back-link');
+            expect(html).toContain('./js/help-context.js?v=1');
+        });
     });
 });
