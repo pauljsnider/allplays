@@ -24,11 +24,12 @@ async function waitForTeamDetailRoute(page, teamName) {
     }).toPass({ timeout: 30000 });
 }
 
-async function mockTeamsModules(page) {
-    await page.addInitScript(() => {
+async function mockTeamsModules(page, { scenario = '' } = {}) {
+    await page.addInitScript(({ scenarioName }) => {
         window.__openedPublicUrls = [];
         window.__homeLoads = 0;
-    });
+        window.__teamsScenario = scenarioName;
+    }, { scenarioName: scenario });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -123,10 +124,10 @@ async function mockTeamsModules(page) {
 
                 export async function loadParentHome() {
                     window.__homeLoads += 1;
-                    if (window.location.hash.includes('scenario=error')) {
+                    if (window.__teamsScenario === 'error') {
                         throw new Error('Team service down');
                     }
-                    if (window.location.hash.includes('scenario=empty')) {
+                    if (window.__teamsScenario === 'empty') {
                         return {
                             players: [],
                             teams: [],
@@ -399,7 +400,7 @@ test.describe('mobile My Teams', () => {
     });
 
     test('renders empty and error states with recovery links instead of spinners', async ({ page, baseURL }) => {
-        await mockTeamsModules(page);
+        await mockTeamsModules(page, { scenario: 'empty' });
         await page.goto(appUrl(baseURL, '/teams?scenario=empty'), { waitUntil: 'domcontentloaded' });
 
         await expect(page.getByRole('heading', { name: 'No teams linked yet' })).toBeVisible();
@@ -411,7 +412,7 @@ test.describe('mobile My Teams', () => {
     });
 
     test('shows load failures without trapping the user in loading state', async ({ page, baseURL }) => {
-        await mockTeamsModules(page);
+        await mockTeamsModules(page, { scenario: 'error' });
         await page.goto(appUrl(baseURL, '/teams?scenario=error'), { waitUntil: 'domcontentloaded' });
 
         await expect(page.getByText('Team service down')).toBeVisible();
