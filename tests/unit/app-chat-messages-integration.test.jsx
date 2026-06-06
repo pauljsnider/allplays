@@ -420,6 +420,26 @@ describe('React app messages integration', () => {
         );
     });
 
+    it('skips inbox loading for direct mobile thread deep links and keeps conversation targeting', async () => {
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+        ]);
+
+        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
+
+        expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
+        expect(chatMocks.loadChatTeamContext).toHaveBeenCalledWith('team-1', auth.user);
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            'staff-conversation',
+            expect.any(Function),
+            expect.any(Function)
+        );
+        expect(container.textContent).toContain('Staff only');
+        expect(container.textContent).toContain('Bring both jerseys.');
+    });
+
     it('falls back to the default team conversation when the requested conversation is unavailable', async () => {
         chatMocks.loadChatConversations.mockResolvedValueOnce([
             { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
@@ -427,6 +447,7 @@ describe('React app messages integration', () => {
 
         const { container } = await renderMessages('/messages/team-1?conversationId=missing-conversation');
 
+        expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
         expect(container.textContent).toContain('Bears Team Chat');
         expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
             'team-1',
@@ -434,6 +455,49 @@ describe('React app messages integration', () => {
             expect.any(Function),
             expect.any(Function)
         );
+    });
+
+    it('loads the inbox for the inbox route and desktop two-pane thread route', async () => {
+        await renderMessages('/messages');
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledTimes(1);
+
+        vi.clearAllMocks();
+        layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValue({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                }
+            ]
+        });
+        chatMocks.loadChatTeamContext.mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: true
+        });
+        chatMocks.loadChatConversations.mockResolvedValue([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
+        ]);
+        chatMocks.loadChatRecipientOptions.mockResolvedValue([
+            { id: 'user:coach-1', name: 'Coach Jamie', detail: 'Staff' },
+            { id: 'player:player-1', name: 'Pat', detail: '#9' }
+        ]);
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+                chatMessage({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:02:00Z') })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+
+        await renderMessages('/messages/team-1');
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledTimes(1);
     });
 
     it('refreshes the inbox and keeps the latest preview copy visible', async () => {

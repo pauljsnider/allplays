@@ -121,6 +121,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const shouldLoadInbox = isDesktopWeb || !teamId;
 
   const refreshInbox = async () => {
     if (!auth.user) return;
@@ -138,9 +139,15 @@ export function Messages({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    if (!shouldLoadInbox) {
+      setLoading(false);
+      setError(null);
+      setTeams([]);
+      return;
+    }
     refreshInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, shouldLoadInbox]);
 
   const filteredTeams = useMemo(() => {
     const normalized = query.trim().toLowerCase();
