@@ -29,7 +29,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -50,6 +50,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [activeTab, setActiveTab] = useState<TeamTab>('overview');
   const [staffPermissionsLoading, setStaffPermissionsLoading] = useState(false);
   const [staffPermissionsError, setStaffPermissionsError] = useState('');
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState('');
+  const [insightsLoaded, setInsightsLoaded] = useState(false);
+  const [sponsorsLoading, setSponsorsLoading] = useState(false);
+  const [sponsorsError, setSponsorsError] = useState('');
+  const [sponsorsLoaded, setSponsorsLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,11 +64,17 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError('');
       try {
-        const nextModel = await loadParentTeamDetail(teamId, auth.user);
+        const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
         if (!cancelled) {
           setModel(nextModel);
           setStaffPermissionsError('');
           setStaffPermissionsLoading(false);
+          setInsightsLoading(false);
+          setInsightsError('');
+          setInsightsLoaded(false);
+          setSponsorsLoading(false);
+          setSponsorsError('');
+          setSponsorsLoaded(false);
         }
       } catch (loadError: any) {
         if (!cancelled) {
@@ -70,6 +82,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setModel(null);
           setStaffPermissionsError('');
           setStaffPermissionsLoading(false);
+          setInsightsLoading(false);
+          setInsightsError('');
+          setInsightsLoaded(false);
+          setSponsorsLoading(false);
+          setSponsorsError('');
+          setSponsorsLoaded(false);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -106,6 +124,56 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   }, [activeTab, auth.user, model?.canManageTeam, model?.staffPermissions, teamId]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadInsightsForTab() {
+      if (!teamId || activeTab !== 'insights' || !model || insightsLoaded || insightsLoading) return;
+      setInsightsLoading(true);
+      setInsightsError('');
+      try {
+        const insights = await loadTeamDetailInsights(teamId, auth.user);
+        if (!cancelled) {
+          setModel((currentModel) => currentModel ? { ...currentModel, ...insights } : currentModel);
+          setInsightsLoaded(true);
+        }
+      } catch (loadError: any) {
+        if (!cancelled) setInsightsError(loadError?.message || 'Unable to load team insights.');
+      } finally {
+        if (!cancelled) setInsightsLoading(false);
+      }
+    }
+
+    void loadInsightsForTab();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, auth.user, insightsLoaded, insightsLoading, model, teamId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSponsorsForMoreTab() {
+      if (!teamId || activeTab !== 'more' || !model || sponsorsLoaded || sponsorsLoading) return;
+      setSponsorsLoading(true);
+      setSponsorsError('');
+      try {
+        const sponsorPayload = await loadTeamDetailSponsors(teamId);
+        if (!cancelled) {
+          setModel((currentModel) => currentModel ? { ...currentModel, ...sponsorPayload } : currentModel);
+          setSponsorsLoaded(true);
+        }
+      } catch (loadError: any) {
+        if (!cancelled) setSponsorsError(loadError?.message || 'Unable to load team sponsors.');
+      } finally {
+        if (!cancelled) setSponsorsLoading(false);
+      }
+    }
+
+    void loadSponsorsForMoreTab();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, model, sponsorsLoaded, sponsorsLoading, teamId]);
+
+  useEffect(() => {
     const scroll = () => {
       try {
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -122,15 +190,21 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   async function refreshTeamDetail() {
     if (!teamId) return;
-    const nextModel = await loadParentTeamDetail(teamId, auth.user);
+    const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
+    const mergedModel = {
+      ...nextModel,
+      leaderboards: model?.leaderboards || nextModel.leaderboards,
+      trackingSummaries: model?.trackingSummaries || nextModel.trackingSummaries,
+      sponsors: model?.sponsors || nextModel.sponsors
+    };
     if (activeTab === 'more' && nextModel.canManageTeam) {
       const staffPermissions = await loadTeamStaffPermissions(teamId, auth.user);
-      setModel({ ...nextModel, staffPermissions });
+      setModel({ ...mergedModel, staffPermissions });
       setStaffPermissionsError('');
       setStaffPermissionsLoading(false);
       return;
     }
-    setModel(nextModel);
+    setModel(mergedModel);
     setStaffPermissionsError('');
     setStaffPermissionsLoading(false);
   }
@@ -206,8 +280,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
       {activeTab === 'roster' ? <RosterTab model={model} /> : null}
-      {activeTab === 'insights' ? <InsightsTab model={model} /> : null}
-      {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
+      {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
+      {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
     </div>
   );
 }
@@ -325,13 +399,15 @@ function RosterTab({ model }: { model: TeamDetailModel }) {
   );
 }
 
-function InsightsTab({ model }: { model: TeamDetailModel }) {
+function InsightsTab({ model, loading, error }: { model: TeamDetailModel; loading: boolean; error: string }) {
   return (
     <div className="space-y-4">
       <section className="app-card p-4">
         <div className="text-sm font-black text-gray-950">Player checklist</div>
         <div className="mt-0.5 text-xs font-semibold text-gray-500">Public tracking items visible for your linked player.</div>
         <div className="mt-3 space-y-3">
+          {loading ? <InlineDeferredLoading copy="Loading player tracking…" /> : null}
+          {!loading && error ? <InlineDeferredError title="Player checklist unavailable" message={error} /> : null}
           {model.trackingSummaries.length ? model.trackingSummaries.map((summary) => (
             <div key={summary.playerId} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
               <div className="flex items-center gap-3">
@@ -355,9 +431,9 @@ function InsightsTab({ model }: { model: TeamDetailModel }) {
                 ))}
               </div>
             </div>
-          )) : (
+          )) : !loading && !error ? (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No parent-visible tracking items for your players yet.</div>
-          )}
+          ) : null}
         </div>
       </section>
 
@@ -365,6 +441,8 @@ function InsightsTab({ model }: { model: TeamDetailModel }) {
         <div className="text-sm font-black text-gray-950">Leaderboards</div>
         <div className="mt-0.5 text-xs font-semibold text-gray-500">Public top stats from completed tracked games.</div>
         <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          {loading ? <InlineDeferredLoading copy="Loading leaderboards…" /> : null}
+          {!loading && error ? <InlineDeferredError title="Leaderboards unavailable" message={error} /> : null}
           {model.leaderboards.length ? model.leaderboards.map((leaderboard) => (
             <div key={leaderboard.id} className="rounded-xl border border-gray-200 bg-white p-3">
               <div className="text-sm font-black text-gray-950">{leaderboard.label}</div>
@@ -381,16 +459,16 @@ function InsightsTab({ model }: { model: TeamDetailModel }) {
                 ))}
               </div>
             </div>
-          )) : (
+          )) : !loading && !error ? (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Leaderboards appear after public stat configs and completed tracked games exist.</div>
-          )}
+          ) : null}
         </div>
       </section>
     </div>
   );
 }
 
-function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, onTeamDetailRefresh }: { model: TeamDetailModel; auth: AuthState; staffPermissionsLoading: boolean; staffPermissionsError: string; onTeamDetailRefresh: () => Promise<void> }) {
+function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, sponsorsLoading, sponsorsError, onTeamDetailRefresh }: { model: TeamDetailModel; auth: AuthState; staffPermissionsLoading: boolean; staffPermissionsError: string; sponsorsLoading: boolean; sponsorsError: string; onTeamDetailRefresh: () => Promise<void> }) {
   return (
     <div className="space-y-4">
       {model.canManageTeam && !model.staffPermissions && staffPermissionsLoading ? (
@@ -440,6 +518,9 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
         </section>
       ) : null}
 
+      {sponsorsLoading ? <InlineDeferredLoading copy="Loading local attractions and sponsors…" /> : null}
+      {!sponsorsLoading && sponsorsError ? <InlineDeferredError title="Sponsors unavailable" message={sponsorsError} /> : null}
+
       {model.sponsors.length ? (
         <section className="app-card p-4">
           <div className="text-sm font-black text-gray-950">Local attractions and sponsors</div>
@@ -465,6 +546,26 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
           </div>
         </section>
       ) : null}
+    </div>
+  );
+}
+
+function InlineDeferredLoading({ copy }: { copy: string }) {
+  return (
+    <div className="rounded-xl border border-primary-200 bg-primary-50 p-4">
+      <div className="flex items-center gap-3 text-sm font-semibold text-gray-600">
+        <Loader2 className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
+        {copy}
+      </div>
+    </div>
+  );
+}
+
+function InlineDeferredError({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+      <div className="text-sm font-black text-gray-950">{title}</div>
+      <div className="mt-1 text-xs font-semibold text-rose-700">{message}</div>
     </div>
   );
 }

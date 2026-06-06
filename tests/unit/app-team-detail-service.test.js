@@ -51,9 +51,9 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayers, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 describe('React app team detail model', () => {
@@ -450,18 +450,57 @@ describe('React app team detail model', () => {
             ]
         });
 
-        const adminModel = await loadParentTeamDetail('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
+        const adminModel = await loadParentTeamDetail('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, { includeDeferredData: false });
         expect(adminModel.canManageTeam).toBe(true);
         expect(adminModel.staffPermissions).toBeNull();
+        expect(adminModel.leaderboards).toEqual([]);
+        expect(adminModel.trackingSummaries).toEqual([]);
+        expect(adminModel.sponsors).toEqual([]);
         expect(getAllUsers).not.toHaveBeenCalled();
         expect(getDocs).not.toHaveBeenCalled();
+        expect(getAggregatedStatsForGames).not.toHaveBeenCalled();
+        expect(getPublicTrackingItems).not.toHaveBeenCalled();
+        expect(getPlayerTrackingStatuses).not.toHaveBeenCalled();
+        expect(getLocalAttractionSponsors).not.toHaveBeenCalled();
+        expect(getAdSpaceSponsors).not.toHaveBeenCalled();
 
         getDocs.mockClear();
         getAllUsers.mockClear();
-        const parentModel = await loadParentTeamDetail('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] });
+        const parentModel = await loadParentTeamDetail('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] }, { includeDeferredData: false });
         expect(parentModel.staffPermissions).toBeNull();
         expect(getDocs).not.toHaveBeenCalled();
         expect(getAllUsers).not.toHaveBeenCalled();
+    });
+
+    it('loads deferred insights and sponsors only when requested', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'Basketball' });
+        getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', photoUrl: 'https://img.example.test/player.png' }]);
+        getGames.mockResolvedValue([
+            { id: 'game-1', opponent: 'Falcons', date: new Date('2026-05-01T18:00:00Z'), status: 'completed', homeScore: 42, awayScore: 35, isHome: true }
+        ]);
+        getConfigs.mockResolvedValue([{
+            id: 'basketball',
+            name: 'Basketball',
+            columns: ['pts'],
+            statDefinitions: [{ id: 'pts', label: 'Points', acronym: 'PTS', topStat: true, visibility: 'public', scope: 'player' }]
+        }]);
+        getAggregatedStatsForGames.mockResolvedValue({ 'player-1': { pts: 88 } });
+        getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball', public: true }]);
+        getPlayerTrackingStatuses.mockResolvedValue([{ itemId: 'item-1', playerId: 'player-1', status: 'complete', public: true }]);
+        getLocalAttractionSponsors.mockResolvedValue([{ id: 'local-1', name: 'Museum', description: 'Visit downtown', imageUrl: null, websiteUrl: 'https://museum.example.test' }]);
+        getAdSpaceSponsors.mockResolvedValue([{ id: 'ad-1', name: 'Pizza Place', description: 'After game', imageUrl: null, websiteUrl: 'https://pizza.example.test' }]);
+
+        const insights = await loadTeamDetailInsights('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'], parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] });
+        const sponsors = await loadTeamDetailSponsors('team-1');
+
+        expect(getAggregatedStatsForGames).toHaveBeenCalledWith('team-1', ['game-1']);
+        expect(getPublicTrackingItems).toHaveBeenCalledWith('team-1');
+        expect(getPlayerTrackingStatuses).toHaveBeenCalledWith('team-1', ['player-1']);
+        expect(insights.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
+        expect(insights.trackingSummaries[0].items[0]).toMatchObject({ title: 'Bring ball', isComplete: true });
+        expect(getLocalAttractionSponsors).toHaveBeenCalledWith('team-1');
+        expect(getAdSpaceSponsors).toHaveBeenCalledWith('team-1');
+        expect(sponsors.sponsors.map((sponsor) => sponsor.id)).toEqual(['ad-1', 'local-1']);
     });
 
     it('loads deferred staff permissions only when requested for a team manager', async () => {

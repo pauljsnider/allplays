@@ -6,6 +6,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const teamDetailMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn(),
+    loadTeamDetailInsights: vi.fn(),
+    loadTeamDetailSponsors: vi.fn(),
     loadTeamStaffPermissions: vi.fn(),
     grantScorekeeperAccessForApp: vi.fn(),
     grantVideographerAccessForApp: vi.fn(),
@@ -25,7 +27,7 @@ const publicActionMocks = vi.hoisted(() => ({
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => teamDetailMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
-    loadStaffRsvpReminderPreview: vi.fn(),
+    createStaffRsvpReminderPreviewLoader: vi.fn(() => ({ loadPreview: vi.fn() })),
     sendStaffRsvpReminder: vi.fn()
 }));
 
@@ -145,6 +147,8 @@ beforeEach(() => {
     };
     window.scrollTo = vi.fn();
     publicActionMocks.copyPublicText.mockResolvedValue('copied');
+    teamDetailMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [] });
+    teamDetailMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
     teamDetailMocks.grantScorekeeperAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.grantVideographerAccessForApp.mockResolvedValue(undefined);
     teamDetailMocks.revokeScorekeeperAccessForApp.mockResolvedValue(undefined);

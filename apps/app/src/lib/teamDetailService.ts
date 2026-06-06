@@ -187,6 +187,15 @@ export type TeamDetailModel = {
   };
 };
 
+export type TeamDetailInsightsPayload = {
+  leaderboards: TeamDetailLeaderboard[];
+  trackingSummaries: TeamDetailTrackingSummary[];
+};
+
+export type TeamDetailSponsorsPayload = {
+  sponsors: TeamDetailSponsor[];
+};
+
 type FirestoreDocument = Record<string, any> & { id: string };
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
@@ -525,7 +534,12 @@ function getPublicBaseUrl() {
   return 'https://allplays.ai';
 }
 
-export async function loadParentTeamDetail(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
+export async function loadParentTeamDetail(
+  teamId: string,
+  user: AuthUser | null,
+  options: { includeDeferredData?: boolean } = {}
+): Promise<TeamDetailModel> {
+  const includeDeferredData = options.includeDeferredData === true;
   const [team, players, games, configs] = await Promise.all([
     loadTeamDocument(teamId),
     loadTeamPlayers(teamId),
@@ -541,13 +555,21 @@ export async function loadParentTeamDetail(teamId: string, user: AuthUser | null
     .map((game: any) => cleanString(game.id || game.gameId))
     .filter(Boolean);
 
-  const [seasonStatsByPlayerId, trackingItems, trackingStatuses, localSponsors, adSponsors] = await Promise.all([
-    completedGameIds.length ? Promise.resolve(getAggregatedStatsForGames(teamId, completedGameIds)).catch(() => ({})) : Promise.resolve({}),
-    linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(teamId)).catch(() => []) : Promise.resolve([]),
-    linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(teamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([]),
-    Promise.resolve(getLocalAttractionSponsors(teamId)).catch(() => []),
-    Promise.resolve(getAdSpaceSponsors(teamId)).catch(() => [])
-  ]);
+  const [seasonStatsByPlayerId, trackingItems, trackingStatuses, localSponsors, adSponsors] = includeDeferredData
+    ? await Promise.all([
+      completedGameIds.length ? Promise.resolve(getAggregatedStatsForGames(teamId, completedGameIds)).catch(() => ({})) : Promise.resolve({}),
+      linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(teamId)).catch(() => []) : Promise.resolve([]),
+      linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(teamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([]),
+      Promise.resolve(getLocalAttractionSponsors(teamId)).catch(() => []),
+      Promise.resolve(getAdSpaceSponsors(teamId)).catch(() => [])
+    ])
+    : await Promise.all([
+      Promise.resolve({}),
+      Promise.resolve([]),
+      Promise.resolve([]),
+      Promise.resolve([]),
+      Promise.resolve([])
+    ]);
 
   return buildTeamDetailModel({
     teamId,
@@ -563,6 +585,46 @@ export async function loadParentTeamDetail(teamId: string, user: AuthUser | null
     sponsors: [...normalizeSponsorList(adSponsors), ...normalizeSponsorList(localSponsors)],
     includeStaffPermissions: false
   });
+}
+
+export async function loadTeamDetailInsights(teamId: string, user: AuthUser | null): Promise<TeamDetailInsightsPayload> {
+  const [team, players, games, configs] = await Promise.all([
+    loadTeamDocument(teamId),
+    loadTeamPlayers(teamId),
+    loadTeamGames(teamId),
+    loadTeamConfigs(teamId)
+  ]);
+
+  if (!team) throw new Error('Team not found.');
+
+  const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
+  const completedGameIds = (Array.isArray(games) ? games : [])
+    .filter(isCompletedGame)
+    .map((game: any) => cleanString(game.id || game.gameId))
+    .filter(Boolean);
+
+  const [seasonStatsByPlayerId, trackingItems, trackingStatuses] = await Promise.all([
+    completedGameIds.length ? Promise.resolve(getAggregatedStatsForGames(teamId, completedGameIds)).catch(() => ({})) : Promise.resolve({}),
+    linkedPlayerIds.length ? Promise.resolve(getPublicTrackingItems(teamId)).catch(() => []) : Promise.resolve([]),
+    linkedPlayerIds.length ? Promise.resolve(getPlayerTrackingStatuses(teamId, linkedPlayerIds)).catch(() => []) : Promise.resolve([])
+  ]);
+
+  const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
+  return {
+    leaderboards: buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport),
+    trackingSummaries: buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses)
+  };
+}
+
+export async function loadTeamDetailSponsors(teamId: string): Promise<TeamDetailSponsorsPayload> {
+  const [localSponsors, adSponsors] = await Promise.all([
+    Promise.resolve(getLocalAttractionSponsors(teamId)).catch(() => []),
+    Promise.resolve(getAdSpaceSponsors(teamId)).catch(() => [])
+  ]);
+
+  return {
+    sponsors: [...normalizeSponsorList(adSponsors), ...normalizeSponsorList(localSponsors)].slice(0, 4)
+  };
 }
 
 export async function loadTeamStaffPermissions(teamId: string, user: AuthUser | null): Promise<TeamStaffPermissionsSummary | null> {
