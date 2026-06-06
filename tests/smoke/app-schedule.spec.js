@@ -687,6 +687,7 @@ test('calendar day selection opens a visible event picker for multiple events', 
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
     const calendarToggle = page.getByRole('button', { name: 'Calendar', exact: true });
+    await waitForScheduleRoute(page, calendarToggle);
     await expect(calendarToggle).toBeVisible();
     await calendarToggle.click();
     await page.getByRole('button', { name: /May 2030 28, 2 events/ }).click();
@@ -918,6 +919,7 @@ test('app practice more tab uses hub cards and shares event details without a li
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
+    await waitForScheduleRoute(page, page.locator('.event-summary-card'));
     await expect(page.locator('.event-summary-card')).toContainText('Practice');
     await expect(page.getByRole('button', { name: 'Practice packet ready, review packet' })).toBeVisible();
     await page.getByRole('button', { name: 'Practice packet ready, review packet' }).click();

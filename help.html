@@ -467,6 +467,24 @@
             }
         }
 
+        function buildWorkflowHref(file) {
+            const currentParams = new URLSearchParams(window.location.search);
+            if (currentParams.get('context') !== 'team' || !currentParams.get('teamId')) {
+                return file;
+            }
+
+            const linkParams = new URLSearchParams();
+            ['context', 'teamId', 'role'].forEach((key) => {
+                const value = currentParams.get(key);
+                if (value) {
+                    linkParams.set(key, value);
+                }
+            });
+
+            const query = linkParams.toString();
+            return query ? `${file}?${query}` : file;
+        }
+
         function render() {
             const q = (searchInput.value || '').toLowerCase().trim();
             const role = roleSelect.value;
@@ -483,7 +501,7 @@
                     + '<h2 class="text-xl font-extrabold tracking-tight text-slate-900">'+escapeHtml(item.title)+'</h2>'
                     + '<p class="mt-2 text-sm text-slate-600 leading-6">'+escapeHtml(item.summary)+'</p>'
                     + '<div class="mt-4 flex flex-wrap gap-2">'+badges+'</div>'
-                    + '<a class="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary-700 hover:text-primary-800" href="'+escapeHtml(item.file)+'">Open workflow <span aria-hidden="true">→</span></a>'
+                    + '<a class="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary-700 hover:text-primary-800" href="'+escapeHtml(buildWorkflowHref(item.file))+'">Open workflow <span aria-hidden="true">→</span></a>'
                     + '</article>';
             }).join('');
 
