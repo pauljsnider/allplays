@@ -13,4 +13,15 @@ describe('edit team stat schema defaults', () => {
         expect(source).toContain('const defaultStatConfig = getDefaultStatConfigForSport(teamData.sport);');
         expect(source).toContain('const configId = await addConfig(newTeamId, defaultStatConfig);');
     });
+
+    it('migrates stat config selection when an existing team changes sports', () => {
+        const source = readEditTeamSource();
+
+        expect(source).toContain("from './js/team-stat-config-migration.js?v=1'");
+        expect(source).toContain('const migrationPlan = buildTeamSportConfigMigrationPlan({');
+        expect(source).toContain('configs: await getConfigs(currentTeamId),');
+        expect(source).toContain('games: await getGames(currentTeamId)');
+        expect(source).toContain('statTrackerConfigId: targetConfigId');
+        expect(source).toContain('sport: teamData.sport');
+    });
 });
