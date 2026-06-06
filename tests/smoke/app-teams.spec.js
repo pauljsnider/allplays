@@ -238,6 +238,26 @@ async function mockTeamsModules(page) {
                     return null;
                 }
 
+                export async function loadTeamDetailInsights(teamId) {
+                    if (teamId === 'team-empty') {
+                        return { leaderboards: [], trackingSummaries: [] };
+                    }
+                    return {
+                        leaderboards: [{ id: 'pts', label: 'Points', leaders: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: 'https://img.example.test/player.png', rank: 1, formattedValue: '88' }] }],
+                        trackingSummaries: [{ playerId: 'player-1', playerName: 'Pat Star', photoUrl: 'https://img.example.test/player.png', items: [
+                            { id: 'item-1', title: 'Bring ball', description: 'For warmups', isComplete: true },
+                            { id: 'item-2', title: 'Upload waiver', description: '', isComplete: false }
+                        ] }]
+                    };
+                }
+
+                export async function loadTeamDetailSponsors(teamId) {
+                    if (teamId === 'team-empty') {
+                        return { sponsors: [] };
+                    }
+                    return { sponsors: [{ id: 'sponsor-1', name: 'Pizza Place', description: 'After the game', imageUrl: 'https://img.example.test/pizza.png', websiteUrl: 'https://pizza.example.test' }] };
+                }
+
                 export function buildPublicTeamGamesIcsUrl(teamId) {
                     return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
                 }

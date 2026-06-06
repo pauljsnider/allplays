@@ -281,6 +281,14 @@ async function mockSearchModules(page) {
                     return null;
                 }
 
+                export async function loadTeamDetailInsights() {
+                    return { leaderboards: [], trackingSummaries: [] };
+                }
+
+                export async function loadTeamDetailSponsors() {
+                    return { sponsors: [] };
+                }
+
                 export function buildPublicTeamGamesIcsUrl(teamId) {
                     return teamId ? 'https://calendar.example.test/publicTeamGamesIcs?teamId=' + encodeURIComponent(teamId) : '';
                 }
