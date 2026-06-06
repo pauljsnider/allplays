@@ -15,7 +15,7 @@ async function gotoAppRoute(page, baseURL, hashPath) {
 async function waitForAppShell(page) {
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
-        await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible({ timeout: 1000 });
+        await expect(page.getByRole('button', { name: 'Search', exact: true }).first()).toBeVisible({ timeout: 1000 });
     }).toPass({ timeout: 30000 });
 }
 
