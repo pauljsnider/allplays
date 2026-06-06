@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GameDetail } from '../../apps/app/src/pages/GameDetail.tsx';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
-    loadParentSchedule: vi.fn()
+    resolveParentGameRoute: vi.fn()
 }));
 
 vi.mock('../../apps/app/src/lib/scheduleService', () => scheduleServiceMocks);
@@ -66,16 +66,10 @@ afterEach(() => {
 
 describe('app GameDetail route resolution', () => {
     it('routes tracked games into the live schedule event detail workflow', async () => {
-        scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-            children: [],
-            events: [
-                {
-                    id: 'game-baseball',
-                    teamId: 'team-baseball',
-                    childId: 'player-1',
-                    type: 'game'
-                }
-            ]
+        scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
+            teamId: 'team-baseball',
+            eventId: 'game-baseball',
+            childId: 'player-1'
         });
 
         const { container, root, router } = await renderGameDetail();
@@ -91,8 +85,7 @@ describe('app GameDetail route resolution', () => {
         expect(container.textContent).toContain('Assignments');
         expect(container.textContent).toContain('Live event workflow');
         expect(container.textContent).not.toContain('Live chat');
-        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(coachAuth.user, {
-            hydrateDetails: false,
+        expect(scheduleServiceMocks.resolveParentGameRoute).toHaveBeenCalledWith(coachAuth.user, 'game-baseball', {
             expandStaffPlayers: false
         });
 
@@ -102,10 +95,7 @@ describe('app GameDetail route resolution', () => {
     });
 
     it('shows a recovery state when the game cannot be resolved', async () => {
-        scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-            children: [],
-            events: []
-        });
+        scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue(null);
 
         const { container, root } = await renderGameDetail('/games/unknown-game');
 
