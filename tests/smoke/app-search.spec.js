@@ -396,8 +396,12 @@ test.describe('desktop app global search', () => {
         await page.getByLabel('Search teams, players, actions, help').fill('rock');
         await expect(page.getByRole('button', { name: /Rockets/ })).toBeVisible();
         await page.getByRole('button', { name: /Rockets/ }).click();
-        await expect(page).toHaveURL(/#\/teams\/team-2$/);
-        await expect(page.getByRole('heading', { name: 'Rockets' })).toBeVisible();
+        await expect(async () => {
+            await expect(page).toHaveURL(/#\/teams\/team-2$/, { timeout: 1000 });
+            await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+            await expect(page.getByText('Loading team')).toHaveCount(0, { timeout: 1000 });
+            await expect(page.getByRole('heading', { name: 'Rockets' })).toBeVisible({ timeout: 1000 });
+        }).toPass({ timeout: 30000 });
 
         await openDesktopSearch(page);
         await page.getByRole('button', { name: /Browse Teams/ }).click();

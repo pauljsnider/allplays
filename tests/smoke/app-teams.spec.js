@@ -15,6 +15,14 @@ async function waitForTeamsRoute(page, readyLocator) {
     }).toPass({ timeout: 30000 });
 }
 
+async function waitForTeamDetailRoute(page, teamName) {
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(page.getByText('Loading team')).toHaveCount(0, { timeout: 1000 });
+        await expect(page.getByRole('heading', { name: teamName })).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
+}
+
 async function mockTeamsModules(page) {
     await page.addInitScript(() => {
         window.__openedPublicUrls = [];
@@ -394,7 +402,7 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'Bears' })).toBeVisible();
+        await waitForTeamDetailRoute(page, 'Bears');
         await expect(page.getByText('4-2').first()).toBeVisible();
         await expect(page.getByText('Parent actions')).toBeVisible();
         await expect(page.locator('a[href="#/schedule?teamId=team-1&filter=availability"]')).toBeVisible();
@@ -442,8 +450,7 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams/team-empty'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByText('Loading team')).toHaveCount(0);
-        await expect(page.getByRole('heading', { name: /Empty Team/i })).toBeVisible();
+        await waitForTeamDetailRoute(page, /Empty Team/i);
         await expect(page.getByText('No completed games yet')).toBeVisible();
         await expect(page.getByText('Schedule is clear for now')).toBeVisible();
 

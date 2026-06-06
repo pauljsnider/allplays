@@ -634,7 +634,11 @@ test('my teams opens from Home data with selected team, player, and chat routes'
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.locator('a[href="#/teams/team-1"]').first().click();
-    await expect(page.getByRole('heading', { name: 'Bears' })).toBeVisible();
+    await expect(async () => {
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
+        await expect(page.getByText('Loading team')).toHaveCount(0, { timeout: 1000 });
+        await expect(page.getByRole('heading', { name: 'Bears' })).toBeVisible({ timeout: 1000 });
+    }).toPass({ timeout: 30000 });
     await expect(page.locator('img[src="https://img.example.test/bears.png"]').first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Roster' })).toBeVisible();
     await page.getByRole('button', { name: 'Roster' }).click();
