@@ -22,6 +22,7 @@ vi.mock('../../../../js/firebase.js', () => ({
 
 vi.mock('../../../../js/db.js', () => ({
   getAssignmentClaims: vi.fn(),
+  getGame: vi.fn(),
   getGames: vi.fn(),
   getPracticePacketCompletions: vi.fn(),
   getPracticeSessions: vi.fn(),
@@ -82,8 +83,50 @@ vi.mock('./uxTiming', () => ({ startUxTimer: vi.fn(() => ({ end: vi.fn() })) }))
 vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 
-import { updateGame, getPlayers, getRsvpBreakdownByPlayer, getRsvps, submitRsvpForPlayer } from '../../../../js/db.js';
-import { buildPlayerScoringLiveEvent, loadStaffScheduleRsvpBreakdown, recordPlayerScoringStat, saveScheduledGameLineupDraftForApp, submitStaffScheduleRsvpOverride } from './scheduleService';
+import { updateGame, getGame, getGames, getPlayers, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeams, submitRsvpForPlayer } from '../../../../js/db.js';
+import { fetchAndParseCalendar } from '../../../../js/utils.js';
+import { loadProfileDocument } from './profileService';
+import { buildPlayerScoringLiveEvent, loadStaffScheduleRsvpBreakdown, recordPlayerScoringStat, resolveParentGameRoute, saveScheduledGameLineupDraftForApp, submitStaffScheduleRsvpOverride } from './scheduleService';
+
+describe('parent game route resolution', () => {
+  beforeEach(() => {
+    (globalThis as any).window = globalThis as any;
+    vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-alpha', playerId: 'child-1', playerName: 'Avery' },
+        { teamId: 'team-bravo', playerId: 'child-2', playerName: 'Blake' }
+      ]
+    } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => {
+      if (teamId === 'team-bravo' && gameId === 'game-7') {
+        return { id: 'game-7', type: 'game' } as any;
+      }
+      return null as any;
+    });
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(fetchAndParseCalendar).mockResolvedValue([] as any);
+  });
+
+  it('resolves a game route without loading full schedules or calendars', async () => {
+    const result = await resolveParentGameRoute({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, 'game-7', {
+      expandStaffPlayers: false
+    });
+
+    expect(result).toEqual({
+      teamId: 'team-bravo',
+      eventId: 'game-7',
+      childId: 'child-2'
+    });
+    expect(getGame).toHaveBeenCalledWith('team-alpha', 'game-7');
+    expect(getGame).toHaveBeenCalledWith('team-bravo', 'game-7');
+    expect(getGames).not.toHaveBeenCalled();
+    expect(getPracticeSessions).not.toHaveBeenCalled();
+    expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+});
 
 describe('player-attributed live scoring', () => {
   beforeEach(() => {
