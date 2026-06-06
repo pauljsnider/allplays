@@ -1293,7 +1293,7 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Older update');
     });
 
-    it('opens the shared media gallery with share, save, and copy actions', async () => {
+    it('renders inline chat image attachments with deferred loading attrs and gallery actions', async () => {
         chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
             onMessages([
                 chatMessage({
@@ -1311,6 +1311,14 @@ describe('React app messages integration', () => {
             return { unsubscribe: vi.fn() };
         });
         const { container } = await renderMessages('/messages/team-1');
+
+        const inlineImage = container.querySelector('img[alt="Lineup.jpg"]');
+        const inlineImageLink = container.querySelector('a[href="https://media.example.test/lineup.jpg"]');
+        expect(inlineImage).toBeTruthy();
+        expect(inlineImage.getAttribute('src')).toBe('https://media.example.test/lineup.jpg');
+        expect(inlineImage.getAttribute('loading')).toBe('lazy');
+        expect(inlineImage.getAttribute('decoding')).toBe('async');
+        expect(inlineImageLink).toBeTruthy();
 
         await click(container, 'Open photos and videos');
         expect(container.textContent).toContain('Photos & videos');
