@@ -16,6 +16,18 @@ async function waitForScheduleRoute(page, readyLocator) {
     }).toPass({ timeout: 30000 });
 }
 
+function mobileScheduleHeader(page) {
+    return page.locator('.schedule-header').first();
+}
+
+function mobileScheduleFilter(page) {
+    return mobileScheduleHeader(page).getByLabel('Schedule filter', { exact: true });
+}
+
+function mobilePlayerFilter(page) {
+    return mobileScheduleHeader(page).getByLabel('Player filter', { exact: true });
+}
+
 async function mockScheduleModules(page, options = {}) {
     const gameDate = options.gameDate || '2030-05-28T18:00:00Z';
     const practiceDate = options.practiceDate || '2030-05-29T19:00:00Z';
@@ -757,7 +769,7 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByLabel('Schedule filter', { exact: true })).toBeVisible({ timeout: 15000 });
+    await expect(mobileScheduleFilter(page)).toBeVisible({ timeout: 15000 });
     await expect(page.locator('.schedule-web-sidebar')).toBeHidden();
     await expect(page.locator('.schedule-list > a').first()).toBeVisible();
     const scheduleRowCount = await page.locator('.schedule-list > a').count();
@@ -989,7 +1001,7 @@ test('app schedule keeps filters compact on phone', async ({ page, baseURL }) =>
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    const scheduleFilter = page.getByLabel('Schedule filter', { exact: true });
+    const scheduleFilter = mobileScheduleFilter(page);
     await waitForScheduleRoute(page, scheduleFilter);
 
     const mobileRows = page.locator('.schedule-list > a');
@@ -1035,12 +1047,12 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     expect(expandedRowCount).toBeLessThanOrEqual(25);
     await expect(page.getByRole('button', { name: /Show .* more/ })).toHaveCount(0);
 
-    await page.getByLabel('Schedule filter', { exact: true }).selectOption('past-all');
+    await mobileScheduleFilter(page).selectOption('past-all');
     await expect(mobileRows).toHaveCount(10);
     await expect(page.getByText('Showing 10 of 12 events')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show 2 more' })).toBeVisible();
 
-    await page.getByLabel('Player filter', { exact: true }).selectOption('player-2');
+    await mobilePlayerFilter(page).selectOption('player-2');
     await expect(mobileRows).toHaveCount(0);
     await expect(page.getByText('No events in this filter')).toBeVisible();
     await expect(page.getByRole('button', { name: /Show .* more/ })).toHaveCount(0);
