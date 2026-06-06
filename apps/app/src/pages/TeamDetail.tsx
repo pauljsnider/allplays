@@ -146,7 +146,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, auth.user, insightsLoaded, insightsLoading, model, teamId]);
+  }, [activeTab, auth.user, insightsLoaded, Boolean(model), teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -171,7 +171,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, model, sponsorsLoaded, sponsorsLoading, teamId]);
+  }, [activeTab, Boolean(model), sponsorsLoaded, teamId]);
 
   useEffect(() => {
     const scroll = () => {

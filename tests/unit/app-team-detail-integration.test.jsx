@@ -560,6 +560,41 @@ describe('React app TeamDetail page', () => {
         expect(teamDetailMocks.loadTeamDetailSponsors).toHaveBeenCalledTimes(1);
     });
 
+    it('applies deferred insights and sponsors after async loads resolve', async () => {
+        let resolveInsights;
+        let resolveSponsors;
+        teamDetailMocks.loadTeamDetailInsights.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveInsights = resolve;
+        }));
+        teamDetailMocks.loadTeamDetailSponsors.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveSponsors = resolve;
+        }));
+
+        const { container } = await renderTeamDetail();
+
+        await clickButton(container, 'Insights');
+        expect(container.textContent).toContain('Loading player tracking…');
+
+        await act(async () => {
+            resolveInsights(deferredInsightsModel());
+        });
+        await flush();
+
+        expect(container.textContent).toContain('Bring ball');
+        expect(container.textContent).not.toContain('Loading player tracking…');
+
+        await clickButton(container, 'More');
+        expect(container.textContent).toContain('Loading local attractions and sponsors…');
+
+        await act(async () => {
+            resolveSponsors(deferredSponsorsModel());
+        });
+        await flush();
+
+        expect(container.textContent).toContain('Pizza Place');
+        expect(container.textContent).not.toContain('Loading local attractions and sponsors…');
+    });
+
     it('keeps the page usable when deferred Insights or More hydration fails', async () => {
         teamDetailMocks.loadTeamDetailInsights.mockRejectedValueOnce(new Error('Insights offline'));
         teamDetailMocks.loadTeamDetailSponsors.mockRejectedValueOnce(new Error('Sponsors offline'));
