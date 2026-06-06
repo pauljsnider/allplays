@@ -24,6 +24,7 @@ const {
   shouldApplyTeamFeeCheckoutSession,
   shouldMarkTeamFeePaidFromEvent,
   shouldRecordTeamFeeCheckoutNotPaidFromEvent,
+  getTeamFeeStripePaymentRefs,
   buildTeamFeePaidUpdate,
   buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
@@ -141,6 +142,28 @@ function withTeamFeeParentBillingClears(update = {}) {
       }
     } : {})
   };
+}
+
+async function fetchTeamFeePaymentAdminBilling(recipientRef) {
+  const latestSnap = await buildTeamFeeAdminBillingRef(recipientRef, 'latest').get();
+  const latest = latestSnap.exists ? (latestSnap.data() || {}) : {};
+  const latestRefs = getTeamFeeStripePaymentRefs(latest);
+  if (latestRefs.paymentIntentId || latestRefs.chargeId) {
+    return latest;
+  }
+
+  const querySnap = await recipientRef.collection('adminBilling')
+    .where('type', '==', 'stripe_checkout_paid')
+    .limit(10)
+    .get();
+  for (const doc of querySnap.docs) {
+    const data = doc.data() || {};
+    const refs = getTeamFeeStripePaymentRefs(data);
+    if (refs.paymentIntentId || refs.chargeId) {
+      return data;
+    }
+  }
+  return {};
 }
 
 function buildTeamFeeRefundRequestId(input, uid) {
@@ -1581,9 +1604,10 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid team fee refund request.');
   }
 
+  const recipientRef = buildTeamFeeRecipientRef(input);
   const [teamSnap, recipientSnap, user] = await Promise.all([
     firestore.doc(`teams/${input.teamId}`).get(),
-    buildTeamFeeRecipientRef(input).get(),
+    recipientRef.get(),
     getUserForEligibility(context.auth.uid)
   ]);
 
@@ -1608,8 +1632,8 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('failed-precondition', 'Only Stripe team fee payments can be refunded online.');
   }
 
-  const paymentIntentId = String(recipient.stripePaymentIntentId || '').trim();
-  const chargeId = String(recipient.stripeChargeId || recipient.stripeLatestChargeId || '').trim();
+  const paymentAdminBilling = await fetchTeamFeePaymentAdminBilling(recipientRef);
+  const { paymentIntentId, chargeId } = getTeamFeeStripePaymentRefs(recipient, paymentAdminBilling);
   if (!paymentIntentId && !chargeId) {
     throw new functions.https.HttpsError('failed-precondition', 'This payment is missing a Stripe payment intent or charge reference.');
   }
@@ -1619,7 +1643,6 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
     throw new functions.https.HttpsError('failed-precondition', 'Refund amount exceeds the refundable paid amount.');
   }
 
-  const recipientRef = buildTeamFeeRecipientRef(input);
   const refundRequestId = buildTeamFeeRefundRequestId(input, context.auth.uid);
   const refundIntentRef = recipientRef.collection('refundIntents').doc(refundRequestId);
   let existingRefundResult = null;
@@ -1757,7 +1780,7 @@ exports.refundStripeTeamFeePayment = functions.https.onCall(async (data, context
       }
 
       const { ledgerEntries = [], adminBilling, ...update } = buildTeamFeeStripeRefundUpdate({
-        recipient: latestRecipient,
+        recipient: { ...latestRecipient, adminBilling: paymentAdminBilling },
         refund,
         amountCents: actualRefundAmount,
         actorId: context.auth.uid,
@@ -2125,6 +2148,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           transaction.set(recipientRef, withTeamFeeParentBillingClears(recipientUpdate), { merge: true });
           if (adminBilling) {
             transaction.set(buildTeamFeeAdminBillingRef(recipientRef, event.id), adminBilling, { merge: true });
+            transaction.set(buildTeamFeeAdminBillingRef(recipientRef, 'latest'), adminBilling, { merge: true });
           }
         } else if (shouldRecordTeamFeeCheckoutNotPaidFromEvent(event) && shouldApplyCheckoutEvent) {
           transaction.set(recipientRef, {

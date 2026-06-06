@@ -21,6 +21,7 @@ const {
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
     getTeamFeeStripePaidAmountCents,
     buildTeamFeeAdminBillingMetadata,
+    getTeamFeeStripePaymentRefs,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 } = require('../../functions/team-fees-core.cjs');
@@ -219,6 +220,7 @@ describe('team fee checkout function helpers', () => {
             paymentProvider: 'stripe',
             stripeCheckoutSessionId: null,
             stripePaymentAmountCents: 10000,
+            hasAdminBilling: true,
         });
         expect(update.receiptMetadata).toEqual({
             provider: 'stripe',
@@ -283,18 +285,38 @@ describe('team fee checkout function helpers', () => {
         })).toBe(8000);
     });
 
+    it('resolves private Stripe payment refs from admin billing metadata', () => {
+        expect(getTeamFeeStripePaymentRefs({
+            adminBilling: {
+                stripePaymentIntentId: 'pi_private',
+                stripeChargeId: 'ch_private'
+            }
+        })).toEqual({
+            paymentIntentId: 'pi_private',
+            chargeId: 'ch_private'
+        });
+        expect(getTeamFeeStripePaymentRefs({}, [{
+            stripePaymentIntentId: 'pi_from_entry'
+        }])).toEqual({
+            paymentIntentId: 'pi_from_entry',
+            chargeId: ''
+        });
+    });
+
     it('builds Stripe refund ledger updates without over-crediting balances', () => {
         const update = buildTeamFeeStripeRefundUpdate({
             recipient: {
                 amountCents: 12500,
                 paidAmountCents: 12500,
                 refundedAmountCents: 2500,
-                stripePaymentIntentId: 'pi_123'
+                adminBilling: {
+                    stripePaymentIntentId: 'pi_123',
+                    stripeChargeId: 'ch_123'
+                }
             },
             refund: {
                 id: 're_123',
-                status: 'succeeded',
-                payment_intent: 'pi_123'
+                status: 'succeeded'
             },
             amountCents: 5000,
             actorId: 'admin_1',
@@ -314,6 +336,7 @@ describe('team fee checkout function helpers', () => {
             checkoutAttemptToken: null,
             stripeCheckoutSessionId: null,
             paymentProvider: 'stripe',
+            hasAdminBilling: true,
             stripeLastRefundStatus: 'succeeded'
         });
         expect(update.ledgerEntries).toEqual([{
@@ -328,7 +351,7 @@ describe('team fee checkout function helpers', () => {
             provider: 'stripe',
             stripeRefundId: 're_123',
             stripePaymentIntentId: 'pi_123',
-            stripeChargeId: null,
+            stripeChargeId: 'ch_123',
             refundAmountCents: 5000,
             status: 'succeeded',
             reason: 'Family requested refund',
@@ -364,6 +387,9 @@ describe('team fee checkout function helpers', () => {
 
         expect(source).toContain("recipientRef.collection('refundIntents').doc(refundRequestId)");
         expect(source).toContain('idempotencyKey: buildTeamFeeRefundIdempotencyKey(input, refundRequestId)');
+        expect(source).toContain('fetchTeamFeePaymentAdminBilling(recipientRef)');
+        expect(source).toContain('getTeamFeeStripePaymentRefs(recipient, paymentAdminBilling)');
+        expect(source).toContain("buildTeamFeeAdminBillingRef(recipientRef, 'latest')");
         expect(source).toContain('const actualRefundAmount = Math.round(Number(refund.amount || 0));');
         expect(source).toContain("stripeRefundStatus !== 'succeeded'");
         expect(source).toContain('const ledgerRefundedAt = admin.firestore.Timestamp.now();');

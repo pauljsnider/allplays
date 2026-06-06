@@ -243,7 +243,9 @@ describe('online team fee refunds', () => {
 
         expect(getRecipientRefundableCents(recipient)).toBe(10000);
         expect(isOnlineRefundEligible(recipient)).toBe(true);
-        expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', stripeChargeId: '' })).toBe(false);
+        expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', hasAdminBilling: true })).toBe(true);
+        expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', adminBilling: { stripePaymentIntentId: 'pi_private' } })).toBe(true);
+        expect(isOnlineRefundEligible({ ...recipient, stripePaymentIntentId: '', stripeChargeId: '', adminBilling: {} })).toBe(false);
         expect(isOnlineRefundEligible({ ...recipient, paymentProvider: 'manual' })).toBe(false);
     });
 });

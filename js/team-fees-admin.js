@@ -187,9 +187,16 @@ export function getRecipientRefundableCents(recipient) {
     return getRecipientPaidCents(recipient);
 }
 
+export function getRecipientStripePaymentRefs(recipient) {
+    const paymentIntentId = normalizeString(recipient?.stripePaymentIntentId || recipient?.adminBilling?.stripePaymentIntentId);
+    const chargeId = normalizeString(recipient?.stripeChargeId || recipient?.stripeLatestChargeId || recipient?.adminBilling?.stripeChargeId || recipient?.adminBilling?.stripeLatestChargeId);
+    return { paymentIntentId, chargeId };
+}
+
 export function isOnlineRefundEligible(recipient) {
+    const { paymentIntentId, chargeId } = getRecipientStripePaymentRefs(recipient);
     return recipient?.paymentProvider === 'stripe'
-        && Boolean(recipient?.stripePaymentIntentId || recipient?.stripeChargeId || recipient?.stripeLatestChargeId)
+        && Boolean(paymentIntentId || chargeId)
         && getRecipientRefundableCents(recipient) > 0;
 }
 

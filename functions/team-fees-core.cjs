@@ -247,6 +247,30 @@ function buildTeamFeeAdminBillingMetadata({ type, provider = 'stripe', data = {}
     };
 }
 
+function getTeamFeeStripePaymentRefs(...sources) {
+    const pending = [...sources];
+    while (pending.length > 0) {
+        const source = pending.shift();
+        if (!source) continue;
+        if (Array.isArray(source)) {
+            pending.unshift(...source);
+            continue;
+        }
+        if (typeof source !== 'object') continue;
+
+        const paymentIntentId = normalizeString(source.stripePaymentIntentId || source.paymentIntentId);
+        const chargeId = normalizeString(source.stripeChargeId || source.chargeId || source.stripeLatestChargeId);
+        if (paymentIntentId || chargeId) {
+            return { paymentIntentId, chargeId };
+        }
+
+        if (source.adminBilling) pending.unshift(source.adminBilling);
+        if (Array.isArray(source.adminBillingEntries)) pending.unshift(...source.adminBillingEntries);
+    }
+
+    return { paymentIntentId: '', chargeId: '' };
+}
+
 function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCents = 0, actorId = '', reason = '', refundedAt, ledgerRefundedAt = refundedAt }) {
     const refundAmountCents = Math.round(Number(amountCents || refund.amount || 0));
     const previousPaidCents = getTeamFeePaidCents(recipient);
@@ -256,6 +280,7 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
     const balanceDueCents = Math.max(0, getTeamFeeTotalCents(recipient) - paidAmountCents);
     const status = paidAmountCents <= 0 ? 'unpaid' : balanceDueCents > 0 ? 'partial' : 'paid';
     const refundStatus = normalizeString(refund.status || 'pending').toLowerCase() || 'pending';
+    const paymentRefs = getTeamFeeStripePaymentRefs(recipient);
 
     return {
         status,
@@ -274,6 +299,7 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
         stripeCheckoutSessionId: null,
         checkoutAmountCents: null,
         paymentProvider: 'stripe',
+        hasAdminBilling: true,
         stripeLastRefundStatus: refundStatus,
         ledgerEntries: [{
             type: 'stripe_refund',
@@ -286,8 +312,8 @@ function buildTeamFeeStripeRefundUpdate({ recipient = {}, refund = {}, amountCen
             type: 'stripe_refund',
             data: {
                 stripeRefundId: refund.id || null,
-                stripePaymentIntentId: typeof refund.payment_intent === 'string' ? refund.payment_intent : (recipient.stripePaymentIntentId || null),
-                stripeChargeId: typeof refund.charge === 'string' ? refund.charge : (recipient.stripeChargeId || null),
+                stripePaymentIntentId: typeof refund.payment_intent === 'string' ? refund.payment_intent : (paymentRefs.paymentIntentId || null),
+                stripeChargeId: typeof refund.charge === 'string' ? refund.charge : (paymentRefs.chargeId || null),
                 refundAmountCents,
                 status: refundStatus,
                 reason: normalizeString(reason),
@@ -317,6 +343,7 @@ function buildTeamFeePaidUpdate({ recipient = {}, session = {}, eventId, receive
         paymentProvider: 'stripe',
         stripeCheckoutSessionId: null,
         stripePaymentAmountCents: stripePaidAmountCents,
+        hasAdminBilling: true,
         paidAt: receivedAt,
         updatedAt: receivedAt,
         receiptMetadata: {
@@ -365,6 +392,7 @@ module.exports = {
     shouldRecordTeamFeeCheckoutNotPaidFromEvent,
     getTeamFeeStripePaidAmountCents,
     buildTeamFeeAdminBillingMetadata,
+    getTeamFeeStripePaymentRefs,
     buildTeamFeePaidUpdate,
     buildTeamFeeStripeRefundUpdate
 };
