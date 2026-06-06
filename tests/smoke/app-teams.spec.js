@@ -13,7 +13,6 @@ async function waitForTeamsRoute(page, readyLocator) {
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
         await expect(searchInput).toBeVisible({ timeout: 1000 });
-        await expect(readyLocator.or(searchInput)).toBeVisible({ timeout: 1000 });
     }).toPass({ timeout: 30000 });
 }
 
