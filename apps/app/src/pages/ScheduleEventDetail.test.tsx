@@ -35,10 +35,16 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
+const publicActionMocks = vi.hoisted(() => ({
+  exportCalendarIcsFile: vi.fn(),
+  openPublicUrl: vi.fn(),
+  sharePublicUrl: vi.fn()
+}));
+
 vi.mock('../lib/gameReportService', () => ({ loadGameReportSections: vi.fn() }));
-vi.mock('../lib/publicActions', () => ({ openPublicUrl: vi.fn(), sharePublicUrl: vi.fn() }));
+vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/liveGameAnnouncer', () => ({ useLiveGameAnnouncer: vi.fn() }));
-vi.mock('../lib/parentToolsService', () => ({ buildParentScheduleEventIcs: vi.fn(() => 'BEGIN:VCALENDAR'), downloadIcs: vi.fn() }));
+vi.mock('../lib/parentToolsService', () => ({ buildParentScheduleEventIcs: vi.fn(() => 'BEGIN:VCALENDAR') }));
 vi.mock('../lib/scheduleHub', () => ({
   buildGameHubDestinations: vi.fn(() => []),
   buildPracticeHubDestinations: vi.fn(() => []),
@@ -122,6 +128,46 @@ describe('ScheduleEventDetail assignments', () => {
     cleanup();
   });
 
+  it('uses native-aware calendar export messaging for shared, downloaded, and failed event exports', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent()],
+      children: []
+    });
+    publicActionMocks.exportCalendarIcsFile.mockResolvedValueOnce('shared');
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Add to Calendar' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add to Calendar' }));
+
+    await waitFor(() => {
+      expect(publicActionMocks.exportCalendarIcsFile).toHaveBeenCalledWith(
+        'Bears-vs. Wolves-2026-06-04.ics',
+        'BEGIN:VCALENDAR'
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Calendar file ready to share.')).toBeTruthy();
+    });
+
+    publicActionMocks.exportCalendarIcsFile.mockResolvedValueOnce('downloaded');
+    fireEvent.click(screen.getByRole('button', { name: 'Add to Calendar' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Add to Calendar download started.')).toBeTruthy();
+    });
+
+    publicActionMocks.exportCalendarIcsFile.mockRejectedValueOnce(new Error('Sharing is not available on this device. Try the Apple or Google calendar links instead.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to Calendar' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Sharing is not available on this device. Try the Apple or Google calendar links instead.')).toBeTruthy();
+    });
+  });
+
   it('refreshes assignment cards after claim and release actions mutate the loaded array in place', async () => {
     const assignments = [
       { role: 'Snacks', value: '', claimable: true, claim: null },
@@ -148,10 +194,10 @@ describe('ScheduleEventDetail assignments', () => {
     renderScheduleEventDetail();
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Assignments' })).toBeTruthy();
+      expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Assignments' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Assignments' })[0]);
 
     await waitFor(() => {
       expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
@@ -200,7 +246,7 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
 
   it('renders staff breakdown controls and refreshes counts after an override', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent()],
+      events: [buildEvent({ isTeamAdmin: true })],
       children: []
     });
     scheduleServiceMocks.loadStaffScheduleRsvpBreakdown

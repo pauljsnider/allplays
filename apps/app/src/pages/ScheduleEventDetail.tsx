@@ -41,9 +41,9 @@ import {
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
-import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
+import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
-import { buildParentScheduleEventIcs, downloadIcs } from '../lib/parentToolsService';
+import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import {
   buildGameHubDestinations,
   buildPracticeHubDestinations,
@@ -415,15 +415,21 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const attentionItems = getAttentionItems(selectedEvent, rsvp).filter((item) => item.section !== 'availability' && item.title !== 'Practice packet ready');
   const sections = getEventDetailSections(selectedEvent);
 
-  const addEventToCalendar = () => {
+  const addEventToCalendar = async () => {
     const icsTitle = `${title} | ${selectedEvent.teamName}`;
     const fileDate = selectedEvent.date.toISOString().slice(0, 10);
-    downloadIcs(
-      `${selectedEvent.teamName}-${title}-${fileDate}.ics`,
-      buildParentScheduleEventIcs(selectedEvent, icsTitle)
-    );
+    const filename = `${selectedEvent.teamName}-${title}-${fileDate}.ics`;
     setError(null);
-    setStatusMessage('Add to Calendar download started.');
+    setStatusMessage(null);
+    try {
+      const result = await exportCalendarIcsFile(
+        filename,
+        buildParentScheduleEventIcs(selectedEvent, icsTitle)
+      );
+      setStatusMessage(result === 'shared' ? 'Calendar file ready to share.' : 'Add to Calendar download started.');
+    } catch (calendarError: any) {
+      setError(calendarError?.message || 'Unable to export the calendar file. Try again or use another calendar option.');
+    }
   };
 
   return (
