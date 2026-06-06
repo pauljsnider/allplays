@@ -88,15 +88,18 @@ function buildLegacyLinkFallback(link: string) {
 export function resolvePushNotificationRoute(input: unknown) {
     const payload = readPayload(input);
     const appRoute = normalizeAppRoute(payload.appRoute);
-    if (appRoute) {
-        return appRoute;
-    }
-
     const category = normalizeValue(payload.category);
     const teamId = normalizeValue(payload.teamId);
     const conversationId = normalizeValue(payload.conversationId);
     const gameId = normalizeValue(payload.gameId);
     const eventId = normalizeValue(payload.eventId) || gameId;
+
+    if (category === 'liveChat' && teamId && conversationId) {
+        return buildMessagesRoute(teamId, conversationId);
+    }
+    if (appRoute) {
+        return appRoute;
+    }
 
     if (category === 'liveChat' && teamId) {
         return buildMessagesRoute(teamId, conversationId);
