@@ -2224,6 +2224,48 @@ function MessageAvatar({ message, label }: { message: ChatMessage; label: string
   );
 }
 
+function InlineAttachmentVideo({ src }: { src: string }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [shouldPreloadMetadata, setShouldPreloadMetadata] = useState(false);
+
+  useEffect(() => {
+    if (shouldPreloadMetadata) return undefined;
+    const video = videoRef.current;
+    if (!video || typeof IntersectionObserver === 'undefined') return undefined;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setShouldPreloadMetadata(true);
+        observer.disconnect();
+      }
+    }, {
+      threshold: 0.01
+    });
+
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, [shouldPreloadMetadata]);
+
+  const armMetadataPreload = useCallback(() => {
+    setShouldPreloadMetadata(true);
+  }, []);
+
+  return (
+    <video
+      ref={videoRef}
+      controls
+      preload={shouldPreloadMetadata ? 'metadata' : 'none'}
+      className="max-h-72 w-full"
+      src={src}
+      onFocus={armMetadataPreload}
+      onMouseEnter={armMetadataPreload}
+      onPlay={armMetadataPreload}
+      onPointerDown={armMetadataPreload}
+      onTouchStart={armMetadataPreload}
+    />
+  );
+}
+
 function MessageAttachments({ attachments, isOwn }: { attachments: any[]; isOwn: boolean }) {
   return (
     <div className={`mb-2 grid gap-2 ${attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
@@ -2232,7 +2274,7 @@ function MessageAttachments({ attachments, isOwn }: { attachments: any[]; isOwn:
         if (attachment.type === 'video') {
           return (
             <div key={`${attachment.url}-${index}`} className="overflow-hidden rounded-xl border border-gray-200 bg-black">
-              <video controls preload="metadata" className="max-h-72 w-full" src={attachment.url} />
+              <InlineAttachmentVideo src={attachment.url} />
               <a href={attachment.url} target="_blank" rel="noopener noreferrer" className="block truncate bg-white px-3 py-2 text-xs font-bold text-primary-600">
                 {label}
               </a>
