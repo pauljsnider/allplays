@@ -363,7 +363,7 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.getUserTeamsWithAccess).not.toHaveBeenCalled();
     });
 
-    it('uploads media, creates targeted conversations, and posts complete chat metadata', async () => {
+    it('routes selected-member messages into a non-default conversation before posting', async () => {
         const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
         const video = new File(['clip'], 'warmups.mp4', { type: 'video/mp4' });
         const uploadedPhoto = {
@@ -439,6 +439,54 @@ describe('React app chat recipient service', () => {
             conversationId: 'group-player-coach',
             createdConversation: expect.objectContaining({ id: 'group-player-coach' }),
             wantsAi: true
+        });
+    });
+
+    it('routes staff-only messages into a non-default conversation before posting', async () => {
+        dbMocks.upsertChatConversation.mockResolvedValue({
+            id: 'staff-conversation',
+            type: 'group',
+            participantIds: ['coach-1'],
+            participantRoles: ['staff']
+        });
+        dbMocks.postChatMessage.mockResolvedValue({ id: 'msg-staff-1' });
+
+        const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
+        const result = await sendTeamChatMessage({
+            teamId: 'team-1',
+            user: {
+                uid: 'coach-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Jamie'
+            },
+            profile: {
+                fullName: 'Coach Jamie'
+            },
+            text: 'Coaches only update',
+            files: [],
+            selectedConversation: null,
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'staff',
+            selectedRecipientIds: []
+        });
+
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'group',
+            participantIds: ['coach-1'],
+            participantRoles: ['staff'],
+            name: 'Staff only'
+        }));
+        expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            text: 'Coaches only update',
+            conversationId: 'staff-conversation',
+            targetType: 'staff',
+            recipientIds: [],
+            targetRole: 'staff'
+        }));
+        expect(result).toEqual({
+            conversationId: 'staff-conversation',
+            createdConversation: expect.objectContaining({ id: 'staff-conversation' }),
+            wantsAi: false
         });
     });
 
