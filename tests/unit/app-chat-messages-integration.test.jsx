@@ -594,6 +594,46 @@ describe('React app messages integration', () => {
         expect(container.textContent).not.toContain('Thunder');
     });
 
+    it('shows a search-specific empty state and restores the inbox when cleared', async () => {
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Parent',
+                    canModerate: false,
+                    unreadCount: 0,
+                    lastMessage: chatMessage({ id: 'last-2', senderName: 'Morgan', text: 'Tournament schedule changed.' })
+                }
+            ]
+        });
+        const { container } = await renderMessages('/messages');
+        const search = container.querySelector('input[placeholder="Search team chats"]');
+
+        await setFieldValue(search, 'volleyball');
+
+        expect(container.textContent).toContain('No team chats match “volleyball”');
+        expect(container.textContent).toContain('Clear search');
+        expect(container.textContent).not.toContain('No team chats yet');
+        expect(container.textContent).not.toContain('Join or create a team to start messaging.');
+
+        await click(container, 'Clear search');
+
+        expect(search.value).toBe('');
+        expect(container.textContent).toContain('Bears');
+        expect(container.textContent).toContain('Thunder');
+    });
+
     it('auto-selects the first filtered team in the desktop messages workspace', async () => {
         layoutMocks.isDesktopWeb = true;
         const { container } = await renderMessages('/messages');

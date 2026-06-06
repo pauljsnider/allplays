@@ -280,6 +280,14 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await expect.poll(() => searchInput.evaluate((element) => window.getComputedStyle(element).fontSize)).toBe('16px');
     await searchInput.click();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    await searchInput.fill('volleyball');
+    await expect(page.getByText('No team chats match “volleyball”')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Clear search' })).toBeVisible();
+    await expect(page.getByText('No team chats yet')).toBeHidden();
+    await page.getByRole('button', { name: 'Clear search' }).click();
+    await expect(searchInput).toHaveValue('');
+    await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /Thunder/ }).first()).toBeVisible();
 
     await openTeamThread(page, 'Bears');
     const thread = page.locator('.chat-messages-scroll');
