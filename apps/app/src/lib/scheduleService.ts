@@ -121,6 +121,12 @@ export type ParentScheduleEventDetailLoadOptions = ParentScheduleLoadOptions & {
   eventId: string;
 };
 
+export type ParentGameRouteResolution = {
+  teamId: string;
+  eventId: string;
+  childId: string | null;
+};
+
 export type StaffScheduleRsvpRow = {
   playerId: string;
   playerName: string;
@@ -1847,6 +1853,49 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
     return { children, events };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, teamId: requestedTeamId, eventId: requestedEventId, error: error?.message || 'Unable to load schedule event detail.' });
+    throw error;
+  }
+}
+
+export async function resolveParentGameRoute(user: AuthUser | null, gameId: string, options: ParentScheduleLoadOptions = {}): Promise<ParentGameRouteResolution | null> {
+  const requestedGameId = compactString(gameId);
+
+  if (!user?.uid || !requestedGameId) {
+    return null;
+  }
+
+  const timer = startUxTimer('parent game route resolve');
+  const expandStaffPlayers = options.expandStaffPlayers === true;
+
+  try {
+    const profile = await loadProfileDocument(user.uid);
+    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { expandStaffPlayers });
+    const teamEntries = [...byTeam.entries()];
+
+    const matches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
+      try {
+        const game = await loadGameById(teamId, requestedGameId);
+        const eventId = compactString(game?.id || game?.gameId || requestedGameId);
+        if (!game || eventId !== requestedGameId) return null;
+        const childId = (teamChildren || [])
+          .map((child) => compactString(child?.playerId))
+          .find((value) => value && !value.startsWith(`staff-team-${teamId}`)) || null;
+        return {
+          teamId,
+          eventId,
+          childId
+        };
+      } catch (error) {
+        console.warn('[schedule-service] Failed to resolve game route for team:', teamId, error);
+        return null;
+      }
+    });
+
+    const resolution = matches.find(Boolean) || null;
+    timer.end({ gameId: requestedGameId, expandStaffPlayers, childLinks: children.length, teams: byTeam.size, staffTeams: staffTeams.length, matched: Boolean(resolution) });
+    return resolution;
+  } catch (error: any) {
+    timer.end({ gameId: requestedGameId, expandStaffPlayers, error: error?.message || 'Unable to resolve game route.' });
     throw error;
   }
 }

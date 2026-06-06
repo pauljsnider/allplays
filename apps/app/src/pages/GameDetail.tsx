@@ -1,26 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertCircle, ChevronLeft, RefreshCw } from 'lucide-react'
 import { Link, Navigate, useParams } from 'react-router-dom'
-import { loadParentSchedule } from '../lib/scheduleService'
-import type { ParentScheduleEvent } from '../lib/scheduleLogic'
+import { resolveParentGameRoute, type ParentGameRouteResolution } from '../lib/scheduleService'
 import type { AuthState } from '../lib/types'
 
 type ResolutionState = {
   loading: boolean
-  targetEvent: ParentScheduleEvent | null
+  targetRoute: ParentGameRouteResolution | null
   error: string | null
-}
-
-function pickTargetEvent(events: ParentScheduleEvent[], gameId: string) {
-  const matches = events.filter((event) => event.id === gameId)
-  return matches.find((event) => event.type === 'game') || matches[0] || null
 }
 
 export function GameDetail({ auth }: { auth: AuthState }) {
   const { gameId = '' } = useParams()
   const [state, setState] = useState<ResolutionState>({
     loading: true,
-    targetEvent: null,
+    targetRoute: null,
     error: null
   })
 
@@ -30,34 +24,33 @@ export function GameDetail({ auth }: { auth: AuthState }) {
     async function resolveGameRoute() {
       if (!auth.user || !gameId) {
         if (!cancelled) {
-          setState({ loading: false, targetEvent: null, error: 'This game is not available right now.' })
+          setState({ loading: false, targetRoute: null, error: 'This game is not available right now.' })
         }
         return
       }
 
-      setState({ loading: true, targetEvent: null, error: null })
+      setState({ loading: true, targetRoute: null, error: null })
 
       try {
-        const result = await loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false })
-        const targetEvent = pickTargetEvent(result.events, gameId)
+        const targetRoute = await resolveParentGameRoute(auth.user, gameId, { expandStaffPlayers: false })
 
         if (cancelled) return
 
-        if (!targetEvent) {
+        if (!targetRoute) {
           setState({
             loading: false,
-            targetEvent: null,
+            targetRoute: null,
             error: 'We could not find this game in your live schedule. Open Schedule to find the event or refresh after the team shares access.'
           })
           return
         }
 
-        setState({ loading: false, targetEvent, error: null })
+        setState({ loading: false, targetRoute, error: null })
       } catch (error: any) {
         if (cancelled) return
         setState({
           loading: false,
-          targetEvent: null,
+          targetRoute: null,
           error: error?.message || 'Unable to open this game right now.'
         })
       }
@@ -71,10 +64,10 @@ export function GameDetail({ auth }: { auth: AuthState }) {
   }, [auth.user, gameId])
 
   const redirectTarget = useMemo(() => {
-    if (!state.targetEvent) return ''
-    const childQuery = state.targetEvent.childId ? `?childId=${encodeURIComponent(state.targetEvent.childId)}` : ''
-    return `/schedule/${encodeURIComponent(state.targetEvent.teamId)}/${encodeURIComponent(state.targetEvent.id)}${childQuery}`
-  }, [state.targetEvent])
+    if (!state.targetRoute) return ''
+    const childQuery = state.targetRoute.childId ? `?childId=${encodeURIComponent(state.targetRoute.childId)}` : ''
+    return `/schedule/${encodeURIComponent(state.targetRoute.teamId)}/${encodeURIComponent(state.targetRoute.eventId)}${childQuery}`
+  }, [state.targetRoute])
 
   if (redirectTarget) {
     return <Navigate to={redirectTarget} replace />

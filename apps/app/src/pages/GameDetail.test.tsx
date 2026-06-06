@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const scheduleServiceMocks = vi.hoisted(() => ({
-  loadParentSchedule: vi.fn()
+  resolveParentGameRoute: vi.fn()
 }))
 
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks)
@@ -61,16 +61,10 @@ describe('GameDetail route resolution', () => {
   })
 
   it('routes /games/:gameId into the schedule event detail workflow', async () => {
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-      children: [],
-      events: [
-        {
-          id: 'game-1',
-          teamId: 'team-bears',
-          childId: 'player-7',
-          type: 'game'
-        }
-      ]
+    scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
+      teamId: 'team-bears',
+      eventId: 'game-1',
+      childId: 'player-7'
     })
 
     renderGameDetail()
@@ -86,17 +80,13 @@ describe('GameDetail route resolution', () => {
     expect(screen.getByText('Assignments')).toBeTruthy()
     expect(screen.queryByText('Live chat')).toBeNull()
     expect(screen.queryByText('Player Performance')).toBeNull()
-    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledWith(auth.user, {
-      hydrateDetails: false,
+    expect(scheduleServiceMocks.resolveParentGameRoute).toHaveBeenCalledWith(auth.user, 'game-1', {
       expandStaffPlayers: false
     })
   })
 
   it('shows a recovery state when the game cannot be resolved', async () => {
-    scheduleServiceMocks.loadParentSchedule.mockResolvedValue({
-      children: [],
-      events: []
-    })
+    scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue(null)
 
     renderGameDetail('/games/missing-game')
 
