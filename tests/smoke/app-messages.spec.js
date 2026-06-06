@@ -26,6 +26,59 @@ async function openTeamThread(page, teamName) {
     }).toPass({ timeout: 30000 });
 }
 
+function buildDefaultThreadMessagesScript() {
+    return `
+        const filler = Array.from({ length: 28 }, (_, index) => msg({
+            id: 'filler-' + index,
+            senderId: index % 2 ? 'user-1' : 'coach-1',
+            senderName: index % 2 ? 'Pat Parent' : 'Coach Jamie',
+            text: 'Schedule update ' + (index + 1),
+            createdAt: new Date(Date.UTC(2026, 4, 21, 14, index + 3))
+        }));
+        onMessages([
+            msg({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+            ...filler,
+            msg({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:40:00Z') }),
+            msg({ id: 'msg-3', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Latest ride update.', createdAt: new Date('2026-05-21T14:45:00Z') })
+        ], { id: 'cursor' });
+    `;
+}
+
+function buildDeferredMediaThreadMessagesScript() {
+    return `
+        const filler = Array.from({ length: 40 }, (_, index) => msg({
+            id: 'filler-' + index,
+            senderId: index % 2 ? 'user-1' : 'coach-1',
+            senderName: index % 2 ? 'Pat Parent' : 'Coach Jamie',
+            text: 'Long schedule update ' + (index + 1) + ' with extra context to keep earlier media offscreen on first render.',
+            createdAt: new Date(Date.UTC(2026, 4, 21, 14, index + 3))
+        }));
+        onMessages([
+            msg({
+                id: 'msg-deferred-photo-1',
+                text: 'Deferred lineup board',
+                attachments: [{ type: 'image', url: 'https://media.example.test/deferred-lineup-1.jpg', name: 'Deferred lineup 1' }],
+                createdAt: new Date('2026-05-21T13:58:00Z')
+            }),
+            msg({
+                id: 'msg-deferred-photo-2',
+                text: 'Deferred huddle photo',
+                attachments: [{ type: 'image', url: 'https://media.example.test/deferred-huddle-2.jpg', name: 'Deferred huddle 2' }],
+                createdAt: new Date('2026-05-21T13:59:00Z')
+            }),
+            msg({
+                id: 'msg-deferred-video',
+                text: 'Deferred warmups clip',
+                attachments: [{ type: 'video', url: 'https://media.example.test/deferred-warmups.mp4', name: 'Deferred warmups clip' }],
+                createdAt: new Date('2026-05-21T14:00:00Z')
+            }),
+            ...filler,
+            msg({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:40:00Z') }),
+            msg({ id: 'msg-3', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Latest ride update.', createdAt: new Date('2026-05-21T14:45:00Z') })
+        ], { id: 'cursor' });
+    `;
+}
+
 async function mockMessagesModules(page, options = {}) {
     await page.addInitScript(({ speech }) => {
         window.__chatCalls = {
@@ -166,19 +219,7 @@ async function mockMessagesModules(page, options = {}) {
                 }
 
                 export function subscribeToTeamChatMessages(teamId, conversationId, onMessages) {
-                    const filler = Array.from({ length: 28 }, (_, index) => msg({
-                        id: 'filler-' + index,
-                        senderId: index % 2 ? 'user-1' : 'coach-1',
-                        senderName: index % 2 ? 'Pat Parent' : 'Coach Jamie',
-                        text: 'Schedule update ' + (index + 1),
-                        createdAt: new Date(Date.UTC(2026, 4, 21, 14, index + 3))
-                    }));
-                    onMessages([
-                        msg({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
-                        ...filler,
-                        msg({ id: 'msg-2', senderId: 'user-1', senderName: 'Pat Parent', text: 'We can bring snacks.', createdAt: new Date('2026-05-21T14:40:00Z') }),
-                        msg({ id: 'msg-3', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Latest ride update.', createdAt: new Date('2026-05-21T14:45:00Z') })
-                    ], { id: 'cursor' });
+                    ${options.threadMessagesScript || buildDefaultThreadMessagesScript()}
                     return { unsubscribe: () => {} };
                 }
 
@@ -445,6 +486,45 @@ test('messages selected-member, dictation, and validation flows stay usable on m
     });
     await expect(page.getByText('Choose image or video files only.')).toBeVisible();
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test('messages defer offscreen media requests until scroll or video interaction', async ({ page, baseURL }) => {
+    const mediaRequests = [];
+    await page.route('https://media.example.test/**', async (route) => {
+        const url = new URL(route.request().url());
+        mediaRequests.push(url.pathname);
+        const isVideo = url.pathname.endsWith('.mp4');
+        await route.fulfill({
+            status: 200,
+            contentType: isVideo ? 'video/mp4' : 'image/png',
+            body: isVideo ? Buffer.from('0000', 'utf8') : Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO9W6l8AAAAASUVORK5CYII=', 'base64')
+        });
+    });
+    await mockMessagesModules(page, { threadMessagesScript: buildDeferredMediaThreadMessagesScript() });
+    await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
+
+    const thread = page.locator('.chat-messages-scroll');
+    await waitForMessagesRoute(page, page.getByRole('button', { name: /Audience: Full team/ }));
+    await expect(thread).toContainText('Latest ride update.');
+    await page.waitForTimeout(500);
+    expect(mediaRequests).not.toContain('/deferred-lineup-1.jpg');
+    expect(mediaRequests).not.toContain('/deferred-huddle-2.jpg');
+    expect(mediaRequests).not.toContain('/deferred-warmups.mp4');
+
+    await thread.evaluate((element) => {
+        element.scrollTop = 0;
+    });
+    await expect(page.getByAltText('Deferred lineup 1')).toBeVisible();
+    await expect.poll(() => mediaRequests.filter((path) => path.endsWith('.jpg')).sort()).toEqual([
+        '/deferred-huddle-2.jpg',
+        '/deferred-lineup-1.jpg'
+    ]);
+
+    await page.evaluate(() => {
+        const video = document.querySelector('video[src="https://media.example.test/deferred-warmups.mp4"]');
+        video?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    });
+    await expect.poll(() => mediaRequests.includes('/deferred-warmups.mp4')).toBe(true);
 });
 
 test.describe('desktop messages workspace', () => {
