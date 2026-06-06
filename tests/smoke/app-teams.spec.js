@@ -9,9 +9,11 @@ function appUrl(baseURL, hashPath) {
 }
 
 async function waitForTeamsRoute(page, readyLocator) {
+    const searchInput = page.getByPlaceholder('Search teams or players');
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
-        await expect(readyLocator).toBeVisible({ timeout: 1000 });
+        await expect(searchInput).toBeVisible({ timeout: 1000 });
+        await expect(readyLocator.or(searchInput)).toBeVisible({ timeout: 1000 });
     }).toPass({ timeout: 30000 });
 }
 
