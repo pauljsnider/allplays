@@ -155,8 +155,6 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     }));
   }, [activeTool]);
 
-  if (!activeTool) return <Navigate to="/parent-tools/access" replace />;
-
   const setTool = useCallback((nextTool: ParentToolId) => {
     navigate(`/parent-tools/${nextTool}`);
     window.requestAnimationFrame(() => {
@@ -174,6 +172,8 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     } : current);
     setStaleTools(() => new Set(accessDependentToolIds.filter((id) => id !== currentActiveTool && currentVisitedTools.includes(id))));
   }, []);
+
+  if (!activeTool) return <Navigate to="/parent-tools/access" replace />;
 
   return (
     <div className="parent-tools-page space-y-3">
