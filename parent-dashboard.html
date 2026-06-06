@@ -388,7 +388,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=40';
+        } from './js/db.js?v=41';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=11';
         import {
             getIncentiveRules,
@@ -1544,7 +1544,7 @@
                 updateShareLinkControlsReady();
                 await loadShareLinks();
                 await loadParentCertificateLinks(data.children);
-                renderPlayers(data.children);
+                renderPlayers(data.children, data.dashboardState || null);
                 renderRegistrationApplications(data.registrationApplications || []);
                 teamChildrenByTeamId.clear();
                 (data.children || []).forEach((child) => {
@@ -1596,6 +1596,46 @@
 
             } catch (error) {
                 console.error(error);
+                renderDashboardLoadFailure(error);
+            }
+        }
+
+        function getParentDashboardStateMessage(dashboardState) {
+            switch (dashboardState?.kind) {
+                case 'access-blocked':
+                    return 'We could not verify your roster access yet. Try again in a moment or use Request Team Access below.';
+                case 'stale-links':
+                    return 'Your player links look stale. Ask a coach to refresh access or submit a new access request below.';
+                case 'degraded':
+                    return 'Some roster or schedule details are still syncing. Core dashboard links are still available.';
+                case 'load-error':
+                    return 'We could not load the parent dashboard right now. Refresh to try again.';
+                default:
+                    return '';
+            }
+        }
+
+        function renderDashboardLoadFailure(error) {
+            renderPlayers([], { kind: 'load-error', message: error?.message || '' });
+
+            const teamChats = document.getElementById('team-chats-list');
+            if (teamChats) {
+                teamChats.innerHTML = '<div class="text-center py-4 text-gray-500 text-sm">Team links are temporarily unavailable.</div>';
+            }
+
+            const familyPlanCard = document.getElementById('family-plan-card');
+            if (familyPlanCard) {
+                familyPlanCard.innerHTML = '<div class="p-6 text-center text-sm text-gray-500">Family plan details are temporarily unavailable.</div>';
+            }
+
+            const scheduleList = document.getElementById('schedule-list');
+            if (scheduleList) {
+                scheduleList.innerHTML = '<div class="text-center py-12 text-sm text-gray-500">Schedule data could not be loaded right now.</div>';
+            }
+
+            const practicePackets = document.getElementById('practice-packets-list');
+            if (practicePackets) {
+                practicePackets.innerHTML = '<div class="text-center py-12 text-sm text-gray-500">Practice packet data could not be loaded right now.</div>';
             }
         }
 
@@ -2568,14 +2608,26 @@
             }).join('');
         }
 
-        function renderPlayers(children) {
+        function renderPlayers(children, dashboardState = null) {
             const container = document.getElementById('my-players-list');
+            const statusMessage = dashboardState?.message || getParentDashboardStateMessage(dashboardState);
+            const statusHtml = statusMessage
+                ? `<div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">${escapeHtml(statusMessage)}</div>`
+                : '';
+
             if (!children || children.length === 0) {
-                container.innerHTML = `<div class="text-center py-8 text-gray-500 text-sm">No players linked yet.</div>`;
+                const emptyMessage = dashboardState?.kind === 'access-blocked'
+                    ? 'We are holding your saved player links while access finishes syncing.'
+                    : dashboardState?.kind === 'stale-links'
+                        ? 'No active linked players were found for this account.'
+                        : dashboardState?.kind === 'load-error'
+                            ? 'Please refresh and try again.'
+                            : 'No players linked yet.';
+                container.innerHTML = `${statusHtml}<div class="text-center py-8 text-gray-500 text-sm">${escapeHtml(emptyMessage)}</div>`;
                 return;
             }
 
-            container.innerHTML = children.map(child => {
+            container.innerHTML = `${statusHtml}${children.map(child => {
                 const certificates = certificatesByPlayerKey.get(parentCertificateKey(child.teamId, child.playerId)) || [];
                 return `
                 <div class="rounded-xl border border-gray-200 overflow-hidden">
@@ -2624,7 +2676,7 @@
                     </div>
                 </div>
             `;
-            }).join('');
+            }).join('')}`;
         }
 
         function renderTeamChats(children, unreadCounts = {}) {

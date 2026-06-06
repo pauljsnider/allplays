@@ -91,6 +91,8 @@ import {
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     const activeLinks = [];
+    let blockedLinkCount = 0;
+    let staleLinkCount = 0;
     const teamCache = new Map();
     const playerCache = new Map();
     const seenKeys = new Set();
@@ -109,7 +111,10 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
             team = await getTeam(teamId, { includeInactive: true });
             teamCache.set(teamId, team || null);
         }
-        if (!team || !isTeamActive(team)) continue;
+        if (!team || !isTeamActive(team)) {
+            staleLinkCount += 1;
+            continue;
+        }
 
         let playerSnap = playerCache.get(playerKey);
         if (playerSnap === undefined) {
@@ -118,6 +123,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
             } catch (error) {
                 if (error?.code === 'permission-denied') {
                     console.warn('[parent-scope] Preserving legacy player link while roster permissions are being repaired:', error);
+                    blockedLinkCount += 1;
                     playerSnap = { blockedByPermissions: true };
                 } else {
                     throw error;
@@ -139,10 +145,16 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
             continue;
         }
 
-        if (!playerSnap?.exists()) continue;
+        if (!playerSnap?.exists()) {
+            staleLinkCount += 1;
+            continue;
+        }
 
         const player = { id: playerSnap.id, ...playerSnap.data() };
-        if (player.active === false) continue;
+        if (player.active === false) {
+            staleLinkCount += 1;
+            continue;
+        }
 
         activeLinks.push({
             ...link,
@@ -158,7 +170,9 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
     return {
         activeLinks,
         parentTeamIds: [...new Set(activeLinks.map((link) => link.teamId))],
-        parentPlayerKeys: [...new Set(activeLinks.map((link) => `${link.teamId}::${link.playerId}`))]
+        parentPlayerKeys: [...new Set(activeLinks.map((link) => `${link.teamId}::${link.playerId}`))],
+        blockedLinkCount,
+        staleLinkCount
     };
 }
 import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
@@ -4592,11 +4606,27 @@ export async function getParentDashboardData(userId) {
     const userProfile = await getUserProfile(userId);
     if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {
         const registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile || {});
-        return { upcomingGames: [], children: [], registrationApplications };
+        return {
+            upcomingGames: [],
+            children: [],
+            registrationApplications,
+            dashboardState: {
+                kind: 'no-links',
+                blockedLinkCount: 0,
+                staleLinkCount: 0,
+                teamEventErrors: 0
+            }
+        };
     }
 
     const normalizedParentScope = await normalizeParentScopeLinks(userProfile.parentOf);
     const children = normalizedParentScope.activeLinks;
+    const dashboardState = {
+        kind: 'ready',
+        blockedLinkCount: normalizedParentScope.blockedLinkCount || 0,
+        staleLinkCount: normalizedParentScope.staleLinkCount || 0,
+        teamEventErrors: 0
+    };
     const existingParentTeamIds = Array.isArray(userProfile.parentTeamIds) ? userProfile.parentTeamIds : [];
     const existingParentPlayerKeys = Array.isArray(userProfile.parentPlayerKeys) ? userProfile.parentPlayerKeys : [];
     const normalizedParentTeamIds = normalizedParentScope.parentTeamIds;
@@ -4627,13 +4657,21 @@ export async function getParentDashboardData(userId) {
     now.setHours(0, 0, 0, 0);
 
     for (const child of children) {
-        const team = await getTeam(child.teamId);
-        if (!team) continue;
         activeChildren.push(child);
 
         let events = eventsByTeam.get(child.teamId);
-        if (!events) {
-            events = await getEvents(child.teamId);
+        if (events === undefined) {
+            try {
+                events = await getEvents(child.teamId);
+            } catch (error) {
+                console.warn('[parent-dashboard] Failed to load team events for parent child link:', {
+                    teamId: child.teamId,
+                    playerId: child.playerId,
+                    error
+                });
+                dashboardState.teamEventErrors += 1;
+                events = [];
+            }
             eventsByTeam.set(child.teamId, events);
         }
 
@@ -4661,7 +4699,19 @@ export async function getParentDashboardData(userId) {
 
     const registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile);
 
-    return { upcomingGames, children: activeChildren, registrationApplications };
+    if (activeChildren.length === 0) {
+        if (dashboardState.blockedLinkCount > 0) {
+            dashboardState.kind = 'access-blocked';
+        } else if (dashboardState.staleLinkCount > 0) {
+            dashboardState.kind = 'stale-links';
+        } else {
+            dashboardState.kind = 'no-links';
+        }
+    } else if (dashboardState.blockedLinkCount > 0 || dashboardState.teamEventErrors > 0) {
+        dashboardState.kind = 'degraded';
+    }
+
+    return { upcomingGames, children: activeChildren, registrationApplications, dashboardState };
 }
 
 export async function updatePlayerProfile(teamId, playerId, data) {
