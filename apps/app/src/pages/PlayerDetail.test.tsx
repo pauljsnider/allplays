@@ -199,6 +199,49 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(playerServiceMocks.saveParentAthleteProfileDraft).not.toHaveBeenCalled();
   });
 
+  it('preselects saved seasons from older profile shapes without seasonKey', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-legacy',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'public',
+          clips: [],
+          seasons: [
+            { teamId: 'team-current', playerId: 'player-current', teamName: 'Current Team', playerName: 'Sam Player' },
+            { teamId: 'team-prior', playerId: 'player-prior', teamName: 'Prior Team', playerName: 'Sam Player' }
+          ]
+        },
+        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-legacy',
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-legacy',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('Athlete Profile Builder');
+
+    const currentSeason = await screen.findByLabelText('Sam Player Current Team');
+    const priorSeason = screen.getByLabelText('Sam Player Prior Team');
+    expect((currentSeason as HTMLInputElement).checked).toBe(true);
+    expect((priorSeason as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Athlete Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
+        draft: expect.objectContaining({
+          selectedSeasonKeys: ['team-current::player-current', 'team-prior::player-prior']
+        })
+      }));
+    });
+  });
+
   it('falls back to the current linked season when season options are missing', async () => {
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
       athleteProfile: {

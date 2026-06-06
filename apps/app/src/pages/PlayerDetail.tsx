@@ -545,7 +545,15 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const initialSelectedSeasonKeys = useMemo(() => {
     const existingKeys = Array.isArray(existing?.seasons)
       ? existing.seasons
-        .map((season: any) => String(season?.seasonKey || '').trim())
+        .map((season: any) => {
+          const seasonKey = String(season?.seasonKey || '').trim();
+          if (seasonKey) {
+            return seasonKey;
+          }
+          const seasonTeamId = String(season?.teamId || '').trim();
+          const seasonPlayerId = String(season?.playerId || '').trim();
+          return seasonTeamId && seasonPlayerId ? `${seasonTeamId}::${seasonPlayerId}` : '';
+        })
         .filter(Boolean)
       : [];
     if (existingKeys.length) {
