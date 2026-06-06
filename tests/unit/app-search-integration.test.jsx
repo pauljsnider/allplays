@@ -30,6 +30,10 @@ const publicActionMocks = vi.hoisted(() => ({
     openPublicUrl: vi.fn()
 }));
 
+const routePreloadMocks = vi.hoisted(() => ({
+    preloadSearchRoute: vi.fn(async () => true)
+}));
+
 const helpMocks = vi.hoisted(() => ({
     searchHelpKnowledge: vi.fn()
 }));
@@ -39,6 +43,7 @@ vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
+vi.mock('../../apps/app/src/lib/searchRoutePreload.ts', () => routePreloadMocks);
 
 import { AppShell } from '../../apps/app/src/components/AppShell.tsx';
 import { resetAppSearchCacheForTests } from '../../apps/app/src/lib/searchService.ts';
@@ -210,6 +215,7 @@ beforeEach(() => {
         };
     });
     helpMocks.searchHelpKnowledge.mockReturnValue([]);
+    routePreloadMocks.preloadSearchRoute.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -469,6 +475,23 @@ describe('React app shell search', () => {
         await clickButton(container, 'Browse Teams');
 
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/teams.html');
+        expect(routePreloadMocks.preloadSearchRoute).not.toHaveBeenCalled();
+    });
+
+    it('preloads a highlighted app route before Enter and does not preload it twice on selection', async () => {
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'bea');
+        expect(container.textContent).toContain('Bears');
+
+        await pressDialogKey(container, 'ArrowDown');
+        expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledWith('/teams/team-1');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/home');
+
+        await pressDialogKey(container, 'Enter');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/teams/team-1');
+        expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledTimes(1);
     });
 
     it('opens the add workflow launcher with native and website actions', async () => {

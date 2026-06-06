@@ -38,6 +38,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [helpRoleFilter, setHelpRoleFilter] = useState<AppSearchHelpRoleFilter>('all');
   const searchRequestId = useRef(0);
   const openedAtRef = useRef(Date.now());
+  const preloadedRoutesRef = useRef(new Set<string>());
   const navigate = useNavigate();
 
   const results = useMemo(
@@ -49,6 +50,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     if (!open) return;
+    openedAtRef.current = Date.now();
+    preloadedRoutesRef.current = new Set<string>();
     setQuery('');
     setPlayers([]);
     setPlayersError('');
@@ -134,12 +137,24 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   if (!open) return null;
 
+  const preloadResultRoute = (item: AppSearchItem | undefined) => {
+    const route = item?.route;
+    if (!route || preloadedRoutesRef.current.has(route)) return;
+    preloadedRoutesRef.current.add(route);
+    void preloadSearchRoute(route);
+  };
+
+  const setActiveResultIndex = (index: number) => {
+    setActiveIndex(index);
+    preloadResultRoute(flatResults[index]);
+  };
+
   const openResult = async (item: AppSearchItem | undefined) => {
     if (!item) return;
     onClose();
     setQuery('');
     if (item.route) {
-      void preloadSearchRoute(item.route);
+      preloadResultRoute(item);
       navigate(item.route);
       return;
     }
@@ -156,12 +171,14 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActiveIndex((value) => Math.min(flatResults.length - 1, value + 1));
+      const nextIndex = Math.min(flatResults.length - 1, activeIndex + 1);
+      setActiveResultIndex(nextIndex);
       return;
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault();
-      setActiveIndex((value) => Math.max(0, value - 1));
+      const nextIndex = Math.max(0, activeIndex - 1);
+      setActiveResultIndex(nextIndex);
       return;
     }
     if (event.key === 'Enter') {
@@ -247,7 +264,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               activeIndex={activeIndex}
               offset={0}
               onOpen={openResult}
-              onHover={setActiveIndex}
+              onHover={setActiveResultIndex}
             />
 
             <SearchSection
@@ -258,7 +275,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               status={teamsStatus}
               statusTone={teamsError ? 'error' : 'neutral'}
               onOpen={openResult}
-              onHover={setActiveIndex}
+              onHover={setActiveResultIndex}
             />
 
             <SearchSection
@@ -268,7 +285,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
               onOpen={openResult}
-              onHover={setActiveIndex}
+              onHover={setActiveResultIndex}
             />
 
             <SearchSection
@@ -279,7 +296,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               status={playersStatus}
               statusTone={playersError ? 'error' : 'neutral'}
               onOpen={openResult}
-              onHover={setActiveIndex}
+              onHover={setActiveResultIndex}
             />
 
             {!teamsLoading && !playersLoading && flatResults.length === 0 ? (
