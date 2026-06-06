@@ -131,6 +131,17 @@
       clearSearchButton.classList.toggle('opacity-70', isPending);
     }
 
+    function getStoredLocationLabel(team) {
+      const city = String(team.city || '').trim();
+      const state = String(team.state || '').trim();
+      if (city && state) return `${city}, ${state}`;
+      return city || state || '';
+    }
+
+    function getTeamLocationLabel(team, zipToLocation = {}) {
+      return getStoredLocationLabel(team) || (team.zip && zipToLocation[team.zip]) || '';
+    }
+
     function renderLoadMoreButton(container, { canLoadMore, onClick }) {
       const existing = document.getElementById('load-more-public-teams');
       existing?.remove();
@@ -184,7 +195,10 @@
         renderedTeams = append ? [...renderedTeams, ...teams] : teams;
 
         // Resolve locations for teams with zip
-        const uniqueZips = [...new Set(renderedTeams.map(t => t.zip).filter(Boolean))];
+        const uniqueZips = [...new Set(renderedTeams
+          .filter((team) => !getStoredLocationLabel(team))
+          .map((team) => team.zip)
+          .filter(Boolean))];
         const zipToLocation = {};
         await Promise.all(uniqueZips.map(async (zip) => {
           zipToLocation[zip] = await resolveZip(zip);
@@ -193,7 +207,7 @@
         // Group teams by location label
         const grouped = {};
         renderedTeams.forEach(team => {
-          const loc = team.zip && zipToLocation[team.zip] ? zipToLocation[team.zip] : 'Other';
+          const loc = getTeamLocationLabel(team, zipToLocation) || 'Other';
           if (!grouped[loc]) grouped[loc] = [];
           grouped[loc].push(team);
         });
@@ -212,7 +226,7 @@
           const initial = escapeHtml(teamName.trim().charAt(0) || '?');
           const sport = escapeHtml(team.sport || 'Sport not set');
           const description = escapeHtml(team.description || 'No description available');
-          const location = team.zip && zipToLocation[team.zip] ? zipToLocation[team.zip] : '';
+          const location = getTeamLocationLabel(team, zipToLocation);
           const escapedLocation = escapeHtml(location);
 
           return `
