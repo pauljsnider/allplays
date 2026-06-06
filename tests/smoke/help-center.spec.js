@@ -74,6 +74,11 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expect(page.locator('#help-summary')).toHaveText(`${coachResults.length} of ${manifest.length} workflows`);
     await expect(page.locator('#help-grid')).toContainText('Plan Schedule and Launch Game Flows');
     await expect(page.locator('#help-grid')).not.toContainText('Operate Platform Admin Controls');
+    const teamContextScheduleCard = page.locator('#help-grid article', { hasText: 'Plan Schedule and Launch Game Flows' });
+    await expect(teamContextScheduleCard.getByRole('link', { name: /Open workflow/i })).toHaveAttribute(
+        'href',
+        'workflow-schedule.html?context=team&teamId=team-123&role=coach'
+    );
 
     await page.locator('#help-search').fill('team operations');
     const teamOperationsResults = filterManifest(manifest, { role: 'Coach', query: 'team operations' });
@@ -81,7 +86,10 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expect(page.locator('#help-summary')).toHaveText(`${teamOperationsResults.length} of ${manifest.length} workflows`);
     await expect(page.locator('#help-grid')).toContainText('Team Operations');
     const teamOperationsCard = page.locator('#help-grid article', { hasText: 'Team Operations' });
-    await expect(teamOperationsCard.getByRole('link', { name: /Open workflow/i })).toHaveAttribute('href', 'help-team-operations.html');
+    await expect(teamOperationsCard.getByRole('link', { name: /Open workflow/i })).toHaveAttribute(
+        'href',
+        'help-team-operations.html?context=team&teamId=team-123&role=coach'
+    );
 
     await page.locator('#help-search').fill('foundation');
     const foundationResults = filterManifest(manifest, { role: 'Coach', query: 'foundation' });
@@ -99,6 +107,11 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expect(page.locator('#help-grid article')).toHaveCount(manifest.length);
     await expect(page.locator('#help-empty')).toHaveClass(/hidden/);
     await expect(page.locator('#help-grid')).not.toHaveClass(/hidden/);
+    const restoredScheduleCard = page.locator('#help-grid article', { hasText: 'Plan Schedule and Launch Game Flows' });
+    await expect(restoredScheduleCard.getByRole('link', { name: /Open workflow/i })).toHaveAttribute(
+        'href',
+        'workflow-schedule.html?context=team&teamId=team-123&role=coach'
+    );
 
     await page.getByRole('link', { name: 'View file-by-file page reference' }).click();
     await expect(page).toHaveURL(/help-page-reference\.html/);
@@ -111,9 +124,10 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expect(page).toHaveURL(/help\.html/);
     await expect(page.getByRole('heading', { name: 'ALL PLAYS Help Center' })).toBeVisible();
 
+    await page.goto(buildUrl(baseURL, '/help.html?context=team&teamId=team-123&role=coach'), { waitUntil: 'domcontentloaded' });
     const scheduleCard = page.locator('#help-grid article', { hasText: 'Plan Schedule and Launch Game Flows' });
     await scheduleCard.getByRole('link', { name: /Open workflow/i }).click();
-    await expect(page).toHaveURL(/workflow-schedule\.html/);
+    await expect(page).toHaveURL(/workflow-schedule\.html\?context=team&teamId=team-123&role=coach/);
     await expect(page.getByRole('link', { name: '← Back to Help Center' })).toBeVisible();
     await page.getByRole('link', { name: '← Back to Help Center' }).click();
     await expect(page).toHaveURL(/help\.html/);
