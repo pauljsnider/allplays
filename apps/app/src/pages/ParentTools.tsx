@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -57,6 +57,10 @@ import type { AuthState } from '../lib/types';
 
 type ParentToolId = 'access' | 'household' | 'fees' | 'calendar' | 'share' | 'registrations' | 'certificates';
 
+declare global {
+  var __ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__: ((toolId: ParentToolId) => void) | undefined;
+}
+
 const tools: Array<{ id: ParentToolId; label: string; icon: LucideIcon }> = [
   { id: 'access', label: 'Access', icon: Shield },
   { id: 'household', label: 'Household', icon: Users },
@@ -70,6 +74,45 @@ const tools: Array<{ id: ParentToolId; label: string; icon: LucideIcon }> = [
 const validToolIds = new Set(tools.map((tool) => tool.id));
 const accessDependentToolIds = tools.map((tool) => tool.id).filter((id): id is ParentToolId => id !== 'access');
 const initialToolRefreshVersions = Object.fromEntries(tools.map((tool) => [tool.id, 0])) as Record<ParentToolId, number>;
+
+function trackParentToolRender(toolId: ParentToolId) {
+  globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__?.(toolId);
+}
+
+const MemoizedAccessTool = memo(function MemoizedAccessTool(props: { auth: AuthState; onAccessChanged: () => void }) {
+  trackParentToolRender('access');
+  return <AccessTool {...props} />;
+});
+
+const MemoizedHouseholdInviteTool = memo(function MemoizedHouseholdInviteTool(props: { auth: AuthState; refreshVersion: number }) {
+  trackParentToolRender('household');
+  return <HouseholdInviteTool {...props} />;
+});
+
+const MemoizedFeesTool = memo(function MemoizedFeesTool(props: { auth: AuthState; refreshVersion: number }) {
+  trackParentToolRender('fees');
+  return <FeesTool {...props} />;
+});
+
+const MemoizedCalendarTool = memo(function MemoizedCalendarTool(props: { auth: AuthState; refreshVersion: number }) {
+  trackParentToolRender('calendar');
+  return <CalendarTool {...props} />;
+});
+
+const MemoizedFamilyShareTool = memo(function MemoizedFamilyShareTool(props: { auth: AuthState; refreshVersion: number }) {
+  trackParentToolRender('share');
+  return <FamilyShareTool {...props} />;
+});
+
+const MemoizedRegistrationsTool = memo(function MemoizedRegistrationsTool(props: { auth: AuthState; refreshVersion: number }) {
+  trackParentToolRender('registrations');
+  return <RegistrationsTool {...props} />;
+});
+
+const MemoizedCertificatesTool = memo(function MemoizedCertificatesTool(props: { auth: AuthState; refreshVersion: number }) {
+  trackParentToolRender('certificates');
+  return <CertificatesTool {...props} />;
+});
 
 export function ParentTools({ auth }: { auth: AuthState }) {
   const { toolId = 'access' } = useParams();
@@ -112,16 +155,14 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     }));
   }, [activeTool]);
 
-  if (!activeTool) return <Navigate to="/parent-tools/access" replace />;
-
-  const setTool = (nextTool: ParentToolId) => {
+  const setTool = useCallback((nextTool: ParentToolId) => {
     navigate(`/parent-tools/${nextTool}`);
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
-  };
+  }, [navigate]);
 
-  const handleAccessChanged = () => {
+  const handleAccessChanged = useCallback(() => {
     const currentActiveTool = activeToolRef.current;
     const currentVisitedTools = visitedToolsRef.current;
 
@@ -130,7 +171,9 @@ export function ParentTools({ auth }: { auth: AuthState }) {
       [currentActiveTool]: current[currentActiveTool] + 1
     } : current);
     setStaleTools(() => new Set(accessDependentToolIds.filter((id) => id !== currentActiveTool && currentVisitedTools.includes(id))));
-  };
+  }, []);
+
+  if (!activeTool) return <Navigate to="/parent-tools/access" replace />;
 
   return (
     <div className="parent-tools-page space-y-3">
@@ -168,13 +211,13 @@ export function ParentTools({ auth }: { auth: AuthState }) {
         </div>
       </div>
 
-      <KeepAliveTool active={activeTool === 'access'} mounted={visitedTools.includes('access')}><AccessTool auth={auth} onAccessChanged={handleAccessChanged} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'household'} mounted={visitedTools.includes('household')}><HouseholdInviteTool auth={auth} refreshVersion={toolRefreshVersions.household} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'fees'} mounted={visitedTools.includes('fees')}><FeesTool auth={auth} refreshVersion={toolRefreshVersions.fees} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'calendar'} mounted={visitedTools.includes('calendar')}><CalendarTool auth={auth} refreshVersion={toolRefreshVersions.calendar} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'share'} mounted={visitedTools.includes('share')}><FamilyShareTool auth={auth} refreshVersion={toolRefreshVersions.share} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'registrations'} mounted={visitedTools.includes('registrations')}><RegistrationsTool auth={auth} refreshVersion={toolRefreshVersions.registrations} /></KeepAliveTool>
-      <KeepAliveTool active={activeTool === 'certificates'} mounted={visitedTools.includes('certificates')}><CertificatesTool auth={auth} refreshVersion={toolRefreshVersions.certificates} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'access'} mounted={visitedTools.includes('access')}><MemoizedAccessTool auth={auth} onAccessChanged={handleAccessChanged} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'household'} mounted={visitedTools.includes('household')}><MemoizedHouseholdInviteTool auth={auth} refreshVersion={toolRefreshVersions.household} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'fees'} mounted={visitedTools.includes('fees')}><MemoizedFeesTool auth={auth} refreshVersion={toolRefreshVersions.fees} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'calendar'} mounted={visitedTools.includes('calendar')}><MemoizedCalendarTool auth={auth} refreshVersion={toolRefreshVersions.calendar} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'share'} mounted={visitedTools.includes('share')}><MemoizedFamilyShareTool auth={auth} refreshVersion={toolRefreshVersions.share} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'registrations'} mounted={visitedTools.includes('registrations')}><MemoizedRegistrationsTool auth={auth} refreshVersion={toolRefreshVersions.registrations} /></KeepAliveTool>
+      <KeepAliveTool active={activeTool === 'certificates'} mounted={visitedTools.includes('certificates')}><MemoizedCertificatesTool auth={auth} refreshVersion={toolRefreshVersions.certificates} /></KeepAliveTool>
     </div>
   );
 }

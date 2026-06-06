@@ -75,6 +75,8 @@ async function openDesktopSearch(page) {
 
 async function mockSearchModules(page) {
     await page.addInitScript(() => {
+        window.localStorage.clear();
+        window.sessionStorage.clear();
         window.__openedPublicUrls = [];
         window.__teamSearchQueries = [];
         window.__loadAppSearchTeamsCalls = 0;

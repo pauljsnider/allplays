@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ParentTools } from './ParentTools';
 import type { AuthState } from '../lib/types';
@@ -59,11 +59,28 @@ const auth: AuthState = {
     signOut: vi.fn().mockResolvedValue(undefined)
 };
 
-function renderParentTools() {
+function ParentToolsRoute() {
+    return <ParentTools auth={auth} />;
+}
+
+function InvalidParentToolsButton() {
+    const navigate = useNavigate();
+    return <button type="button" onClick={() => navigate('/parent-tools/not-a-real-tab')}>Go invalid</button>;
+}
+
+function renderParentTools(initialEntries: string[] = ['/parent-tools/access'], includeInvalidButton = false) {
     return render(
-        <MemoryRouter initialEntries={['/parent-tools/access']}>
+        <MemoryRouter initialEntries={initialEntries}>
             <Routes>
-                <Route path="/parent-tools/:toolId" element={<ParentTools auth={auth} />} />
+                <Route
+                    path="/parent-tools/:toolId"
+                    element={(
+                        <>
+                            {includeInvalidButton ? <InvalidParentToolsButton /> : null}
+                            <ParentToolsRoute />
+                        </>
+                    )}
+                />
                 <Route path="/accept-invite" element={<div>Accept invite route</div>} />
             </Routes>
         </MemoryRouter>
@@ -73,6 +90,7 @@ function renderParentTools() {
 describe('ParentTools access', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         parentToolsServiceMocks.loadParentAccessModel.mockResolvedValue({
             teams: [{ id: 'team-1', name: 'Bears', sport: 'Soccer' }],
             requests: []
@@ -89,6 +107,7 @@ describe('ParentTools access', () => {
     });
 
     afterEach(() => {
+        delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         cleanup();
     });
 
@@ -255,6 +274,73 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Register' }));
         expect(await screen.findByText('Summer Camp')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+    });
+
+    it('redirects invalid tabs without triggering a hook order violation', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        renderParentTools(['/parent-tools/access'], true);
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Go invalid' }));
+
+        expect(await screen.findByText('Request player access')).toBeTruthy();
+        expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Rendered fewer hooks than expected'));
+        expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('change in the order of Hooks'));
+
+        consoleErrorSpy.mockRestore();
+    });
+
+    it('does not rerender inactive visited panels when only the active tab changes', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-1',
+                title: 'Team dues',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                statusLabel: 'Open',
+                balanceDueCents: 10000,
+                canPay: false,
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: []
+        });
+
+        const renderCounts: Record<string, number> = {};
+        globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__ = (toolId) => {
+            renderCounts[toolId] = (renderCounts[toolId] || 0) + 1;
+        };
+
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        expect(renderCounts.access).toBe(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        await screen.findByText('Team dues');
+        expect(renderCounts.fees).toBe(1);
+        expect(renderCounts.access).toBe(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        await screen.findByText('No team schedules');
+        expect(renderCounts.calendar).toBe(1);
+        expect(renderCounts.fees).toBe(1);
+        expect(renderCounts.access).toBe(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        await screen.findByText('Team dues');
+        expect(renderCounts.fees).toBe(1);
+        expect(renderCounts.calendar).toBe(1);
+        expect(renderCounts.access).toBe(1);
     });
 
     it('defers hidden fees refresh after access changes until fees is reopened', async () => {
