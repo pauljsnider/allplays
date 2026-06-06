@@ -534,7 +534,7 @@ describe('React app parent tools service', () => {
         expect(isParentTeamFeePayActionAllowed({ status: 'adjusted', balanceDueCents: 0 })).toBe(false);
     });
 
-    it('loads schedule tools and builds escaped ICS content', async () => {
+    it('loads calendar tools with lightweight parent schedule options and builds escaped ICS content', async () => {
         const event = {
             eventKey: 'team-1::event-1::player-1',
             id: 'event-1',
@@ -548,11 +548,18 @@ describe('React app parent tools service', () => {
             childName: 'Pat Star',
             notes: 'Bring water; arrive early'
         };
-        scheduleMocks.loadParentSchedule.mockResolvedValue({ children: [], events: [event] });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [],
+            events: [event, { id: 'event-2', teamId: 'team-1', teamName: 'Bears', type: 'practice', date: new Date('2100-06-02T18:00:00Z') }]
+        });
 
         await expect(loadParentCalendarTools(user)).resolves.toMatchObject({
-            events: [event],
-            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+            events: [event, { id: 'event-2', teamId: 'team-1', teamName: 'Bears', type: 'practice', date: new Date('2100-06-02T18:00:00Z') }],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 2 }]
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, {
+            hydrateDetails: false,
+            expandStaffPlayers: false
         });
 
         const ics = buildParentScheduleIcs([event], 'Family, Schedule');
