@@ -526,8 +526,22 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
 
 function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const existing = data.athleteProfile.profile;
-  const seasonOptions = data.athleteProfile.seasonOptions;
   const currentSeasonKey = `${data.child.teamId || ''}::${data.child.playerId || ''}`;
+  const seasonOptions = useMemo(() => {
+    if (Array.isArray(data.athleteProfile.seasonOptions) && data.athleteProfile.seasonOptions.length) {
+      return data.athleteProfile.seasonOptions;
+    }
+    if (!data.child.teamId || !data.child.playerId) {
+      return [];
+    }
+    return [{
+      seasonKey: currentSeasonKey,
+      teamId: data.child.teamId,
+      teamName: data.child.teamName || data.team?.name || 'Team',
+      playerId: data.child.playerId,
+      playerName: data.child.playerName || data.player.name || 'Athlete'
+    }];
+  }, [currentSeasonKey, data.athleteProfile.seasonOptions, data.child.playerId, data.child.playerName, data.child.teamId, data.child.teamName, data.player.name, data.team?.name]);
   const initialSelectedSeasonKeys = useMemo(() => {
     const existingKeys = Array.isArray(existing?.seasons)
       ? existing.seasons
