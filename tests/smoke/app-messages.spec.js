@@ -506,7 +506,20 @@ test('messages defer offscreen media requests until scroll or video interaction'
     const thread = page.locator('.chat-messages-scroll');
     await waitForMessagesRoute(page, page.getByRole('button', { name: /Audience: Full team/ }));
     await expect(thread).toContainText('Latest ride update.');
-    await page.waitForTimeout(500);
+    await expect.poll(async () => {
+        const sampleRequestCount = async () => {
+            await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            return mediaRequests.length;
+        };
+
+        return {
+            latestMessageVisible: await page.getByText('Latest ride update.').isVisible(),
+            requestCounts: [await sampleRequestCount(), await sampleRequestCount()]
+        };
+    }, { timeout: 3000 }).toEqual({
+        latestMessageVisible: true,
+        requestCounts: [0, 0]
+    });
     expect(mediaRequests).not.toContain('/deferred-lineup-1.jpg');
     expect(mediaRequests).not.toContain('/deferred-huddle-2.jpg');
     expect(mediaRequests).not.toContain('/deferred-warmups.mp4');
@@ -522,7 +535,8 @@ test('messages defer offscreen media requests until scroll or video interaction'
 
     await page.evaluate(() => {
         const video = document.querySelector('video[src="https://media.example.test/deferred-warmups.mp4"]');
-        video?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        if (!video) throw new Error('Video element not found');
+        video.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     });
     await expect.poll(() => mediaRequests.includes('/deferred-warmups.mp4')).toBe(true);
 });
