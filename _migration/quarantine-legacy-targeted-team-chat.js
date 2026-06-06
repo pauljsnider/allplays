@@ -19,11 +19,21 @@ async function main() {
     let pendingWrites = 0;
     let quarantinedCount = 0;
 
-    async function commitBatch() {
+    async function commitBatch(context = {}) {
         if (pendingWrites === 0) return;
-        await batch.commit();
-        batch = db.batch();
-        pendingWrites = 0;
+        try {
+            await batch.commit();
+            batch = db.batch();
+            pendingWrites = 0;
+        } catch (error) {
+            console.error('[quarantine-legacy-targeted-team-chat] Batch commit failed', {
+                teamId: context.teamId || null,
+                messageId: context.messageId || null,
+                pendingWrites,
+                error
+            });
+            throw error;
+        }
     }
 
     for (const teamDoc of teamsSnapshot.docs) {
@@ -46,7 +56,7 @@ async function main() {
             quarantinedCount += 1;
 
             if (pendingWrites >= FIRESTORE_BATCH_LIMIT - 1) {
-                await commitBatch();
+                await commitBatch({ teamId: teamDoc.id, messageId: messageDoc.id });
             }
         }
     }

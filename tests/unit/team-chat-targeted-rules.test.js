@@ -12,9 +12,8 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isFullTeamChatMessage(data) ||');
     });
 
-    it('locks legacy team chat reads and writes to full-team messages only', () => {
-        expect(rules).toContain('allow list: if canAccessTeamChat(teamId) &&');
-        expect(rules).toContain('isFullTeamChatMessage(resource.data);');
+    it('keeps legacy team chat queries open for members while limiting stored docs to full-team messages', () => {
+        expect(rules).toContain('allow list: if canAccessTeamChat(teamId);');
         expect(rules).toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
         expect(rules).toContain('allow create: if canAccessTeamChat(teamId) &&');
         expect(rules).toContain('isFullTeamChatMessage(request.resource.data);');

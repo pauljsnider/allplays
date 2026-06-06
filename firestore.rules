@@ -1959,10 +1959,9 @@ service cloud.firestore {
 
       // Chat messages subcollection
       match /chatMessages/{messageId} {
-        // Legacy team-wide chat must stay query-safe for unfiltered list/subscription reads.
-        // Targeted traffic belongs under chatConversations where participant checks apply.
-        allow list: if canAccessTeamChat(teamId) &&
-                       isFullTeamChatMessage(resource.data);
+        // Legacy team-wide chat stays query-safe because this collection only accepts
+        // full-team messages. Targeted traffic belongs under chatConversations.
+        allow list: if canAccessTeamChat(teamId);
         allow get: if isFullTeamChatMessage(resource.data) &&
                       canReadChatMessage(teamId, resource.data);
 
