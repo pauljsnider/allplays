@@ -99,6 +99,10 @@ const resizeObserverState = vi.hoisted(() => ({
     instances: []
 }));
 
+const intersectionObserverState = vi.hoisted(() => ({
+    instances: []
+}));
+
 const animationFrameState = vi.hoisted(() => ({
     nextId: 1,
     callbacks: new Map()
@@ -304,6 +308,26 @@ beforeEach(() => {
 
         trigger() {
             this.callback([], this);
+        }
+    };
+    intersectionObserverState.instances.length = 0;
+    global.IntersectionObserver = class MockIntersectionObserver {
+        constructor(callback) {
+            this.callback = callback;
+            this.elements = [];
+            intersectionObserverState.instances.push(this);
+        }
+
+        observe = vi.fn((element) => {
+            this.elements.push(element);
+        });
+        disconnect = vi.fn();
+        unobserve = vi.fn((element) => {
+            this.elements = this.elements.filter((candidate) => candidate !== element);
+        });
+
+        trigger(element, isIntersecting) {
+            this.callback([{ isIntersecting, target: element }], this);
         }
     };
 
@@ -1332,6 +1356,64 @@ describe('React app messages integration', () => {
         await click(container, 'Open photos and videos');
         expect(container.textContent).toContain('Photos & videos');
         expect(container.textContent).toContain('Tipoff');
+    });
+
+    it('defers inline video metadata until the attachment is visible or hovered', async () => {
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: 'msg-video',
+                    text: '',
+                    attachments: [
+                        {
+                            type: 'video',
+                            url: 'https://media.example.test/warmups.mp4',
+                            name: 'Warmups.mp4'
+                        }
+                    ]
+                })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+        const video = container.querySelector('video[src="https://media.example.test/warmups.mp4"]');
+        expect(video).toBeTruthy();
+        expect(video.getAttribute('preload')).toBe('none');
+        expect(intersectionObserverState.instances).toHaveLength(1);
+
+        await act(async () => {
+            intersectionObserverState.instances[0].trigger(video, true);
+        });
+        await flush();
+        expect(video.getAttribute('preload')).toBe('metadata');
+
+        chatMocks.subscribeToTeamChatMessages.mockImplementationOnce((teamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: 'msg-video-hover',
+                    text: '',
+                    attachments: [
+                        {
+                            type: 'video',
+                            url: 'https://media.example.test/huddle.mp4',
+                            name: 'Huddle.mp4'
+                        }
+                    ]
+                })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const hovered = await renderMessages('/messages/team-1');
+        const hoveredVideo = hovered.container.querySelector('video[src="https://media.example.test/huddle.mp4"]');
+        expect(hoveredVideo.getAttribute('preload')).toBe('none');
+
+        await act(async () => {
+            hoveredVideo.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+        });
+        await flush();
+        expect(hoveredVideo.getAttribute('preload')).toBe('metadata');
     });
 
     it('routes ALL PLAYS mentions through the existing AI assistant send path', async () => {
