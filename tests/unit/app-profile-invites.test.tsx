@@ -483,6 +483,7 @@ describe('Profile invites', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Take photo' }));
 
     await waitFor(() => expect(profileServiceMocks.acquireProfilePhoto).toHaveBeenCalledWith('camera'));
+    expect(profileServiceMocks.normalizeProfilePhoto).not.toHaveBeenCalled();
     await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
     expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:native-camera.jpg');
 
