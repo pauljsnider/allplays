@@ -263,6 +263,9 @@ async function mockParentToolsModules(page) {
                 export async function moveTeamMediaItemForApp() {
                     return undefined;
                 }
+                export async function setTeamMediaAlbumCoverForApp() {
+                    return undefined;
+                }
             `
         });
     });
