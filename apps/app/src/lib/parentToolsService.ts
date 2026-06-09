@@ -21,7 +21,8 @@ import {
   uploadTeamMediaPhoto,
   deleteTeamMediaItem,
   updateTeamMediaItem,
-  moveTeamMediaItems
+  moveTeamMediaItems,
+  setTeamMediaAlbumCover
 } from '../../../../js/db.js';
 import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
 import { db, doc, collection, getDoc, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
@@ -229,6 +230,11 @@ export async function updateTeamMediaItemForApp(teamId: string, itemId: string, 
 export async function moveTeamMediaItemForApp(teamId: string, itemId: string, targetFolderId: string) {
   if (!teamId || !itemId || !targetFolderId) throw new Error('Missing team, media item, or destination album ID.');
   return moveTeamMediaItems(teamId, [itemId], targetFolderId);
+}
+
+export async function setTeamMediaAlbumCoverForApp(teamId: string, folderId: string, item: TeamMediaItem) {
+  if (!teamId || !folderId || !item?.id) throw new Error('Choose a photo to use as the album cover.');
+  return setTeamMediaAlbumCover(teamId, folderId, item);
 }
 
 export async function bulkDeleteTeamMediaItemsForApp(teamId: string, items: TeamMediaItem[]) {

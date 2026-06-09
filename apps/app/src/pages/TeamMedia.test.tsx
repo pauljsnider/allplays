@@ -12,6 +12,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
   deleteTeamMediaItemForApp: vi.fn(),
   loadTeamMediaForApp: vi.fn(),
   moveTeamMediaItemForApp: vi.fn(),
+  setTeamMediaAlbumCoverForApp: vi.fn(),
   updateTeamMediaItemForApp: vi.fn(),
   uploadParentTeamMediaFile: vi.fn(),
   uploadParentTeamMediaPhoto: vi.fn()
@@ -93,6 +94,7 @@ describe('TeamMedia bulk delete', () => {
     parentToolsServiceMocks.deleteTeamMediaItemForApp.mockReset();
     parentToolsServiceMocks.loadTeamMediaForApp.mockReset();
     parentToolsServiceMocks.moveTeamMediaItemForApp.mockReset();
+    parentToolsServiceMocks.setTeamMediaAlbumCoverForApp.mockReset();
     parentToolsServiceMocks.updateTeamMediaItemForApp.mockReset();
     parentToolsServiceMocks.uploadParentTeamMediaFile.mockReset();
     parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockReset();

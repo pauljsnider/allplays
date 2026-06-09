@@ -6,7 +6,8 @@ const familyPlanMocks = vi.hoisted(() => ({
 }));
 
 const dbMocks = vi.hoisted(() => ({
-    moveTeamMediaItems: vi.fn()
+    moveTeamMediaItems: vi.fn(),
+    setTeamMediaAlbumCover: vi.fn()
 }));
 
 vi.mock('../../js/family-plan.js', () => familyPlanMocks);
@@ -32,7 +33,8 @@ vi.mock('../../js/db.js', () => ({
     uploadTeamMediaPhoto: vi.fn(),
     deleteTeamMediaItem: vi.fn(),
     updateTeamMediaItem: vi.fn(),
-    moveTeamMediaItems: dbMocks.moveTeamMediaItems
+    moveTeamMediaItems: dbMocks.moveTeamMediaItems,
+    setTeamMediaAlbumCover: dbMocks.setTeamMediaAlbumCover
 }));
 vi.mock('../../js/firebase.js', () => ({
     db: {},
@@ -77,7 +79,8 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({ loadParentSchedule
 import {
     createParentHouseholdMemberInvite,
     loadParentHouseholdInviteModel,
-    moveTeamMediaItemForApp
+    moveTeamMediaItemForApp,
+    setTeamMediaAlbumCoverForApp
 } from '../../apps/app/src/lib/parentToolsService.ts';
 
 const user = {
@@ -90,6 +93,7 @@ beforeEach(() => {
     familyPlanMocks.readFamilyMembers.mockResolvedValue([]);
     familyPlanMocks.addPendingFamilyMember.mockResolvedValue({ code: 'HOME1234', inviteUrl: 'accept-invite.html?code=HOME1234' });
     dbMocks.moveTeamMediaItems.mockResolvedValue(undefined);
+    dbMocks.setTeamMediaAlbumCover.mockResolvedValue(undefined);
 });
 
 describe('Parent Tools household invite service', () => {
@@ -148,5 +152,24 @@ describe('React app team media move service', () => {
         await expect(moveTeamMediaItemForApp('team-1', '', 'folder-2')).rejects.toThrow('Missing team, media item, or destination album ID.');
         await expect(moveTeamMediaItemForApp('team-1', 'item-1', '')).rejects.toThrow('Missing team, media item, or destination album ID.');
         expect(dbMocks.moveTeamMediaItems).not.toHaveBeenCalled();
+    });
+});
+
+describe('React app team media cover service', () => {
+    it('persists a selected photo through the legacy album cover helper', async () => {
+        const item = { id: 'item-1', title: 'Bench celebration', type: 'photo', url: 'https://example.test/bench.jpg' };
+
+        await setTeamMediaAlbumCoverForApp('team-1', 'folder-2', item);
+
+        expect(dbMocks.setTeamMediaAlbumCover).toHaveBeenCalledWith('team-1', 'folder-2', item);
+    });
+
+    it('rejects missing cover identifiers before calling the legacy helper', async () => {
+        const item = { id: 'item-1', type: 'photo', url: 'https://example.test/bench.jpg' };
+
+        await expect(setTeamMediaAlbumCoverForApp('', 'folder-2', item)).rejects.toThrow('Choose a photo to use as the album cover.');
+        await expect(setTeamMediaAlbumCoverForApp('team-1', '', item)).rejects.toThrow('Choose a photo to use as the album cover.');
+        await expect(setTeamMediaAlbumCoverForApp('team-1', 'folder-2', { ...item, id: '' })).rejects.toThrow('Choose a photo to use as the album cover.');
+        expect(dbMocks.setTeamMediaAlbumCover).not.toHaveBeenCalled();
     });
 });
