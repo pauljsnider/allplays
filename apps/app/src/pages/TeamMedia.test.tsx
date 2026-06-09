@@ -225,4 +225,26 @@ describe('TeamMedia bulk delete', () => {
     expect(screen.getByText('No media in this album.')).toBeTruthy();
     expect(container.querySelectorAll('img').length).toBe(0);
   });
+
+  it('renders a folder cover image when cover photo metadata exists without a folder item', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValueOnce(createModel({
+      folders: [
+        {
+          id: 'album-1',
+          name: 'Highlights',
+          visibility: 'team',
+          itemCount: 0,
+          coverPhotoId: 'cover-1',
+          coverPhotoUrl: 'https://example.com/cover.jpg',
+          coverPhotoTitle: 'Album cover',
+          items: []
+        }
+      ]
+    }));
+
+    const { container } = renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    expect(container.querySelector('img[src="https://example.com/cover.jpg"]')).toBeTruthy();
+  });
 });

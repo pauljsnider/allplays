@@ -758,10 +758,11 @@ function getFolderCoverMedia(folder: TeamMediaFolder | null) {
 
 function FolderCoverThumb({ folder, active }: { folder: TeamMediaFolder; active: boolean }) {
   const cover = getFolderCoverMedia(folder);
+  const coverUrl = cover && isPhotoMediaItem(cover) ? cover.url : '';
 
   return (
     <span className={`flex h-6 w-6 flex-none items-center justify-center overflow-hidden rounded-full ${active ? 'bg-white/20 text-white' : 'bg-white text-gray-500'}`} aria-hidden="true">
-      {isPhotoMediaItem(cover) ? <img src={cover.url} alt="" className="h-full w-full object-cover" /> : <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+      {coverUrl ? <img src={coverUrl} alt="" className="h-full w-full object-cover" /> : <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
     </span>
   );
 }
