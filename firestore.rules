@@ -67,13 +67,17 @@ service cloud.firestore {
              data.usedAt == null;
     }
 
+    function canReadManagedTeamDocument(data) {
+      return isSignedIn() &&
+             (data.ownerId == request.auth.uid ||
+              (request.auth.token.email != null &&
+               request.auth.token.email.lower() in data.get('adminEmails', [])) ||
+              isGlobalAdmin());
+    }
+
     function canReadTeamDocument(data) {
       return (data.isPublic is bool && data.isPublic == true) ||
-             (isSignedIn() &&
-              (data.ownerId == request.auth.uid ||
-               (request.auth.token.email != null &&
-                request.auth.token.email.lower() in data.get('adminEmails', [])) ||
-               isGlobalAdmin()));
+             canReadManagedTeamDocument(data);
     }
 
     function isSafeDocumentId(documentId) {
@@ -416,8 +420,7 @@ service cloud.firestore {
     function canReadCollectionGroupGameDocument(teamPath, data) {
       return exists(/databases/$(database)/documents/$(teamPath)) &&
              (
-               isGlobalAdmin() ||
-               canReadTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data) ||
+               canReadManagedTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data) ||
                canReadPublicGameDocument(get(/databases/$(database)/documents/$(teamPath)).data, data)
              );
     }

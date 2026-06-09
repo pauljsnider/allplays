@@ -14,6 +14,7 @@ describe('game Firestore read rules', () => {
     it('replaces unconditional game reads with shared visibility helpers', () => {
         expect(rules).toContain('function canReadGameDocument(teamId, gameId, data)');
         expect(rules).toContain('function canReadCollectionGroupGameDocument(teamPath, data)');
+        expect(rules).toContain('function canReadManagedTeamDocument(data)');
         expect(rules).toContain('function canReadPublicGameDocument(teamData, data)');
         expect(teamGamesRules).toContain('allow read: if canReadGameDocument(teamId, gameId, resource.data);');
         expect(collectionGroupGamesRules).toContain('allow read: if canReadCollectionGroupGameDocument(path, resource.data);');
@@ -31,6 +32,8 @@ describe('game Firestore read rules', () => {
         expect(rules).toContain("isPublicGameReadTeam(teamData) || isShareableGameDocument(data)");
         expect(rules).toContain("data.get('shareable', false) == true");
         expect(rules).toContain("data.get('publicCalendar', false) == true");
+        expect(rules).toContain('canReadManagedTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data)');
+        expect(rules).not.toContain('canReadTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data)');
     });
 
     it('preserves signed-in access for team staff, parents, scoped helpers, and officials', () => {
