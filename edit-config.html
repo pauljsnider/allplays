@@ -283,9 +283,10 @@
             const rankingOrder = document.getElementById('statDefinitionRankingOrder').value;
             const visibility = document.getElementById('statDefinitionVisibility').value;
             const scope = document.getElementById('statDefinitionScope').value;
+            const isPlayerScope = scope === 'player';
             const topStat = document.getElementById('statDefinitionTopStat').checked;
 
-            if (topStat && (visibility !== 'public' || scope !== 'player')) {
+            if (topStat && (visibility !== 'public' || !isPlayerScope)) {
                 alert(`${label} cannot be a Top Stat unless visibility is public and scope is player.`);
                 return;
             }
@@ -311,7 +312,7 @@
             }
             textarea.value = lines.join('\n');
 
-            if (!formula) {
+            if (!formula && isPlayerScope) {
                 syncColumnsInputWithStatId(id);
             }
         }
