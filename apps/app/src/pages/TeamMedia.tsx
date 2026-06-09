@@ -35,6 +35,7 @@ import {
   bulkDeleteTeamMediaItemsForApp,
   updateTeamMediaItemForApp,
   moveTeamMediaItemForApp,
+  setTeamMediaAlbumCoverForApp,
   type TeamMediaFolder,
   type TeamMediaItem,
   type TeamMediaModel
@@ -60,6 +61,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [deletingItemId, setDeletingItemId] = useState('');
   const [renamingItemId, setRenamingItemId] = useState('');
   const [movingItemId, setMovingItemId] = useState('');
+  const [coverItemId, setCoverItemId] = useState('');
   const [postingItemId, setPostingItemId] = useState('');
   const postingItemIdRef = useRef('');
   const [message, setMessage] = useState('');
@@ -159,6 +161,32 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     }
   };
 
+  const handleSetAlbumCover = async (item: TeamMediaItem) => {
+    if (!teamId || !activeFolder?.id || !item?.id) return;
+
+    setCoverItemId(item.id);
+    setError('');
+    setMessage('');
+    try {
+      await setTeamMediaAlbumCoverForApp(teamId, activeFolder.id, item);
+      setModel((current) => current ? {
+        ...current,
+        folders: current.folders.map((folder) => folder.id === activeFolder.id ? {
+          ...folder,
+          coverPhotoId: item.id,
+          coverPhotoUrl: item.url,
+          coverPhotoTitle: item.title || 'Album cover'
+        } : folder)
+      } : current);
+      setMessage('Album cover saved.');
+      await refresh({ showLoading: false, preferredFolderId: activeFolder.id });
+    } catch (coverError: any) {
+      setError(coverError?.message || 'Unable to save album cover.');
+    } finally {
+      setCoverItemId('');
+    }
+  };
+
   const handlePostItemToChat = async (item: TeamMediaItem, caption = '') => {
     if (!teamId || !auth.user || !item?.id || postingItemIdRef.current) return false;
 
@@ -212,7 +240,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const selectedCount = selectedItems.length;
   const selectedMediaTypeLabel = MEDIA_TYPE_FILTERS.find((filter) => filter.id === selectedMediaType)?.label || 'All';
   const emptyStateLabel = selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
-  const featured = activeFolder?.items[0] || allItems[0] || null;
+  const featured = activeFolder ? getFolderCoverMedia(activeFolder) || allItems[0] || null : allItems[0] || null;
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((itemId) => visibleItemIds.includes(itemId)));
@@ -414,7 +442,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
           <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-primary-700">
-            {featured?.type === 'photo' ? <img src={featured.url} alt="" className="h-full w-full object-cover" /> : <ImageIcon className="h-5 w-5" aria-hidden="true" />}
+            {isPhotoMediaItem(featured) ? <img src={featured.url} alt="" className="h-full w-full object-cover" /> : <ImageIcon className="h-5 w-5" aria-hidden="true" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Team media</div>
@@ -431,7 +459,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             <button
               key={folder.id}
               type="button"
-              className={`flex min-h-9 flex-none items-center gap-2 rounded-full border px-3 text-xs font-black ${activeFolder?.id === folder.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-200 bg-gray-50 text-gray-700'}`}
+              className={`flex min-h-9 flex-none items-center gap-2 rounded-full border px-2 py-1 text-xs font-black ${activeFolder?.id === folder.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-200 bg-gray-50 text-gray-700'}`}
               onClick={() => {
                 setActiveFolderId(folder.id);
                 setSelectedMediaType('all');
@@ -439,6 +467,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               }}
               aria-pressed={activeFolder?.id === folder.id}
             >
+              <FolderCoverThumb folder={folder} active={activeFolder?.id === folder.id} />
               {folder.name || 'Album'}
               <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${activeFolder?.id === folder.id ? 'bg-white/20 text-white' : 'bg-white text-gray-600'}`}>{folder.itemCount}</span>
             </button>
@@ -604,11 +633,13 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               selected={selectedIds.includes(item.id)}
               renaming={renamingItemId === item.id}
               moving={movingItemId === item.id}
+              settingCover={coverItemId === item.id}
               posting={postingItemId === item.id}
               onToggleSelected={toggleItemSelection}
               onRenameItem={handleRenameItem}
               onDeleteItem={handleDeleteItem}
               onMoveItem={handleMoveItem}
+              onSetAlbumCover={handleSetAlbumCover}
               onPostToChat={handlePostItemToChat}
             />
           )) : (
@@ -680,9 +711,9 @@ async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (i
   await Promise.all(workers);
 }
 
-function isPhotoMediaItem(item: TeamMediaItem) {
-  const type = String(item.type || '').toLowerCase();
-  return type === 'photo' || type.includes('image');
+function isPhotoMediaItem(item: TeamMediaItem | null | undefined): item is TeamMediaItem {
+  const type = String(item?.type || '').toLowerCase();
+  return Boolean(item) && (type === 'photo' || type.includes('image'));
 }
 
 function isVideoMediaItem(item: TeamMediaItem) {
@@ -709,6 +740,33 @@ function getMediaTypeCounts(items: TeamMediaItem[]) {
   };
 }
 
+function getFolderCoverMedia(folder: TeamMediaFolder | null) {
+  if (!folder) return null;
+
+  const coverPhotoUrl = String(folder.coverPhotoUrl || '').trim();
+  if (coverPhotoUrl) {
+    return {
+      id: String(folder.coverPhotoId || 'album-cover').trim() || 'album-cover',
+      url: coverPhotoUrl,
+      title: String(folder.coverPhotoTitle || folder.name || 'Album cover').trim() || 'Album cover',
+      type: 'photo'
+    };
+  }
+
+  return folder.items[0] || null;
+}
+
+function FolderCoverThumb({ folder, active }: { folder: TeamMediaFolder; active: boolean }) {
+  const cover = getFolderCoverMedia(folder);
+  const coverUrl = cover && isPhotoMediaItem(cover) ? cover.url : '';
+
+  return (
+    <span className={`flex h-6 w-6 flex-none items-center justify-center overflow-hidden rounded-full ${active ? 'bg-white/20 text-white' : 'bg-white text-gray-500'}`} aria-hidden="true">
+      {coverUrl ? <img src={coverUrl} alt="" className="h-full w-full object-cover" /> : <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+    </span>
+  );
+}
+
 function TeamMediaItemCard({
   item,
   onStatus,
@@ -722,11 +780,13 @@ function TeamMediaItemCard({
   selected,
   renaming,
   moving,
+  settingCover,
   posting,
   onToggleSelected,
   onRenameItem,
   onDeleteItem,
   onMoveItem,
+  onSetAlbumCover,
   onPostToChat
 }: {
   item: TeamMediaItem;
@@ -741,11 +801,13 @@ function TeamMediaItemCard({
   selected: boolean;
   renaming: boolean;
   moving: boolean;
+  settingCover: boolean;
   posting: boolean;
   onToggleSelected: (itemId: string, checked: boolean) => void;
   onRenameItem: (item: TeamMediaItem, title: string) => Promise<void>;
   onDeleteItem: (item: TeamMediaItem) => void;
   onMoveItem: (item: TeamMediaItem, targetFolderId: string) => Promise<void>;
+  onSetAlbumCover: (item: TeamMediaItem) => Promise<void>;
   onPostToChat: (item: TeamMediaItem, caption: string) => Promise<boolean>;
 }) {
   const Icon = getItemIcon(item);
@@ -897,6 +959,12 @@ function TeamMediaItemCard({
             <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => setIsPosting((current) => !current)} disabled={posting} aria-label={`Post ${title} to team chat`}>
               {posting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" />}
               Post to team chat
+            </button>
+          )}
+          {canManage && isPhoto && (
+            <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 !text-xs" onClick={() => onSetAlbumCover(item)} disabled={settingCover} aria-label={`Set ${title} as album cover`}>
+              {settingCover ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+              {settingCover ? 'Saving cover' : 'Set as cover'}
             </button>
           )}
           {canMove && (

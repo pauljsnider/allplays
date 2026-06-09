@@ -12,6 +12,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
   deleteTeamMediaItemForApp: vi.fn(),
   loadTeamMediaForApp: vi.fn(),
   moveTeamMediaItemForApp: vi.fn(),
+  setTeamMediaAlbumCoverForApp: vi.fn(),
   updateTeamMediaItemForApp: vi.fn(),
   uploadParentTeamMediaFile: vi.fn(),
   uploadParentTeamMediaPhoto: vi.fn()
@@ -93,6 +94,7 @@ describe('TeamMedia bulk delete', () => {
     parentToolsServiceMocks.deleteTeamMediaItemForApp.mockReset();
     parentToolsServiceMocks.loadTeamMediaForApp.mockReset();
     parentToolsServiceMocks.moveTeamMediaItemForApp.mockReset();
+    parentToolsServiceMocks.setTeamMediaAlbumCoverForApp.mockReset();
     parentToolsServiceMocks.updateTeamMediaItemForApp.mockReset();
     parentToolsServiceMocks.uploadParentTeamMediaFile.mockReset();
     parentToolsServiceMocks.uploadParentTeamMediaPhoto.mockReset();
@@ -202,5 +204,47 @@ describe('TeamMedia bulk delete', () => {
       })]
     }));
     expect(await screen.findByText('Photo posted to team chat.')).toBeTruthy();
+  });
+
+  it('renders an album without a cover photo using the fallback icon', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValueOnce(createModel({
+      folders: [
+        {
+          id: 'album-1',
+          name: 'Empty album',
+          visibility: 'team',
+          itemCount: 0,
+          items: []
+        }
+      ]
+    }));
+
+    const { container } = renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    expect(screen.getByText('No media in this album.')).toBeTruthy();
+    expect(container.querySelectorAll('img').length).toBe(0);
+  });
+
+  it('renders a folder cover image when cover photo metadata exists without a folder item', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValueOnce(createModel({
+      folders: [
+        {
+          id: 'album-1',
+          name: 'Highlights',
+          visibility: 'team',
+          itemCount: 0,
+          coverPhotoId: 'cover-1',
+          coverPhotoUrl: 'https://example.com/cover.jpg',
+          coverPhotoTitle: 'Album cover',
+          items: []
+        }
+      ]
+    }));
+
+    const { container } = renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    expect(container.querySelector('img[src="https://example.com/cover.jpg"]')).toBeTruthy();
   });
 });

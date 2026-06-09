@@ -14,6 +14,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
   deleteTeamMediaItemForApp: vi.fn(),
   updateTeamMediaItemForApp: vi.fn(),
   moveTeamMediaItemForApp: vi.fn(),
+  setTeamMediaAlbumCoverForApp: vi.fn(),
 }));
 
 const publicActionsMocks = vi.hoisted(() => ({
@@ -76,7 +77,12 @@ const mediaModel = (overrides = {}) => ({
 });
 
 async function renderTeamMedia(model = mediaModel()) {
-  parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValue(model);
+  if (Array.isArray(model)) {
+    model.forEach((entry) => parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValueOnce(entry));
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValue(model[model.length - 1]);
+  } else {
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValue(model);
+  }
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -133,6 +139,7 @@ beforeEach(() => {
   parentToolsServiceMocks.bulkDeleteTeamMediaItemsForApp.mockResolvedValue(undefined);
   parentToolsServiceMocks.updateTeamMediaItemForApp.mockResolvedValue(undefined);
   parentToolsServiceMocks.moveTeamMediaItemForApp.mockResolvedValue(undefined);
+  parentToolsServiceMocks.setTeamMediaAlbumCoverForApp.mockResolvedValue(undefined);
   chatServiceMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team', createdConversation: null, wantsAi: false });
 });
 
@@ -207,6 +214,93 @@ describe('React app TeamMedia rename flow', () => {
     expect(parentToolsServiceMocks.updateTeamMediaItemForApp).not.toHaveBeenCalled();
     expect(container.textContent).toContain('Tipoff');
     expect(container.textContent).toContain('Media item title cannot be empty.');
+
+    await act(async () => root.unmount());
+  });
+});
+
+describe('React app TeamMedia album cover flow', () => {
+  it('prefers a persisted album cover over the first media item and only shows Set as cover for managers on photos', async () => {
+    const coverModel = mediaModel({
+      canManage: true,
+      folders: [{
+        id: 'folder-1',
+        name: 'Game media',
+        visibility: 'team',
+        itemCount: 2,
+        coverPhotoId: 'cover-1',
+        coverPhotoUrl: 'https://example.test/cover.jpg',
+        coverPhotoTitle: 'Chosen cover',
+        items: [
+          { id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' },
+          { id: 'other-file', title: 'Scouting PDF', type: 'file', url: 'https://example.test/scout.pdf', uploadedBy: 'user-2' },
+        ],
+      }],
+    });
+    const { container, root } = await renderTeamMedia(coverModel);
+
+    expect(container.querySelector('img[src="https://example.test/cover.jpg"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Set Tipoff as album cover"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Set Scouting PDF as album cover"]')).toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  it('saves a photo as the album cover, refreshes, and shows the updated thumbnail', async () => {
+    const initialModel = mediaModel({ canManage: true });
+    const refreshedModel = mediaModel({
+      canManage: true,
+      folders: [{
+        ...initialModel.folders[0],
+        coverPhotoId: 'owned-photo',
+        coverPhotoUrl: 'https://example.test/tipoff.jpg',
+        coverPhotoTitle: 'Tipoff',
+      }],
+    });
+    const { container, root } = await renderTeamMedia([initialModel, refreshedModel]);
+
+    await act(async () => {
+      container.querySelector('[aria-label="Set Tipoff as album cover"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(parentToolsServiceMocks.setTeamMediaAlbumCoverForApp).toHaveBeenCalledWith(
+      'team-1',
+      'folder-1',
+      expect.objectContaining({ id: 'owned-photo', type: 'photo', url: 'https://example.test/tipoff.jpg' })
+    );
+    expect(container.textContent).toContain('Album cover saved.');
+    expect(container.querySelector('img[src="https://example.test/tipoff.jpg"]')).not.toBeNull();
+
+    await act(async () => root.unmount());
+  });
+
+  it('keeps the current cover visible and shows the error when saving the album cover fails', async () => {
+    parentToolsServiceMocks.setTeamMediaAlbumCoverForApp.mockRejectedValueOnce(new Error('Album cover must use a valid photo URL.'));
+    const coverModel = mediaModel({
+      canManage: true,
+      folders: [{
+        id: 'folder-1',
+        name: 'Game media',
+        visibility: 'team',
+        itemCount: 2,
+        coverPhotoId: 'cover-1',
+        coverPhotoUrl: 'https://example.test/current-cover.jpg',
+        coverPhotoTitle: 'Current cover',
+        items: [
+          { id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' },
+          { id: 'other-file', title: 'Scouting PDF', type: 'file', url: 'https://example.test/scout.pdf', uploadedBy: 'user-2' },
+        ],
+      }],
+    });
+    const { container, root } = await renderTeamMedia(coverModel);
+
+    await act(async () => {
+      container.querySelector('[aria-label="Set Tipoff as album cover"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('Album cover must use a valid photo URL.');
+    expect(container.querySelector('img[src="https://example.test/current-cover.jpg"]')).not.toBeNull();
 
     await act(async () => root.unmount());
   });
