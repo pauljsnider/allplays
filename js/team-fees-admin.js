@@ -399,6 +399,14 @@ function normalizeLedgerStatus(balanceCents, paidCents) {
     return 'unpaid';
 }
 
+function assertManualPaymentWithinRemainingBalance(paymentAmountCents, balanceCents, priorPaidCents) {
+    if (!Number.isFinite(balanceCents)) return;
+    const remainingBalanceCents = Math.max(0, balanceCents - priorPaidCents);
+    if (paymentAmountCents > remainingBalanceCents) {
+        throw new Error('Manual payment amount cannot exceed the remaining balance.');
+    }
+}
+
 export function buildManualPaymentUpdate({ amount, date, note, actorId, currentBalanceCents, currentPaidCents }) {
     const paymentAmountCents = toFeeCents(amount);
     if (paymentAmountCents === null || paymentAmountCents <= 0) {
@@ -410,6 +418,7 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
     const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : Number.MAX_SAFE_INTEGER;
     const priorPaid = Number(currentPaidCents);
     const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
+    assertManualPaymentWithinRemainingBalance(paymentAmountCents, balanceCents, priorPaidCents);
     const amountPaidCents = priorPaidCents + paymentAmountCents;
     const remainingBalanceCents = Math.max(0, balanceCents - amountPaidCents);
     const status = normalizeLedgerStatus(balanceCents, amountPaidCents);
@@ -815,7 +824,7 @@ function renderRecipients(container, countEl, recipients) {
                     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 w-full lg:max-w-7xl">
                         <form data-action="paid" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
                             <div class="text-xs font-bold uppercase tracking-wide text-gray-500">Manual payment</div>
-                            <input name="amount" type="number" min="0" step="0.01" value="${(outstandingCents / 100).toFixed(2)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment amount">
+                            <input name="amount" type="number" min="0" max="${(outstandingCents / 100).toFixed(2)}" step="0.01" value="${(outstandingCents / 100).toFixed(2)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment amount">
                             <input name="date" type="date" value="${new Date().toISOString().slice(0, 10)}" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment date">
                             <input name="note" type="text" placeholder="Optional note" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Payment note">
                             <button class="w-full rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700">Mark paid</button>
@@ -1148,7 +1157,7 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=42'),
+        import('./db.js?v=43'),
         import('./auth.js?v=20')
     ]);
 

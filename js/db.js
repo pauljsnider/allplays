@@ -4432,6 +4432,9 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
 
     const recipientRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId);
     const { ledgerEntries = [], ...recipientUpdates } = updates;
+    const isManualPaymentUpdate = Object.prototype.hasOwnProperty.call(recipientUpdates, 'manualPayment')
+        || (Array.isArray(ledgerEntries) && ledgerEntries.some((entry) => entry?.type === 'offline_payment'));
+
     const updatePayload = {
         ...recipientUpdates,
         teamId,
@@ -4466,6 +4469,34 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
 
     if (Array.isArray(ledgerEntries) && ledgerEntries.length > 0) {
         updatePayload.paymentLedger = arrayUnion(...ledgerEntries);
+    }
+
+    if (isManualPaymentUpdate) {
+        await runTransaction(db, async (transaction) => {
+            const recipientSnapshot = await transaction.get(recipientRef);
+            if (!recipientSnapshot.exists()) {
+                throw new Error('Fee recipient not found.');
+            }
+            const recipient = recipientSnapshot.data() || {};
+            const amountDueRaw = recipient.amountDueCents ?? recipient.adjustedAmountCents ?? recipient.amountCents ?? 0;
+            const amountDueCents = Number.isFinite(Number(amountDueRaw)) ? Math.max(0, Number(amountDueRaw)) : 0;
+            const priorPaidRaw = recipient.amountPaidCents ?? recipient.paidAmountCents ?? 0;
+            const priorPaidCents = Number.isFinite(Number(priorPaidRaw)) ? Math.max(0, Number(priorPaidRaw)) : 0;
+            const remainingBalanceCents = Math.max(0, amountDueCents - priorPaidCents);
+            const manualPaymentAmountRaw = recipientUpdates.manualPayment?.amountPaidCents
+                ?? ledgerEntries.find((entry) => entry?.type === 'offline_payment')?.amountCents;
+            const manualPaymentAmountCents = Number(manualPaymentAmountRaw);
+
+            if (!Number.isFinite(manualPaymentAmountCents)) {
+                throw new Error('Manual payment amount is required.');
+            }
+            if (manualPaymentAmountCents > remainingBalanceCents) {
+                throw new Error('Manual payment amount cannot exceed the remaining balance.');
+            }
+
+            transaction.update(recipientRef, updatePayload);
+        });
+        return;
     }
 
     await updateDoc(recipientRef, updatePayload);
