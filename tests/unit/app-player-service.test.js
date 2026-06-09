@@ -19,7 +19,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 const scheduleMocks = vi.hoisted(() => ({
-    loadParentSchedule: vi.fn()
+    loadParentPlayerSchedule: vi.fn()
 }));
 
 const profileStatMocks = vi.hoisted(() => ({
@@ -99,7 +99,7 @@ function user() {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    scheduleMocks.loadParentSchedule.mockResolvedValue({
+    scheduleMocks.loadParentPlayerSchedule.mockResolvedValue({
         children: [
             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
             { teamId: 'team-2', teamName: 'Thunder', playerId: 'player-2', playerName: 'Sam' }
@@ -199,7 +199,10 @@ describe('React app parent player detail service', () => {
     it('loads a team-scoped linked player with schedule actions, stats, clips, certificates, and tracking', async () => {
         const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-1');
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }));
+        expect(scheduleMocks.loadParentPlayerSchedule).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), {
+            teamId: 'team-1',
+            playerId: 'player-1'
+        });
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1', { includeInactive: true });
         expect(dbMocks.getPlayers).toHaveBeenCalledWith('team-1', { includeInactive: true });
         expect(dbMocks.getGames).toHaveBeenCalledWith('team-1');
@@ -262,10 +265,35 @@ describe('React app parent player detail service', () => {
 
     it('falls back to the legacy player-only route and blocks unlinked players', async () => {
         const legacyDetail = await loadParentPlayerDetail(user(), '', 'player-2');
+        expect(scheduleMocks.loadParentPlayerSchedule).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), {
+            teamId: '',
+            playerId: 'player-2'
+        });
         expect(legacyDetail.child).toMatchObject({ teamId: 'team-2', playerId: 'player-2' });
 
         await expect(loadParentPlayerDetail(user(), 'team-9', 'player-9')).rejects.toThrow('This player is not linked to your account.');
         await expect(loadParentPlayerDetail(null, 'team-1', 'player-1')).rejects.toThrow('signed-in user');
+    });
+
+    it('ignores off-team schedule rows when computing player detail data', async () => {
+        scheduleMocks.loadParentPlayerSchedule.mockResolvedValueOnce({
+            children: [
+                { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
+                { teamId: 'team-2', teamName: 'Thunder', playerId: 'player-2', playerName: 'Sam' }
+            ],
+            events: [
+                event({ id: 'game-next', teamId: 'team-1', childId: 'player-1', date: new Date('2100-06-01T18:00:00Z') }),
+                event({ id: 'game-final', teamId: 'team-1', childId: 'player-1', status: 'completed', liveStatus: 'completed', myRsvp: 'going', date: new Date('2000-06-01T18:00:00Z') }),
+                event({ id: 'other-team-game', teamId: 'team-2', teamName: 'Thunder', childId: 'player-2', childName: 'Sam', date: new Date('2100-06-03T18:00:00Z') })
+            ]
+        });
+
+        const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-1');
+
+        expect(detail.events.map((item) => item.id)).toEqual(['game-final', 'game-next']);
+        expect(detail.nextEvent?.id).toBe('game-next');
+        expect(dbMocks.getAggregatedStatsForPlayer).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getAggregatedStatsForPlayer).toHaveBeenCalledWith('team-1', 'game-final', 'player-1');
     });
 
     it('keeps the player page usable when optional profile data fails', async () => {

@@ -128,7 +128,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentSchedule, loadParentScheduleEventDetail, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
@@ -396,6 +396,30 @@ describe('React app schedule service contract integration', () => {
             opponent: 'Eagles',
             location: 'Imported Field'
         });
+    });
+
+    it('loads one linked player schedule without a cross-team fan-out', async () => {
+        dbMocks.getTeams.mockResolvedValue([
+            { id: 'team-staff-1', name: 'Staff Team 1', ownerId: 'user-1' },
+            { id: 'team-staff-2', name: 'Staff Team 2', ownerId: 'user-1' }
+        ]);
+
+        const result = await loadParentPlayerSchedule(user(), { teamId: 'team-1', playerId: 'player-1' });
+
+        expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
+        expect(dbMocks.getTeams).not.toHaveBeenCalled();
+        expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getPracticeSessions).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1');
+        expect(result.children).toEqual([
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
+        ]);
+        expect(new Set(result.events.map((event) => event.childId))).toEqual(new Set(['player-1']));
+        expect(result.events.every((event) => event.teamId === 'team-1')).toBe(true);
     });
 
     it('loads schedule event detail without expanding the full team schedule', async () => {

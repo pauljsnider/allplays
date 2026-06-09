@@ -121,6 +121,11 @@ export type ParentScheduleEventDetailLoadOptions = ParentScheduleLoadOptions & {
   eventId: string;
 };
 
+export type ParentPlayerScheduleLoadOptions = ParentScheduleLoadOptions & {
+  teamId?: string;
+  playerId: string;
+};
+
 export type ParentGameRouteResolution = {
   teamId: string;
   eventId: string;
@@ -1853,6 +1858,48 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
     return { children, events };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, teamId: requestedTeamId, eventId: requestedEventId, error: error?.message || 'Unable to load schedule event detail.' });
+    throw error;
+  }
+}
+
+export async function loadParentPlayerSchedule(user: AuthUser | null, options: ParentPlayerScheduleLoadOptions): Promise<ParentScheduleLoadResult> {
+  const requestedTeamId = compactString(options?.teamId);
+  const requestedPlayerId = compactString(options?.playerId);
+
+  if (!user?.uid || !requestedPlayerId) {
+    return { children: [], events: [] };
+  }
+
+  const timer = startUxTimer('parent player schedule load');
+  const hydrateDetails = options.hydrateDetails !== false;
+
+  try {
+    const profile = await loadProfileDocument(user.uid);
+    const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+    const child = (requestedTeamId && requestedPlayerId)
+      ? children.find((entry) => entry.teamId === requestedTeamId && entry.playerId === requestedPlayerId)
+      : children.find((entry) => entry.playerId === requestedPlayerId);
+
+    if (!child) {
+      timer.end({ hydrateDetails, teamId: requestedTeamId || null, playerId: requestedPlayerId, childLinks: children.length, eventRows: 0 });
+      return { children, events: [] };
+    }
+
+    const events = await buildTeamSchedule(child.teamId, [child], user);
+    if (hydrateDetails && events.length) {
+      await hydrateEventDetails(events, user);
+    }
+    timer.end({
+      hydrateDetails,
+      requestedTeamId: requestedTeamId || null,
+      resolvedTeamId: child.teamId,
+      playerId: child.playerId,
+      childLinks: children.length,
+      eventRows: events.length
+    });
+    return { children, events };
+  } catch (error: any) {
+    timer.end({ hydrateDetails, teamId: requestedTeamId || null, playerId: requestedPlayerId, error: error?.message || 'Unable to load player schedule.' });
     throw error;
   }
 }

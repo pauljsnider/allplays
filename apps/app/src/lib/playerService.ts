@@ -33,7 +33,7 @@ import { buildAthleteProfileShareUrl } from '../../../../js/athlete-profile-util
 import { collectPlayerVideoClips } from '../../../../js/player-profile-stats.js';
 import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-summary.js';
 import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleEvent } from './scheduleLogic';
-import { loadParentSchedule, type ParentScheduleChild } from './scheduleService';
+import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
 import type { AuthUser } from './types';
 
 export type ParentPlayerStatRow = {
@@ -107,7 +107,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     throw new Error('Player details require a signed-in user.');
   }
 
-  const schedule = await loadParentSchedule(user);
+  const schedule = await loadParentPlayerSchedule(user, { teamId, playerId });
   const child = findLinkedChild(schedule.children, teamId, playerId);
   if (!child) {
     throw new Error('This player is not linked to your account.');
