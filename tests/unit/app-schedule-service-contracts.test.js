@@ -422,6 +422,39 @@ describe('React app schedule service contract integration', () => {
         expect(result.events.every((event) => event.teamId === 'team-1')).toBe(true);
     });
 
+    it('lets staff load a roster player detail without expanding every staff team', async () => {
+        profileMocks.loadProfileDocument.mockResolvedValue({ parentOf: [] });
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            calendarUrls: ['mock://team-calendar'],
+            availabilityPreferences: { noteVisibility: 'team' }
+        });
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat', active: true },
+            { id: 'player-2', name: 'Sam', active: true }
+        ]);
+
+        const result = await loadParentPlayerSchedule({
+            ...user(),
+            uid: 'coach-1',
+            email: 'coach@example.com',
+            parentOf: [],
+            coachOf: ['team-1']
+        }, { teamId: 'team-1', playerId: 'player-2' });
+
+        expect(dbMocks.getTeams).not.toHaveBeenCalled();
+        expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getPlayers).toHaveBeenCalledWith('team-1', { includeInactive: true });
+        expect(result.children).toEqual([
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
+        ]);
+        expect(new Set(result.events.map((event) => event.childId))).toEqual(new Set(['player-2']));
+        expect(result.events.every((event) => event.teamId === 'team-1')).toBe(true);
+    });
+
     it('loads schedule event detail without expanding the full team schedule', async () => {
         dbMocks.getGame.mockResolvedValue({
             id: 'game-1',

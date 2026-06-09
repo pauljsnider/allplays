@@ -1876,9 +1876,27 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
   try {
     const profile = await loadProfileDocument(user.uid);
     const children = normalizeChildLinks(user, profile as Record<string, unknown>);
-    const child = (requestedTeamId && requestedPlayerId)
+    let child = (requestedTeamId && requestedPlayerId)
       ? children.find((entry) => entry.teamId === requestedTeamId && entry.playerId === requestedPlayerId)
       : children.find((entry) => entry.playerId === requestedPlayerId);
+
+    if (!child && requestedTeamId) {
+      const team = await loadTeam(requestedTeamId).catch(() => null);
+      const teamWithId = team ? { ...team, id: team.id || requestedTeamId } : null;
+      if (teamWithId && isTeamStaff(teamWithId, user)) {
+        const player = (await loadPlayers(requestedTeamId).catch(() => []))
+          .find((entry: any) => compactString(entry?.id) === requestedPlayerId && isActiveRosterPlayer(entry));
+        if (player) {
+          child = {
+            teamId: requestedTeamId,
+            teamName: compactString(teamWithId.name) || requestedTeamId,
+            playerId: requestedPlayerId,
+            playerName: normalizePlayerName(player)
+          };
+          children.push(child);
+        }
+      }
+    }
 
     if (!child) {
       timer.end({ hydrateDetails, teamId: requestedTeamId || null, playerId: requestedPlayerId, childLinks: children.length, eventRows: 0 });
