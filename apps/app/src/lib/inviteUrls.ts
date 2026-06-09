@@ -11,17 +11,13 @@ export function buildAppAcceptInviteUrl(code: string, inviteType?: string | null
         return '';
     }
 
-    const normalizedType = String(inviteType || '').trim().toLowerCase();
-    if (!normalizedType) {
-        const signupUrl = new URL('/login.html', baseUrl);
-        signupUrl.searchParams.set('code', inviteCode);
-        return signupUrl.toString();
-    }
-
     const url = new URL('/app', baseUrl);
     const searchParams = new URLSearchParams();
     searchParams.set('code', inviteCode);
-    searchParams.set('type', normalizedType);
+    const normalizedType = String(inviteType || '').trim().toLowerCase();
+    if (normalizedType) {
+        searchParams.set('type', normalizedType);
+    }
 
     url.hash = `/accept-invite?${searchParams.toString()}`;
     return url.toString();

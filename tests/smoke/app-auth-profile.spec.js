@@ -571,12 +571,15 @@ test('profile exposes account, notification, invite, verification, password, upl
     expect(sharedInviteUrl).toContain('/app#/accept-invite?code=NEWMVP42');
     expect(sharedInviteUrl).not.toContain('/login.html?code=');
 
-    await page.goto(sharedInviteUrl, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: 'Accept invite' })).toBeVisible();
-    await expect(page.getByText('Invite found')).toBeVisible();
-    await expect(page.getByText('NEWMVP42')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Sign in to accept' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Create account with code' })).toBeVisible();
+    const recipientPage = await page.context().newPage();
+    await mockAppModules(recipientPage);
+    await recipientPage.goto(sharedInviteUrl, { waitUntil: 'domcontentloaded' });
+    await expect(recipientPage.getByRole('heading', { name: 'Accept invite' })).toBeVisible();
+    await expect(recipientPage.getByText('Invite found')).toBeVisible();
+    await expect(recipientPage.getByText('NEWMVP42')).toBeVisible();
+    await expect(recipientPage.getByRole('link', { name: 'Sign in to accept' })).toBeVisible();
+    await expect(recipientPage.getByRole('link', { name: 'Create account with code' })).toBeVisible();
+    await recipientPage.close();
 
     await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
 
@@ -616,8 +619,8 @@ test('profile exposes account, notification, invite, verification, password, upl
         shares: [expect.objectContaining({
             title: 'ALL PLAYS invite link',
             text: 'Use this ALL PLAYS invite link to join ALL PLAYS.',
-            url: expect.stringContaining('/login.html?code=NEWMVP42'),
-            clipboardText: expect.stringContaining('/login.html?code=NEWMVP42')
+            url: expect.stringContaining('/app#/accept-invite?code=NEWMVP42'),
+            clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42')
         })],
         password: ['new-password'],
         reset: ['parent@example.com'],
