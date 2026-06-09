@@ -205,4 +205,24 @@ describe('TeamMedia bulk delete', () => {
     }));
     expect(await screen.findByText('Photo posted to team chat.')).toBeTruthy();
   });
+
+  it('renders an album without a cover photo using the fallback icon', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValueOnce(createModel({
+      folders: [
+        {
+          id: 'album-1',
+          name: 'Empty album',
+          visibility: 'team',
+          itemCount: 0,
+          items: []
+        }
+      ]
+    }));
+
+    const { container } = renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    expect(screen.getByText('No media in this album.')).toBeTruthy();
+    expect(container.querySelectorAll('img').length).toBe(0);
+  });
 });

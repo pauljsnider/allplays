@@ -711,9 +711,9 @@ async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (i
   await Promise.all(workers);
 }
 
-function isPhotoMediaItem(item: TeamMediaItem | null | undefined) {
+function isPhotoMediaItem(item: TeamMediaItem | null | undefined): item is TeamMediaItem {
   const type = String(item?.type || '').toLowerCase();
-  return type === 'photo' || type.includes('image');
+  return Boolean(item) && (type === 'photo' || type.includes('image'));
 }
 
 function isVideoMediaItem(item: TeamMediaItem) {
