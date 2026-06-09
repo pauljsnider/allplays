@@ -1426,7 +1426,7 @@ describe('React app messages integration', () => {
         });
 
         const { container } = await renderMessages('/messages/team-1');
-        const video = container.querySelector('video[src="https://media.example.test/warmups.mp4"]');
+        const video = container.querySelector('video[data-chat-attachment-url="https://media.example.test/warmups.mp4"]');
         expect(video).toBeTruthy();
         expect(video.getAttribute('preload')).toBe('none');
         expect(intersectionObserverState.instances).toHaveLength(1);
@@ -1455,7 +1455,7 @@ describe('React app messages integration', () => {
         });
 
         const hovered = await renderMessages('/messages/team-1');
-        const hoveredVideo = hovered.container.querySelector('video[src="https://media.example.test/huddle.mp4"]');
+        const hoveredVideo = hovered.container.querySelector('video[data-chat-attachment-url="https://media.example.test/huddle.mp4"]');
         expect(hoveredVideo.getAttribute('preload')).toBe('none');
 
         await act(async () => {

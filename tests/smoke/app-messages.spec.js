@@ -535,7 +535,7 @@ test('messages defer offscreen media requests until scroll or video interaction'
     expect(mediaRequests).not.toContain('/deferred-warmups.mp4');
 
     await page.evaluate(() => {
-        const video = document.querySelector('video[src="https://media.example.test/deferred-warmups.mp4"]');
+        const video = document.querySelector('video[data-chat-attachment-url="https://media.example.test/deferred-warmups.mp4"]');
         if (!video) throw new Error('Video element not found');
         video.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
     });

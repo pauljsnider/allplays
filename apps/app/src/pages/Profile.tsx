@@ -40,6 +40,7 @@ import {
   uploadProfilePhoto
 } from '../lib/profileService';
 import { enablePushNotificationsForUser } from '../lib/pushService';
+import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AccessCodeRecord, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
@@ -705,7 +706,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     }
   };
 
-  const shareInviteLink = async (code: string, metadata?: { email?: string | null; phone?: string | null }) => {
+  const shareInviteLink = async (code: string, metadata?: { email?: string | null; phone?: string | null; type?: string | null }) => {
     const result = await sharePublicUrl(buildInviteShareInput(code, metadata));
     if (result === 'shared') {
       setInviteActionStatus('Share sheet opened.');
@@ -1160,8 +1161,8 @@ function PreferenceToggle({ label, checked, onChange }: { label: string; checked
   );
 }
 
-function AccessCodeCard({ code, onCopy, onShare }: { code: AccessCodeRecord; onCopy: (text: string, label: string) => void; onShare: (code: string, metadata?: { email?: string | null; phone?: string | null }) => void }) {
-  const signupLink = buildSignupLink(code.code);
+function AccessCodeCard({ code, onCopy, onShare }: { code: AccessCodeRecord; onCopy: (text: string, label: string) => void; onShare: (code: string, metadata?: { email?: string | null; phone?: string | null; type?: string | null }) => void }) {
+  const signupLink = buildSignupLink(code.code, code.type);
   return (
     <div className={`rounded-xl border p-3 ${code.used ? 'border-gray-200 bg-gray-50' : 'border-primary-200 bg-white'}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1175,7 +1176,7 @@ function AccessCodeCard({ code, onCopy, onShare }: { code: AccessCodeRecord; onC
             <span className="text-xs font-black">Copy code</span>
           </button>
           {!code.used ? (
-            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onShare(code.code, { email: code.email, phone: code.phone })} aria-label={`Share saved invite link for ${code.code}`}>
+            <button type="button" className="ghost-button !min-h-9 !px-3 !py-1.5" onClick={() => onShare(code.code, { email: code.email, phone: code.phone, type: code.type })} aria-label={`Share saved invite link for ${code.code}`}>
               <Share2 className="h-4 w-4" aria-hidden="true" />
               <span className="text-xs font-black">Share link</span>
             </button>
@@ -1236,15 +1237,14 @@ function toDate(value: any): Date | null {
   return null;
 }
 
-function buildSignupLink(code: string) {
-  const origin = window.location.protocol === 'capacitor:' ? 'https://allplays.ai' : window.location.origin;
-  return `${origin}/login.html?code=${encodeURIComponent(code)}`;
+function buildSignupLink(code: string, inviteType?: string | null) {
+  return buildAppAcceptInviteUrl(code, inviteType);
 }
 
-function buildInviteShareInput(code: string, metadata?: { email?: string | null; phone?: string | null }) {
+function buildInviteShareInput(code: string, metadata?: { email?: string | null; phone?: string | null; type?: string | null }) {
   const recipientDetails = [metadata?.email, metadata?.phone].map((value) => String(value || '').trim()).filter(Boolean);
   const recipientLabel = recipientDetails.join(' • ');
-  const signupLink = buildSignupLink(code);
+  const signupLink = buildSignupLink(code, metadata?.type);
   return {
     title: recipientLabel ? `ALL PLAYS invite for ${recipientLabel}` : 'ALL PLAYS invite link',
     text: recipientLabel ? `Use this ALL PLAYS invite link for ${recipientLabel}.` : 'Use this ALL PLAYS invite link to join ALL PLAYS.',

@@ -2224,7 +2224,7 @@ function MessageAvatar({ message, label }: { message: ChatMessage; label: string
   );
 }
 
-function InlineAttachmentVideo({ src }: { src: string }) {
+function InlineAttachmentVideo({ src, label }: { src: string; label: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [shouldPreloadMetadata, setShouldPreloadMetadata] = useState(false);
 
@@ -2257,6 +2257,8 @@ function InlineAttachmentVideo({ src }: { src: string }) {
       preload={shouldPreloadMetadata ? 'metadata' : 'none'}
       className="max-h-72 w-full"
       src={src}
+      aria-label={label}
+      data-chat-attachment-url={src}
       onFocus={armMetadataPreload}
       onMouseEnter={armMetadataPreload}
       onPlay={armMetadataPreload}
@@ -2274,7 +2276,7 @@ function MessageAttachments({ attachments, isOwn }: { attachments: any[]; isOwn:
         if (attachment.type === 'video') {
           return (
             <div key={`${attachment.url}-${index}`} className="overflow-hidden rounded-xl border border-gray-200 bg-black">
-              <InlineAttachmentVideo src={attachment.url} />
+              <InlineAttachmentVideo src={attachment.url} label={label} />
               <a href={attachment.url} target="_blank" rel="noopener noreferrer" className="block truncate bg-white px-3 py-2 text-xs font-bold text-primary-600">
                 {label}
               </a>
