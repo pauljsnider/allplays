@@ -245,6 +245,22 @@
             return { name, baseType, columns, statDefinitions };
         }
 
+        function syncColumnsInputWithStatId(statId = '') {
+            const normalizedStatId = String(statId || '').trim();
+            if (!normalizedStatId) return;
+
+            const columnsInput = document.getElementById('columns');
+            const columns = columnsInput.value
+                .split(',')
+                .map((entry) => entry.trim())
+                .filter(Boolean);
+            const hasColumn = columns.some((entry) => entry.toLowerCase() === normalizedStatId.toLowerCase());
+            if (hasColumn) return;
+
+            columns.push(normalizedStatId);
+            columnsInput.value = columns.join(', ');
+        }
+
         function getStatDefinitionLineId(line = '') {
             const [head] = String(line || '').split('|');
             const [labelPart, idPart] = head.split('=').map((segment) => segment.trim());
@@ -294,6 +310,10 @@
                 lines.push(line);
             }
             textarea.value = lines.join('\n');
+
+            if (!formula) {
+                syncColumnsInputWithStatId(id);
+            }
         }
 
         function resetFormState() {
