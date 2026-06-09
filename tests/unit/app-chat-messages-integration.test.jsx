@@ -326,8 +326,8 @@ beforeEach(() => {
             this.elements = this.elements.filter((candidate) => candidate !== element);
         });
 
-        trigger(element, isIntersecting) {
-            this.callback([{ isIntersecting, target: element }], this);
+        trigger(element, isIntersecting, intersectionRatio = isIntersecting ? 1 : 0) {
+            this.callback([{ isIntersecting, intersectionRatio, target: element }], this);
         }
     };
 
@@ -1405,6 +1405,37 @@ describe('React app messages integration', () => {
         videos.forEach((video) => {
             expect(video.getAttribute('preload')).toBe('none');
         });
+    });
+
+    it('keeps inline video metadata deferred when the attachment is only barely intersecting', async () => {
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: 'msg-video-partial',
+                    text: '',
+                    attachments: [
+                        {
+                            type: 'video',
+                            url: 'https://media.example.test/partial.mp4',
+                            name: 'Partial.mp4'
+                        }
+                    ]
+                })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1');
+        const video = container.querySelector('video[data-chat-attachment-url="https://media.example.test/partial.mp4"]');
+        expect(video).toBeTruthy();
+        expect(video.getAttribute('preload')).toBe('none');
+        expect(intersectionObserverState.instances).toHaveLength(1);
+
+        await act(async () => {
+            intersectionObserverState.instances[0].trigger(video, true, 0.1);
+        });
+        await flush();
+        expect(video.getAttribute('preload')).toBe('none');
     });
 
     it('defers inline video metadata until the attachment is visible or hovered', async () => {

@@ -2234,12 +2234,12 @@ function InlineAttachmentVideo({ src, label }: { src: string; label: string }) {
     if (!video || typeof IntersectionObserver === 'undefined') return undefined;
 
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) {
+      if (entries.some((entry) => entry.isIntersecting && (typeof entry.intersectionRatio !== 'number' || entry.intersectionRatio >= 0.5))) {
         setShouldPreloadMetadata(true);
         observer.disconnect();
       }
     }, {
-      threshold: 0.01
+      threshold: 0.5
     });
 
     observer.observe(video);
