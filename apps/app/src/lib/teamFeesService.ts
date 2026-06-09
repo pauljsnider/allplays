@@ -90,6 +90,14 @@ function normalizeLedgerStatus(balanceCents: number, amountPaidCents: number) {
   return amountPaidCents > 0 ? 'partial' : 'unpaid';
 }
 
+function assertManualPaymentWithinRemainingBalance(paymentAmountCents: number, balanceCents: number, priorPaidCents: number) {
+  if (!Number.isFinite(balanceCents)) return;
+  const remainingBalanceCents = Math.max(0, balanceCents - priorPaidCents);
+  if (paymentAmountCents > remainingBalanceCents) {
+    throw new Error('Manual payment amount cannot exceed the remaining balance.');
+  }
+}
+
 export function buildManualPaymentUpdate({ amount, date, note, actorId, currentBalanceCents, currentPaidCents }: ManualTeamFeePaymentInput) {
   const paymentAmountCents = toFeeCents(amount);
   if (paymentAmountCents === null || paymentAmountCents <= 0) {
@@ -101,6 +109,7 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
   const balanceCents = Number.isFinite(currentBalance) ? Math.max(0, currentBalance) : Number.MAX_SAFE_INTEGER;
   const priorPaid = Number(currentPaidCents);
   const priorPaidCents = Number.isFinite(priorPaid) ? Math.max(0, priorPaid) : 0;
+  assertManualPaymentWithinRemainingBalance(paymentAmountCents, balanceCents, priorPaidCents);
   const amountPaidCents = priorPaidCents + paymentAmountCents;
   const remainingBalanceCents = Math.max(0, balanceCents - amountPaidCents);
   const status = normalizeLedgerStatus(balanceCents, amountPaidCents);

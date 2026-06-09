@@ -59,16 +59,16 @@ describe('React app team fee offline payment service', () => {
         ]);
     });
 
-    it('builds a paid update when payment covers the balance', () => {
+    it('builds a paid update when payment exactly covers the remaining balance', () => {
         const update = buildManualPaymentUpdate({
-            amount: '50.00',
+            amount: '25.00',
             date: '2026-05-28',
             currentBalanceCents: 5000,
             currentPaidCents: 2500
         });
 
         expect(update.status).toBe('paid');
-        expect(update.amountPaidCents).toBe(7500);
+        expect(update.amountPaidCents).toBe(5000);
         expect(update.remainingBalanceCents).toBe(0);
         expect(update.paidAt).toBe('2026-05-28');
     });
@@ -77,6 +77,22 @@ describe('React app team fee offline payment service', () => {
         expect(() => buildManualPaymentUpdate({ amount: '0', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '-1.00', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '5.00', date: '' })).toThrow('payment date');
+    });
+
+    it('rejects offline payments larger than the remaining balance', () => {
+        expect(() => buildManualPaymentUpdate({
+            amount: '25.01',
+            date: '2026-06-09',
+            currentBalanceCents: 2500,
+            currentPaidCents: 0
+        })).toThrow('cannot exceed the remaining balance');
+
+        expect(() => buildManualPaymentUpdate({
+            amount: '10.01',
+            date: '2026-06-09',
+            currentBalanceCents: 2500,
+            currentPaidCents: 1500
+        })).toThrow('cannot exceed the remaining balance');
     });
 
     it('treats positive adjustments as credits that reduce the amount owed', () => {

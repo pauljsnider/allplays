@@ -21,8 +21,8 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=42')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=8"></script>');
+        expect(adminSource).toContain("import('./db.js?v=43')");
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=9"></script>');
     });
 });
 
@@ -140,18 +140,14 @@ describe('buildManualPaymentUpdate', () => {
         expect(updates.remainingBalanceCents).toBe(Number.MAX_SAFE_INTEGER - paymentAmountCents);
         expect(updates.status).toBe('partial');
 
-        // Case 3: currentBalanceCents is 0, and a payment is made
-        updates = buildManualPaymentUpdate({
+        // Case 3: currentBalanceCents is 0, so additional payments are rejected
+        expect(() => buildManualPaymentUpdate({
             amount: paymentAmount,
             date,
             actorId,
-            currentBalanceCents: '0', // Explicitly 0 outstanding balance
+            currentBalanceCents: '0',
             currentPaidCents: '0'
-        });
-
-        expect(updates.amountPaidCents).toBe(paymentAmountCents);
-        expect(updates.remainingBalanceCents).toBe(0); // 0 - 500 = -500, then Math.max(0, -500) = 0
-        expect(updates.status).toBe('paid'); // Correctly 'paid' as 500 >= 0
+        })).toThrow('cannot exceed the remaining balance');
 
         // Case 4: Valid currentBalanceCents (partial payment scenario)
         const initialBalanceCents = 1000; // $10.00 outstanding
@@ -165,6 +161,22 @@ describe('buildManualPaymentUpdate', () => {
         expect(updates.amountPaidCents).toBe(paymentAmountCents); // 500
         expect(updates.remainingBalanceCents).toBe(initialBalanceCents - paymentAmountCents); // 1000 - 500 = 500
         expect(updates.status).toBe('partial');
+    });
+
+    it('rejects manual payments that exceed the remaining balance', () => {
+        expect(() => buildManualPaymentUpdate({
+            amount: '25.01',
+            date: '2026-06-09',
+            currentBalanceCents: '2500',
+            currentPaidCents: '0'
+        })).toThrow('cannot exceed the remaining balance');
+
+        expect(() => buildManualPaymentUpdate({
+            amount: '10.01',
+            date: '2026-06-09',
+            currentBalanceCents: '2500',
+            currentPaidCents: '1500'
+        })).toThrow('cannot exceed the remaining balance');
     });
 });
 
