@@ -35,6 +35,7 @@ async function mockScheduleModules(page, options = {}) {
     const scheduleLoadError = options.scheduleLoadError || '';
     const rideshareLoadError = options.rideshareLoadError || '';
     const assignmentClaimError = options.assignmentClaimError || '';
+    const staffManageable = options.staffManageable === true;
     const gameStatus = options.gameStatus || 'scheduled';
     const gameLiveStatus = options.gameLiveStatus || null;
     const gameHomeScore = options.gameHomeScore ?? null;
@@ -321,8 +322,8 @@ async function mockScheduleModules(page, options = {}) {
                             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
                         ],
                         events: [
-                            baseEvent({ eventKey: 'game-1-player-1', id: 'game-1', childId: 'player-1', childName: 'Pat', date: new Date(${JSON.stringify(gameDate)}), rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)} }),
-                            baseEvent({ eventKey: 'game-1-player-2', id: 'game-1', childId: 'player-2', childName: 'Sam', date: new Date(${JSON.stringify(gameDate)}), myRsvp: 'maybe', rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)} }),
+                            baseEvent({ eventKey: 'game-1-player-1', id: 'game-1', childId: 'player-1', childName: 'Pat', date: new Date(${JSON.stringify(gameDate)}), rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)}, isTeamStaff: ${JSON.stringify(staffManageable)} }),
+                            baseEvent({ eventKey: 'game-1-player-2', id: 'game-1', childId: 'player-2', childName: 'Sam', date: new Date(${JSON.stringify(gameDate)}), myRsvp: 'maybe', rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)}, isTeamStaff: ${JSON.stringify(staffManageable)} }),
                             baseEvent({
                                 eventKey: 'practice-1-player-1',
                                 id: 'practice-1',
@@ -785,6 +786,25 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
     await expect(page.getByRole('heading', { name: 'Rideshare' })).toBeVisible();
     await expect(page.getByText('Dana Driver')).toBeVisible();
     await expect(page.getByText('Request spot')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
+test('iOS-sized staff schedule keeps tools collapsed below the event list', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, { isCoach: true, staffManageable: true });
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await expect(mobileScheduleFilter(page)).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('.schedule-list > a').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /Manage schedule/ })).toBeVisible();
+    await expect(page.getByText('Add external calendar')).toHaveCount(0);
+    await expect(page.getByText('Draft schedule with AI')).toHaveCount(0);
+    await expect(page.getByText('Import schedule CSV')).toHaveCount(0);
+
+    await page.getByRole('button', { name: /Manage schedule/ }).click();
+    await expect(page.getByText('Add external calendar')).toBeVisible();
+    await expect(page.getByText('Draft schedule with AI')).toBeVisible();
+    await expect(page.getByText('Import schedule CSV')).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });
 

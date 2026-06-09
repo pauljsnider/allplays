@@ -12,13 +12,18 @@ const scheduleMocks = vi.hoisted(() => ({
     removeTeamCalendarUrl: vi.fn(),
     generateScheduleAiImportRows: vi.fn()
 }));
+const layoutState = vi.hoisted(() => ({
+    isDesktopWeb: true,
+    isNative: false,
+    isMobileWeb: false
+}));
 
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/scheduleAiImport.ts', () => ({
     generateScheduleAiImportRows: scheduleMocks.generateScheduleAiImportRows
 }));
 vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({
-    useShellLayout: () => ({ isDesktopWeb: true, isNative: false, isMobileWeb: false })
+    useShellLayout: () => layoutState
 }));
 
 import { Schedule } from '../../apps/app/src/pages/Schedule.tsx';
@@ -97,6 +102,12 @@ function queryButtonByText(container, text) {
     return Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === text) || null;
 }
 
+function buttonContainingText(container, text) {
+    const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.includes(text));
+    if (!button) throw new Error(`Button not found: ${text}`);
+    return button;
+}
+
 function selectByLabel(container, label) {
     const select = Array.from(container.querySelectorAll('select')).find((candidate) => candidate.getAttribute('aria-label') === label);
     if (!select) throw new Error(`Select not found: ${label}`);
@@ -137,6 +148,9 @@ beforeEach(() => {
     vi.clearAllMocks();
     clearAppDataCache('app-schedule-summary');
     document.body.innerHTML = '';
+    layoutState.isDesktopWeb = true;
+    layoutState.isNative = false;
+    layoutState.isMobileWeb = false;
     scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-new');
@@ -263,6 +277,36 @@ describe('React app desktop Schedule controls', () => {
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
         expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, auth.user, { hydrateDetails: false, expandStaffPlayers: false });
+    });
+
+    it('keeps mobile staff schedule tools collapsed until explicitly opened', async () => {
+        layoutState.isDesktopWeb = false;
+        layoutState.isMobileWeb = true;
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Falcons');
+        await waitForText(container, 'Manage schedule');
+
+        expect(container.textContent).not.toContain('Add external calendar');
+        expect(container.textContent).not.toContain('Draft schedule with AI');
+        expect(container.textContent).not.toContain('Import schedule CSV');
+        expect(container.querySelector('.schedule-list > a')).toBeTruthy();
+        expect(buttonContainingText(container, 'Manage schedule').getAttribute('aria-expanded')).toBe('false');
+
+        await act(async () => {
+            buttonContainingText(container, 'Manage schedule').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(buttonContainingText(container, 'Manage schedule').getAttribute('aria-expanded')).toBe('true');
+        await waitForText(container, 'Add external calendar');
+        expect(container.textContent).toContain('Draft schedule with AI');
+        expect(container.textContent).toContain('Import schedule CSV');
     });
 
     it('reuses the cached schedule when the route remounts', async () => {
