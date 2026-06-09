@@ -108,7 +108,7 @@ export function resolvePushNotificationRoute(input: unknown) {
         if (teamId) {
             return `/schedule/${encodeRouteParam(teamId)}/${encodeRouteParam(gameId)}`;
         }
-        return '/schedule';
+        return `/games/${encodeRouteParam(gameId)}`;
     }
     if (category === 'schedule') {
         if (teamId && eventId) {
