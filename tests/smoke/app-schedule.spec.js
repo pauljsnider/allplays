@@ -180,6 +180,7 @@ async function mockScheduleModules(page, options = {}) {
                         rsvpSummary: overrides.rsvpSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1 },
                         rideshareSummary: overrides.rideshareSummary || { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false },
                         assignments: overrides.assignments || getAssignments(),
+                        isTeamStaff: overrides.isTeamStaff === true,
                         availabilityLocked: false,
                         availabilityCutoffLabel: 'No cutoff',
                         availabilityPreferences: { cutoffMinutesBeforeStart: 0, noteVisibility: 'team' },
