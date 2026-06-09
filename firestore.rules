@@ -67,13 +67,17 @@ service cloud.firestore {
              data.usedAt == null;
     }
 
+    function canReadManagedTeamDocument(data) {
+      return isSignedIn() &&
+             (data.ownerId == request.auth.uid ||
+              (request.auth.token.email != null &&
+               request.auth.token.email.lower() in data.get('adminEmails', [])) ||
+              isGlobalAdmin());
+    }
+
     function canReadTeamDocument(data) {
       return (data.isPublic is bool && data.isPublic == true) ||
-             (isSignedIn() &&
-              (data.ownerId == request.auth.uid ||
-               (request.auth.token.email != null &&
-                request.auth.token.email.lower() in data.get('adminEmails', [])) ||
-               isGlobalAdmin()));
+             canReadManagedTeamDocument(data);
     }
 
     function isSafeDocumentId(documentId) {
@@ -363,6 +367,62 @@ service cloud.firestore {
     function canReadPublicTrackingItem(teamId, data) {
       return isActivePublicTrackingItem(data) &&
              (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId));
+    }
+
+    function isPublicGameReadTeam(teamData) {
+      return teamData.get('isPublic', false) == true &&
+             teamData.get('active', true) != false;
+    }
+
+    function isShareableGameDocument(data) {
+      let visibility = data.get('visibility', '');
+      return visibility != 'private' &&
+             data.get('isPrivate', false) != true &&
+             data.get('private', false) != true &&
+             (
+               visibility == 'public' ||
+               data.get('isPublic', false) == true ||
+               data.get('public', false) == true ||
+               data.get('shareable', false) == true ||
+               data.get('isShareable', false) == true ||
+               data.get('publicCalendar', false) == true
+             );
+    }
+
+    function canReadPublicGameDocument(teamData, data) {
+      return data.get('type', 'game') == 'game' &&
+             data.get('visibility', '') != 'private' &&
+             data.get('isPrivate', false) != true &&
+             data.get('private', false) != true &&
+             data.get('status', '') != 'deleted' &&
+             data.get('liveStatus', '') != 'deleted' &&
+             (isPublicGameReadTeam(teamData) || isShareableGameDocument(data));
+    }
+
+    function isAuthorizedOfficialForGame(data) {
+      return isSignedIn() && (
+        request.auth.uid in data.get('officiatingAuthorizedUserIds', []) ||
+        (request.auth.token.email != null &&
+         request.auth.token.email.lower() in data.get('officiatingAuthorizedEmails', []))
+      );
+    }
+
+    function canReadGameDocument(teamId, gameId, data) {
+      let teamPath = /databases/$(database)/documents/teams/$(teamId);
+      return isTeamOwnerOrAdmin(teamId) ||
+             isParentForTeam(teamId) ||
+             canScorekeepGame(teamId, gameId) ||
+             canVideographGame(teamId, gameId) ||
+             isAuthorizedOfficialForGame(data) ||
+             (exists(teamPath) && canReadPublicGameDocument(get(teamPath).data, data));
+    }
+
+    function canReadCollectionGroupGameDocument(teamPath, data) {
+      return exists(/databases/$(database)/documents/$(teamPath)) &&
+             (
+               canReadManagedTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data) ||
+               canReadPublicGameDocument(get(/databases/$(database)/documents/$(teamPath)).data, data)
+             );
     }
 
     function isTrackingItemPayloadValid(teamId, data) {
@@ -1287,7 +1347,7 @@ service cloud.firestore {
 
 	    // Collection group rule for games - allows cross-team queries (e.g., live games, recent games)
 	    match /{path=**}/games/{gameId} {
-      allow read: if true;  // Public read for collection group queries
+      allow read: if canReadCollectionGroupGameDocument(path, resource.data);
     }
 
     // Collection group rule for players - enables collectionGroup('players') queries.
@@ -1650,7 +1710,7 @@ service cloud.firestore {
 
       // Games subcollection
       match /games/{gameId} {
-        allow read: if true;  // Public game data
+        allow read: if canReadGameDocument(teamId, gameId, resource.data);
         allow create, delete: if isTeamOwnerOrAdmin(teamId);
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
