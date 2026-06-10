@@ -377,8 +377,10 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'public' }));
 
+    const saveFirstButton = screen.getByRole('button', { name: 'Save to publish before sharing' });
     expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Preview Public Page' })).toBeTruthy();
+    expect(saveFirstButton).toBeDisabled();
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
   });
 });

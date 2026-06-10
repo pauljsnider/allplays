@@ -603,7 +603,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     ].filter(Boolean);
     return items;
   }, [achievements, data.child.playerName, dominantHand, existing?.clips?.length, graduationYear, headline, highlightClipFile, hometown, name, position, selectedSeasonKeys.length]);
-  const hasPublicShare = existing?.privacy === 'public' && privacy === 'public' && !!shareUrl;
+  const persistedPrivacy = existing?.privacy === 'public' ? 'public' : 'private';
+  const hasUnsavedPrivacyChange = privacy !== persistedPrivacy;
+  const hasPublicShare = persistedPrivacy === 'public' && !!shareUrl;
 
   useEffect(() => {
     return () => {
@@ -875,10 +877,15 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
             {saving ? 'Saving' : privacy === 'public' ? 'Publish Athlete Profile' : 'Save Athlete Profile'}
           </button>
-          {hasPublicShare ? (
+          {hasPublicShare && !hasUnsavedPrivacyChange ? (
             <button type="button" className="secondary-button justify-center" onClick={shareProfile}>
               <Share2 className="h-4 w-4" aria-hidden="true" />
               Share Public Profile
+            </button>
+          ) : hasUnsavedPrivacyChange && privacy === 'public' ? (
+            <button type="button" className="secondary-button justify-center" disabled>
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              Save to publish before sharing
             </button>
           ) : (
             <a href={shareUrl || data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
