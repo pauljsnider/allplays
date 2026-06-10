@@ -349,7 +349,10 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('• 1 highlight clip')).toBeTruthy();
   });
 
-  it('keeps sharing gated until the public privacy change is saved', async () => {
+  it('keeps an existing private profile share URL gated until the public privacy change is saved', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+    const builderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';
+
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
       athleteProfile: {
         profile: {
@@ -360,8 +363,8 @@ describe('PlayerDetail athlete profile season selection', () => {
           clips: [],
           seasons: [{ seasonKey: 'team-current::player-current' }]
         },
-        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
-        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        shareUrl,
+        builderUrl,
         seasonOptions: buildDetailData().athleteProfile.seasonOptions
       }
     }));
@@ -375,9 +378,8 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(
-      'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1'
-    );
+    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(builderUrl);
+    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).not.toBe(shareUrl);
 
     fireEvent.click(screen.getByRole('button', { name: 'public' }));
 
@@ -386,6 +388,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect((saveFirstButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });
 });
