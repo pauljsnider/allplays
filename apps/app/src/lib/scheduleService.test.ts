@@ -170,7 +170,7 @@ describe('live score publishing', () => {
   beforeEach(() => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
-    vi.mocked(getGame).mockResolvedValue({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false } as any);
+    vi.mocked(getGame).mockResolvedValue({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q2', liveClockMs: 321000 } as any);
     vi.mocked(updateGame).mockResolvedValue(undefined as any);
   });
 
@@ -183,7 +183,10 @@ describe('live score publishing', () => {
       liveStartedAt: expect.any(Date)
     }));
     expect(broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+      eventId: expect.stringMatching(/^app-live-/),
       type: 'score_update',
+      period: 'Q2',
+      gameClockMs: 321000,
       homeScore: 12,
       awayScore: 8
     }));
@@ -194,7 +197,9 @@ describe('live score publishing', () => {
       previousHomeScore: 10,
       previousAwayScore: 8,
       createdBy: 'coach-1',
-      createdByName: 'Coach'
+      createdByName: 'Coach',
+      period: 'Q2',
+      gameClockMs: 321000
     });
   });
 
@@ -211,7 +216,7 @@ describe('player-attributed live scoring', () => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
     mocks.transactionGet
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8 }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8, period: 'Q3', liveClockMs: 245000 }) })
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4, reb: 1 } }) });
   });
 
@@ -228,7 +233,10 @@ describe('player-attributed live scoring', () => {
     });
 
     expect(event).toMatchObject({
+      eventId: expect.stringMatching(/^app-live-/),
       type: 'stat',
+      period: null,
+      gameClockMs: 0,
       playerId: 'player-1',
       playerName: 'Avery Smith',
       playerNumber: '12',
@@ -272,7 +280,10 @@ describe('player-attributed live scoring', () => {
       stats: { pts: { __increment: 2 } }
     }), { merge: true });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents') }), expect.objectContaining({
+      eventId: expect.stringMatching(/^app-live-/),
       type: 'stat',
+      period: 'Q3',
+      gameClockMs: 245000,
       playerId: 'player-1',
       statKey: 'pts',
       value: 2,
@@ -305,7 +316,10 @@ describe('player-attributed live scoring', () => {
       liveStartedAt: expect.any(Date)
     }), { merge: true });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents') }), expect.objectContaining({
+      eventId: expect.stringMatching(/^app-live-/),
       type: 'stat',
+      period: 'Q3',
+      gameClockMs: 245000,
       playerId: 'player-1',
       homeScore: 10,
       awayScore: 10,

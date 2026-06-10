@@ -2214,6 +2214,19 @@ function buildLiveScoreUpdateDescription(score: GameScoreSnapshot) {
   return `Score update: Home ${normalizeGameScoreValue(score.homeScore)}, Away ${normalizeGameScoreValue(score.awayScore)}.`;
 }
 
+function createAppLiveEventId() {
+  return `app-live-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getLiveEventPeriod(game: Record<string, any> | null | undefined) {
+  return compactString(game?.liveClockPeriod) || compactString(game?.period) || null;
+}
+
+function getLiveEventClockMs(game: Record<string, any> | null | undefined) {
+  const value = Number(game?.liveClockMs ?? game?.gameClockMs ?? 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
 function isFinalLiveTrackingStatus(value: unknown) {
   const normalized = String(value || '').trim().toLowerCase();
   return normalized === 'completed' || normalized === 'final';
@@ -2259,7 +2272,10 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
   const now = new Date();
   const liveGamePatch = buildLiveTrackingGamePatch(currentGame, user, now);
   const payload = {
+    eventId: createAppLiveEventId(),
     type: 'score_update',
+    period: getLiveEventPeriod(currentGame),
+    gameClockMs: getLiveEventClockMs(currentGame),
     description: buildLiveScoreUpdateDescription(score),
     homeScore: normalizeGameScoreValue(score.homeScore),
     awayScore: normalizeGameScoreValue(score.awayScore),
@@ -2295,7 +2311,9 @@ export function buildPlayerScoringLiveEvent({
   value,
   homeScore,
   awayScore,
-  user
+  user,
+  game = null,
+  eventId = createAppLiveEventId()
 }: {
   playerId: string;
   playerName: string;
@@ -2305,10 +2323,15 @@ export function buildPlayerScoringLiveEvent({
   homeScore: number;
   awayScore: number;
   user: AuthUser;
+  game?: Record<string, any> | null;
+  eventId?: string;
 }) {
   const identity = playerNumber ? `#${playerNumber} ${playerName}` : playerName;
   return {
+    eventId,
     type: 'stat',
+    period: getLiveEventPeriod(game),
+    gameClockMs: getLiveEventClockMs(game),
     playerId,
     playerName,
     playerNumber,
@@ -2349,7 +2372,6 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
     return await withTimeout(runTransaction(db, async (transaction: any) => {
       const gameRef = doc(db, gamePath);
       const statsRef = doc(db, statsPath);
-      const eventRef = doc(collection(db, liveEventsPath));
       const [gameSnap, statsSnap] = await Promise.all([
         transaction.get(gameRef),
         transaction.get(statsRef)
@@ -2362,7 +2384,7 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
       const playerPoints = normalizeGameScoreValue(statsData?.stats?.pts) + 2;
       const scoreUpdatedAt = new Date();
       const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, scoreUpdatedAt);
-      const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user });
+      const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user, game: gameData });
 
       transaction.set(gameRef, {
         homeScore,
@@ -2376,7 +2398,7 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
         playerNumber,
         stats: { pts: increment(2) }
       }, { merge: true });
-      transaction.set(eventRef, liveEvent);
+      transaction.set(doc(collection(db, liveEventsPath), String(liveEvent.eventId)), liveEvent);
 
       return {
         homeScore,
@@ -2405,7 +2427,7 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
     existingStats.pts = playerPoints;
     const scoreUpdatedAt = new Date();
     const liveGamePatch = buildLiveTrackingGamePatch(gameDoc, user, scoreUpdatedAt);
-    const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user });
+    const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user, game: gameDoc });
 
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
       homeScore,
