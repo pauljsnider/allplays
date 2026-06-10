@@ -54,7 +54,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
 import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
@@ -122,6 +122,48 @@ describe('React app team detail model', () => {
             inviteUrl: 'http://localhost:3000/app#/accept-invite?code=ABCD1234&type=parent',
             status: 'pending'
         });
+    });
+
+    it('treats accepted roster invites as linked when legacy parent scope is stored in parentPlayerKeys', () => {
+        const summaries = buildRosterParentInviteSummaries({
+            teamId: 'team-1',
+            players: [
+                { id: 'player-1', name: 'Pat Star' },
+                { id: 'player-2', name: 'Sam Wing' }
+            ],
+            pendingParentInvites: [
+                { playerId: 'player-1', code: 'PENDING1', type: 'parent_invite', used: false }
+            ],
+            confirmedTeamMembers: [
+                {
+                    id: 'parent-1',
+                    parentPlayerKeys: ['team-1::player-1']
+                },
+                {
+                    id: 'parent-2',
+                    parentOf: [{ teamId: 'team-1', playerId: 'player-2' }],
+                    parentTeamIds: ['team-1'],
+                    parentPlayerKeys: ['team-1::player-2']
+                }
+            ]
+        });
+
+        expect(summaries).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 1,
+                latestPendingCode: 'PENDING1'
+            },
+            {
+                playerId: 'player-2',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 0,
+                latestPendingCode: ''
+            }
+        ]);
     });
 
     it('wraps scorekeeper and roster active-state mutations with app validation', async () => {
