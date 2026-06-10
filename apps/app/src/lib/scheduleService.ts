@@ -94,6 +94,7 @@ import {
 } from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
+import { getCachedAppData } from './appDataCache';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -1931,6 +1932,23 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
 
   const timer = startUxTimer('parent game route resolve');
   const expandStaffPlayers = options.expandStaffPlayers === true;
+  const cachedSchedule = getCachedAppData<ParentScheduleLoadResult>(`app-schedule-summary:${user.uid}`);
+  const cachedMatch = (cachedSchedule?.events || []).find((event) => (
+    compactString(event?.id) === requestedGameId
+    && event?.type === 'game'
+    && compactString(event?.teamId)
+  ));
+
+  if (cachedMatch) {
+    const childId = compactString(cachedMatch.childId);
+    const resolution = {
+      teamId: compactString(cachedMatch.teamId),
+      eventId: requestedGameId,
+      childId: childId && !childId.startsWith(`staff-team-${compactString(cachedMatch.teamId)}`) ? childId : null
+    };
+    timer.end({ gameId: requestedGameId, expandStaffPlayers, cacheHit: true, matched: true });
+    return resolution;
+  }
 
   try {
     const profile = await loadProfileDocument(user.uid);
@@ -1957,10 +1975,10 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
     });
 
     const resolution = matches.find(Boolean) || null;
-    timer.end({ gameId: requestedGameId, expandStaffPlayers, childLinks: children.length, teams: byTeam.size, staffTeams: staffTeams.length, matched: Boolean(resolution) });
+    timer.end({ gameId: requestedGameId, expandStaffPlayers, cacheHit: false, childLinks: children.length, teams: byTeam.size, staffTeams: staffTeams.length, matched: Boolean(resolution) });
     return resolution;
   } catch (error: any) {
-    timer.end({ gameId: requestedGameId, expandStaffPlayers, error: error?.message || 'Unable to resolve game route.' });
+    timer.end({ gameId: requestedGameId, expandStaffPlayers, cacheHit: false, error: error?.message || 'Unable to resolve game route.' });
     throw error;
   }
 }
