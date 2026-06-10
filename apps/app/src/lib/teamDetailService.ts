@@ -896,10 +896,8 @@ export function buildRosterParentInviteSummaries({
   const acceptedCounts = new Map<string, number>();
 
   (Array.isArray(confirmedTeamMembers) ? confirmedTeamMembers : []).forEach((member) => {
-    (Array.isArray(member?.parentOf) ? member.parentOf : []).forEach((link: any) => {
-      if (cleanString(link?.teamId) !== normalizedTeamId) return;
-      const playerId = cleanString(link?.playerId);
-      if (!playerId) return;
+    const linkedPlayerIds = getAcceptedParentPlayerIds(member, normalizedTeamId);
+    linkedPlayerIds.forEach((playerId) => {
       acceptedCounts.set(playerId, (acceptedCounts.get(playerId) || 0) + 1);
     });
   });
@@ -931,6 +929,31 @@ export function buildRosterParentInviteSummaries({
         latestPendingCode: cleanString(pendingInvites[0]?.code).toUpperCase()
       };
     });
+}
+
+function getAcceptedParentPlayerIds(member: any, teamId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) return [] as string[];
+
+  const linkedPlayerIds = new Set<string>();
+  (Array.isArray(member?.parentOf) ? member.parentOf : []).forEach((link: any) => {
+    if (cleanString(link?.teamId) !== normalizedTeamId) return;
+    const playerId = cleanString(link?.playerId);
+    if (playerId) linkedPlayerIds.add(playerId);
+  });
+
+  const parentTeamIds = Array.isArray(member?.parentTeamIds) ? member.parentTeamIds.map((value: any) => cleanString(value)) : [];
+  const parentPlayerKeys = Array.isArray(member?.parentPlayerKeys) ? member.parentPlayerKeys : [];
+  if (parentTeamIds.includes(normalizedTeamId)) {
+    parentPlayerKeys.forEach((value: any) => {
+      const [keyTeamId, keyPlayerId] = cleanString(value).split('::');
+      if (keyTeamId === normalizedTeamId && keyPlayerId) {
+        linkedPlayerIds.add(keyPlayerId);
+      }
+    });
+  }
+
+  return [...linkedPlayerIds];
 }
 
 function buildTeamStaffPermissionsSummary({
