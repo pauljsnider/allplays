@@ -3,6 +3,16 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 const playerServiceMocks = vi.hoisted(() => ({
   loadParentPlayerDetail: vi.fn(),
   markParentPlayerIncentivePaid: vi.fn(),
@@ -438,6 +448,66 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+  });
+
+  it('keeps sharing disabled until the refreshed profile confirms the public publish state', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+    const refreshDeferred = createDeferred<ReturnType<typeof buildDetailData>>();
+
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        athleteProfile: {
+          profile: {
+            id: 'profile-1',
+            athlete: { name: 'Sam Player' },
+            bio: {},
+            privacy: 'private',
+            clips: [],
+            seasons: [{ seasonKey: 'team-current::player-current' }]
+          },
+          shareUrl,
+          builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+          seasonOptions: buildDetailData().athleteProfile.seasonOptions
+        }
+      }))
+      .mockImplementationOnce(() => refreshDeferred.promise);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
+        draft: expect.objectContaining({ privacy: 'public' })
+      }));
+    });
+
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Refresh player' }) as HTMLButtonElement).disabled).toBe(true);
+
+    refreshDeferred.resolve(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'public',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl,
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    expect(await screen.findByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
   });
 
   it('removes stale public share actions after a refresh clears the persisted share URL', async () => {

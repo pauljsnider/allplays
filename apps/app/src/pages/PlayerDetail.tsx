@@ -574,7 +574,6 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const [selectedSeasonKeys, setSelectedSeasonKeys] = useState<string[]>(initialSelectedSeasonKeys);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
-  const [shareUrl, setShareUrl] = useState(data.athleteProfile.shareUrl || '');
   const [headshotFile, setHeadshotFile] = useState<File | null>(null);
   const [headshotError, setHeadshotError] = useState('');
   const [resetHeadshot, setResetHeadshot] = useState(false);
@@ -629,7 +628,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     resetHeadshot ||
     !!highlightClipFile
   );
-  const persistedPublicProfileUrl = persistedPrivacy === 'public' && shareUrl ? shareUrl : '';
+  const persistedPublicProfileUrl = persistedPrivacy === 'public' && data.athleteProfile.shareUrl ? data.athleteProfile.shareUrl : '';
   const canPreviewPublishedPublicProfile = !!persistedPublicProfileUrl && !hasUnsavedPublishChanges;
   const canSharePublicProfile = canPreviewPublishedPublicProfile && !saving;
 
@@ -642,10 +641,6 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   useEffect(() => {
     setSelectedSeasonKeys(initialSelectedSeasonKeys);
   }, [initialSelectedSeasonKeys]);
-
-  useEffect(() => {
-    setShareUrl(data.athleteProfile.shareUrl || '');
-  }, [data.athleteProfile.shareUrl]);
 
   const toggleSeasonKey = (seasonKey: string) => {
     setSelectedSeasonKeys((current) => (
@@ -665,7 +660,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     setSaving(true);
     setStatus(null);
     try {
-      const result = await saveParentAthleteProfileDraft({
+      await saveParentAthleteProfileDraft({
         user: auth.user,
         teamId: data.child.teamId,
         playerId: data.child.playerId,
@@ -691,7 +686,6 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
       setHeadshotFile(null);
       setResetHeadshot(false);
       setHighlightClipFile(null);
-      setShareUrl(result.shareUrl);
       setStatus({ tone: 'success', message: 'Athlete profile saved.' });
       await onChanged();
     } catch (error: any) {
