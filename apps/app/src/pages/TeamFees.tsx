@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, DollarSign, Loader2, RefreshCw, Shield } from 'lucide-react';
 import {
+  createTeamFeeBatchForApp,
   loadTeamFeeManagementModel,
   recordOfflineTeamFeePayment,
   recordOfflineTeamFeeRefund,
@@ -47,6 +48,12 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   const [submittingId, setSubmittingId] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [createTitle, setCreateTitle] = useState('');
+  const [createAmount, setCreateAmount] = useState('');
+  const [createDueDate, setCreateDueDate] = useState(todayIsoDate());
+  const [createForWholeRoster, setCreateForWholeRoster] = useState(true);
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
+  const [createError, setCreateError] = useState('');
   const [formByRecipient, setFormByRecipient] = useState<Record<string, RecipientFormState>>({});
 
   const selectedBatchId = model?.selectedBatch?.id || '';
@@ -76,6 +83,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, teamId, batchId]);
 
   const recipients = model?.recipients || [];
+  const rosterPlayers = model?.rosterPlayers || [];
 
   const totals = useMemo(() => {
     return {
@@ -96,6 +104,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   );
 
   const isRecipientSubmitting = (recipientId: string) => submittingId === `payment:${recipientId}` || submittingId === `adjustment:${recipientId}` || submittingId === `refund:${recipientId}`;
+  const isCreateSubmitting = submittingId === 'create-batch';
 
   if (!teamId) return <Navigate to="/teams" replace />;
 
@@ -107,6 +116,41 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         ...patch
       }
     }));
+  };
+
+  const toggleRecipient = (recipientId: string, checked: boolean) => {
+    setSelectedRecipientIds((current) => checked
+      ? Array.from(new Set([...current, recipientId]))
+      : current.filter((id) => id !== recipientId));
+  };
+
+  const submitCreateBatch = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCreateError('');
+    setSuccess('');
+    setSubmittingId('create-batch');
+    try {
+      const batch = await createTeamFeeBatchForApp({
+        teamId,
+        title: createTitle,
+        amount: createAmount,
+        dueDate: createDueDate,
+        recipientIds: selectedRecipientIds,
+        applyToWholeRoster: createForWholeRoster,
+        user: auth.user
+      });
+      setCreateTitle('');
+      setCreateAmount('');
+      setCreateDueDate(todayIsoDate());
+      setCreateForWholeRoster(true);
+      setSelectedRecipientIds([]);
+      setSuccess(`Created fee batch ${createTitle.trim() || 'Team fee'}.`);
+      navigate(`/teams/${encodeURIComponent(teamId)}/fees/${encodeURIComponent(batch.id)}`);
+    } catch (submitError: any) {
+      setCreateError(submitError?.message || 'Unable to create fee batch.');
+    } finally {
+      setSubmittingId('');
+    }
   };
 
   const submitPayment = async (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => {
@@ -216,6 +260,54 @@ export function TeamFees({ auth }: { auth: AuthState }) {
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" /> Refresh
           </button>
         </div>
+
+        <form className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-4" onSubmit={submitCreateBatch}>
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-sm font-black uppercase tracking-[0.06em] text-gray-500">Create fee batch</h2>
+              <p className="mt-1 text-xs font-semibold text-gray-500">Post a one-time fee in cents-backed app storage so the existing parent fee view keeps working.</p>
+            </div>
+            <div className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-black uppercase text-amber-800">Offline/manual collection</div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Fee name
+              <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" value={createTitle} onChange={(event) => setCreateTitle(event.target.value)} disabled={isCreateSubmitting} placeholder="Tournament dues" />
+            </label>
+            <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Amount
+              <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={createAmount} onChange={(event) => setCreateAmount(event.target.value)} disabled={isCreateSubmitting} placeholder="25.00" />
+            </label>
+            <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Due date
+              <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" type="date" value={createDueDate} onChange={(event) => setCreateDueDate(event.target.value)} disabled={isCreateSubmitting} />
+            </label>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-3">
+            <label className="flex items-start gap-3 text-sm font-bold text-gray-900">
+              <input className="mt-1 h-4 w-4 rounded border-gray-300" type="checkbox" checked={createForWholeRoster} onChange={(event) => setCreateForWholeRoster(event.target.checked)} disabled={isCreateSubmitting || !rosterPlayers.length} />
+              <span>
+                Charge the whole roster
+                <span className="mt-1 block text-xs font-semibold text-gray-500">{rosterPlayers.length ? `${rosterPlayers.length} active player${rosterPlayers.length === 1 ? '' : 's'} will receive the fee.` : 'No active roster members are available yet.'}</span>
+              </span>
+            </label>
+
+            {!createForWholeRoster && rosterPlayers.length ? (
+              <div className="mt-3 grid gap-2 md:grid-cols-2" aria-label="Fee recipients">
+                {rosterPlayers.map((player) => (
+                  <label key={player.id} className="flex items-center gap-3 rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900">
+                    <input className="h-4 w-4 rounded border-gray-300" type="checkbox" checked={selectedRecipientIds.includes(player.id)} onChange={(event) => toggleRecipient(player.id, event.target.checked)} disabled={isCreateSubmitting} />
+                    <span>{player.name}{player.number ? ` · #${player.number}` : ''}</span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          {createError ? <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{createError}</div> : null}
+          <div className="mt-4 flex justify-end">
+            <button type="submit" className="primary-button" disabled={isCreateSubmitting || !rosterPlayers.length}>{isCreateSubmitting ? 'Creating...' : 'Create fee batch'}</button>
+          </div>
+        </form>
 
         {model.batches.length ? (
           <label className="mt-4 block text-xs font-black uppercase tracking-[0.06em] text-gray-500">
@@ -379,7 +471,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         <section className="app-card p-5 text-center">
           <DollarSign className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-950">No fee recipients</div>
-          <p className="mt-1 text-xs font-semibold text-gray-500">Create fee batches in the full website manager, then record offline payments, refunds, or adjustments here.</p>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Create a fee batch above, then record offline payments, refunds, or adjustments here.</p>
         </section>
       ) : null}
     </div>

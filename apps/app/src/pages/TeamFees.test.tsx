@@ -6,6 +6,7 @@ import { TeamFees } from './TeamFees';
 import type { AuthState } from '../lib/types';
 
 const teamFeesServiceMocks = vi.hoisted(() => ({
+  createTeamFeeBatchForApp: vi.fn(),
   loadTeamFeeManagementModel: vi.fn(),
   recordOfflineTeamFeePayment: vi.fn(),
   recordTeamFeeBalanceAdjustment: vi.fn(),
@@ -32,10 +33,11 @@ const auth: AuthState = {
   signOut: vi.fn()
 };
 
-function renderTeamFees() {
+function renderTeamFees(initialEntry = '/teams/team-1/fees/batch-1') {
   return render(
-    <MemoryRouter initialEntries={['/teams/team-1/fees/batch-1']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
+        <Route path="/teams/:teamId/fees" element={<TeamFees auth={auth} />} />
         <Route path="/teams/:teamId/fees/:batchId" element={<TeamFees auth={auth} />} />
         <Route path="/teams/:teamId" element={<div>Team detail</div>} />
       </Routes>
@@ -53,15 +55,22 @@ describe('TeamFees recipient queue', () => {
     teamFeesServiceMocks.recordOfflineTeamFeePayment.mockReset();
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockReset();
     teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockReset();
+    teamFeesServiceMocks.createTeamFeeBatchForApp.mockReset();
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockReset();
     teamFeesServiceMocks.recordOfflineTeamFeePayment.mockResolvedValue(undefined);
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockResolvedValue(undefined);
     teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockResolvedValue(undefined);
+    teamFeesServiceMocks.createTeamFeeBatchForApp.mockResolvedValue({ id: 'batch-2' });
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
       team: { id: 'team-1', name: 'Bears' },
       batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
       selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
       canManageFees: true,
+      rosterPlayers: [
+        { id: 'unpaid-1', name: 'Unpaid Player', number: '4' },
+        { id: 'partial-1', name: 'Partial Player', number: '8' },
+        { id: 'paid-1', name: 'Paid Player', number: '12' }
+      ],
       recipients: [
         {
           id: 'unpaid-1',
@@ -113,6 +122,37 @@ describe('TeamFees recipient queue', () => {
     expect(screen.getByDisplayValue('100.00')).toBeTruthy();
     expect(screen.getByDisplayValue('75.00')).toBeTruthy();
     expect(screen.getAllByText('Positive credits reduce what is owed. Negative charges increase it.')).toHaveLength(3);
+  });
+
+  it('creates a fee batch from the native form using selected roster recipients', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
+      team: { id: 'team-1', name: 'Bears' },
+      batches: [],
+      selectedBatch: null,
+      canManageFees: true,
+      rosterPlayers: [
+        { id: 'player-1', name: 'Pat Star', number: '12' },
+        { id: 'player-2', name: 'Chris Doe', number: '7' }
+      ],
+      recipients: []
+    });
+
+    renderTeamFees('/teams/team-1/fees');
+
+    fireEvent.change(await screen.findByPlaceholderText('Tournament dues'), { target: { value: 'Bus fee' } });
+    fireEvent.change(screen.getByPlaceholderText('25.00'), { target: { value: '15.00' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /Charge the whole roster/ }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Pat Star · #12' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create fee batch' }));
+
+    expect(await screen.findByText('Created fee batch Bus fee.')).toBeTruthy();
+    expect(teamFeesServiceMocks.createTeamFeeBatchForApp).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      title: 'Bus fee',
+      amount: '15.00',
+      applyToWholeRoster: false,
+      recipientIds: ['player-1']
+    }));
   });
 
   it('renders paid recipients in a secondary review area with adjustment-only controls', async () => {
