@@ -591,6 +591,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const [privacy, setPrivacy] = useState(existing?.privacy === 'public' ? 'public' : 'private');
   const [selectedSeasonKeys, setSelectedSeasonKeys] = useState<string[]>(initialSelectedSeasonKeys);
   const [saving, setSaving] = useState(false);
+  const [awaitingPersistedPublish, setAwaitingPersistedPublish] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [headshotFile, setHeadshotFile] = useState<File | null>(null);
   const [headshotError, setHeadshotError] = useState('');
@@ -678,6 +679,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     }
     setSaving(true);
     setStatus(null);
+    setAwaitingPersistedPublish(privacy === 'public');
     try {
       await saveParentAthleteProfileDraft({
         user: auth.user,
@@ -711,6 +713,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
       setStatus({ tone: 'error', message: error?.message || 'Unable to save athlete profile.' });
     } finally {
       setSaving(false);
+      setAwaitingPersistedPublish(false);
     }
   };
 
@@ -925,6 +928,11 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
               <Share2 className="h-4 w-4" aria-hidden="true" />
               Share Public Profile
             </button>
+          ) : awaitingPersistedPublish ? (
+            <button type="button" className="secondary-button justify-center" disabled>
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              Waiting for published profile...
+            </button>
           ) : hasUnsavedPublishChanges ? (
             <button type="button" className="secondary-button justify-center" disabled>
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
@@ -937,7 +945,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             </a>
           )}
         </div>
-        {privacy === 'public' && hasUnsavedPublishChanges ? (
+        {privacy === 'public' && awaitingPersistedPublish ? (
+          <p className="text-center text-xs font-semibold text-gray-500">Waiting for refresh to confirm the public share link.</p>
+        ) : privacy === 'public' && hasUnsavedPublishChanges ? (
           <p className="text-center text-xs font-semibold text-gray-500">Publish this profile before the public share link becomes available.</p>
         ) : null}
       </form>

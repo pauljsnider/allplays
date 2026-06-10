@@ -500,6 +500,8 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
 
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Waiting for published profile...' })).toBeTruthy();
+    expect(screen.getByText('Waiting for refresh to confirm the public share link.')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Refresh player' }) as HTMLButtonElement).disabled).toBe(true);
     expect(getPublicProfileCard().getAttribute('href')).toBe('#');
     expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('true');
