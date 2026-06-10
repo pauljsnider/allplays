@@ -260,6 +260,12 @@ async function mockSearchModules(page) {
                     return { status: 'sent', email: 'coach@example.com' };
                 }
 
+                export async function createRosterParentInviteForApp() {
+                    return { code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' };
+                }
+
+                export async function deactivateRosterPlayerForApp() {}
+
                 export async function grantScorekeeperAccessForApp() {
                     return { success: true };
                 }
@@ -288,6 +294,10 @@ async function mockSearchModules(page) {
 
                 export async function loadTeamStaffPermissions() {
                     return null;
+                }
+
+                export async function loadTeamRosterParentInvites() {
+                    return [];
                 }
 
                 export async function loadTeamDetailInsights() {
@@ -336,6 +346,8 @@ async function mockSearchModules(page) {
                         counts: { games: 0, practices: 0, completedGames: 0 }
                     };
                 }
+
+                export async function reactivateRosterPlayerForApp() {}
             `
         });
     });
