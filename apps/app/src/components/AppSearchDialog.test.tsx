@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSearchDialog } from './AppSearchDialog';
+import type { AppSearchTeam } from '../lib/searchService';
 import type { AuthState } from '../lib/types';
 
 const { navigateMock, preloadSearchRouteMock } = vi.hoisted(() => ({
@@ -209,7 +210,7 @@ describe('AppSearchDialog', () => {
 
   it('does not block the first player search on slow team hydration', async () => {
     const onClose = vi.fn();
-    let releaseHydration!: (teams: Array<{ id: string; name: string; sport?: string; zip?: string }>) => void;
+    let releaseHydration!: (teams: AppSearchTeam[] | PromiseLike<AppSearchTeam[]>) => void;
     loadAppSearchTeamsMock.mockImplementationOnce(() => new Promise((resolve) => {
       releaseHydration = resolve;
     }));
