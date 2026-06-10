@@ -787,7 +787,8 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
 
   const shareProfile = async () => {
     const { canSharePublicProfile: shareReady, persistedPublicProfileUrl: shareUrl } = latestPublicShareStateRef.current;
-    if (!shareReady || !shareUrl) return;
+    const shareBlockedByUnsavedPublish = privacy !== 'public' || persistedPrivacy !== 'public' || hasPendingPersistedPublicProfile;
+    if (shareBlockedByUnsavedPublish || !shareReady || !shareUrl) return;
     try {
       const result = await sharePublicUrl({
         title: `${name || data.child.playerName || 'Athlete'} profile`,

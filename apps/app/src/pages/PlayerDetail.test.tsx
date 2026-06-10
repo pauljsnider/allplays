@@ -529,6 +529,7 @@ describe('PlayerDetail athlete profile season selection', () => {
       expect(publicProfileCard.className).toContain('pointer-events-none');
     });
     expect(screen.getByText('Publish and save this profile to enable sharing.')).toBeTruthy();
+    expect(screen.queryByText('Public athlete profile shared.')).toBeNull();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });
 
