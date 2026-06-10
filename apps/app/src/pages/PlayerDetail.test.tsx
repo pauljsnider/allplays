@@ -447,6 +447,10 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'public' }));
 
+    const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
+    expect(publicProfileCard.getAttribute('href')).toBe('#');
+    expect(publicProfileCard.getAttribute('aria-disabled')).toBe('true');
+    expect(publicProfileCard.className).toContain('pointer-events-none');
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
