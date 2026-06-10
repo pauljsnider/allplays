@@ -677,6 +677,43 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
   });
 
+  it('keeps a public profile card disabled when the saved share URL is missing', async () => {
+    const builderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';
+
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'public',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl: '',
+        builderUrl,
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
+    expect(publicProfileCard.getAttribute('href')).toBe('#');
+    expect(publicProfileCard.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('Publish and save this profile to enable sharing.')).toBeTruthy();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(builderUrl);
+  });
+
   it('removes stale public share actions after a refresh clears the persisted share URL', async () => {
     const builderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';
 
