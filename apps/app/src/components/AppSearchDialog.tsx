@@ -52,6 +52,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     openedAtRef.current = Date.now();
     preloadedRoutesRef.current = new Set<string>();
     hydratedTeamsPromiseRef.current = null;
@@ -71,6 +72,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     const hydratedTeamsPromise = loadAppSearchTeams(auth.user)
       .then((loadedTeams) => mergeSearchTeams(knownTeams, loadedTeams))
       .then((loadedTeams) => {
+        if (cancelled) return knownTeams;
         baseTeamsRef.current = loadedTeams;
         setBaseTeams(loadedTeams);
         setTeams((currentTeams) => mergeSearchTeams(currentTeams, loadedTeams));
@@ -79,6 +81,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       .catch(() => knownTeams);
 
     hydratedTeamsPromiseRef.current = hydratedTeamsPromise;
+
+    return () => {
+      cancelled = true;
+    };
   }, [auth.user, open]);
 
   useEffect(() => {
@@ -102,7 +108,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
-      const runSearch = async (accessibleTeams: AppSearchTeam[], options: { teamsLoadingDone?: boolean; playersLoadingDone?: boolean } = {}) => {
+      let hydratedResultsApplied = false;
+
+      const runSearch = async (
+        accessibleTeams: AppSearchTeam[],
+        options: { phase: 'initial' | 'hydrated'; teamsLoadingDone?: boolean; playersLoadingDone?: boolean }
+      ) => {
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
         const [teamsResult, playersResult] = await Promise.allSettled([
           searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
@@ -110,6 +121,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
 
         if (requestId !== searchRequestId.current) return;
+        if (options.phase === 'initial' && hydratedResultsApplied) return;
+        if (options.phase === 'hydrated') hydratedResultsApplied = true;
 
         if (teamsResult.status === 'fulfilled') {
           setTeams(teamsResult.value);
@@ -135,12 +148,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         }
       };
 
-      void runSearch(initialAccessibleTeams, { teamsLoadingDone: false, playersLoadingDone: true });
+      void runSearch(initialAccessibleTeams, { phase: 'initial', teamsLoadingDone: false, playersLoadingDone: true });
 
       void (hydratedTeamsPromiseRef.current || loadAppSearchTeams(auth.user)
         .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams))
         .catch(() => initialAccessibleTeams))
-        .then((hydratedTeams) => runSearch(hydratedTeams, { teamsLoadingDone: true, playersLoadingDone: false }))
+        .then((hydratedTeams) => runSearch(hydratedTeams, { phase: 'hydrated', teamsLoadingDone: true, playersLoadingDone: true }))
         .catch(() => {
           if (requestId === searchRequestId.current) {
             setTeamsLoading(false);
