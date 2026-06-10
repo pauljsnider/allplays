@@ -374,9 +374,9 @@ describe('PlayerDetail athlete profile season selection', () => {
     await screen.findByText('Sam Player');
     fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
 
-    const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
-    expect(publicProfileCard.getAttribute('href')).toBe('#');
-    expect(publicProfileCard.className).toContain('pointer-events-none');
+    const getPublicProfileCard = () => screen.getByRole('link', { name: /Public athlete profile/i });
+    expect(getPublicProfileCard().getAttribute('href')).toBe('#');
+    expect(getPublicProfileCard().className).toContain('pointer-events-none');
     expect(screen.getByText('Save a public profile to enable sharing.')).toBeTruthy();
 
     fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
@@ -396,6 +396,11 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }));
+    expect(getPublicProfileCard().getAttribute('href')).toBe('#');
+    expect(getPublicProfileCard().className).toContain('pointer-events-none');
+    expect(screen.getByText('Save a public profile to enable sharing.')).toBeTruthy();
   });
 
   it('requires saving updated public profile content before sharing the public link', async () => {
