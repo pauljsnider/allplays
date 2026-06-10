@@ -1,4 +1,4 @@
-import { getTeam, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from '../../../../js/db.js';
+import { createTeamFeeBatch, getPlayers, getTeam, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from '../../../../js/db.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 import type { AuthUser } from './types';
 
@@ -30,7 +30,24 @@ export type TeamFeeManagementModel = {
   batches: TeamFeeBatchSummary[];
   selectedBatch: TeamFeeBatchSummary | null;
   recipients: TeamFeeRecipientSummary[];
+  rosterPlayers: TeamFeeRosterPlayer[];
   canManageFees: boolean;
+};
+
+export type TeamFeeRosterPlayer = {
+  id: string;
+  name: string;
+  number: string;
+};
+
+export type CreateTeamFeeBatchInput = {
+  teamId: string;
+  title: string;
+  amount: string | number;
+  dueDate: string;
+  recipientIds?: string[];
+  applyToWholeRoster?: boolean;
+  user: AuthUser | null;
 };
 
 export type ManualTeamFeePaymentInput = {
@@ -64,6 +81,8 @@ const REFUND_METHOD_LABELS: Record<string, string> = {
   cash: 'Cash',
   check: 'Check'
 };
+
+const OFFLINE_TEAM_FEE_INSTRUCTIONS = 'Collect payment outside ALL PLAYS. No online payment is processed.';
 
 export function toFeeCents(value: string | number | null | undefined) {
   const normalized = String(value ?? '').replace(/[$,]/g, '').trim();
@@ -244,23 +263,89 @@ export async function loadTeamFeeManagementModel(teamId: string, batchId: string
       batches: [],
       selectedBatch: null,
       recipients: [],
+      rosterPlayers: [],
       canManageFees: false
     };
   }
 
-  const batches = ((await Promise.resolve(listTeamFeeBatches(teamId))) as any[]).map(toBatchSummary);
+  const [rawBatches, rawPlayers] = await Promise.all([
+    Promise.resolve(listTeamFeeBatches(teamId)),
+    Promise.resolve(getPlayers(teamId))
+  ]);
+  const batches = ((rawBatches || []) as any[]).map(toBatchSummary);
   const selectedBatch = batches.find((batch) => batch.id === batchId) || batches[0] || null;
   const recipients = selectedBatch
     ? ((await Promise.resolve(listTeamFeeRecipients(teamId, selectedBatch.id))) as any[]).map(toRecipientSummary)
     : [];
+  const rosterPlayers = ((rawPlayers || []) as any[])
+    .filter((player) => player?.active !== false)
+    .map(toRosterPlayer)
+    .filter((player) => player.id)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return {
     team: { id: team.id, name: team.name || 'Team' },
     batches,
     selectedBatch,
     recipients,
+    rosterPlayers,
     canManageFees: true
   };
+}
+
+export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate, recipientIds = [], applyToWholeRoster = false, user }: CreateTeamFeeBatchInput) {
+  if (!teamId) throw new Error('Missing team context.');
+  const team = await Promise.resolve(getTeam(teamId));
+  if (!hasFullTeamAccess(user, team)) throw new Error('You do not have access to create team fees.');
+
+  const cleanTitle = normalizeString(title);
+  if (!cleanTitle) throw new Error('Enter a fee name.');
+  const amountCents = toFeeCents(amount);
+  if (amountCents === null || amountCents <= 0) throw new Error('Enter an amount greater than $0.');
+  if (!normalizeString(dueDate)) throw new Error('Enter a due date.');
+
+  const activePlayers = ((await Promise.resolve(getPlayers(teamId))) as any[])
+    .filter((player) => player?.active !== false)
+    .map(toRosterPlayer)
+    .filter((player) => player.id);
+  const selectedPlayers = applyToWholeRoster
+    ? activePlayers
+    : activePlayers.filter((player) => new Set((recipientIds || []).map(normalizeString).filter(Boolean)).has(player.id));
+
+  if (!selectedPlayers.length) throw new Error('Select at least one roster recipient.');
+  if (!applyToWholeRoster && selectedPlayers.length !== new Set((recipientIds || []).map(normalizeString).filter(Boolean)).size) {
+    throw new Error('One or more selected recipients are no longer on the active roster.');
+  }
+
+  const draft = {
+    title: cleanTitle,
+    amountCents,
+    dueDate: normalizeString(dueDate),
+    notes: '',
+    recipientIds: selectedPlayers.map((player) => player.id),
+    lineItems: [],
+    installments: [],
+    collectionMode: 'offline_manual',
+    offlinePaymentInstructions: OFFLINE_TEAM_FEE_INSTRUCTIONS
+  };
+  const recipients = selectedPlayers.map((player) => ({
+    teamId,
+    playerId: player.id,
+    playerKey: `${teamId}::${player.id}`,
+    playerName: player.name,
+    playerNumber: player.number,
+    feeTitle: cleanTitle,
+    amountCents,
+    dueDate: draft.dueDate,
+    notes: '',
+    status: 'unpaid',
+    collectionMode: 'offline_manual',
+    offlinePaymentInstructions: OFFLINE_TEAM_FEE_INSTRUCTIONS,
+    lineItems: [],
+    installments: []
+  }));
+
+  return createTeamFeeBatch(teamId, draft, recipients, user || {});
 }
 
 export async function recordOfflineTeamFeePayment({ teamId, batchId, recipient, amount, date, note, user }: {
@@ -365,5 +450,13 @@ function toRecipientSummary(recipient: any): TeamFeeRecipientSummary {
     amountPaidCents,
     remainingBalanceCents: Number.isFinite(explicitBalance) ? Math.max(0, explicitBalance) : Math.max(0, amountDueCents - amountPaidCents),
     paymentLedger: Array.isArray(recipient?.paymentLedger) ? recipient.paymentLedger : []
+  };
+}
+
+function toRosterPlayer(player: any): TeamFeeRosterPlayer {
+  return {
+    id: String(player?.id || ''),
+    name: normalizeString(player?.name || player?.displayName) || 'Roster member',
+    number: normalizeString(player?.number)
   };
 }

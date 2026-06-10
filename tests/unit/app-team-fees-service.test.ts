@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
+    createTeamFeeBatch: vi.fn(),
+    getPlayers: vi.fn(),
     getTeam: vi.fn(),
     listTeamFeeBatches: vi.fn(),
     listTeamFeeRecipients: vi.fn(),
@@ -13,6 +15,7 @@ vi.mock('../../js/team-access.js', () => ({
 }));
 
 import {
+    createTeamFeeBatchForApp,
     buildBalanceAdjustmentUpdate,
     buildOfflineTeamFeeRefundUpdate,
     buildManualPaymentUpdate,
@@ -236,16 +239,91 @@ describe('React app team fee offline payment service', () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.listTeamFeeBatches.mockResolvedValue([{ id: 'batch-1', title: 'Dues', amountCents: 10000 }]);
         dbMocks.listTeamFeeRecipients.mockResolvedValue([{ id: 'recipient-1', playerName: 'Pat Star', amountDueCents: 10000, amountPaidCents: 2500 }]);
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star', number: '12', active: true },
+            { id: 'player-2', name: 'Inactive Player', active: false }
+        ]);
 
         const model = await loadTeamFeeManagementModel('team-1', undefined, { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] });
 
         expect(model.canManageFees).toBe(true);
         expect(model.selectedBatch?.id).toBe('batch-1');
+        expect(model.rosterPlayers).toEqual([{ id: 'player-1', name: 'Pat Star', number: '12' }]);
         expect(model.recipients[0]).toMatchObject({
             id: 'recipient-1',
             playerName: 'Pat Star',
             remainingBalanceCents: 7500
         });
+    });
+
+    it('creates a simple fee batch using the legacy document shape', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star', number: '12', active: true },
+            { id: 'player-2', name: 'Chris Doe', number: '7', active: true },
+            { id: 'player-3', name: 'Inactive Player', active: false }
+        ]);
+        dbMocks.createTeamFeeBatch.mockResolvedValue({ id: 'batch-9' });
+
+        const result = await createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Tournament dues',
+            amount: '25.00',
+            dueDate: '2026-06-15',
+            applyToWholeRoster: false,
+            recipientIds: ['player-1', 'player-2'],
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        });
+
+        expect(result).toEqual({ id: 'batch-9' });
+        expect(dbMocks.createTeamFeeBatch).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            title: 'Tournament dues',
+            amountCents: 2500,
+            dueDate: '2026-06-15',
+            collectionMode: 'offline_manual',
+            offlinePaymentInstructions: 'Collect payment outside ALL PLAYS. No online payment is processed.'
+        }), [
+            expect.objectContaining({
+                playerId: 'player-1',
+                playerKey: 'team-1::player-1',
+                playerName: 'Pat Star',
+                amountCents: 2500,
+                dueDate: '2026-06-15',
+                status: 'unpaid'
+            }),
+            expect.objectContaining({
+                playerId: 'player-2',
+                playerKey: 'team-1::player-2',
+                playerName: 'Chris Doe',
+                amountCents: 2500,
+                dueDate: '2026-06-15',
+                status: 'unpaid'
+            })
+        ], expect.objectContaining({ uid: 'coach-1' }));
+    });
+
+    it('creates a whole-roster fee batch from active players only', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star', active: true },
+            { id: 'player-2', name: 'Chris Doe', active: true },
+            { id: 'player-3', name: 'Inactive Player', active: false }
+        ]);
+        dbMocks.createTeamFeeBatch.mockResolvedValue({ id: 'batch-10' });
+
+        await createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Bus fee',
+            amount: '10.00',
+            dueDate: '2026-07-01',
+            applyToWholeRoster: true,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        });
+
+        expect(dbMocks.createTeamFeeBatch).toHaveBeenCalledWith('team-1', expect.any(Object), [
+            expect.objectContaining({ playerId: 'player-1' }),
+            expect.objectContaining({ playerId: 'player-2' })
+        ], expect.any(Object));
     });
 
     it('writes manualPayment and paymentLedger updates to the existing recipient document', async () => {
