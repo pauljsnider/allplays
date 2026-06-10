@@ -434,7 +434,8 @@ describe('React app team detail model', () => {
             games: [
                 { id: 'game-1', opponent: 'Falcons', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-basketball' },
                 { id: 'game-2', opponent: 'Tigers', date: new Date('2100-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' },
-                { id: 'game-3', opponent: 'Orphans', date: new Date('2100-06-03T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-missing' }
+                { id: 'game-3', opponent: 'Orphans', date: new Date('2100-06-03T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-missing' },
+                { id: 'stale-game', opponent: 'Past Tigers', date: new Date('2020-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' }
             ],
             configs: [
                 {
@@ -485,6 +486,8 @@ describe('React app team detail model', () => {
                 ]
             })
         ]);
+        expect(model.statTrackerConfigs.find((config) => config.id === 'cfg-legacy').assignedUpcomingGames)
+            .toEqual([expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })]);
         expect(model.upcomingEvents.find((event) => event.id === 'game-1')).toMatchObject({
             statTrackerConfigId: 'cfg-basketball',
             statTrackerConfigLabel: 'Varsity Basketball',

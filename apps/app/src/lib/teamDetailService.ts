@@ -1134,7 +1134,8 @@ function dedupeStrings(values: string[]) {
 
 function isUpcomingAssignedGame(game: any) {
   if (!game || game?.type === 'practice') return false;
-  return !isHistoricalGameStatus(game);
+  if (isHistoricalGameStatus(game)) return false;
+  return isInUpcomingWindow(game?.date);
 }
 
 function isHistoricalGameStatus(game: any) {
@@ -1144,7 +1145,6 @@ function isHistoricalGameStatus(game: any) {
 }
 
 function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTrackerConfig> = new Map()) {
-  const now = new Date();
   const events = (Array.isArray(games) ? games : [])
     .map((game) => {
       const date = toDate(game?.date);
@@ -1181,12 +1181,16 @@ function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTra
 
   return {
     upcoming: events
-      .filter((event) => !event.isCancelled && event.status.toLowerCase() !== 'completed' && event.date.getTime() >= now.getTime() - 3 * 60 * 60 * 1000)
+      .filter((event) => !event.isCancelled && event.status.toLowerCase() !== 'completed' && isInUpcomingWindow(event.date))
       .sort((a, b) => a.date.getTime() - b.date.getTime()),
     recent: events
-      .filter((event) => event.status.toLowerCase() === 'completed' || (event.homeScore !== null && event.awayScore !== null && event.date.getTime() < now.getTime()))
+      .filter((event) => event.status.toLowerCase() === 'completed' || (event.homeScore !== null && event.awayScore !== null && event.date.getTime() < Date.now()))
       .sort((a, b) => b.date.getTime() - a.date.getTime())
   };
+}
+
+function isInUpcomingWindow(value: any) {
+  return toDate(value).getTime() >= Date.now() - 3 * 60 * 60 * 1000;
 }
 
 function buildStandings(team: Record<string, any>, games: any[]) {
