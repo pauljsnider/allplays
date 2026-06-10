@@ -3944,13 +3944,15 @@ export async function redeemParentInvite(userId, code, authEmail = null) {
         playerId: codeData.playerId,
         generatedBy: codeData.generatedBy
     });
+    let team = null;
+    let player = null;
     try {
         // 3. Get Team & Player details for caching
         console.log('[redeemParentInvite] fetching team & player', {
             teamId: codeData.teamId,
             playerId: codeData.playerId
         });
-        const [team, player] = await Promise.all([
+        [team, player] = await Promise.all([
             getTeam(codeData.teamId),
             getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
         ]);

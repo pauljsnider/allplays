@@ -261,6 +261,17 @@ describe('player profile private doc writes', () => {
         expect(householdInviteSource).toContain('await setDoc(privateProfileRef, {');
     });
 
+    it('keeps resolved parent invite team and player in scope for the success return', () => {
+        const source = readDbSource();
+        const parentInviteSource = extractFunction(source, 'export async function redeemParentInvite(');
+
+        expect(parentInviteSource).toContain('let team = null;');
+        expect(parentInviteSource).toContain('let player = null;');
+        expect(parentInviteSource).toContain('[team, player] = await Promise.all([');
+        expect(parentInviteSource).toContain("teamName: team?.name || null");
+        expect(parentInviteSource).toContain("playerName: player?.name || null");
+    });
+
     it('hydrates RSVP roster players with private-profile parent contacts when public docs are redacted', async () => {
         const { deps, mergePlayerPrivateProfileParents } = buildPrivateParentMergeHelpers();
         deps.getPlayerPrivateProfile.mockImplementation(async (_teamId, playerId) => {

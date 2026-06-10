@@ -47,6 +47,19 @@ describe('admin invite acceptance', () => {
         ).rejects.toThrow('Team not found');
     });
 
+    it('throws when atomic persistence returns no result', async () => {
+        await expect(
+            redeemAdminInviteAcceptance({
+                userId: 'user-1',
+                userEmail: 'admin@example.com',
+                codeId: 'code-1',
+                getTeam: vi.fn().mockResolvedValue({ id: 'team-1', name: 'Sharks' }),
+                getUserProfile: vi.fn().mockResolvedValue(null),
+                redeemAdminInviteAtomicPersistence: vi.fn().mockResolvedValue(null)
+            })
+        ).rejects.toThrow('Admin invite redemption returned no result');
+    });
+
     it('fails closed when codeId is absent', async () => {
         await expect(
             redeemAdminInviteAcceptance({

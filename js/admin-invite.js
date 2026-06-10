@@ -27,7 +27,11 @@ export async function redeemAdminInviteAcceptance({
         codeId
     });
 
-    const teamId = redeemResult?.teamId || null;
+    if (!redeemResult) {
+        throw new Error('Admin invite redemption returned no result');
+    }
+
+    const teamId = redeemResult.teamId || null;
     if (!teamId) {
         throw new Error('Missing teamId');
     }
