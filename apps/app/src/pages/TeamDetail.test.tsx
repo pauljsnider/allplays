@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamDetail } from './TeamDetail';
@@ -8,6 +8,7 @@ import type { AuthState } from '../lib/types';
 const teamDetailServiceMocks = vi.hoisted(() => ({
   buildPublicTeamGamesIcsUrl: vi.fn(() => 'https://calendar.example.test/team.ics'),
   canExposePublicFanFeed: vi.fn(() => true),
+  deactivateRosterPlayerForApp: vi.fn(),
   grantScorekeeperAccessForApp: vi.fn(),
   grantVideographerAccessForApp: vi.fn(),
   inviteTeamAdminForApp: vi.fn(),
@@ -15,6 +16,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   loadTeamDetailInsights: vi.fn(),
   loadTeamDetailSponsors: vi.fn(),
   loadTeamStaffPermissions: vi.fn(),
+  reactivateRosterPlayerForApp: vi.fn(),
   revokeScorekeeperAccessForApp: vi.fn(),
   revokeVideographerAccessForApp: vi.fn(),
   saveTeamScheduleNotificationsForApp: vi.fn()
@@ -83,10 +85,13 @@ const model = {
     }
   },
   players: [
-    { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true }
+    { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true, active: true }
+  ],
+  inactivePlayers: [
+    { id: 'player-2', name: 'Sam Bench', number: '12', photoUrl: null, position: 'Wing', isLinked: false, active: false }
   ],
   linkedPlayers: [
-    { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true }
+    { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true, active: true }
   ],
   upcomingEvents: [],
   recentResults: [],
@@ -113,6 +118,8 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
     teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(null);
     teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
+    teamDetailServiceMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
+    teamDetailServiceMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.grantScorekeeperAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeScorekeeperAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.grantVideographerAccessForApp.mockResolvedValue({ success: true });
@@ -148,5 +155,49 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets team staff deactivate and reactivate players from the roster tab', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce(managedModel)
+      .mockResolvedValueOnce({
+        ...managedModel,
+        players: [],
+        inactivePlayers: [
+          managedModel.inactivePlayers[0],
+          { ...managedModel.players[0], active: false }
+        ]
+      })
+      .mockResolvedValueOnce(managedModel);
+    vi.spyOn(window, 'confirm')
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Deactivate' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.deactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-1'));
+    expect(await screen.findByText('Pat Star deactivated.')).toBeTruthy();
+    expect(await screen.findByText('Inactive roster')).toBeTruthy();
+
+    const reactivateButtons = await screen.findAllByRole('button', { name: 'Reactivate' });
+    fireEvent.click(reactivateButtons[0]);
+
+    await waitFor(() => expect(teamDetailServiceMocks.reactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-2'));
+    expect(await screen.findByText('Sam Bench reactivated.')).toBeTruthy();
   });
 });

@@ -15,7 +15,9 @@ import {
   inviteAdmin,
   addTeamAdminEmail,
   revokeScorekeeperAccess,
-  revokeVideographerAccess
+  revokeVideographerAccess,
+  deactivatePlayer,
+  reactivatePlayer
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
@@ -40,6 +42,7 @@ export type TeamDetailPlayer = {
   photoUrl: string | null;
   position: string;
   isLinked: boolean;
+  active: boolean;
 };
 
 export type TeamScorekeeperGrantTarget = {
@@ -155,6 +158,7 @@ export type TeamDetailModel = {
     scheduleNotifications: TeamScheduleNotificationSettings;
   };
   players: TeamDetailPlayer[];
+  inactivePlayers: TeamDetailPlayer[];
   linkedPlayers: TeamDetailPlayer[];
   upcomingEvents: TeamDetailEvent[];
   recentResults: TeamDetailEvent[];
@@ -469,6 +473,24 @@ export async function grantScorekeeperAccessForApp(teamId: string, memberUserId:
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
+export async function deactivateRosterPlayerForApp(teamId: string, playerId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedPlayerId = cleanString(playerId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedPlayerId) throw new Error('Player ID is required.');
+  await deactivatePlayer(normalizedTeamId, normalizedPlayerId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
+export async function reactivateRosterPlayerForApp(teamId: string, playerId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedPlayerId = cleanString(playerId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedPlayerId) throw new Error('Player ID is required.');
+  await reactivatePlayer(normalizedTeamId, normalizedPlayerId);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
 export async function revokeScorekeeperAccessForApp(teamId: string, memberUserId: string) {
   const normalizedTeamId = cleanString(teamId);
   const normalizedUserId = cleanString(memberUserId);
@@ -691,6 +713,7 @@ export function buildTeamDetailModel({
   includeStaffPermissions?: boolean;
 }): TeamDetailModel {
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
+  const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true });
   const normalizedEvents = normalizeEvents(games);
   const seasonLabels = listSeasonLabels(games);
   const currentYearLabel = String(new Date().getFullYear());
@@ -725,6 +748,7 @@ export function buildTeamDetailModel({
       scheduleNotifications: normalizeTeamScheduleNotifications(team?.scheduleNotifications)
     },
     players: normalizedPlayers,
+    inactivePlayers: normalizedInactivePlayers,
     linkedPlayers: normalizedPlayers.filter((player) => player.isLinked),
     upcomingEvents: normalizedEvents.upcoming,
     recentResults: normalizedEvents.recent,
@@ -785,20 +809,27 @@ function normalizeTeamScheduleNotifications(settings: any): TeamScheduleNotifica
   };
 }
 
-function normalizePlayers(players: any[], linkedPlayerIds: string[]): TeamDetailPlayer[] {
+function normalizePlayers(players: any[], linkedPlayerIds: string[], options: { inactiveOnly?: boolean } = {}): TeamDetailPlayer[] {
   const linked = new Set(linkedPlayerIds);
+  const inactiveOnly = options.inactiveOnly === true;
   return (Array.isArray(players) ? players : [])
-    .filter((player) => player?.active !== false)
-    .map((player) => ({
-      id: cleanString(player?.id || player?.playerId),
-      name: cleanString(player?.name || player?.playerName) || 'Player',
-      number: cleanString(player?.number),
-      photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
-      position: cleanString(player?.position || player?.primaryPosition),
-      isLinked: linked.has(cleanString(player?.id || player?.playerId))
-    }))
+    .filter((player) => inactiveOnly ? player?.active === false : player?.active !== false)
+    .map((player) => normalizePlayer(player, linked))
     .filter((player) => player.id)
     .sort((a, b) => sortByNumberThenName(a, b));
+}
+
+function normalizePlayer(player: any, linked: Set<string>): TeamDetailPlayer {
+  const id = cleanString(player?.id || player?.playerId);
+  return {
+    id,
+    name: cleanString(player?.name || player?.playerName) || 'Player',
+    number: cleanString(player?.number),
+    photoUrl: getFirstUrl(player?.photoUrl, player?.imageUrl, player?.headshotUrl),
+    position: cleanString(player?.position || player?.primaryPosition),
+    isLinked: linked.has(id),
+    active: player?.active !== false
+  };
 }
 
 function buildPermissionGrantTargets(team: Record<string, any>, players: any[], permissionKey: string, confirmedTeamMembers: any[] = [], teamId = ''): TeamScorekeeperGrantTarget[] {

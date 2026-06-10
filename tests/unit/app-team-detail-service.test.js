@@ -31,7 +31,9 @@ vi.mock('../../js/db.js', () => ({
     inviteAdmin: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     revokeScorekeeperAccess: vi.fn(),
-    revokeVideographerAccess: vi.fn()
+    revokeVideographerAccess: vi.fn(),
+    deactivatePlayer: vi.fn(),
+    reactivatePlayer: vi.fn()
 }));
 
 vi.mock('../../js/firebase.js', () => ({
@@ -51,9 +53,9 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, updateEvent, updateGame, updateTeam } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 beforeEach(() => {
@@ -102,30 +104,42 @@ describe('React app team detail model', () => {
         expect(inviteAdmin).not.toHaveBeenCalled();
     });
 
-    it('wraps scorekeeper grant mutations with app validation', async () => {
+    it('wraps scorekeeper and roster active-state mutations with app validation', async () => {
         grantScorekeeperAccess.mockResolvedValue(undefined);
         revokeScorekeeperAccess.mockResolvedValue(undefined);
         grantVideographerAccess.mockResolvedValue(undefined);
         revokeVideographerAccess.mockResolvedValue(undefined);
+        deactivatePlayer.mockResolvedValue(undefined);
+        reactivatePlayer.mockResolvedValue(undefined);
 
         await grantScorekeeperAccessForApp(' team-1 ', ' member-1 ');
         await revokeScorekeeperAccessForApp('team-1', 'member-1');
         await grantVideographerAccessForApp(' team-1 ', ' member-2 ');
         await revokeVideographerAccessForApp('team-1', 'member-2');
+        await deactivateRosterPlayerForApp(' team-1 ', ' player-1 ');
+        await reactivateRosterPlayerForApp('team-1', 'player-1');
 
         expect(grantScorekeeperAccess).toHaveBeenCalledWith('team-1', 'member-1');
         expect(revokeScorekeeperAccess).toHaveBeenCalledWith('team-1', 'member-1');
         expect(grantVideographerAccess).toHaveBeenCalledWith('team-1', 'member-2');
         expect(revokeVideographerAccess).toHaveBeenCalledWith('team-1', 'member-2');
+        expect(deactivatePlayer).toHaveBeenCalledWith('team-1', 'player-1');
+        expect(reactivatePlayer).toHaveBeenCalledWith('team-1', 'player-1');
 
         grantScorekeeperAccess.mockClear();
         grantVideographerAccess.mockClear();
+        deactivatePlayer.mockClear();
+        reactivatePlayer.mockClear();
         await expect(grantScorekeeperAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
         await expect(grantScorekeeperAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
         await expect(grantVideographerAccessForApp('', 'member-1')).rejects.toThrow('Team ID is required.');
         await expect(grantVideographerAccessForApp('team-1', '')).rejects.toThrow('Team member user ID is required.');
+        await expect(deactivateRosterPlayerForApp('', 'player-1')).rejects.toThrow('Team ID is required.');
+        await expect(reactivateRosterPlayerForApp('team-1', '')).rejects.toThrow('Player ID is required.');
         expect(grantScorekeeperAccess).not.toHaveBeenCalled();
         expect(grantVideographerAccess).not.toHaveBeenCalled();
+        expect(deactivatePlayer).not.toHaveBeenCalled();
+        expect(reactivatePlayer).not.toHaveBeenCalled();
     });
 
     it('invalidates cached team detail snapshots after scorekeeper mutations so refreshed permissions reflect the write', async () => {
@@ -256,7 +270,8 @@ describe('React app team detail model', () => {
             },
             players: [
                 { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png' },
-                { id: 'player-2', name: 'Sam Wing', number: '12' }
+                { id: 'player-2', name: 'Sam Wing', number: '12' },
+                { id: 'player-3', name: 'Taylor Bench', number: '22', active: false }
             ],
             games: [
                 { id: 'game-1', opponent: 'Falcons', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled', homeScore: null, awayScore: null, shareable: true },
@@ -292,6 +307,10 @@ describe('React app team detail model', () => {
         });
         expect(model.team.registrationProvider.map((row) => row.value)).toContain('Sports Connect');
         expect(model.players.find((player) => player.id === 'player-1').photoUrl).toBe('https://img.example.test/player.png');
+        expect(model.players.map((player) => player.id)).toEqual(['player-1', 'player-2']);
+        expect(model.inactivePlayers).toEqual([
+            expect.objectContaining({ id: 'player-3', active: false, name: 'Taylor Bench' })
+        ]);
         expect(model.linkedPlayers.map((player) => player.id)).toEqual(['player-1']);
         expect(model.record).toMatchObject({ wins: 1, losses: 0, ties: 0, gamesPlayed: 1 });
         expect(model.upcomingEvents.map((event) => event.id)).toEqual(['game-1', 'practice-1']);

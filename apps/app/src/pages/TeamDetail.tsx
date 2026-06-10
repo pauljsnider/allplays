@@ -29,7 +29,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -280,7 +280,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
-      {activeTab === 'roster' ? <RosterTab model={model} /> : null}
+      {activeTab === 'roster' ? <RosterTab model={model} onRefresh={refreshTeamDetail} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
     </div>
@@ -381,7 +381,31 @@ function ScheduleTab({ model, auth }: { model: TeamDetailModel; auth: AuthState 
   );
 }
 
-function RosterTab({ model }: { model: TeamDetailModel }) {
+function RosterTab({ model, onRefresh }: { model: TeamDetailModel; onRefresh: () => Promise<void> }) {
+  const [pendingPlayerId, setPendingPlayerId] = useState('');
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  async function togglePlayerActiveState(player: TeamDetailPlayer) {
+    const action = player.active ? 'deactivate' : 'reactivate';
+    const confirmed = window.confirm(`${action === 'deactivate' ? 'Deactivate' : 'Reactivate'} ${player.name}?`);
+    if (!confirmed) return;
+    setPendingPlayerId(player.id);
+    setStatus(null);
+    try {
+      if (player.active) {
+        await deactivateRosterPlayerForApp(model.team.id, player.id);
+      } else {
+        await reactivateRosterPlayerForApp(model.team.id, player.id);
+      }
+      await onRefresh();
+      setStatus({ success: true, message: `${player.name} ${player.active ? 'deactivated' : 'reactivated'}.` });
+    } catch (saveError: any) {
+      setStatus({ success: false, message: saveError?.message || `Unable to ${action} ${player.name}.` });
+    } finally {
+      setPendingPlayerId('');
+    }
+  }
+
   return (
     <section className="app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -389,13 +413,32 @@ function RosterTab({ model }: { model: TeamDetailModel }) {
           <div className="text-sm font-black text-gray-950">Roster</div>
           <div className="mt-0.5 text-xs font-semibold text-gray-500">Player photos, numbers, linked-player shortcuts, and profile drill-in.</div>
         </div>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.players.length} players</span>
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.players.length} active</span>
       </div>
+      {status ? (
+        <div className={`mt-3 rounded-xl border p-3 text-xs font-semibold ${status.success ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+          {status.message}
+        </div>
+      ) : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} player={player} />) : (
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
+        {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} />) : (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No active players right now.</div>
         )}
       </div>
+      {model.canManageTeam && model.inactivePlayers.length ? (
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-black text-gray-950">Inactive roster</div>
+              <div className="mt-0.5 text-xs font-semibold text-gray-500">Inactive players stay attached to history and can be restored anytime.</div>
+            </div>
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.inactivePlayers.length} inactive</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {model.inactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} />)}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1350,19 +1393,44 @@ function buildTeamReminderScheduleEvent(event: TeamDetailEvent, model: TeamDetai
   };
 }
 
-function PlayerRow({ teamId, player }: { teamId: string; player: TeamDetailPlayer }) {
+function PlayerRow({
+  teamId,
+  player,
+  canManageTeam = false,
+  pending = false,
+  onToggleActive
+}: {
+  teamId: string;
+  player: TeamDetailPlayer;
+  canManageTeam?: boolean;
+  pending?: boolean;
+  onToggleActive?: (player: TeamDetailPlayer) => Promise<void>;
+}) {
   return (
-    <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
-      <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-black text-gray-950">{player.number ? `#${player.number} ` : ''}{player.name}</span>
-          {player.isLinked ? <span className="rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">Yours</span> : null}
+    <div className="flex min-w-0 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+      <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 flex-1 items-center gap-3 transition hover:text-primary-700">
+        <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-black text-gray-950">{player.number ? `#${player.number} ` : ''}{player.name}</span>
+            {player.isLinked ? <span className="rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">Yours</span> : null}
+            {!player.active ? <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-black text-gray-700">Inactive</span> : null}
+          </span>
+          <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{player.position || 'Player profile'}</span>
         </span>
-        <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{player.position || 'Player profile'}</span>
-      </span>
-      <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
-    </Link>
+        <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
+      </Link>
+      {canManageTeam && onToggleActive ? (
+        <button
+          type="button"
+          className={`inline-flex min-h-10 flex-none items-center justify-center rounded-lg px-3 text-xs font-black ${player.active ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'} disabled:cursor-not-allowed disabled:opacity-60`}
+          onClick={() => void onToggleActive(player)}
+          disabled={pending}
+        >
+          {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : player.active ? 'Deactivate' : 'Reactivate'}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
