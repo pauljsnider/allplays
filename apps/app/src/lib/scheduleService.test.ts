@@ -87,11 +87,11 @@ vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 vi.mock('./appDataCache', () => ({ getCachedAppData: vi.fn(), loadCachedAppData: vi.fn(), clearAppDataCache: vi.fn() }));
 
-import { updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeams, submitRsvpForPlayer, updatePracticeAttendance } from '../../../../js/db.js';
+import { broadcastLiveEvent, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeams, submitRsvpForPlayer, updatePracticeAttendance } from '../../../../js/db.js';
 import { fetchAndParseCalendar } from '../../../../js/utils.js';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, recordPlayerScoringStat, resolveParentGameRoute, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride } from './scheduleService';
+import { buildPlayerScoringLiveEvent, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerScoringStat, resolveParentGameRoute, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride } from './scheduleService';
 
 describe('parent game route resolution', () => {
   beforeEach(() => {
@@ -164,12 +164,59 @@ describe('parent game route resolution', () => {
   });
 });
 
+describe('live score publishing', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] };
+
+  beforeEach(() => {
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.clearAllMocks();
+    vi.mocked(getGame).mockResolvedValue({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q2', liveClockMs: 321000 } as any);
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+  });
+
+  it('marks the game live before broadcasting app score updates', async () => {
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user, { homeScore: 10, awayScore: 8 });
+
+    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+      liveStatus: 'live',
+      liveHasData: true,
+      liveStartedAt: expect.any(Date)
+    }));
+    expect(broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+      eventId: expect.stringMatching(/^app-live-/),
+      type: 'score_update',
+      period: 'Q2',
+      gameClockMs: 321000,
+      homeScore: 12,
+      awayScore: 8
+    }));
+    expect(result).toMatchObject({
+      type: 'score_update',
+      homeScore: 12,
+      awayScore: 8,
+      previousHomeScore: 10,
+      previousAwayScore: 8,
+      createdBy: 'coach-1',
+      createdByName: 'Coach',
+      period: 'Q2',
+      gameClockMs: 321000
+    });
+  });
+
+  it('rejects score broadcasts after the game is final', async () => {
+    vi.mocked(getGame).mockResolvedValue({ id: 'game-1', status: 'completed', liveStatus: 'completed' } as any);
+
+    await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('game is final');
+    expect(updateGame).not.toHaveBeenCalled();
+  });
+});
+
 describe('player-attributed live scoring', () => {
   beforeEach(() => {
-    (globalThis as any).window = globalThis as any;
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
     mocks.transactionGet
-      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8 }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8, period: 'Q3', liveClockMs: 245000 }) })
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4, reb: 1 } }) });
   });
 
@@ -186,7 +233,10 @@ describe('player-attributed live scoring', () => {
     });
 
     expect(event).toMatchObject({
+      eventId: expect.stringMatching(/^app-live-/),
       type: 'stat',
+      period: null,
+      gameClockMs: 0,
       playerId: 'player-1',
       playerName: 'Avery Smith',
       playerNumber: '12',
@@ -217,14 +267,23 @@ describe('player-attributed live scoring', () => {
       value: 2,
       playerPoints: 6
     });
-    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({ homeScore: 12, awayScore: 8 }), { merge: true });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({
+      homeScore: 12,
+      awayScore: 8,
+      liveStatus: 'live',
+      liveHasData: true,
+      liveStartedAt: expect.any(Date)
+    }), { merge: true });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }), expect.objectContaining({
       playerName: 'Avery Smith',
       playerNumber: '12',
       stats: { pts: { __increment: 2 } }
     }), { merge: true });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents') }), expect.objectContaining({
+      eventId: expect.stringMatching(/^app-live-/),
       type: 'stat',
+      period: 'Q3',
+      gameClockMs: 245000,
       playerId: 'player-1',
       statKey: 'pts',
       value: 2,
@@ -249,9 +308,18 @@ describe('player-attributed live scoring', () => {
       value: 2,
       playerPoints: 6
     });
-    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({ homeScore: 10, awayScore: 10 }), { merge: true });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({
+      homeScore: 10,
+      awayScore: 10,
+      liveStatus: 'live',
+      liveHasData: true,
+      liveStartedAt: expect.any(Date)
+    }), { merge: true });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents') }), expect.objectContaining({
+      eventId: expect.stringMatching(/^app-live-/),
       type: 'stat',
+      period: 'Q3',
+      gameClockMs: 245000,
       playerId: 'player-1',
       homeScore: 10,
       awayScore: 10,
@@ -259,6 +327,20 @@ describe('player-attributed live scoring', () => {
       value: 2,
       isOpponent: false
     }));
+  });
+
+  it('rejects player scoring after the game is final', async () => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8, liveStatus: 'completed' }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4 } }) });
+
+    await expect(recordPlayerScoringStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts',
+      value: 2,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] })).rejects.toThrow('game is final');
   });
 
   it('rejects missing required identity inputs', async () => {
