@@ -450,6 +450,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Publish and save this profile before the public share link becomes available.')).toBeTruthy();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });
 
