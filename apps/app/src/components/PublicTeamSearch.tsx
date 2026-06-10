@@ -1,35 +1,33 @@
-import { useState, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
 import { TeamAvatar, TeamLauncherChip, Status } from '../pages/Teams';
-import { openPublicUrl } from '../lib/publicActions';
 import { getPublicTeamsPage } from '../lib/publicTeamsService';
 import { resolveZip } from '../lib/utils';
 
-const PUBLIC_TEAM_WEBSITE_BASE_URL = 'https://allplays.ai/team.html';
-
-export function PublicTeamSearch() {
+export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = false }: { autoBrowseOnMount?: boolean; showBackLink?: boolean }) {
   const navigate = useNavigate();
-  const [locationQuery, setLocationQuery] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [publicTeams, setPublicTeams] = useState<ParentHomeTeam[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
-  const [activeSearchLocation, setActiveSearchLocation] = useState<string | null>(null);
+  const [activeSearchQuery, setActiveSearchQuery] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [nextCursor, setNextCursor] = useState<unknown | null>(null);
+  const autoBrowseTriggeredRef = useRef(false);
 
-  const fetchPublicTeams = useCallback(async ({ location, cursor = null, append = false }: { location?: string; cursor?: unknown | null; append?: boolean } = {}) => {
+  const fetchPublicTeams = useCallback(async ({ searchText, cursor = null, append = false }: { searchText?: string; cursor?: unknown | null; append?: boolean } = {}) => {
     setLoading(true);
     if (!append) {
       setError('');
     }
     setHasSearched(true);
     try {
-      const result = await getPublicTeamsPage({ locationFilter: location, cursor });
+      const result = await getPublicTeamsPage({ searchText, cursor });
       setPublicTeams((current) => append ? [...current, ...result.teams] : result.teams);
       setNextCursor(result.nextCursor);
-      setActiveSearchLocation(location || null);
+      setActiveSearchQuery(searchText || null);
     } catch (err: any) {
       if (!append) {
         setError(err?.message || 'Failed to fetch public teams.');
@@ -42,7 +40,7 @@ export function PublicTeamSearch() {
   }, []);
 
   const handleSearch = () => {
-    void fetchPublicTeams({ location: locationQuery.trim() || undefined });
+    void fetchPublicTeams({ searchText: searchQuery.trim() || undefined });
   };
 
   const handleBrowseAll = () => {
@@ -50,29 +48,34 @@ export function PublicTeamSearch() {
   };
 
   const handleLoadMore = () => {
-    if (!nextCursor || activeSearchLocation) return;
+    if (!nextCursor || activeSearchQuery) return;
     void fetchPublicTeams({ cursor: nextCursor, append: true });
   };
 
   const handleClear = () => {
-    setLocationQuery('');
+    setSearchQuery('');
     setPublicTeams([]);
     setError('');
-    setActiveSearchLocation(null);
+    setActiveSearchQuery(null);
     setHasSearched(false);
     setNextCursor(null);
   };
 
-  const handleOpenTeam = useCallback(async (team: ParentHomeTeam) => {
-    if (team.appAccess) {
-      navigate(`/teams/${encodeURIComponent(team.teamId)}`);
+  const handleOpenTeam = useCallback((team: ParentHomeTeam) => {
+    if (!team.appAccess && !team.webAccess) {
       return;
     }
 
-    if (team.webAccess) {
-      await openPublicUrl(`${PUBLIC_TEAM_WEBSITE_BASE_URL}#teamId=${encodeURIComponent(team.teamId)}`);
-    }
+    navigate(`/teams/${encodeURIComponent(team.teamId)}`);
   }, [navigate]);
+
+  useEffect(() => {
+    if (!autoBrowseOnMount || autoBrowseTriggeredRef.current) {
+      return;
+    }
+    autoBrowseTriggeredRef.current = true;
+    void fetchPublicTeams();
+  }, [autoBrowseOnMount, fetchPublicTeams]);
 
   const groupedTeams = useMemo(() => {
     const groups: Record<string, ParentHomeTeam[]> = {};
@@ -90,18 +93,26 @@ export function PublicTeamSearch() {
   return (
     <section className="app-card p-3 sm:p-4 space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xl font-black text-gray-950 sm:text-2xl">Discover Public Teams</h2>
+        <div>
+          <h2 className="text-xl font-black text-gray-950 sm:text-2xl">Discover Public Teams</h2>
+          <p className="mt-1 text-xs font-semibold text-gray-500 sm:text-sm">Browse public teams and open their team page in read-only mode.</p>
+        </div>
+        {showBackLink ? (
+          <Link to="/teams" className="ghost-button !min-h-10 !px-3 text-sm">
+            Back to Teams
+          </Link>
+        ) : null}
       </div>
 
       <div className="flex gap-2">
-        <label className="sr-only" htmlFor="public-team-location-search">Search by city, state, or zip</label>
+        <label className="sr-only" htmlFor="public-team-location-search">Search by team, city, state, or zip</label>
         <input
           id="public-team-location-search"
           type="text"
           className="auth-input flex-1 !min-h-10 !px-3 !py-2 text-sm"
-          placeholder="Search by city, state, or zip"
-          value={locationQuery}
-          onChange={(e) => setLocationQuery(e.target.value)}
+          placeholder="Search by team, city, state, or zip"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               handleSearch();
@@ -121,7 +132,7 @@ export function PublicTeamSearch() {
           )}
           <span className="hidden sm:inline">Search</span>
         </button>
-        {locationQuery || activeSearchLocation ? (
+        {searchQuery || activeSearchQuery ? (
           <button
             type="button"
             className="ghost-button !min-h-10 !px-3 text-sm"
@@ -138,7 +149,7 @@ export function PublicTeamSearch() {
         <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-6 text-center">
           <Users className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-900">Search for public teams near you</div>
-          <div className="mt-1 text-xs font-semibold text-gray-500">Enter a city, state, or zip code to find nearby teams.</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">Search by team name, city, state, or zip code, or browse all public teams.</div>
           <button
             type="button"
             className="ghost-button mt-4 !min-h-10 !px-3 text-sm"
@@ -152,7 +163,7 @@ export function PublicTeamSearch() {
         <div className="app-card p-6 text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-900">Loading public teams</div>
-          <div className="mt-1 text-xs font-semibold text-gray-500">{activeSearchLocation ? `Searching for teams near "${activeSearchLocation}".` : 'Browsing teams across all regions.'}</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">{activeSearchQuery ? `Searching public teams for "${activeSearchQuery}".` : 'Browsing teams across all regions.'}</div>
         </div>
       ) : error ? (
         <Status tone="error" message={error} />
@@ -168,7 +179,7 @@ export function PublicTeamSearch() {
               </div>
             </div>
           ))}
-          {nextCursor && !activeSearchLocation ? (
+          {nextCursor && !activeSearchQuery ? (
             <div className="flex justify-center">
               <button
                 type="button"
@@ -186,7 +197,7 @@ export function PublicTeamSearch() {
         </div>
       ) : (
         <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500 text-center">
-          No public teams found {activeSearchLocation ? `for "${activeSearchLocation}"` : ''}. Try a different location or browse all public teams.
+          No public teams found {activeSearchQuery ? `for "${activeSearchQuery}"` : ''}. Try a different search or browse all public teams.
         </div>
       )}
     </section>
@@ -195,7 +206,7 @@ export function PublicTeamSearch() {
 
 function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam: (team: ParentHomeTeam) => void | Promise<void> }) {
   const isActionable = Boolean(team.appAccess || team.webAccess);
-  const actionLabel = team.appAccess ? 'View team' : 'View team on website';
+  const actionLabel = 'View team';
 
   return (
     <article className={`min-w-0 rounded-2xl border bg-white p-3 shadow-sm ${isActionable ? 'border-gray-200' : 'border-gray-200/80 bg-gray-50'}`}>

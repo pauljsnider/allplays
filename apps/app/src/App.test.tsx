@@ -51,6 +51,10 @@ vi.mock('./pages/Home', () => ({
   },
 }));
 
+vi.mock('./pages/PublicTeamsBrowse', () => ({
+  PublicTeamsBrowse: () => <div>Browse public teams page</div>,
+}));
+
 describe('App protected route loading', () => {
   it('keeps the app shell visible while a protected route is still loading', async () => {
     render(
@@ -59,8 +63,19 @@ describe('App protected route loading', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('navigation', { name: 'Primary navigation' })).toBeInTheDocument();
-    expect(screen.getByText('Loading page')).toBeInTheDocument();
-    expect(screen.queryByText('Loading ALL PLAYS')).not.toBeInTheDocument();
+    expect(await screen.findByRole('navigation', { name: 'Primary navigation' })).toBeTruthy();
+    expect(screen.getByText('Loading page')).toBeTruthy();
+    expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
+  });
+
+  it('routes the dedicated public-team discovery screen ahead of dynamic team ids', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/browse']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Browse public teams page')).toBeTruthy();
+    expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
   });
 });

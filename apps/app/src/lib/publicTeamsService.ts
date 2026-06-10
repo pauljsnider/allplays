@@ -31,9 +31,10 @@ function mapPublicTeam(team: { id: string; name: string; sport?: string | null; 
     };
 }
 
-export async function getPublicTeamsPage({ locationFilter, cursor = null, pageSize = 24 }: { locationFilter?: string; cursor?: unknown | null; pageSize?: number } = {}): Promise<PublicTeamsPage> {
+export async function getPublicTeamsPage({ searchText, locationFilter, cursor = null, pageSize = 24 }: { searchText?: string; locationFilter?: string; cursor?: unknown | null; pageSize?: number } = {}): Promise<PublicTeamsPage> {
+    const normalizedSearchText = String(searchText ?? locationFilter ?? '').trim();
     const result = await discoverPublicTeams({
-        searchText: locationFilter || '',
+        searchText: normalizedSearchText,
         cursor,
         pageSize
     });
@@ -45,6 +46,6 @@ export async function getPublicTeamsPage({ locationFilter, cursor = null, pageSi
 }
 
 export async function getPublicTeamsByLocation(locationFilter?: string): Promise<ParentHomeTeam[]> {
-    const result = await getPublicTeamsPage({ locationFilter });
+    const result = await getPublicTeamsPage({ searchText: locationFilter });
     return result.teams;
 }

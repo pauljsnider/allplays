@@ -25,7 +25,6 @@ import {
   WalletCards
 } from 'lucide-react';
 import { RoleBadge } from '../components/Badges';
-import { PublicTeamSearch } from '../components/PublicTeamSearch';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
 import { loadParentHomeSummary, loadParentTeamsSummary } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
@@ -152,7 +151,17 @@ export function Teams({ auth }: { auth: AuthState }) {
 
       {!loading && hasManagementTeam && !isDesktopWeb ? <WebsiteToolsNotice /> : null}
 
-      <PublicTeamSearch />
+      <section className="app-card p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-black text-gray-950">Discover public teams</div>
+            <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Browse and search public teams in the app, then open their team page in read-only mode.</div>
+          </div>
+          <Link to="/teams/browse" className="primary-button !min-h-10 !px-3 text-sm">
+            Browse teams
+          </Link>
+        </div>
+      </section>
     </div>
   );
 }
@@ -564,18 +573,7 @@ function EmptyTeams() {
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <Link to="/accept-invite" className="secondary-button justify-center !min-h-9 text-xs">Accept invite</Link>
             <Link to="/home" className="ghost-button justify-center !min-h-9 text-xs">Back to Home</Link>
-            <a
-              href="https://allplays.ai/teams.html"
-              className="ghost-button justify-center !min-h-9 text-xs"
-              target="_blank"
-              rel="noreferrer"
-              onClick={(event) => {
-                event.preventDefault();
-                void openPublicUrl('https://allplays.ai/teams.html');
-              }}
-            >
-              Browse teams
-            </a>
+            <Link to="/teams/browse" className="ghost-button justify-center !min-h-9 text-xs">Browse teams</Link>
           </div>
         </div>
       </div>

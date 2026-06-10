@@ -20,6 +20,7 @@ const RegistrationDetail = lazy(() => import('./pages/RegistrationDetail').then(
 const PlayerDetail = lazy(() => import('./pages/PlayerDetail').then((module) => ({ default: module.PlayerDetail })));
 const PrivateAiChat = lazy(() => import('./pages/PrivateAiChat').then((module) => ({ default: module.PrivateAiChat })));
 const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
+const PublicTeamsBrowse = lazy(() => import('./pages/PublicTeamsBrowse').then((module) => ({ default: module.PublicTeamsBrowse })));
 const ResetPassword = lazy(() => import('./pages/ResetPassword').then((module) => ({ default: module.ResetPassword })));
 const Schedule = lazy(() => import('./pages/Schedule').then((module) => ({ default: module.Schedule })));
 const ScheduleEventDetail = lazy(() => import('./pages/ScheduleEventDetail').then((module) => ({ default: module.ScheduleEventDetail })));
@@ -98,6 +99,7 @@ export default function App() {
         <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
         <Route path="/teams" element={shouldDefaultReloadToHome ? <Navigate to="/home" replace /> : <Protected auth={auth}><Teams auth={auth} /></Protected>} />
+        <Route path="/teams/browse" element={<Protected auth={auth}><PublicTeamsBrowse /></Protected>} />
         <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/drills" element={<Protected auth={auth}><TeamDrills auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/fees" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />

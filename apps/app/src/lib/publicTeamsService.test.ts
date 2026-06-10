@@ -8,7 +8,7 @@ vi.mock('../../../../js/db.js', () => dbMocks);
 
 import { getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsService';
 
-describe('getPublicTeamsByLocation', () => {
+describe('publicTeamsService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
@@ -88,5 +88,16 @@ describe('getPublicTeamsByLocation', () => {
             })
         ]);
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'Kansas City', cursor: null, pageSize: 24 });
+    });
+
+    it('trims generic search text before hitting the bounded discovery helper', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [],
+            nextCursor: null
+        });
+
+        await getPublicTeamsPage({ searchText: '  Atlanta United  ' });
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'Atlanta United', cursor: null, pageSize: 24 });
     });
 });
