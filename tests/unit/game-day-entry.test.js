@@ -77,4 +77,13 @@ describe('game day entry page wiring', () => {
         expect(source).toContain('scoreUpdatedBy: state.user?.uid || null');
         expect(source).toContain('scoreStreamSessionId: state.game?.broadcastSession?.id || null');
     });
+
+    it('registers baseball and softball diamond formations before rendering saved game plans', () => {
+        const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+        expect(source).toContain("'baseball-diamond': {");
+        expect(source).toContain("'softball-diamond': {");
+        expect(source).toContain("{ id: 'pitcher', name: 'Pitcher (P)' }");
+        expect(source).toContain("'pitcher':     { left: 50, top: 56 }");
+    });
 });
