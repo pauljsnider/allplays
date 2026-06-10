@@ -495,7 +495,7 @@ function RosterTab({
       {model.canManageTeam && rosterInviteError ? <div className="mt-3 text-xs font-black text-rose-700">{rosterInviteError}</div> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
-          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No active players right now.</div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
       {model.canManageTeam && model.inactivePlayers.length ? (
