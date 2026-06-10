@@ -643,8 +643,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     !!highlightClipFile
   );
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, data.athleteProfile.shareUrl);
-  const canPreviewPublishedPublicProfile = !!persistedPublicProfileUrl && !hasUnsavedPublishChanges;
-  const canSharePublicProfile = canPreviewPublishedPublicProfile && !saving;
+  const hasPersistedPublicProfile = persistedPrivacy === 'public' && !!persistedPublicProfileUrl;
+  const canPreviewPublishedPublicProfile = hasPersistedPublicProfile && !hasUnsavedPublishChanges;
+  const canSharePublicProfile = hasPersistedPublicProfile && !hasUnsavedPublishChanges && !saving;
 
   useEffect(() => {
     return () => {

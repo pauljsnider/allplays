@@ -516,6 +516,61 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(await screen.findByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
   });
 
+  it('keeps sharing disabled when a publish refresh still returns a private profile', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+    const refreshDeferred = createDeferred<ReturnType<typeof buildDetailData>>();
+
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        athleteProfile: {
+          profile: {
+            id: 'profile-1',
+            athlete: { name: 'Sam Player' },
+            bio: {},
+            privacy: 'private',
+            clips: [],
+            seasons: [{ seasonKey: 'team-current::player-current' }]
+          },
+          shareUrl,
+          builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+          seasonOptions: buildDetailData().athleteProfile.seasonOptions
+        }
+      }))
+      .mockImplementationOnce(() => refreshDeferred.promise);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
+
+    refreshDeferred.resolve(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'private',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl,
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    });
+    expect((screen.getByRole('button', { name: 'Save to publish before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+  });
+
   it('removes stale public share actions after a refresh clears the persisted share URL', async () => {
     const builderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';
 
