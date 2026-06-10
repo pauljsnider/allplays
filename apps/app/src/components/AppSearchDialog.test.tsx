@@ -28,10 +28,10 @@ vi.mock('../lib/searchRoutePreload', () => ({
 }));
 
 const { getKnownAppSearchTeamsMock, loadAppSearchTeamsMock, searchAppTeamsMock, searchAppPlayersMock } = vi.hoisted(() => ({
-  getKnownAppSearchTeamsMock: vi.fn((): Array<{ id: string; name: string; sport?: string; zip?: string }> => []),
-  loadAppSearchTeamsMock: vi.fn(async () => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
-  searchAppTeamsMock: vi.fn(async (_query: string, teams: Array<{ id: string; name: string; sport?: string; zip?: string }>) => teams),
-  searchAppPlayersMock: vi.fn(async () => []),
+  getKnownAppSearchTeamsMock: vi.fn((): AppSearchTeam[] => []),
+  loadAppSearchTeamsMock: vi.fn(async (): Promise<AppSearchTeam[]> => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
+  searchAppTeamsMock: vi.fn<(query: string, teams: AppSearchTeam[], user: AuthState['user']) => Promise<AppSearchTeam[]>>(),
+  searchAppPlayersMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => Promise<never[]>>(),
 }));
 
 vi.mock('../lib/searchService', () => ({
@@ -263,8 +263,8 @@ describe('AppSearchDialog', () => {
 
   it('does not let the initial cold search overwrite hydrated search results', async () => {
     const onClose = vi.fn();
-    const initialTeams = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
-    const hydratedTeams = [
+    const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+    const hydratedTeams: AppSearchTeam[] = [
       ...initialTeams,
       { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }
     ];
@@ -282,7 +282,7 @@ describe('AppSearchDialog', () => {
       }
       resolveInitialTeams = resolve;
     }));
-    searchAppPlayersMock.mockImplementation((_query, teamsById) => new Promise((resolve) => {
+    searchAppPlayersMock.mockImplementation((_query: string, teamsById: Map<string, AppSearchTeam>) => new Promise<never[]>((resolve) => {
       if (teamsById.has('team-2')) {
         resolveHydratedPlayers = resolve;
         return;
