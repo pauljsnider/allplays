@@ -55,7 +55,7 @@ describe('validateAccessCode', () => {
         vi.clearAllMocks();
     });
 
-    it('delegates invite validation to the backend callable and returns the minimal payload', async () => {
+    it('delegates invite validation to the backend callable and returns only generic invite state', async () => {
         const { validateAccessCode } = await import('../../js/db.js');
         callableMock.mockResolvedValue({
             data: {
@@ -64,12 +64,6 @@ describe('validateAccessCode', () => {
                 type: 'parent_invite',
                 data: {
                     code: 'DUP123',
-                    email: 'parent@example.com',
-                    teamId: 'team-1',
-                    teamName: 'Bears',
-                    playerId: 'player-1',
-                    playerName: 'Pat Player',
-                    playerNum: '4',
                     type: 'parent_invite'
                 }
             }
@@ -85,12 +79,6 @@ describe('validateAccessCode', () => {
             type: 'parent_invite',
             data: {
                 code: 'DUP123',
-                email: 'parent@example.com',
-                teamId: 'team-1',
-                teamName: 'Bears',
-                playerId: 'player-1',
-                playerName: 'Pat Player',
-                playerNum: '4',
                 type: 'parent_invite'
             }
         });
@@ -107,12 +95,6 @@ describe('validateAccessCode', () => {
                 type: 'parent_invite',
                 data: {
                     code: 'ABC123',
-                    email: 'parent@example.com',
-                    teamId: 'team-ABC',
-                    teamName: 'Wildcats',
-                    playerId: null,
-                    playerName: null,
-                    playerNum: null,
                     type: 'parent_invite'
                 }
             }
@@ -131,12 +113,6 @@ describe('validateAccessCode', () => {
                 type: 'admin_invite',
                 data: {
                     code: '123456',
-                    email: 'coach@example.com',
-                    teamId: 'team-123',
-                    teamName: 'Rangers',
-                    playerId: null,
-                    playerName: null,
-                    playerNum: null,
                     type: 'admin_invite'
                 }
             }

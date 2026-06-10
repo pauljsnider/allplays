@@ -845,19 +845,6 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string) 
   }
 }
 
-function assertInviteEmailMatches(validation: Record<string, any>, signupEmail: string | null | undefined, action: 'sign up' | 'sign in') {
-  if (validation?.type !== 'parent_invite' && validation?.type !== 'admin_invite') {
-    return;
-  }
-
-  const invitedEmail = normalizeEmail(validation?.data?.email);
-  if (!invitedEmail || normalizeEmail(signupEmail || '') === invitedEmail) {
-    return;
-  }
-
-  throw new Error(`This invite was sent to ${invitedEmail}. ${action === 'sign up' ? 'Sign up' : 'Sign in'} with that email to accept it.`);
-}
-
 export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedUser> {
   if (user.isNativeRestSession && !auth.currentUser) {
     const profile = {
@@ -1081,16 +1068,13 @@ async function processGoogleResult(result: UserCredential | null, activationCode
   }
 
   try {
-    assertInviteEmailMatches(validation, result.user.email, 'sign up');
-
     if (validation.type === 'parent_invite') {
-      await dbModule.redeemParentInvite(result.user.uid, validation.data.code);
+      await dbModule.redeemParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
     } else if (validation.type === 'admin_invite') {
       const { redeemAdminInviteAcceptance } = await loadAdminInvite();
       await redeemAdminInviteAcceptance({
         userId: result.user.uid,
         userEmail: result.user.email,
-        teamId: validation.data.teamId,
         codeId: validation.codeId,
         getTeam: dbModule.getTeam,
         getUserProfile: dbModule.getUserProfile

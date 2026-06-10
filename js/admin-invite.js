@@ -1,22 +1,15 @@
-import { redeemAdminInviteAtomicPersistence } from './db.js?v=42';
+import { redeemAdminInviteAtomicPersistence } from './db.js?v=43';
 
 export async function redeemAdminInviteAcceptance({
     userId,
     userEmail,
-    teamId,
     codeId = null,
     getTeam,
     getUserProfile,
     redeemAdminInviteAtomicPersistence: redeemAdminInviteAtomicPersistenceOverride = redeemAdminInviteAtomicPersistence
 }) {
     if (!userId) throw new Error('Missing userId');
-    if (!teamId) throw new Error('Missing teamId');
     if (!codeId) throw new Error('Missing codeId');
-
-    const team = await getTeam(teamId);
-    if (!team) {
-        throw new Error('Team not found');
-    }
 
     const profile = await getUserProfile(userId);
     const resolvedUserEmail = String(userEmail || profile?.email || '').trim().toLowerCase();
@@ -28,12 +21,21 @@ export async function redeemAdminInviteAcceptance({
         throw new Error('Missing atomic admin invite persistence handler');
     }
 
-    await redeemAdminInviteAtomicPersistenceOverride({
-        teamId,
+    const redeemResult = await redeemAdminInviteAtomicPersistenceOverride({
         userId,
         userEmail: resolvedUserEmail,
         codeId
     });
+
+    const teamId = redeemResult?.teamId || null;
+    if (!teamId) {
+        throw new Error('Missing teamId');
+    }
+
+    const team = await getTeam(teamId);
+    if (!team) {
+        throw new Error('Team not found');
+    }
 
     return team;
 }

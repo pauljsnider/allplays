@@ -30,12 +30,6 @@ function isAccessCodeInactive(data, nowMs = Date.now()) {
 function buildSafeAccessCodeData(data = {}) {
   return {
     code: data.code || '',
-    email: data.email || null,
-    teamId: data.teamId || null,
-    teamName: data.teamName || null,
-    playerId: data.playerId || null,
-    playerName: data.playerName || null,
-    playerNum: data.playerNum || null,
     type: data.type || 'standard'
   };
 }

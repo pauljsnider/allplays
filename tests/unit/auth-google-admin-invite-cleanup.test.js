@@ -27,7 +27,7 @@ vi.mock('../../js/firebase.js?v=17', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=42', () => ({
+vi.mock('../../js/db.js?v=43', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
@@ -39,7 +39,7 @@ vi.mock('../../js/db.js?v=42', () => ({
     addTeamAdminEmail: vi.fn()
 }));
 
-vi.mock('../../js/admin-invite.js?v=4', () => ({
+vi.mock('../../js/admin-invite.js?v=5', () => ({
     redeemAdminInviteAcceptance: redeemAdminInviteAcceptanceMock
 }));
 
@@ -86,7 +86,7 @@ describe('loginWithGoogle admin invite failure handling', () => {
             valid: true,
             type: 'admin_invite',
             codeId: 'code-admin-1',
-            data: { teamId: 'team-1' }
+            data: { code: 'ADMINCODE', type: 'admin_invite' }
         });
         redeemAdminInviteAcceptanceMock.mockRejectedValue(expectedError);
         signOutMock.mockResolvedValue(undefined);
@@ -98,9 +98,9 @@ describe('loginWithGoogle admin invite failure handling', () => {
         expect(redeemAdminInviteAcceptanceMock).toHaveBeenCalledWith(expect.objectContaining({
             userId: 'user-123',
             userEmail: 'coach@example.com',
-            teamId: 'team-1',
             codeId: 'code-admin-1'
         }));
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('teamId');
         expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('markAccessCodeAsUsed');
         expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('addTeamAdminEmail');
         expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('updateUserProfile');
@@ -133,7 +133,7 @@ describe('loginWithGoogle admin invite failure handling', () => {
             valid: true,
             type: 'admin_invite',
             codeId: 'code-admin-2',
-            data: { teamId: 'team-2' }
+            data: { code: 'ADMINCODE', type: 'admin_invite' }
         });
         redeemAdminInviteAcceptanceMock.mockRejectedValue(expectedError);
         signOutMock.mockResolvedValue(undefined);
@@ -145,9 +145,9 @@ describe('loginWithGoogle admin invite failure handling', () => {
         expect(redeemAdminInviteAcceptanceMock).toHaveBeenCalledWith(expect.objectContaining({
             userId: 'user-123',
             userEmail: 'coach@example.com',
-            teamId: 'team-2',
             codeId: 'code-admin-2'
         }));
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('teamId');
         expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('markAccessCodeAsUsed');
         expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('addTeamAdminEmail');
         expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('updateUserProfile');
@@ -179,16 +179,22 @@ describe('loginWithGoogle admin invite failure handling', () => {
             type: 'admin_invite',
             codeId: 'code-admin-mismatch',
             data: {
-                teamId: 'team-1',
-                email: 'coach@example.com'
+                code: 'ADMINCODE',
+                type: 'admin_invite'
             }
         });
+        redeemAdminInviteAcceptanceMock.mockRejectedValue(new Error('This invite was sent to coach@example.com. Sign in with that email to accept it.'));
         signOutMock.mockResolvedValue(undefined);
 
         const { loginWithGoogle } = await import('../../js/auth.js');
 
-        await expect(loginWithGoogle('ADMINCODE')).rejects.toThrow('This invite was sent to coach@example.com. Sign up with that email to accept it.');
-        expect(redeemAdminInviteAcceptanceMock).not.toHaveBeenCalled();
+        await expect(loginWithGoogle('ADMINCODE')).rejects.toThrow('This invite was sent to coach@example.com. Sign in with that email to accept it.');
+        expect(redeemAdminInviteAcceptanceMock).toHaveBeenCalledWith(expect.objectContaining({
+            userId: 'user-mismatch',
+            userEmail: 'other@example.com',
+            codeId: 'code-admin-mismatch'
+        }));
+        expect(redeemAdminInviteAcceptanceMock.mock.calls[0][0]).not.toHaveProperty('teamId');
         expect(updateUserProfileMock).not.toHaveBeenCalled();
         expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
         expect(deleteMock).toHaveBeenCalledTimes(1);
