@@ -101,7 +101,9 @@ describe('upsertChatConversation', () => {
         });
     });
 
-    it('returns an existing conversation without rewriting immutable membership fields', async () => {
+    it('persists mutable metadata for an existing conversation without rewriting immutable membership fields', async () => {
+        const now = { seconds: 999 };
+        const conversationRef = { path: 'teams/team-1/chatConversations/group-user-1-user-2' };
         const getDoc = vi.fn().mockResolvedValue(makeSnapshot({
             type: 'group',
             participantIds: ['user-1', 'user-2'],
@@ -116,8 +118,8 @@ describe('upsertChatConversation', () => {
             normalizeConversationType: vi.fn((value) => value),
             normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
             buildConversationId: vi.fn(() => 'group-user-1-user-2'),
-            Timestamp: { now: vi.fn(() => ({ seconds: 999 })) },
-            doc: vi.fn(() => ({ path: 'teams/team-1/chatConversations/group-user-1-user-2' })),
+            Timestamp: { now: vi.fn(() => now) },
+            doc: vi.fn(() => conversationRef),
             db: {},
             getDoc,
             setDoc
@@ -131,16 +133,19 @@ describe('upsertChatConversation', () => {
             name: 'Renamed by participant'
         });
 
-        expect(setDoc).not.toHaveBeenCalled();
+        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
+            mutedBy: [],
+            updatedAt: now
+        }, { merge: true });
         expect(result).toEqual({
             id: 'group-user-1-user-2',
             type: 'group',
             participantIds: ['user-1', 'user-2'],
             participantRoles: [],
-            mutedBy: ['user-2'],
+            mutedBy: [],
             name: 'Existing chat',
             createdAt: { seconds: 1 },
-            updatedAt: { seconds: 2 }
+            updatedAt: now
         });
     });
 });

@@ -5510,13 +5510,14 @@ export async function getChatConversations(teamId, user = null, { team = null, c
 /**
  * Create or update a lightweight conversation record.
  */
-export async function upsertChatConversation(teamId, {
-    type = 'group',
-    participantIds = [],
-    participantRoles = [],
-    mutedBy = [],
-    name = null
-} = {}) {
+export async function upsertChatConversation(teamId, conversation = {}) {
+    const {
+        type = 'group',
+        participantIds = [],
+        participantRoles = [],
+        mutedBy = [],
+        name = null
+    } = conversation;
     const normalizedType = normalizeConversationType(type);
     const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
     const conversationId = buildConversationId(normalizedType, normalizedParticipantIds);
@@ -5528,12 +5529,22 @@ export async function upsertChatConversation(teamId, {
         .filter(Boolean)))
         .sort();
     const normalizedMutedBy = Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : []));
+    const hasMutedByUpdate = Object.prototype.hasOwnProperty.call(conversation, 'mutedBy');
 
     if (existing.exists()) {
+        if (hasMutedByUpdate) {
+            await setDoc(conversationRef, {
+                mutedBy: normalizedMutedBy,
+                updatedAt: now
+            }, { merge: true });
+        }
         return {
             id: conversationId,
             ...existing.data(),
-            mutedBy: normalizedMutedBy.length > 0 ? normalizedMutedBy : (existing.data()?.mutedBy || []),
+            ...(hasMutedByUpdate ? {
+                mutedBy: normalizedMutedBy,
+                updatedAt: now
+            } : {}),
             participantIds: existing.data()?.participantIds || normalizedParticipantIds,
             participantRoles: existing.data()?.participantRoles || normalizedParticipantRoles,
             name: existing.data()?.name || name || null
