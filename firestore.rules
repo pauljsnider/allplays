@@ -1109,6 +1109,22 @@ service cloud.firestore {
              data.get('mutedBy', []) is list;
     }
 
+    function isChatConversationParticipantMetadataUpdate() {
+      return request.resource.data.get('type', '') == resource.data.get('type', '') &&
+             request.resource.data.get('name', null) == resource.data.get('name', null) &&
+             request.resource.data.get('participantIds', []) == resource.data.get('participantIds', []) &&
+             request.resource.data.get('participantRoles', []) == resource.data.get('participantRoles', []) &&
+             request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['lastMessageAt', 'mutedBy', 'updatedAt']);
+    }
+
+    function isTeamStaffChatConversationUpdate(teamId) {
+      return isTeamOwnerOrAdmin(teamId) &&
+             request.resource.data.get('type', '') == resource.data.get('type', '') &&
+             request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['name', 'participantIds', 'participantRoles', 'lastMessageAt', 'mutedBy', 'updatedAt']);
+    }
+
     function rideshareOfferPath(teamId, gameId, offerId) {
       return /databases/$(database)/documents/teams/$(teamId)/games/$(gameId)/rideOffers/$(offerId);
     }
@@ -2098,8 +2114,8 @@ service cloud.firestore {
         allow update: if canAccessChatConversation(teamId, conversationId, resource.data) &&
                          canAccessChatConversation(teamId, conversationId, request.resource.data) &&
                          isChatConversationPayloadValid(request.resource.data) &&
-                         request.resource.data.diff(resource.data).affectedKeys()
-                           .hasOnly(['name', 'participantIds', 'participantRoles', 'lastMessageAt', 'mutedBy', 'updatedAt']);
+                         (isTeamStaffChatConversationUpdate(teamId) ||
+                          isChatConversationParticipantMetadataUpdate());
         allow delete: if isTeamOwnerOrAdmin(teamId);
 
         match /chatMessages/{messageId} {
