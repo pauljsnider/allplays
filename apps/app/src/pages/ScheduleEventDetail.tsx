@@ -2281,12 +2281,13 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
   const [loadingAttendance, setLoadingAttendance] = useState(false);
   const [attendanceStatus, setAttendanceStatus] = useState<string | null>(null);
   const [attendanceError, setAttendanceError] = useState<string | null>(null);
+  const [savingAttendance, setSavingAttendance] = useState(false);
   const [savingAttendancePlayerId, setSavingAttendancePlayerId] = useState<string | null>(null);
   const [loadingPacket, setLoadingPacket] = useState(true);
   const [packetStatus, setPacketStatus] = useState<string | null>(null);
   const [packetError, setPacketError] = useState<string | null>(null);
   const [busyChildId, setBusyChildId] = useState<string | null>(null);
-  const canManageAttendance = Boolean(auth.user && event.isTeamStaff && event.type === 'practice' && event.isDbGame);
+  const canManageAttendance = Boolean(auth.user && event.isTeamAdmin && event.type === 'practice' && event.isDbGame);
 
   const refreshPacket = useCallback(async (showLoading = true) => {
     if (showLoading) setLoadingPacket(true);
@@ -2367,19 +2368,25 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
         }
         : candidate
     ));
+    const nextAttendance = {
+      ...attendance,
+      checkedInCount: nextPlayers.filter((candidate) => candidate.status === 'present' || candidate.status === 'late').length,
+      players: nextPlayers
+    };
+    setSavingAttendance(true);
     setSavingAttendancePlayerId(player.playerId);
     setAttendanceStatus(null);
     setAttendanceError(null);
+    setAttendance(nextAttendance);
     try {
-      const saved = await saveStaffPracticeAttendance(event, auth.user, {
-        ...attendance,
-        players: nextPlayers
-      });
+      const saved = await saveStaffPracticeAttendance(event, auth.user, nextAttendance);
       setAttendance(saved);
       setAttendanceStatus(`${player.displayName} marked ${status}.`);
     } catch (error: any) {
+      setAttendance(attendance);
       setAttendanceError(error?.message || 'Unable to save practice attendance.');
     } finally {
+      setSavingAttendance(false);
       setSavingAttendancePlayerId(null);
     }
   };
@@ -2411,6 +2418,7 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
           <PracticeAttendancePanel
             attendance={attendance}
             loading={loadingAttendance}
+            saving={savingAttendance}
             savingPlayerId={savingAttendancePlayerId}
             onSelectStatus={updateAttendanceStatus}
           />
@@ -2474,9 +2482,10 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
   );
 }
 
-function PracticeAttendancePanel({ attendance, loading, savingPlayerId, onSelectStatus }: {
+function PracticeAttendancePanel({ attendance, loading, saving, savingPlayerId, onSelectStatus }: {
   attendance: StaffPracticeAttendance | null;
   loading: boolean;
+  saving: boolean;
   savingPlayerId: string | null;
   onSelectStatus: (player: PracticeAttendancePlayer, status: 'present' | 'late' | 'absent') => Promise<void>;
 }) {
@@ -2512,7 +2521,7 @@ function PracticeAttendancePanel({ attendance, loading, savingPlayerId, onSelect
                       key={status}
                       type="button"
                       className={`min-h-8 rounded-full border px-2 text-[11px] font-black transition ${player.status === status ? 'border-amber-300 bg-amber-100 text-amber-900' : 'border-gray-200 bg-white text-gray-600 hover:border-amber-200 hover:bg-amber-50 hover:text-amber-900'}`}
-                      disabled={busy}
+                      disabled={saving}
                       onClick={() => onSelectStatus(player, status)}
                     >
                       {busy && player.status !== status ? 'Saving' : status === 'present' ? 'Present' : status === 'late' ? 'Late' : 'Absent'}

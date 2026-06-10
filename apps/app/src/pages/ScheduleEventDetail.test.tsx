@@ -326,7 +326,7 @@ describe('ScheduleEventDetail practice attendance', () => {
     cleanup();
   });
 
-  it('lets coaches mark practice players present, late, or absent from the More tab', async () => {
+  it('lets team admins mark practice players present, late, or absent from the More tab', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         id: 'practice-1',
@@ -335,6 +335,7 @@ describe('ScheduleEventDetail practice attendance', () => {
         title: 'Finishing session',
         childId: 'staff-team-team-1',
         childName: 'Team schedule',
+        isTeamAdmin: true,
         isTeamStaff: true,
         practiceSessionId: 'session-1',
         practiceAttendanceSummary: '1/2 present'
@@ -396,6 +397,109 @@ describe('ScheduleEventDetail practice attendance', () => {
     });
     await waitFor(() => {
       expect(screen.getByText('2/2 checked in')).toBeTruthy();
+    });
+  });
+
+  it('hides practice attendance controls for coach-only staff without admin write access', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        eventKey: 'team-1::practice-1::staff-team-team-1::2026-06-04T18:00:00.000Z::practice',
+        type: 'practice',
+        title: 'Finishing session',
+        childId: 'staff-team-team-1',
+        childName: 'Team schedule',
+        isTeamAdmin: false,
+        isTeamStaff: true,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.queryByText('Mark each player present, late, or absent.')).toBeNull();
+    });
+    expect(scheduleServiceMocks.loadStaffPracticeAttendance).not.toHaveBeenCalled();
+  });
+
+  it('optimistically disables all attendance buttons and sends the latest roster snapshot while saving', async () => {
+    let resolveSave: (() => void) | null = null;
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        eventKey: 'team-1::practice-1::staff-team-team-1::2026-06-04T18:00:00.000Z::practice',
+        type: 'practice',
+        title: 'Finishing session',
+        childId: 'staff-team-team-1',
+        childName: 'Team schedule',
+        isTeamAdmin: true,
+        isTeamStaff: true,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      rosterSize: 2,
+      checkedInCount: 0,
+      players: [
+        { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'absent', checkedInAt: null },
+        { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'absent', checkedInAt: null }
+      ]
+    });
+    scheduleServiceMocks.saveStaffPracticeAttendance.mockImplementation((_, __, payload) => new Promise((resolve) => {
+      resolveSave = () => resolve({ ...payload, checkedInCount: 1 });
+    }));
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Mark each player present, late, or absent.')).toBeTruthy();
+    });
+
+    const rowOne = screen.getByTestId('practice-attendance-row-p1');
+    const rowTwo = screen.getByTestId('practice-attendance-row-p2');
+    fireEvent.click(within(rowOne).getByRole('button', { name: 'Present' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.saveStaffPracticeAttendance).toHaveBeenCalledWith(
+        expect.any(Object),
+        auth.user,
+        expect.objectContaining({
+          checkedInCount: 1,
+          players: [
+            expect.objectContaining({ playerId: 'p1', status: 'present' }),
+            expect.objectContaining({ playerId: 'p2', status: 'absent' })
+          ]
+        })
+      );
+    });
+    expect(within(rowOne).getByRole('button', { name: 'Present' })).toBeDisabled();
+    expect(within(rowTwo).getByRole('button', { name: 'Late' })).toBeDisabled();
+    expect(screen.getByText('1/2 checked in')).toBeTruthy();
+
+    resolveSave?.();
+
+    await waitFor(() => {
+      expect(screen.getByText('Avery Smith marked present.')).toBeTruthy();
     });
   });
 });

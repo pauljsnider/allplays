@@ -2743,8 +2743,8 @@ function assertPracticeAttendanceManagementEvent(event: ParentScheduleEvent, use
   if (!user?.uid) {
     throw new Error('Sign in before managing practice attendance.');
   }
-  if (!event.isTeamStaff) {
-    throw new Error('Only team coaches and admins can manage practice attendance.');
+  if (!event.isTeamAdmin) {
+    throw new Error('Only team owners and admins can manage practice attendance.');
   }
 }
 

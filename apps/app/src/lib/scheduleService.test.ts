@@ -435,6 +435,7 @@ describe('staff practice attendance', () => {
     teamId: 'team-1',
     type: 'practice',
     isDbGame: true,
+    isTeamAdmin: true,
     isTeamStaff: true,
     practiceSessionId: 'session-1'
   } as any;
@@ -504,5 +505,19 @@ describe('staff practice attendance', () => {
       })
     );
     expect(result.checkedInCount).toBe(2);
+  });
+
+  it('rejects coach-only staff without admin write access', async () => {
+    await expect(loadStaffPracticeAttendance({ ...event, isTeamAdmin: false }, user as any)).rejects.toThrow('Only team owners and admins can manage practice attendance.');
+    await expect(saveStaffPracticeAttendance({ ...event, isTeamAdmin: false }, user as any, {
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      rosterSize: 0,
+      checkedInCount: 0,
+      players: []
+    })).rejects.toThrow('Only team owners and admins can manage practice attendance.');
+    expect(getPracticeSession).not.toHaveBeenCalled();
+    expect(updatePracticeAttendance).not.toHaveBeenCalled();
   });
 });
