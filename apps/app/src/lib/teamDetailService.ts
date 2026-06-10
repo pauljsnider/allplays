@@ -26,7 +26,7 @@ import { collection, db, getDocs, query, where } from '../../../../js/firebase.j
 import { describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
-import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
+import { buildPlayerLeaderboardSnapshot, normalizeStatTrackerConfig, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
 import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-summary.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-permissions.js';
@@ -79,6 +79,25 @@ export type TeamDetailEvent = {
   homeScore: number | null;
   awayScore: number | null;
   isCancelled: boolean;
+  statTrackerConfigId: string;
+  statTrackerConfigLabel: string;
+  statTrackerConfigBaseType: string;
+  statTrackerConfigExists: boolean;
+  statTrackerConfigIsBasketball: boolean;
+};
+
+export type TeamDetailStatTrackerConfig = {
+  id: string;
+  name: string;
+  baseType: string;
+  isBasketball: boolean;
+  columnCount: number;
+  columnNames: string[];
+  assignedUpcomingGames: Array<{
+    gameId: string;
+    title: string;
+    date: Date;
+  }>;
 };
 
 export type TeamDetailLeaderboard = {
@@ -199,6 +218,7 @@ export type TeamDetailModel = {
   leaderboards: TeamDetailLeaderboard[];
   trackingSummaries: TeamDetailTrackingSummary[];
   sponsors: TeamDetailSponsor[];
+  statTrackerConfigs: TeamDetailStatTrackerConfig[];
   canManageTeam: boolean;
   staffPermissions: TeamStaffPermissionsSummary | null;
   counts: {
@@ -798,7 +818,8 @@ export function buildTeamDetailModel({
 }): TeamDetailModel {
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
   const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true });
-  const normalizedEvents = normalizeEvents(games);
+  const normalizedStatTrackerConfigs = buildTeamStatTrackerConfigs(configs, games);
+  const normalizedEvents = normalizeEvents(games, normalizedStatTrackerConfigs.byId);
   const seasonLabels = listSeasonLabels(games);
   const currentYearLabel = String(new Date().getFullYear());
   const seasonLabel = seasonLabels.includes(currentYearLabel) ? currentYearLabel : (seasonLabels[0] || currentYearLabel);
@@ -849,6 +870,7 @@ export function buildTeamDetailModel({
     leaderboards,
     trackingSummaries,
     sponsors: sponsors.slice(0, 4),
+    statTrackerConfigs: normalizedStatTrackerConfigs.items,
     canManageTeam,
     staffPermissions,
     counts: {
@@ -1037,12 +1059,98 @@ function getSelectedPermissionIds(team: Record<string, any>, kind: string) {
     .filter(Boolean));
 }
 
-function normalizeEvents(games: any[]) {
+function buildTeamStatTrackerConfigs(configs: any[], games: any[]) {
+  const byId = new Map<string, TeamDetailStatTrackerConfig>();
+
+  const items = (Array.isArray(configs) ? configs : [])
+    .map((config) => normalizeTeamStatTrackerConfig(config))
+    .filter((config) => config.id)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  items.forEach((config) => {
+    byId.set(config.id, config);
+  });
+
+  (Array.isArray(games) ? games : []).forEach((game) => {
+    const configId = cleanString(game?.statTrackerConfigId);
+    if (!configId || !isUpcomingAssignedGame(game)) return;
+    const config = byId.get(configId);
+    if (!config) return;
+    config.assignedUpcomingGames.push({
+      gameId: cleanString(game?.id || game?.gameId),
+      title: cleanString(game?.title) || `vs. ${cleanString(game?.opponent) || 'TBD'}`,
+      date: toDate(game?.date)
+    });
+  });
+
+  items.forEach((config) => {
+    config.assignedUpcomingGames.sort((a, b) => a.date.getTime() - b.date.getTime());
+  });
+
+  return { items, byId };
+}
+
+function normalizeTeamStatTrackerConfig(config: any): TeamDetailStatTrackerConfig {
+  const rawColumns = extractStatColumnNames(config?.columns);
+  const normalized = normalizeStatTrackerConfig({
+    ...config,
+    columns: rawColumns,
+    statDefinitions: Array.isArray(config?.statDefinitions) ? config.statDefinitions : []
+  });
+  const columnNames = dedupeStrings(
+    normalized.columns.length
+      ? normalized.columns
+      : (normalized.statDefinitions || [])
+        .filter((definition: any) => !definition?.formula)
+        .map((definition: any) => cleanString(definition?.acronym || definition?.label || definition?.id))
+  );
+  const baseType = cleanString(config?.baseType) || 'Custom';
+
+  return {
+    id: cleanString(config?.id || config?.configId),
+    name: cleanString(config?.name) || `${baseType} config`,
+    baseType,
+    isBasketball: baseType.toLowerCase() === 'basketball',
+    columnCount: columnNames.length,
+    columnNames,
+    assignedUpcomingGames: []
+  };
+}
+
+function extractStatColumnNames(columns: any) {
+  return dedupeStrings((Array.isArray(columns) ? columns : [])
+    .map((column) => {
+      if (typeof column === 'string') return cleanString(column);
+      if (column && typeof column === 'object') {
+        return cleanString(column.acronym || column.key || column.id || column.label || column.name);
+      }
+      return '';
+    }));
+}
+
+function dedupeStrings(values: string[]) {
+  return Array.from(new Set((Array.isArray(values) ? values : []).map((value) => cleanString(value)).filter(Boolean)));
+}
+
+function isUpcomingAssignedGame(game: any) {
+  if (!game || game?.type === 'practice') return false;
+  return !isHistoricalGameStatus(game);
+}
+
+function isHistoricalGameStatus(game: any) {
+  const status = cleanString(game?.status).toLowerCase();
+  const liveStatus = cleanString(game?.liveStatus).toLowerCase();
+  return status === 'completed' || status === 'final' || status === 'cancelled' || liveStatus === 'completed';
+}
+
+function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTrackerConfig> = new Map()) {
   const now = new Date();
   const events = (Array.isArray(games) ? games : [])
     .map((game) => {
       const date = toDate(game?.date);
       const type = game?.type === 'practice' ? 'practice' : 'game';
+      const statTrackerConfigId = cleanString(game?.statTrackerConfigId);
+      const matchedConfig = statTrackerConfigId ? configById.get(statTrackerConfigId) : null;
       return {
         id: cleanString(game?.id || game?.gameId),
         type,
@@ -1059,7 +1167,14 @@ function normalizeEvents(games: any[]) {
         publicCalendar: game?.publicCalendar === true,
         homeScore: toNullableNumber(game?.homeScore),
         awayScore: toNullableNumber(game?.awayScore),
-        isCancelled: cleanString(game?.status).toLowerCase() === 'cancelled'
+        isCancelled: cleanString(game?.status).toLowerCase() === 'cancelled',
+        statTrackerConfigId,
+        statTrackerConfigLabel: statTrackerConfigId
+          ? (matchedConfig?.name || `Missing config (${statTrackerConfigId})`)
+          : 'No config assigned',
+        statTrackerConfigBaseType: matchedConfig?.baseType || '',
+        statTrackerConfigExists: Boolean(matchedConfig),
+        statTrackerConfigIsBasketball: matchedConfig?.isBasketball === true
       } as TeamDetailEvent;
     })
     .filter((event) => event.id && event.date);
