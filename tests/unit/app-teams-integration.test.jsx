@@ -206,21 +206,21 @@ describe('React app Teams page', () => {
         expect(hrefs).toContain('https://allplays.ai/edit-schedule.html#teamId=team-staff');
         expect(hrefs).toContain('/teams/team-staff/fees');
         expect(hrefs).not.toContain('https://allplays.ai/team-fees.html#teamId=team-staff');
-        expect(container.textContent).not.toContain('Practice command');
+        expect(container.textContent).not.toContain('Team drills');
         expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Staff Wolves'))?.getAttribute('aria-pressed')).toBe('true');
 
         await clickLink(container, 'Website team page');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/team.html#teamId=team-staff');
 
         await clickButton(container, '6 more');
-        expect(container.textContent).toContain('Practice command');
+        expect(container.textContent).toContain('Team drills');
         hrefs = getHrefs(container);
-        expect(hrefs).toContain('https://allplays.ai/drills.html#teamId=team-staff');
+        expect(hrefs).toContain('/teams/team-staff/drills');
         expect(hrefs).toContain('https://allplays.ai/game-day.html?teamId=team-staff');
 
         await clickButton(container, 'Bears');
         await clickButton(container, 'Staff Wolves');
-        expect(container.textContent).not.toContain('Practice command');
+        expect(container.textContent).not.toContain('Team drills');
         expect(buttonByText(container, '6 more')).toBeTruthy();
     });
 

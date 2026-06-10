@@ -392,10 +392,10 @@ test.describe('mobile My Teams', () => {
         await expect(page.locator('a[aria-label="Staff Wolves schedule"]')).toHaveCount(0);
         await expect(page.getByText('No player is linked to this account for the team, but team chat is available.')).toBeVisible();
         await expect(page.getByText('Coach/admin tools')).toBeVisible();
-        await expect(page.getByText('Practice command')).toHaveCount(0);
+        await expect(page.getByText('Team drills')).toHaveCount(0);
 
         await page.getByRole('button', { name: '6 more' }).click();
-        await expect(page.getByText('Practice command')).toBeVisible();
+        await expect(page.getByText('Team drills')).toBeVisible();
         await expect(page.getByRole('link', { name: /Game day/ })).toHaveAttribute('href', 'https://allplays.ai/game-day.html?teamId=team-staff');
 
         await page.getByRole('link', { name: /Website team page/ }).click();
@@ -407,6 +407,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByRole('button', { name: /Bears/ }).first()).toHaveAttribute('aria-pressed', 'true');
         await expect(page.getByText('Pat Star, Sam Wing')).toBeVisible();
         await expect(page.getByText('Coach/admin tools')).toHaveCount(0);
+        await expect(page.getByRole('link', { name: /Team drills/ })).toHaveCount(0);
         await expect(page.locator('a[aria-label="Bears messages"]')).toBeVisible();
         await expect(page.locator('a[aria-label="Bears messages"]')).toContainText('9+');
         await expect(page.locator('a[href="#/schedule?teamId=team-1&view=packets"]')).toBeVisible();

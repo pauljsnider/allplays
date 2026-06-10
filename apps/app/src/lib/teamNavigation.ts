@@ -130,10 +130,10 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
     },
     {
       id: 'practice-command',
-      label: 'Practice command',
-      detail: 'Drills, attendance, notes, home packets',
-      href: getTeamWebsiteHashHref('drills.html', teamId),
-      kind: 'website'
+      label: 'Team drills',
+      detail: 'Create, edit, and delete team custom drills',
+      href: `/teams/${encodeURIComponent(teamId)}/drills`,
+      kind: 'native'
     },
     {
       id: 'game-plan',
