@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -664,6 +664,14 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   });
   const canPreviewPublishedPublicProfile = persistedPublicProfileReady;
   const canSharePublicProfile = persistedPublicProfileReady;
+  const latestPublicShareStateRef = useRef({
+    canSharePublicProfile: false,
+    persistedPublicProfileUrl: ''
+  });
+  latestPublicShareStateRef.current = {
+    canSharePublicProfile,
+    persistedPublicProfileUrl
+  };
 
   useEffect(() => {
     onShareStateChange({
@@ -741,12 +749,13 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   };
 
   const shareProfile = async () => {
-    if (!canSharePublicProfile) return;
+    const { canSharePublicProfile: shareReady, persistedPublicProfileUrl: shareUrl } = latestPublicShareStateRef.current;
+    if (!shareReady || !shareUrl) return;
     try {
       const result = await sharePublicUrl({
         title: `${name || data.child.playerName || 'Athlete'} profile`,
         text: 'Take a look at this athlete profile on ALL PLAYS.',
-        url: persistedPublicProfileUrl
+        url: shareUrl
       });
       if (result === 'shared') {
         setStatus({ tone: 'success', message: 'Public athlete profile shared.' });

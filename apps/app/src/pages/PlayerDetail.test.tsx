@@ -488,9 +488,11 @@ describe('PlayerDetail athlete profile season selection', () => {
     const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
     expect(publicProfileCard.getAttribute('href')).toBe(shareUrl);
     expect(publicProfileCard.getAttribute('aria-disabled')).toBe('false');
-    expect(screen.getByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
+    const shareButton = screen.getByRole('button', { name: 'Share Public Profile' });
+    expect(shareButton).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Headline'), { target: { value: '2028 Playmaker' } });
+    fireEvent.click(shareButton);
 
     await waitFor(() => {
       const saveFirstButton = screen.getByRole('button', { name: 'Publish changes before sharing' });
