@@ -1,5 +1,25 @@
 import { hasFullTeamAccess } from './team-access.js?v=1';
 
+function normalizeInviteEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function getInviteEmailMismatchMessage(invitedEmail) {
+    return `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`;
+}
+
+function assertInviteEmailMatches(invitedEmail, authEmail) {
+    const normalizedInvitedEmail = normalizeInviteEmail(invitedEmail);
+    if (!normalizedInvitedEmail) {
+        return;
+    }
+
+    const normalizedAuthEmail = normalizeInviteEmail(authEmail);
+    if (!normalizedAuthEmail || normalizedAuthEmail !== normalizedInvitedEmail) {
+        throw new Error(getInviteEmailMismatchMessage(normalizedInvitedEmail));
+    }
+}
+
 function getHouseholdInviteRedemptionMessage(error) {
     const rawMessage = String(error?.message || '');
     const lowerMessage = rawMessage.toLowerCase();
@@ -49,6 +69,8 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
     }
 
     if (validation.type === 'parent_invite') {
+        assertInviteEmailMatches(validation.data?.email, authEmail);
+
         const redeemResult = await redeemParentInvite(userId, code, authEmail);
         const teamId = redeemResult?.teamId || null;
         const team = teamId ? await getTeam(teamId) : null;
@@ -74,14 +96,20 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
 
         const teamId = redeemResult?.teamId || null;
         const team = teamId ? await getTeam(teamId) : null;
+        const playerLabel = redeemResult?.playerNum || validation.data?.playerNum
+            ? `#${redeemResult?.playerNum || validation.data?.playerNum}`
+            : redeemResult?.playerName || validation.data?.playerName || 'a player';
+
         return {
             success: true,
-            message: `You've been added to follow ${redeemResult?.playerNum ? '#' + redeemResult.playerNum : redeemResult?.playerName || 'a player'} on ${team?.name || redeemResult?.teamName || 'the team'}!`,
+            message: `You've been added to follow ${playerLabel} on ${team?.name || redeemResult?.teamName || validation.data?.teamName || 'the team'}!`,
             redirectUrl: 'parent-dashboard.html'
         };
     }
 
     if (validation.type === 'admin_invite') {
+        assertInviteEmailMatches(validation.data?.email, authEmail);
+
         if (typeof redeemAdminInviteAtomically !== 'function') {
             throw new Error('Missing atomic admin invite redemption handler');
         }
