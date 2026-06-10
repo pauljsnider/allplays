@@ -741,7 +741,7 @@ describe('React app TeamDetail page', () => {
         await clickButton(container, 'Schedule');
         expect(container.textContent).toContain('No team events found.');
         await clickButton(container, 'Roster');
-        expect(container.textContent).toContain('No players have been added yet.');
+        expect(container.textContent).toContain('No active players right now.');
         await clickButton(container, 'Insights');
         expect(container.textContent).toContain('No parent-visible tracking items for your players yet.');
         expect(container.textContent).toContain('Leaderboards appear after public stat configs and completed tracked games exist.');
