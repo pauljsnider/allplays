@@ -594,6 +594,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
 
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Waiting for published profile...' })).toBeTruthy();
     expect(screen.getByText('Waiting for refresh to confirm the public share link.')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Refresh player' }) as HTMLButtonElement).disabled).toBe(true);
