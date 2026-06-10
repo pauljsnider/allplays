@@ -56,4 +56,16 @@ describe('targeted team chat Firestore rules', () => {
     it('rejects unauthorized senders by requiring senderId to match auth uid', () => {
         expect(rules).toContain('request.resource.data.senderId == request.auth.uid &&');
     });
+
+    it('locks membership and naming changes to team staff while letting participants update benign metadata', () => {
+        expect(rules).toContain('function isChatConversationParticipantMetadataUpdate()');
+        expect(rules).toContain("request.resource.data.get('name', null) == resource.data.get('name', null)");
+        expect(rules).toContain("request.resource.data.get('participantIds', []) == resource.data.get('participantIds', [])");
+        expect(rules).toContain("request.resource.data.get('participantRoles', []) == resource.data.get('participantRoles', [])");
+        expect(rules).toContain(".hasOnly(['lastMessageAt', 'mutedBy', 'updatedAt']);");
+        expect(rules).toContain('function isTeamStaffChatConversationUpdate(teamId)');
+        expect(rules).toContain('return isTeamOwnerOrAdmin(teamId) &&');
+        expect(rules).toContain('(isTeamStaffChatConversationUpdate(teamId) ||');
+        expect(rules).toContain('isChatConversationParticipantMetadataUpdate());');
+    });
 });

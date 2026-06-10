@@ -5523,22 +5523,34 @@ export async function upsertChatConversation(teamId, {
     const now = Timestamp.now();
     const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
     const existing = await getDoc(conversationRef);
+    const normalizedParticipantRoles = Array.from(new Set((Array.isArray(participantRoles) ? participantRoles : [])
+        .map((role) => String(role || '').trim())
+        .filter(Boolean)))
+        .sort();
+    const normalizedMutedBy = Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : []));
+
+    if (existing.exists()) {
+        return {
+            id: conversationId,
+            ...existing.data(),
+            mutedBy: normalizedMutedBy.length > 0 ? normalizedMutedBy : (existing.data()?.mutedBy || []),
+            participantIds: existing.data()?.participantIds || normalizedParticipantIds,
+            participantRoles: existing.data()?.participantRoles || normalizedParticipantRoles,
+            name: existing.data()?.name || name || null
+        };
+    }
+
     const payload = {
         type: normalizedType,
         participantIds: normalizedParticipantIds,
-        participantRoles: Array.from(new Set((Array.isArray(participantRoles) ? participantRoles : [])
-            .map((role) => String(role || '').trim())
-            .filter(Boolean)))
-            .sort(),
-        mutedBy: Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : [])),
+        participantRoles: normalizedParticipantRoles,
+        mutedBy: normalizedMutedBy,
         updatedAt: now
     };
     if (name) {
         payload.name = name;
     }
-    if (!existing.exists()) {
-        payload.createdAt = now;
-    }
+    payload.createdAt = now;
     await setDoc(conversationRef, payload, { merge: true });
     return { id: conversationId, ...payload };
 }
