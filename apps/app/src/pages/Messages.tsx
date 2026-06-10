@@ -483,6 +483,8 @@ function ChatWindow({
   const pendingScrollRef = useRef(false);
   const stickToLatestRef = useRef(true);
   const recipientOptionsPromiseRef = useRef<Promise<ChatRecipientOption[]> | null>(null);
+  const recipientOptionsRequestIdRef = useRef(0);
+  const currentTeamIdRef = useRef(teamId);
   const programmaticScrollRef = useRef(false);
   const mountedRef = useRef(true);
   const scheduledScrollFrameRef = useRef<number | null>(null);
@@ -516,11 +518,18 @@ function ChatWindow({
     if (recipientOptionsLoaded) return recipientOptions;
     if (recipientOptionsPromiseRef.current) return recipientOptionsPromiseRef.current;
 
+    const requestTeamId = teamId;
+    const requestId = recipientOptionsRequestIdRef.current + 1;
+    recipientOptionsRequestIdRef.current = requestId;
     setRecipientOptionsLoading(true);
     setRecipientOptionsError(null);
-    const request = loadChatRecipientOptions(teamId)
+    const request = loadChatRecipientOptions(requestTeamId)
       .then((options) => {
-        if (mountedRef.current) {
+        if (
+          mountedRef.current
+          && currentTeamIdRef.current === requestTeamId
+          && recipientOptionsRequestIdRef.current === requestId
+        ) {
           setRecipientOptions(options);
           setRecipientOptionsLoaded(true);
         }
@@ -528,15 +537,25 @@ function ChatWindow({
       })
       .catch((loadError: any) => {
         const message = loadError?.message || 'Unable to load recipient options.';
-        if (mountedRef.current) {
+        if (
+          mountedRef.current
+          && currentTeamIdRef.current === requestTeamId
+          && recipientOptionsRequestIdRef.current === requestId
+        ) {
           setRecipientOptionsLoaded(false);
           setRecipientOptionsError(message);
         }
         throw loadError;
       })
       .finally(() => {
-        recipientOptionsPromiseRef.current = null;
-        if (mountedRef.current) {
+        if (recipientOptionsPromiseRef.current === request) {
+          recipientOptionsPromiseRef.current = null;
+        }
+        if (
+          mountedRef.current
+          && currentTeamIdRef.current === requestTeamId
+          && recipientOptionsRequestIdRef.current === requestId
+        ) {
           setRecipientOptionsLoading(false);
         }
       });
@@ -668,6 +687,10 @@ function ChatWindow({
   }, [clearScheduledScrollTimeouts, maybeScrollToLatest]);
 
   useEffect(() => {
+    currentTeamIdRef.current = teamId;
+  }, [teamId]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadContext() {
@@ -679,6 +702,7 @@ function ChatWindow({
       setOlderMessages([]);
       setLiveMessages([]);
       recipientOptionsPromiseRef.current = null;
+      recipientOptionsRequestIdRef.current += 1;
       setRecipientOptions([]);
       setRecipientOptionsLoading(false);
       setRecipientOptionsLoaded(false);

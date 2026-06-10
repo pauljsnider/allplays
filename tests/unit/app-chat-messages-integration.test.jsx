@@ -1035,6 +1035,90 @@ describe('React app messages integration', () => {
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
     });
 
+    it('ignores stale recipient option loads after switching teams', async () => {
+        layoutMocks.isDesktopWeb = true;
+        const deferredRecipients = createDeferred();
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 0,
+                    lastMessage: chatMessage({ id: 'last-2', senderName: 'Coach Taylor', text: 'Travel roster posted.' })
+                }
+            ]
+        });
+        chatMocks.loadChatTeamContext.mockImplementation(async (requestedTeamId) => ({
+            team: {
+                id: requestedTeamId,
+                name: requestedTeamId === 'team-1' ? 'Bears' : 'Thunder',
+                sport: requestedTeamId === 'team-1' ? 'Basketball' : 'Soccer'
+            },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: true
+        }));
+        chatMocks.loadChatConversations.mockImplementation(async (requestedTeamId) => ([
+            {
+                id: 'team',
+                type: 'team',
+                name: requestedTeamId === 'team-1' ? 'Bears Team Chat' : 'Thunder Team Chat',
+                participantIds: [],
+                participantRoles: ['team']
+            }
+        ]));
+        chatMocks.loadChatRecipientOptions
+            .mockImplementationOnce(() => deferredRecipients.promise)
+            .mockResolvedValueOnce([
+                { id: 'user:coach-2', name: 'Coach Taylor', detail: 'Staff' }
+            ]);
+
+        const { container } = await renderMessages('/messages');
+
+        await click(container, 'Team Email');
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenLastCalledWith('team-1');
+
+        const thunderLink = container.querySelector('a[href="/messages/team-2"]');
+        await act(async () => {
+            thunderLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+
+        await act(async () => {
+            deferredRecipients.resolve([
+                { id: 'user:coach-1', name: 'Coach Jamie', detail: 'Staff' }
+            ]);
+        });
+        await flush();
+
+        await click(container, 'Close Team Email');
+        await click(container, 'Team Email');
+
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(2);
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenLastCalledWith('team-2');
+        expect(container.textContent).toContain('Thunder Team Chat');
+
+        await click(container, 'Close Team Email');
+        await click(container, 'Audience: Full team');
+        await click(container, 'Selected members');
+
+        const recipientLabels = Array.from(container.querySelectorAll('label')).map((label) => label.textContent || '');
+        expect(recipientLabels.some((label) => label.includes('Coach Taylor'))).toBe(true);
+        expect(recipientLabels.some((label) => label.includes('Coach Jamie'))).toBe(false);
+    });
+
     it('keeps staff targeting contextual and sends the selected audience metadata', async () => {
         const { container } = await renderMessages('/messages/team-1');
 
