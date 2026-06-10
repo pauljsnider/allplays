@@ -140,7 +140,7 @@ describe('Messages team email templates', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /audience:/i }));
     fireEvent.click(screen.getByRole('button', { name: /selected members/i }));
-    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    fireEvent.click((await screen.findAllByRole('checkbox'))[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
@@ -173,7 +173,7 @@ describe('Messages team email templates', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /audience:/i }));
     fireEvent.click(screen.getByRole('button', { name: /selected members/i }));
-    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    fireEvent.click((await screen.findAllByRole('checkbox'))[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
 
@@ -208,7 +208,7 @@ describe('Messages team email templates', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /audience:/i }));
     fireEvent.click(screen.getByRole('button', { name: /selected members/i }));
-    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    fireEvent.click((await screen.findAllByRole('checkbox'))[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
     await screen.findByRole('dialog', { name: 'Team Email' });
