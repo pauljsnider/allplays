@@ -205,6 +205,16 @@ async function flush() {
     });
 }
 
+function createDeferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((nextResolve, nextReject) => {
+        resolve = nextResolve;
+        reject = nextReject;
+    });
+    return { promise, resolve, reject };
+}
+
 function buttonByText(container, text) {
     const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === text || candidate.getAttribute('aria-label') === text);
     if (!button) {
@@ -973,6 +983,56 @@ describe('React app messages integration', () => {
         expect(scrollIntoView).not.toHaveBeenCalled();
         expect(container.textContent).toContain('Latest');
         expect(scroller.scrollTop).toBe(0);
+    });
+
+    it('renders the moderator thread before lazy recipient options finish loading', async () => {
+        const deferredRecipients = createDeferred();
+        chatMocks.loadChatRecipientOptions.mockImplementationOnce(() => deferredRecipients.promise);
+
+        const { container } = await renderMessages('/messages/team-1');
+
+        expect(container.textContent).toContain('Bring both jerseys.');
+        expect(chatMocks.loadChatRecipientOptions).not.toHaveBeenCalled();
+
+        await click(container, 'Team Email');
+
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
+        expect(container.textContent).toContain('Loading recipient options...');
+        expect(container.textContent).toContain('Bring both jerseys.');
+
+        await act(async () => {
+            deferredRecipients.resolve([
+                { id: 'user:coach-1', name: 'Coach Jamie', detail: 'Staff' },
+                { id: 'player:player-1', name: 'Pat', detail: '#9' }
+            ]);
+        });
+        await flush();
+
+        expect(container.textContent).not.toContain('Loading recipient options...');
+        await click(container, 'Close Team Email');
+        await click(container, 'Audience: Full team');
+        await click(container, 'Selected members');
+        expect(container.textContent).toContain('Coach Jamie');
+    });
+
+    it('loads recipient options once on first moderator tool open and reuses the cache', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+
+        expect(chatMocks.loadChatRecipientOptions).not.toHaveBeenCalled();
+
+        await click(container, 'Team Email');
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
+
+        await click(container, 'Close Team Email');
+        await click(container, 'Audience: Full team');
+        await click(container, 'Selected members');
+
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
+        expect(container.textContent).toContain('Coach Jamie');
+
+        await click(container, 'Done');
+        await click(container, 'Team Email');
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
     });
 
     it('keeps staff targeting contextual and sends the selected audience metadata', async () => {

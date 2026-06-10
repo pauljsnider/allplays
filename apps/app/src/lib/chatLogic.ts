@@ -243,13 +243,16 @@ export function buildEmailAudienceMetadata({
   if (selectedConversation && !isDefaultTeamConversation(selectedConversationId)) {
     const optionIds = new Set(recipientOptions.map((option) => option.id));
     const participantIds: unknown[] = Array.isArray(selectedConversation.participantIds) ? selectedConversation.participantIds : [];
-    const recipientIds = Array.from(new Set<string>(participantIds.flatMap((id: unknown) => {
+    const normalizedRecipientIds = Array.from(new Set<string>(participantIds.flatMap((id: unknown) => {
       const raw = String(id || '').trim();
       if (!raw) return [];
       if (raw.toLowerCase().startsWith('email:')) return [getRecipientOptionId('email', raw.slice(6))];
       if (raw.toLowerCase().startsWith('user:')) return [getRecipientOptionId('user', raw.slice(5))];
       return [raw, getRecipientOptionId('user', raw)];
-    }).filter((id: string) => optionIds.has(id))));
+    })));
+    const recipientIds = optionIds.size > 0
+      ? normalizedRecipientIds.filter((id: string) => optionIds.has(id))
+      : normalizedRecipientIds;
     return {
       targetType: 'individuals',
       recipientIds,
