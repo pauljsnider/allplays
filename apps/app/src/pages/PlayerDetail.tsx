@@ -605,9 +605,32 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     return items;
   }, [achievements, data.child.playerName, dominantHand, existing?.clips?.length, graduationYear, headline, highlightClipFile, hometown, name, position, selectedSeasonKeys.length]);
   const persistedPrivacy = existing?.privacy === 'public' ? 'public' : 'private';
-  const hasUnsavedPrivacyChange = privacy !== persistedPrivacy;
+  const normalizedExistingName = existing?.athlete?.name || data.player.name || data.child.playerName || '';
+  const normalizedExistingHeadline = existing?.athlete?.headline || '';
+  const normalizedExistingPosition = existing?.bio?.position || '';
+  const normalizedExistingGraduationYear = existing?.bio?.graduationYear || '';
+  const normalizedExistingHometown = existing?.bio?.hometown || '';
+  const normalizedExistingDominantHand = existing?.bio?.dominantHand || '';
+  const normalizedExistingAchievements = existing?.bio?.achievements || '';
+  const normalizedInitialSelectedSeasonKeys = [...initialSelectedSeasonKeys].sort();
+  const normalizedSelectedSeasonKeys = [...selectedSeasonKeys].sort();
+  const hasUnsavedPublishChanges = (
+    privacy !== persistedPrivacy ||
+    name !== normalizedExistingName ||
+    headline !== normalizedExistingHeadline ||
+    position !== normalizedExistingPosition ||
+    graduationYear !== normalizedExistingGraduationYear ||
+    hometown !== normalizedExistingHometown ||
+    dominantHand !== normalizedExistingDominantHand ||
+    achievements !== normalizedExistingAchievements ||
+    normalizedInitialSelectedSeasonKeys.length !== normalizedSelectedSeasonKeys.length ||
+    normalizedInitialSelectedSeasonKeys.some((seasonKey, index) => seasonKey !== normalizedSelectedSeasonKeys[index]) ||
+    !!headshotFile ||
+    resetHeadshot ||
+    !!highlightClipFile
+  );
   const publicProfileUrl = persistedPrivacy === 'public' ? shareUrl : '';
-  const canSharePublicProfile = !!publicProfileUrl && !hasUnsavedPrivacyChange && !saving;
+  const canSharePublicProfile = !!publicProfileUrl && !hasUnsavedPublishChanges && !saving;
 
   useEffect(() => {
     return () => {
@@ -884,7 +907,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
               <Share2 className="h-4 w-4" aria-hidden="true" />
               Share Public Profile
             </button>
-          ) : hasUnsavedPrivacyChange && privacy === 'public' ? (
+          ) : hasUnsavedPublishChanges ? (
             <button type="button" className="secondary-button justify-center" disabled>
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
               Save to publish before sharing
