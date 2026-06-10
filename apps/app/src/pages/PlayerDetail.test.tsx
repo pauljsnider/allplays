@@ -420,7 +420,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('Publish and save this profile to enable sharing.')).toBeTruthy();
   });
 
-  it('does not expose a stale share action when public is only toggled locally', async () => {
+  it('keeps sharing gated on the persisted public profile when public is only toggled locally', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
 
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
@@ -451,6 +451,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
     expect(publicProfileCard.getAttribute('href')).toBe('#');
     expect(publicProfileCard.getAttribute('aria-disabled')).toBe('true');
+    expect(publicProfileCard.getAttribute('tabindex')).toBe('-1');
     expect(publicProfileCard.className).toContain('pointer-events-none');
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
