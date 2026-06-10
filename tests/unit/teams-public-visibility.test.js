@@ -33,6 +33,8 @@ describe('public teams visibility', () => {
         expect(source).not.toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
         expect(source).toContain('const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(');
         expect(teamIndexes).toEqual(expect.arrayContaining([
+            'isPublic,publicSearchName',
+            'isPublic,name',
             'isPublic,publicSearchCity',
             'isPublic,city',
             'isPublic,publicSearchState',
