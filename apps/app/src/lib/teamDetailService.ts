@@ -3,6 +3,7 @@ import {
   getAdSpaceSponsors,
   getConfigs,
   getGames,
+  inviteParent,
   getLocalAttractionSponsors,
   getPlayers,
   getPlayerTrackingStatuses,
@@ -51,6 +52,14 @@ export type TeamScorekeeperGrantTarget = {
   email: string;
   playerNames: string[];
   isGranted: boolean;
+};
+
+export type TeamRosterParentInviteSummary = {
+  playerId: string;
+  status: 'none' | 'pending' | 'accepted';
+  acceptedParentCount: number;
+  pendingInviteCount: number;
+  latestPendingCode: string;
 };
 
 export type TeamDetailEvent = {
@@ -128,6 +137,16 @@ export type InviteTeamAdminForAppResult = {
   teamName: string | null;
   acceptInviteUrl: string | null;
   reason?: string;
+};
+
+export type CreateRosterParentInviteForAppResult = {
+  code: string;
+  inviteUrl: string;
+  status: 'pending' | 'accepted';
+  existingUser: boolean;
+  autoLinked: boolean;
+  teamName: string | null;
+  playerName: string | null;
 };
 
 export type TeamScheduleNotificationSettings = {
@@ -439,6 +458,27 @@ async function loadPendingAdminInvites(teamId: string) {
     .filter(isPendingAdminInvite));
 }
 
+function isPendingParentInvite(invite: any) {
+  if (invite?.type !== 'parent_invite') return false;
+  if (invite.used === true || invite.revoked === true || invite.active === false) return false;
+  const status = cleanString(invite.status).toLowerCase();
+  if (status && !['active', 'pending'].includes(status)) return false;
+  const expiresAtMs = getExpirationTime(invite.expiresAt);
+  return expiresAtMs == null || Date.now() < expiresAtMs;
+}
+
+async function loadPendingParentInvites(teamId: string) {
+  return readWithNativeFallback(
+    `pending parent invites ${teamId}`,
+    async () => {
+      const snapshot = await getDocs(query(collection(db, 'accessCodes'), where('teamId', '==', teamId)));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    async () => nativeRunQuery('accessCodes', 'teamId', 'EQUAL', teamId)
+  ).then((invites: any[]) => (Array.isArray(invites) ? invites : [])
+    .filter(isPendingParentInvite));
+}
+
 
 export async function inviteTeamAdminForApp(teamId: string, email: string): Promise<InviteTeamAdminForAppResult> {
   const normalizedTeamId = cleanString(teamId);
@@ -461,6 +501,27 @@ export async function inviteTeamAdminForApp(teamId: string, email: string): Prom
     teamName: result?.teamName || null,
     acceptInviteUrl: code ? buildAdminAcceptInviteUrl(code) : null,
     ...(result?.reason ? { reason: result.reason } : {})
+  };
+}
+
+export async function createRosterParentInviteForApp(teamId: string, player: Pick<TeamDetailPlayer, 'id' | 'number'>): Promise<CreateRosterParentInviteForAppResult> {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedPlayerId = cleanString(player?.id);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedPlayerId) throw new Error('Player ID is required.');
+
+  const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), '', 'Parent');
+  const code = cleanString(inviteResult?.code).toUpperCase();
+  if (!code) throw new Error('Invite code was not created.');
+
+  return {
+    code,
+    inviteUrl: buildAppAcceptInviteUrl(code, 'parent'),
+    status: inviteResult?.autoLinked ? 'accepted' : 'pending',
+    existingUser: inviteResult?.existingUser === true,
+    autoLinked: inviteResult?.autoLinked === true,
+    teamName: inviteResult?.teamName || null,
+    playerName: inviteResult?.playerName || null
   };
 }
 
@@ -681,6 +742,24 @@ export async function loadTeamStaffPermissions(teamId: string, user: AuthUser | 
   });
 }
 
+export async function loadTeamRosterParentInvites(teamId: string, user: AuthUser | null): Promise<TeamRosterParentInviteSummary[]> {
+  const { team, players } = await loadTeamDetailBaseSnapshot(teamId);
+
+  if (!team || !hasFullTeamAccess(user, team)) return [];
+
+  const [pendingParentInvites, confirmedTeamMembers] = await Promise.all([
+    loadPendingParentInvites(teamId).catch(() => []),
+    Promise.resolve(getAllUsers()).catch(() => [])
+  ]);
+
+  return buildRosterParentInviteSummaries({
+    teamId,
+    players,
+    pendingParentInvites,
+    confirmedTeamMembers
+  });
+}
+
 export function buildTeamDetailModel({
   teamId,
   team,
@@ -773,6 +852,58 @@ export function buildTeamDetailModel({
       completedGames: completedGames.length
     }
   };
+}
+
+export function buildRosterParentInviteSummaries({
+  teamId,
+  players = [],
+  pendingParentInvites = [],
+  confirmedTeamMembers = []
+}: {
+  teamId: string;
+  players?: any[];
+  pendingParentInvites?: any[];
+  confirmedTeamMembers?: any[];
+}): TeamRosterParentInviteSummary[] {
+  const normalizedTeamId = cleanString(teamId);
+  const acceptedCounts = new Map<string, number>();
+
+  (Array.isArray(confirmedTeamMembers) ? confirmedTeamMembers : []).forEach((member) => {
+    (Array.isArray(member?.parentOf) ? member.parentOf : []).forEach((link: any) => {
+      if (cleanString(link?.teamId) !== normalizedTeamId) return;
+      const playerId = cleanString(link?.playerId);
+      if (!playerId) return;
+      acceptedCounts.set(playerId, (acceptedCounts.get(playerId) || 0) + 1);
+    });
+  });
+
+  const pendingInvitesByPlayerId = new Map<string, any[]>();
+  (Array.isArray(pendingParentInvites) ? pendingParentInvites : []).forEach((invite) => {
+    const playerId = cleanString(invite?.playerId);
+    if (!playerId) return;
+    const current = pendingInvitesByPlayerId.get(playerId) || [];
+    current.push(invite);
+    pendingInvitesByPlayerId.set(playerId, current);
+  });
+
+  return (Array.isArray(players) ? players : [])
+    .filter((player) => cleanString(player?.id || player?.playerId))
+    .map((player) => {
+      const playerId = cleanString(player?.id || player?.playerId);
+      const pendingInvites = (pendingInvitesByPlayerId.get(playerId) || []).slice().sort((a, b) => (
+        (getExpirationTime(b?.createdAt) || 0) - (getExpirationTime(a?.createdAt) || 0)
+      ));
+      const acceptedParentCount = acceptedCounts.get(playerId) || 0;
+      const pendingInviteCount = pendingInvites.length;
+
+      return {
+        playerId,
+        status: acceptedParentCount > 0 ? 'accepted' : pendingInviteCount > 0 ? 'pending' : 'none',
+        acceptedParentCount,
+        pendingInviteCount,
+        latestPendingCode: cleanString(pendingInvites[0]?.code).toUpperCase()
+      };
+    });
 }
 
 function buildTeamStaffPermissionsSummary({
