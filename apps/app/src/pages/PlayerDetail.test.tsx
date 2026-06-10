@@ -454,6 +454,8 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(publicProfileCard.getAttribute('href')).toBe('#');
     expect(publicProfileCard.getAttribute('aria-disabled')).toBe('true');
     expect(publicProfileCard.getAttribute('tabindex')).toBe('-1');
+    expect(publicProfileCard.getAttribute('target')).toBeNull();
+    expect(publicProfileCard.getAttribute('rel')).toBeNull();
     expect(publicProfileCard.className).toContain('pointer-events-none');
     expect(screen.getByText('Publish and save this profile to enable sharing.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
@@ -468,6 +470,8 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe('#');
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('target')).toBeNull();
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('rel')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
 
