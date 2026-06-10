@@ -438,7 +438,15 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
       </section>
 
       {activePanel === 'edit' ? <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} /> : null}
-      {activePanel === 'athlete' ? <AthleteProfileBuilderCard data={data} auth={auth} onChanged={onChanged} onShareStateChange={setAthleteProfileShareState} /> : null}
+      {activePanel === 'athlete' ? (
+        <AthleteProfileBuilderCard
+          key={`${data.athleteProfile.profile?.id || 'new'}:${data.athleteProfile.profile?.privacy || 'private'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
+          data={data}
+          auth={auth}
+          onChanged={onChanged}
+          onShareStateChange={setAthleteProfileShareState}
+        />
+      ) : null}
       {activePanel === 'family' ? <CoParentInviteCard data={data} auth={auth} /> : null}
       {activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
