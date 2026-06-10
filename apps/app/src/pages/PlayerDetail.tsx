@@ -656,7 +656,6 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     !!highlightClipFile
   );
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, data.athleteProfile.shareUrl);
-  const persistedPublicProfileAvailable = hasPersistedPublicProfile(existing, data.athleteProfile.shareUrl);
   const isPublishingNewPublicProfile = privacy === 'public' && persistedPrivacy !== 'public';
   const persistedPublicProfileReady = isPersistedPublicProfileReady(existing, data.athleteProfile.shareUrl, {
     hasUnsavedPublishChanges,
