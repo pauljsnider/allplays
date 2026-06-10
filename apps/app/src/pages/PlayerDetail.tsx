@@ -78,6 +78,10 @@ function hasPersistedPublicProfile(profile: Record<string, any> | null | undefin
   return !!getPersistedPublicProfileUrl(profile, shareUrl);
 }
 
+function hasPersistedPrivateProfileShareUrl(profile: Record<string, any> | null | undefined, shareUrl: string | null | undefined) {
+  return profile?.privacy !== 'public' && !!String(shareUrl || '').trim();
+}
+
 function isPersistedPublicProfileReady(
   profile: Record<string, any> | null | undefined,
   shareUrl: string | null | undefined,
@@ -676,17 +680,15 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   );
   const normalizedShareUrl = String(data.athleteProfile.shareUrl || '').trim();
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, normalizedShareUrl);
-  const hasPersistedShareUrl = !!normalizedShareUrl;
-  const hasPersistedSavedPublicProfile = !!persistedPublicProfileUrl;
-  const hasPersistedPrivateShareUrl = hasPersistedShareUrl && !hasPersistedSavedPublicProfile;
+  const hasPersistedPrivateShareUrl = hasPersistedPrivateProfileShareUrl(existing, normalizedShareUrl);
   const isPublishingNewPublicProfile = privacy === 'public' && persistedPrivacy !== 'public';
   const persistedPublicProfileReady = isPersistedPublicProfileReady(existing, normalizedShareUrl, {
     hasUnsavedPublishChanges,
     saving
   });
-  const requiresPublishBeforeSharing = hasUnsavedPublishChanges || hasPersistedPrivateShareUrl;
-  const canPreviewPublishedPublicProfile = hasPersistedSavedPublicProfile && persistedPublicProfileReady;
-  const canSharePublicProfile = hasPersistedSavedPublicProfile && persistedPublicProfileReady;
+  const canPreviewPublishedPublicProfile = persistedPublicProfileReady;
+  const canSharePublicProfile = persistedPublicProfileReady;
+  const requiresPublishBeforeSharing = hasUnsavedPublishChanges || hasPersistedPrivateShareUrl || (privacy === 'public' && persistedPrivacy !== 'public');
   const latestPublicShareStateRef = useRef({
     canSharePublicProfile: false,
     persistedPublicProfileUrl: ''
