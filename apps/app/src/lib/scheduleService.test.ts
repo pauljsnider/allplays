@@ -82,9 +82,11 @@ vi.mock('./authService', () => ({ firebaseAuth: {}, getNativeAuthIdToken: vi.fn(
 vi.mock('./uxTiming', () => ({ startUxTimer: vi.fn(() => ({ end: vi.fn() })) }));
 vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
+vi.mock('./appDataCache', () => ({ getCachedAppData: vi.fn(), loadCachedAppData: vi.fn(), clearAppDataCache: vi.fn() }));
 
 import { updateGame, getGame, getGames, getPlayers, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeams, submitRsvpForPlayer } from '../../../../js/db.js';
 import { fetchAndParseCalendar } from '../../../../js/utils.js';
+import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
 import { buildPlayerScoringLiveEvent, loadStaffScheduleRsvpBreakdown, recordPlayerScoringStat, resolveParentGameRoute, saveScheduledGameLineupDraftForApp, submitStaffScheduleRsvpOverride } from './scheduleService';
 
@@ -105,12 +107,43 @@ describe('parent game route resolution', () => {
       }
       return null as any;
     });
+    vi.mocked(getCachedAppData).mockReturnValue(null);
     vi.mocked(getGames).mockResolvedValue([] as any);
     vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
     vi.mocked(fetchAndParseCalendar).mockResolvedValue([] as any);
   });
 
-  it('resolves a game route without loading full schedules or calendars', async () => {
+  it('resolves a game route from the cached schedule summary before scanning teams', async () => {
+    vi.mocked(getCachedAppData).mockReturnValue({
+      children: [],
+      events: [
+        {
+          id: 'game-7',
+          teamId: 'team-bravo',
+          type: 'game',
+          childId: 'child-2'
+        }
+      ]
+    } as any);
+
+    const result = await resolveParentGameRoute({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, 'game-7', {
+      expandStaffPlayers: false
+    });
+
+    expect(result).toEqual({
+      teamId: 'team-bravo',
+      eventId: 'game-7',
+      childId: 'child-2'
+    });
+    expect(getCachedAppData).toHaveBeenCalledWith('app-schedule-summary:parent-1');
+    expect(loadProfileDocument).not.toHaveBeenCalled();
+    expect(getGame).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+    expect(getPracticeSessions).not.toHaveBeenCalled();
+    expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+
+  it('resolves a game route without loading full schedules or calendars when cache misses', async () => {
     const result = await resolveParentGameRoute({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, 'game-7', {
       expandStaffPlayers: false
     });
