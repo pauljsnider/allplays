@@ -617,6 +617,10 @@ function toTitleCase(value) {
 function buildPublicTeamSearchFields(teamData = {}) {
     const searchFields = {};
 
+    if (Object.prototype.hasOwnProperty.call(teamData, 'name')) {
+        searchFields.publicSearchName = normalizePublicTeamSearchValue(teamData.name);
+    }
+
     if (Object.prototype.hasOwnProperty.call(teamData, 'city')) {
         searchFields.publicSearchCity = normalizePublicTeamSearchValue(teamData.city);
     }
@@ -673,24 +677,37 @@ function buildPublicTeamSearchDescriptor(searchText = '') {
 
 function buildPublicTeamSearchStrategies(searchText = '') {
     const descriptor = buildPublicTeamSearchDescriptor(searchText);
-    const trimmed = descriptor?.normalized || normalizePublicTeamSearchInput(searchText);
+    const rawTrimmed = normalizePublicTeamSearchInput(searchText);
+    const trimmed = descriptor?.normalized || rawTrimmed;
     if (!descriptor) return [];
 
+    const strategies = [];
+    const normalizedName = normalizePublicTeamSearchValue(rawTrimmed);
+    const legacyNameSearch = toTitleCase(rawTrimmed);
+    if (normalizedName) {
+        strategies.push(
+            { field: 'publicSearchName', start: normalizedName, end: `${normalizedName}\uf8ff` },
+            { field: 'name', start: legacyNameSearch, end: `${legacyNameSearch}\uf8ff` }
+        );
+    }
+
     if (descriptor.type === 'zip') {
-        return [
+        strategies.push(
             { field: 'publicSearchZip', start: trimmed, end: `${trimmed}\uf8ff` },
             { field: 'zip', start: trimmed, end: `${trimmed}\uf8ff` }
-        ];
+        );
+        return strategies;
     }
 
     const [rawCityPart, rawStatePart = ''] = trimmed.split(',').map((part) => part.trim()).filter((part, index, parts) => index === 0 || part || parts.length > 1);
 
     if (descriptor.type === 'state') {
         const normalizedState = descriptor.state;
-        return [
+        strategies.push(
             { field: 'publicSearchState', start: normalizedState, end: `${normalizedState}\uf8ff` },
             { field: 'state', start: normalizedState, end: `${normalizedState}\uf8ff` }
-        ];
+        );
+        return strategies;
     }
 
     const citySearch = normalizePublicTeamSearchValue(rawCityPart || trimmed);
@@ -700,10 +717,12 @@ function buildPublicTeamSearchStrategies(searchText = '') {
         ? (team) => String(team.publicSearchState || team.state || '').trim().toUpperCase().startsWith(normalizedState)
         : null;
 
-    return [
+    strategies.push(
         { field: 'publicSearchCity', start: citySearch, end: `${citySearch}\uf8ff`, filter: filterByState },
         { field: 'city', start: legacyCitySearch, end: `${legacyCitySearch}\uf8ff`, filter: filterByState }
-    ];
+    );
+
+    return strategies;
 }
 
 function sortTeamsByName(teams = []) {

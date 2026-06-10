@@ -33,6 +33,8 @@ describe('public teams visibility', () => {
         expect(source).not.toContain('await appendResolvedZipPublicTeamMatches(teamsRef, searchDescriptor, teamsById);');
         expect(source).toContain('const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(');
         expect(teamIndexes).toEqual(expect.arrayContaining([
+            'isPublic,publicSearchName',
+            'isPublic,name',
             'isPublic,publicSearchCity',
             'isPublic,city',
             'isPublic,publicSearchState',
@@ -65,7 +67,7 @@ describe('public teams visibility', () => {
     it('wires Browse Teams to the public-only helper path and keeps a defensive client filter', () => {
         const source = readRepoFile('teams.html');
 
-        expect(source).toContain("import { discoverPublicTeams } from './js/db.js?v=41';");
+        expect(source).toContain("import { discoverPublicTeams } from './js/db.js?v=42';");
         expect(source).toContain('discoverPublicTeams(locationFilter');
         expect(source).toContain("{ cursor, pageSize: 24 }");
         expect(source).toContain('allTeams.filter(t => t.isPublic === true)');

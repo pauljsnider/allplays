@@ -1,0 +1,17 @@
+import { PublicTeamSearch } from '../components/PublicTeamSearch';
+
+export function PublicTeamsBrowse() {
+  return (
+    <div className="space-y-4">
+      <section className="app-card p-4 sm:p-5">
+        <div className="app-label">Teams</div>
+        <h1 className="mt-1 text-2xl font-black text-gray-950 sm:text-3xl">Browse public teams</h1>
+        <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">
+          Find public teams, then open the existing team page in read-only mode.
+        </p>
+      </section>
+
+      <PublicTeamSearch autoBrowseOnMount showBackLink />
+    </div>
+  );
+}

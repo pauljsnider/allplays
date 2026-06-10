@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -9,7 +10,7 @@ import { openPublicUrl } from '../lib/publicActions';
 import { ParentHomeTeam } from '../lib/homeLogic';
 
 vi.mock('../lib/publicTeamsService', () => ({
-    getPublicTeamsPage: vi.fn() as MockInstance<(args?: { locationFilter?: string; cursor?: unknown | null; pageSize?: number }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
+    getPublicTeamsPage: vi.fn() as MockInstance<(args?: { searchText?: string; cursor?: unknown | null; pageSize?: number }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
 }));
 
 vi.mock('../lib/publicActions', () => ({
@@ -56,10 +57,10 @@ function LocationProbe() {
     return <div data-testid="location-probe">{location.pathname}</div>;
 }
 
-function renderSearch() {
+function renderSearch(props: ComponentProps<typeof PublicTeamSearch> = {}, initialEntry = '/teams') {
     return render(
-        <MemoryRouter initialEntries={['/teams']}>
-            <PublicTeamSearch />
+        <MemoryRouter initialEntries={[initialEntry]}>
+            <PublicTeamSearch {...props} />
             <LocationProbe />
         </MemoryRouter>
     );
@@ -78,7 +79,7 @@ describe('PublicTeamSearch', () => {
     it('renders an empty search-first state without loading teams on mount', () => {
         renderSearch();
 
-        expect(screen.getByPlaceholderText('Search by city, state, or zip')).toBeTruthy();
+        expect(screen.getByPlaceholderText('Search by team, city, state, or zip')).toBeTruthy();
         expect(screen.getByRole('button', { name: /Search/i })).toBeTruthy();
         expect(screen.getByRole('button', { name: /Browse all public teams/i })).toBeTruthy();
         expect(screen.getByText('Search for public teams near you')).toBeTruthy();
@@ -87,15 +88,15 @@ describe('PublicTeamSearch', () => {
         expect(getPublicTeamsPage).not.toHaveBeenCalled();
     });
 
-    it('filters teams by location when search is submitted', async () => {
+    it('filters teams by search text when search is submitted', async () => {
         (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: null });
         renderSearch();
 
-        const searchInput = screen.getByPlaceholderText('Search by city, state, or zip') as HTMLInputElement;
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
         fireEvent.click(screen.getByRole('button', { name: /Search/i }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ locationFilter: 'atlanta', cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: 'atlanta', cursor: null }));
         expect(screen.getByText('Atlanta United')).toBeTruthy();
         expect(screen.queryByText('New York Knicks')).toBeNull();
         expect(screen.getByRole('button', { name: /Clear/i })).toBeTruthy();
@@ -109,12 +110,12 @@ describe('PublicTeamSearch', () => {
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ locationFilter: undefined, cursor: null }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: undefined, cursor: null }));
         expect(screen.getByText('Atlanta United')).toBeTruthy();
         expect(screen.queryByText('New York Knicks')).toBeNull();
         fireEvent.click(screen.getByRole('button', { name: /Load more teams/i }));
 
-        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenLastCalledWith({ locationFilter: undefined, cursor: 'cursor-2' }));
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenLastCalledWith({ searchText: undefined, cursor: 'cursor-2' }));
         expect(screen.getByText('New York Knicks')).toBeTruthy();
     });
 
@@ -122,7 +123,7 @@ describe('PublicTeamSearch', () => {
         (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: null });
         renderSearch();
 
-        const searchInput = screen.getByPlaceholderText('Search by city, state, or zip') as HTMLInputElement;
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
         fireEvent.click(screen.getByRole('button', { name: /Search/i }));
 
@@ -151,7 +152,7 @@ describe('PublicTeamSearch', () => {
         (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({ teams: [], nextCursor: null });
         renderSearch();
 
-        fireEvent.change(screen.getByPlaceholderText('Search by city, state, or zip'), { target: { value: 'boston' } });
+        fireEvent.change(screen.getByPlaceholderText('Search by team, city, state, or zip'), { target: { value: 'boston' } });
         fireEvent.click(screen.getByRole('button', { name: /Search/i }));
 
         await waitFor(() => {
@@ -186,7 +187,7 @@ describe('PublicTeamSearch', () => {
         expect(openPublicUrl).not.toHaveBeenCalled();
     });
 
-    it('opens the website team page when only web access is available', async () => {
+    it('routes to the app team page when only web access is available', async () => {
         renderSearch();
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
@@ -195,10 +196,10 @@ describe('PublicTeamSearch', () => {
         const newYorkCard = screen.getByText('New York Knicks').closest('article');
         expect(newYorkCard).toBeTruthy();
 
-        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'View team on website' }));
+        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'View team' }));
 
-        expect(openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/team.html#teamId=team-nyc-1');
-        expect(screen.getByTestId('location-probe').textContent).toBe('/teams');
+        expect(openPublicUrl).not.toHaveBeenCalled();
+        expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-nyc-1');
     });
 
     it('renders an unavailable state when neither app nor web access exists', async () => {
@@ -223,5 +224,12 @@ describe('PublicTeamSearch', () => {
         expect(hiddenCard).toBeTruthy();
         expect(within(hiddenCard as HTMLElement).queryByRole('button', { name: /View team/i })).toBeNull();
         expect(within(hiddenCard as HTMLElement).getByText('Team page is not available in the app yet.')).toBeTruthy();
+    });
+
+    it('can auto-browse on mount for the dedicated discovery route', async () => {
+        renderSearch({ autoBrowseOnMount: true }, '/teams/browse');
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: undefined, cursor: null }));
+        expect(screen.getByText('Atlanta United')).toBeTruthy();
     });
 });

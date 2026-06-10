@@ -197,6 +197,8 @@ describe('React app Teams page', () => {
         expect(container.textContent.indexOf('Choose a team')).toBeLessThan(container.textContent.indexOf('Team navigation'));
         expect(container.textContent).toContain('Coach/admin tools');
         expect(container.textContent).toContain('Website tools available');
+        expect(container.textContent).toContain('Discover public teams');
+        expect(getHrefs(container)).toContain('/teams/browse');
         let hrefs = getHrefs(container);
         expect(hrefs).toContain('/messages/team-staff');
         expect(hrefs).toContain('/teams/team-staff');
@@ -407,6 +409,7 @@ describe('React app Teams page', () => {
         expect(container.textContent).toContain('No teams linked yet');
         expect(container.textContent).toContain('Accept invite');
         expect(container.textContent).toContain('Browse teams');
+        expect(getHrefs(container)).toContain('/teams/browse');
         expect(container.textContent).not.toContain('Loading teams');
         expect(container.textContent).not.toContain('Website tools available');
     });
