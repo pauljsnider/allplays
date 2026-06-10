@@ -490,6 +490,65 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });
 
+  it('does not show a waiting-for-publish state when saving changes to an already public profile', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+    const saveDeferred = createDeferred<{ shareUrl: string }>();
+
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        athleteProfile: {
+          profile: {
+            id: 'profile-1',
+            athlete: { name: 'Sam Player', headline: '2028 Guard' },
+            bio: {},
+            privacy: 'public',
+            clips: [],
+            seasons: [{ seasonKey: 'team-current::player-current' }]
+          },
+          shareUrl,
+          builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+          seasonOptions: buildDetailData().athleteProfile.seasonOptions
+        }
+      }))
+      .mockResolvedValueOnce(buildDetailData({
+        athleteProfile: {
+          profile: {
+            id: 'profile-1',
+            athlete: { name: 'Sam Player', headline: '2028 Playmaker' },
+            bio: {},
+            privacy: 'public',
+            clips: [],
+            seasons: [{ seasonKey: 'team-current::player-current' }]
+          },
+          shareUrl,
+          builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+          seasonOptions: buildDetailData().athleteProfile.seasonOptions
+        }
+      }));
+    playerServiceMocks.saveParentAthleteProfileDraft.mockImplementationOnce(() => saveDeferred.promise);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    fireEvent.change(screen.getByLabelText('Headline'), { target: { value: '2028 Playmaker' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalled();
+    });
+
+    expect(screen.queryByRole('button', { name: 'Waiting for published profile...' })).toBeNull();
+    expect(screen.queryByText('Waiting for refresh to confirm the public share link.')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+
+    saveDeferred.resolve({ shareUrl });
+    expect(await screen.findByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
+  });
+
   it('keeps the public athlete profile card disabled until refresh confirms the saved public publish state', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
     const refreshDeferred = createDeferred<ReturnType<typeof buildDetailData>>();

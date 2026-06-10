@@ -657,8 +657,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   );
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = hasPersistedPublicProfile(existing, data.athleteProfile.shareUrl);
-  const canPreviewPublishedPublicProfile = isPersistedPublicProfileReady(existing, data.athleteProfile.shareUrl, { hasUnsavedPublishChanges });
-  const canSharePublicProfile = isPersistedPublicProfileReady(existing, data.athleteProfile.shareUrl, { hasUnsavedPublishChanges, saving });
+  const persistedPublicProfileReady = isPersistedPublicProfileReady(existing, data.athleteProfile.shareUrl);
+  const canPreviewPublishedPublicProfile = persistedPublicProfileReady && !hasUnsavedPublishChanges;
+  const canSharePublicProfile = persistedPublicProfileReady && !hasUnsavedPublishChanges && !saving;
 
   useEffect(() => {
     return () => {
@@ -687,7 +688,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     }
     setSaving(true);
     setStatus(null);
-    setAwaitingPersistedPublish(privacy === 'public');
+    setAwaitingPersistedPublish(privacy === 'public' && !persistedPublicProfileReady);
     try {
       await saveParentAthleteProfileDraft({
         user: auth.user,
