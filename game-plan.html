@@ -170,6 +170,22 @@
                                 <p class="text-sm text-gray-600">5 court positions + bench</p>
                             </div>
                         </div>
+                        <div class="formation-card cursor-pointer border-2 border-gray-300 rounded-xl p-6 hover:border-primary-500 hover:bg-primary-50 transition"
+                             data-formation="baseball-diamond">
+                            <div class="text-center">
+                                <div class="text-4xl mb-3">⚾</div>
+                                <h3 class="text-xl font-bold text-gray-900 mb-2">Baseball Diamond</h3>
+                                <p class="text-sm text-gray-600">9 fielding positions + bench</p>
+                            </div>
+                        </div>
+                        <div class="formation-card cursor-pointer border-2 border-gray-300 rounded-xl p-6 hover:border-primary-500 hover:bg-primary-50 transition"
+                             data-formation="softball-diamond">
+                            <div class="text-center">
+                                <div class="text-4xl mb-3">🥎</div>
+                                <h3 class="text-xl font-bold text-gray-900 mb-2">Softball Diamond</h3>
+                                <p class="text-sm text-gray-600">9 fielding positions + bench</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -185,9 +201,9 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-2">Number of Periods</label>
-                            <input type="number" id="num-periods" min="2" max="4" value="2"
+                            <input type="number" id="num-periods" min="1" max="12" value="2"
                                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
-                            <p class="text-xs text-gray-500 mt-1">Typically 2 halves or 4 quarters</p>
+                            <p class="text-xs text-gray-500 mt-1">Examples: 2 halves, 4 quarters, or 7 innings</p>
                         </div>
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-2">Minutes per Period</label>
@@ -319,6 +335,34 @@
                     { id: 'pf', name: 'Power Forward (PF)' },
                     { id: 'c', name: 'Center (C)' }
                 ]
+            },
+            'baseball-diamond': {
+                name: 'Baseball Diamond',
+                positions: [
+                    { id: 'pitcher', name: 'Pitcher (P)' },
+                    { id: 'catcher', name: 'Catcher (C)' },
+                    { id: 'first-base', name: 'First Base (1B)' },
+                    { id: 'second-base', name: 'Second Base (2B)' },
+                    { id: 'third-base', name: 'Third Base (3B)' },
+                    { id: 'shortstop', name: 'Shortstop (SS)' },
+                    { id: 'left-field', name: 'Left Field (LF)' },
+                    { id: 'center-field', name: 'Center Field (CF)' },
+                    { id: 'right-field', name: 'Right Field (RF)' }
+                ]
+            },
+            'softball-diamond': {
+                name: 'Softball Diamond',
+                positions: [
+                    { id: 'pitcher', name: 'Pitcher (P)' },
+                    { id: 'catcher', name: 'Catcher (C)' },
+                    { id: 'first-base', name: 'First Base (1B)' },
+                    { id: 'second-base', name: 'Second Base (2B)' },
+                    { id: 'third-base', name: 'Third Base (3B)' },
+                    { id: 'shortstop', name: 'Shortstop (SS)' },
+                    { id: 'left-field', name: 'Left Field (LF)' },
+                    { id: 'center-field', name: 'Center Field (CF)' },
+                    { id: 'right-field', name: 'Right Field (RF)' }
+                ]
             }
         };
 
@@ -398,6 +442,7 @@
                 periodDuration: 25,
                 subTimes: [7, 14, 21],
                 formationId: null,
+                periodPrefix: null,
                 lineups: {}
             };
 
@@ -416,6 +461,28 @@
                 return {
                     ...gamePlanDefaults,
                     formationId: 'soccer-9v9'
+                };
+            }
+
+            if (sport === 'baseball') {
+                return {
+                    ...gamePlanDefaults,
+                    numPeriods: 7,
+                    periodDuration: 1,
+                    subTimes: [],
+                    formationId: 'baseball-diamond',
+                    periodPrefix: 'I'
+                };
+            }
+
+            if (sport === 'softball') {
+                return {
+                    ...gamePlanDefaults,
+                    numPeriods: 7,
+                    periodDuration: 1,
+                    subTimes: [],
+                    formationId: 'softball-diamond',
+                    periodPrefix: 'I'
                 };
             }
 
@@ -648,7 +715,7 @@
             document.getElementById('sub-times-input').value = gamePlan.subTimes.join(',');
             renderSubTimesDisplay();
 
-            const hasPlan = gamePlan.formationId && (gamePlan.subTimes || []).length > 0;
+            const hasPlan = !!gamePlan.formationId;
 
             document.getElementById('planning-wizard').classList.remove('hidden');
 
@@ -724,13 +791,13 @@
             const formation = FORMATIONS[gamePlan.formationId];
             const subTimesText = (gamePlan.subTimes && gamePlan.subTimes.length > 0)
                 ? gamePlan.subTimes.join(', ')
-                : '—';
+                : 'None';
             document.getElementById('plan-summary-formation').textContent = formation ? formation.name : 'Not set';
             document.getElementById('plan-summary-periods').textContent = gamePlan.numPeriods || '—';
             document.getElementById('plan-summary-duration').textContent = gamePlan.periodDuration || '—';
             document.getElementById('plan-summary-subs').textContent = subTimesText;
 
-            const ready = formation && subTimesText !== '—';
+            const ready = formation && Number(gamePlan.numPeriods) > 0 && Number(gamePlan.periodDuration) > 0;
             summary.classList.toggle('hidden', !ready);
         }
 

@@ -88,7 +88,9 @@ function buildHarness(overrides = {}) {
         },
         FORMATIONS: {
             'soccer-9v9': { name: 'Soccer 9v9', positions: [{ id: 'keeper', name: 'Keeper' }] },
-            'basketball-5v5': { name: 'Basketball 5v5', positions: [{ id: 'pg', name: 'Point Guard' }] }
+            'basketball-5v5': { name: 'Basketball 5v5', positions: [{ id: 'pg', name: 'Point Guard' }] },
+            'baseball-diamond': { name: 'Baseball Diamond', positions: [{ id: 'pitcher', name: 'Pitcher' }] },
+            'softball-diamond': { name: 'Softball Diamond', positions: [{ id: 'pitcher', name: 'Pitcher' }] }
         },
         document,
         recentAssignments: new Map([['stale-key', Date.now()]]),
@@ -160,6 +162,58 @@ ${loadGameBody}
 }
 
 describe('game plan game switching', () => {
+    it('adds baseball and softball defaults so diamond sports skip the blocked formation step', async () => {
+        const { harness, document, deps } = buildHarness({
+            currentTeam: { sport: 'Baseball' }
+        });
+
+        await harness.loadGame({
+            id: 'game-baseball',
+            opponent: 'Sharks',
+            date: '2026-04-04T19:00:00.000Z'
+        });
+
+        expect(harness.getState().gamePlan).toMatchObject({
+            formationId: 'baseball-diamond',
+            numPeriods: 7,
+            periodDuration: 1,
+            periodPrefix: 'I',
+            subTimes: []
+        });
+        expect(document.getElementById('step-lineup').classList.contains('hidden')).toBe(false);
+        expect(document.getElementById('step-formation').classList.contains('hidden')).toBe(true);
+        expect(deps.renderSubMatrix).toHaveBeenCalledTimes(1);
+    });
+
+    it('maps softball teams to the softball diamond defaults', async () => {
+        const { harness } = buildHarness({
+            currentTeam: { sport: 'Softball' }
+        });
+
+        await harness.loadGame({
+            id: 'game-softball',
+            opponent: 'Panthers',
+            date: '2026-04-04T19:00:00.000Z'
+        });
+
+        expect(harness.getState().gamePlan).toMatchObject({
+            formationId: 'softball-diamond',
+            numPeriods: 7,
+            periodDuration: 1,
+            periodPrefix: 'I',
+            subTimes: []
+        });
+    });
+
+    it('includes baseball and softball formation cards in the chooser markup', () => {
+        const source = readGamePlanPage();
+
+        expect(source).toContain('data-formation="baseball-diamond"');
+        expect(source).toContain('Baseball Diamond');
+        expect(source).toContain('data-formation="softball-diamond"');
+        expect(source).toContain('Softball Diamond');
+    });
+
     it('clears saved lineup assignments when switching to a game without a plan', async () => {
         const { harness, deps } = buildHarness();
 
