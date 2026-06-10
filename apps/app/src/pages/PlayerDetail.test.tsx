@@ -456,7 +456,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });
 
-  it('keeps sharing disabled until the refreshed profile confirms the public publish state', async () => {
+  it('keeps the public athlete profile card disabled until refresh confirms the saved public publish state', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
     const refreshDeferred = createDeferred<ReturnType<typeof buildDetailData>>();
 
@@ -482,6 +482,11 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     await screen.findByText('Sam Player');
     fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    const getPublicProfileCard = () => screen.getByRole('link', { name: /Public athlete profile/i });
+    expect(getPublicProfileCard().getAttribute('href')).toBe('#');
+    expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('true');
+
     fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
     await screen.findByText('What others see');
 
@@ -496,6 +501,8 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect((screen.getByRole('button', { name: 'Refresh player' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(getPublicProfileCard().getAttribute('href')).toBe('#');
+    expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('true');
 
     refreshDeferred.resolve(buildDetailData({
       athleteProfile: {
@@ -514,6 +521,8 @@ describe('PlayerDetail athlete profile season selection', () => {
     }));
 
     expect(await screen.findByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
+    expect(getPublicProfileCard().getAttribute('href')).toBe(shareUrl);
+    expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('false');
   });
 
   it('keeps sharing disabled when a publish refresh still returns a private profile', async () => {

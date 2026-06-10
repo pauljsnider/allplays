@@ -74,6 +74,10 @@ function getPersistedPublicProfileUrl(profile: Record<string, any> | null | unde
   return profile?.privacy === 'public' && normalizedShareUrl ? normalizedShareUrl : '';
 }
 
+function hasPersistedPublicProfile(profile: Record<string, any> | null | undefined, shareUrl: string | null | undefined) {
+  return !!getPersistedPublicProfileUrl(profile, shareUrl);
+}
+
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
@@ -388,7 +392,7 @@ const profilePanels: Array<{ id: ProfilePanelId; label: string }> = [
 function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
-  const hasPersistedPublicProfile = Boolean(persistedPublicProfileUrl);
+  const persistedPublicProfileAvailable = hasPersistedPublicProfile(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   return (
     <div className="player-section-content space-y-3">
       <section className="app-card p-3">
@@ -430,15 +434,15 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
         </a>
         <a
           href={persistedPublicProfileUrl || '#'}
-          target={hasPersistedPublicProfile ? '_blank' : undefined}
-          rel={hasPersistedPublicProfile ? 'noreferrer' : undefined}
-          aria-disabled={!hasPersistedPublicProfile}
-          tabIndex={hasPersistedPublicProfile ? undefined : -1}
-          onClick={hasPersistedPublicProfile ? undefined : (event) => event.preventDefault()}
-          className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${hasPersistedPublicProfile ? '' : 'pointer-events-none opacity-60'}`}
+          target={persistedPublicProfileAvailable ? '_blank' : undefined}
+          rel={persistedPublicProfileAvailable ? 'noreferrer' : undefined}
+          aria-disabled={!persistedPublicProfileAvailable}
+          tabIndex={persistedPublicProfileAvailable ? undefined : -1}
+          onClick={persistedPublicProfileAvailable ? undefined : (event) => event.preventDefault()}
+          className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${persistedPublicProfileAvailable ? '' : 'pointer-events-none opacity-60'}`}
         >
           <IconBox icon={Share2} />
-          <CardText title="Public athlete profile" detail={hasPersistedPublicProfile ? 'Open the shareable athlete profile.' : 'Save a public profile to enable sharing.'} />
+          <CardText title="Public athlete profile" detail={persistedPublicProfileAvailable ? 'Open the shareable athlete profile.' : 'Save a public profile to enable sharing.'} />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <Link to="/parent-tools/certificates" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
@@ -643,9 +647,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     !!highlightClipFile
   );
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, data.athleteProfile.shareUrl);
-  const hasPersistedPublicProfile = persistedPrivacy === 'public' && !!persistedPublicProfileUrl;
-  const canPreviewPublishedPublicProfile = hasPersistedPublicProfile && !hasUnsavedPublishChanges;
-  const canSharePublicProfile = hasPersistedPublicProfile && !hasUnsavedPublishChanges && !saving;
+  const persistedPublicProfileAvailable = hasPersistedPublicProfile(existing, data.athleteProfile.shareUrl);
+  const canPreviewPublishedPublicProfile = persistedPublicProfileAvailable && !hasUnsavedPublishChanges;
+  const canSharePublicProfile = persistedPublicProfileAvailable && !hasUnsavedPublishChanges && !saving;
 
   useEffect(() => {
     return () => {
