@@ -580,6 +580,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const [resetHeadshot, setResetHeadshot] = useState(false);
   const [highlightClipFile, setHighlightClipFile] = useState<File | null>(null);
   const [highlightClipError, setHighlightClipError] = useState('');
+  const persistedPrivacy = existing?.privacy === 'public' ? 'public' : 'private';
   const existingHeadshotUrl = existing?.profilePhotoUrl || '';
   const linkedHeadshotUrl = data.player.photoUrl || '';
   const headshotPreviewUrl = useMemo(() => {
@@ -604,7 +605,6 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     ].filter(Boolean);
     return items;
   }, [achievements, data.child.playerName, dominantHand, existing?.clips?.length, graduationYear, headline, highlightClipFile, hometown, name, position, selectedSeasonKeys.length]);
-  const persistedPrivacy = existing?.privacy === 'public' ? 'public' : 'private';
   const normalizedExistingName = existing?.athlete?.name || data.player.name || data.child.playerName || '';
   const normalizedExistingHeadline = existing?.athlete?.headline || '';
   const normalizedExistingPosition = existing?.bio?.position || '';
@@ -629,8 +629,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     resetHeadshot ||
     !!highlightClipFile
   );
-  const publicProfileUrl = persistedPrivacy === 'public' ? shareUrl : '';
-  const canSharePublicProfile = !!publicProfileUrl && !hasUnsavedPublishChanges && !saving;
+  const persistedPublicProfileUrl = persistedPrivacy === 'public' && shareUrl ? shareUrl : '';
+  const canPreviewPublishedPublicProfile = !!persistedPublicProfileUrl && !hasUnsavedPublishChanges;
+  const canSharePublicProfile = canPreviewPublishedPublicProfile && !saving;
 
   useEffect(() => {
     return () => {
@@ -641,6 +642,10 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   useEffect(() => {
     setSelectedSeasonKeys(initialSelectedSeasonKeys);
   }, [initialSelectedSeasonKeys]);
+
+  useEffect(() => {
+    setShareUrl(data.athleteProfile.shareUrl || '');
+  }, [data.athleteProfile.shareUrl]);
 
   const toggleSeasonKey = (seasonKey: string) => {
     setSelectedSeasonKeys((current) => (
@@ -702,7 +707,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
       const result = await sharePublicUrl({
         title: `${name || data.child.playerName || 'Athlete'} profile`,
         text: 'Take a look at this athlete profile on ALL PLAYS.',
-        url: publicProfileUrl
+        url: persistedPublicProfileUrl
       });
       if (result === 'shared') {
         setStatus({ tone: 'success', message: 'Public athlete profile shared.' });
@@ -913,9 +918,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
               Save to publish before sharing
             </button>
           ) : (
-            <a href={publicProfileUrl || data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
+            <a href={canPreviewPublishedPublicProfile ? persistedPublicProfileUrl : data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
-              {publicProfileUrl ? 'Preview Public Page' : 'Open Full Builder'}
+              {canPreviewPublishedPublicProfile ? 'Preview Public Page' : 'Open Full Builder'}
             </a>
           )}
         </div>
