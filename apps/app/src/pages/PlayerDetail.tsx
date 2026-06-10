@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -698,7 +698,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     persistedPublicProfileUrl
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onShareStateChange({
       hasUnsavedPublishChanges,
       saving: saving || awaitingPersistedPublish
