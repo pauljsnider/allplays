@@ -253,6 +253,64 @@ describe('React app shell search', () => {
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-home/player-1');
     });
 
+    it('lets player search start before slow team hydration finishes and merges team results afterward', async () => {
+        let resolveParentHome;
+        homeMocks.loadParentHome.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveParentHome = resolve;
+        }));
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const parts = request?.parts || [];
+            const collectionName = parts.find((part) => part?.collectionName)?.collectionName;
+            const lowerBound = parts.find((part) => part?.type === 'where' && part.field === 'name' && part.op === '>=')?.value;
+            const ownerQuery = parts.find((part) => part?.type === 'where' && part.field === 'ownerId');
+            const adminQuery = parts.find((part) => part?.type === 'where' && part.field === 'adminEmails');
+            const streamMemberQuery = parts.find((part) => part?.type === 'where' && part.field === 'teamPermissions.streaming.memberIds');
+            const streamEmailQuery = parts.find((part) => part?.type === 'where' && part.field === 'streamVolunteerEmails');
+
+            if (collectionName === 'teams') {
+                if (ownerQuery || adminQuery || streamMemberQuery || streamEmailQuery) {
+                    return { docs: [] };
+                }
+                if (lowerBound === 'roc' || lowerBound === 'Roc') {
+                    return { docs: [firestoreTeam('team-2', { name: 'Rockets', sport: 'Soccer', zip: '64114', isPublic: false })] };
+                }
+                return { docs: [] };
+            }
+
+            return {
+                docs: [
+                    firestorePlayer('teams/team-home/players/player-1', { name: 'Roc Star', number: '9' }),
+                    firestorePlayer('teams/team-2/players/player-2', { name: 'Rocket Kid', number: '10' })
+                ]
+            };
+        });
+
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'roc');
+        await waitForText(container, '#9 Roc Star');
+        expect(container.textContent).toContain('#9 Roc Star');
+        expect(container.textContent).not.toContain('Rocket Kid');
+
+        resolveParentHome({
+            teams: [{
+                teamId: 'team-2',
+                teamName: 'Rockets',
+                sport: 'Soccer',
+                players: [],
+                nextEvent: null,
+                eventCount: 0,
+                unreadCount: 0,
+                openActions: 0
+            }]
+        });
+        await flush(400);
+
+        await waitForText(container, 'Rockets');
+        expect(container.textContent).toContain('#10 Rocket Kid');
+    });
+
     it('avoids repeated Firestore player lookups for narrower mobile search refinements', async () => {
         firebaseMocks.getDocs.mockImplementation(async (request) => {
             const parts = request?.parts || [];

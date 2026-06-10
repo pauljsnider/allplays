@@ -22,6 +22,8 @@ const teamSearchQueryLimit = 20;
 let cachedTeams: AppSearchTeam[] | null = null;
 let cachedTeamsLoadedAt = 0;
 let cachedTeamsUserKey = '';
+let cachedTeamsPromise: Promise<AppSearchTeam[]> | null = null;
+let cachedTeamsPromiseUserKey = '';
 const playerSearchCache = new Map<string, PlayerSearchCacheEntry>();
 
 type PlayerSearchCacheEntry = {
@@ -284,6 +286,10 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
     return cachedTeams;
   }
 
+  if (cachedTeamsPromise && cachedTeamsPromiseUserKey === userCacheKey) {
+    return cachedTeamsPromise;
+  }
+
   if (!user) {
     cachedTeams = [];
     cachedTeamsLoadedAt = now;
@@ -291,46 +297,58 @@ export async function loadAppSearchTeams(user: AuthUser | null): Promise<AppSear
     return cachedTeams;
   }
 
-  const [directAccessTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
-    loadDirectAccessSearchTeams(user),
-    user ? loadParentHomeSummary(user) : Promise.resolve(null),
-    user ? loadStreamVolunteerSearchTeams(user) : Promise.resolve([])
-  ]);
+  cachedTeamsPromiseUserKey = userCacheKey;
+  cachedTeamsPromise = (async () => {
+    const [directAccessTeamsResult, homeTeamsResult, streamVolunteerTeamsResult] = await Promise.allSettled([
+      loadDirectAccessSearchTeams(user),
+      user ? loadParentHomeSummary(user) : Promise.resolve(null),
+      user ? loadStreamVolunteerSearchTeams(user) : Promise.resolve([])
+    ]);
 
-  const teamsById = new Map<string, AppSearchTeam>();
+    const teamsById = new Map<string, AppSearchTeam>();
 
-  if (directAccessTeamsResult.status === 'fulfilled') {
-    normalizeTeams(directAccessTeamsResult.value).forEach((team) => {
-      if (canUserDiscoverTeamInAppSearch(team, user)) teamsById.set(team.id, team);
-    });
+    if (directAccessTeamsResult.status === 'fulfilled') {
+      normalizeTeams(directAccessTeamsResult.value).forEach((team) => {
+        if (canUserDiscoverTeamInAppSearch(team, user)) teamsById.set(team.id, team);
+      });
+    }
+
+    if (homeTeamsResult.status === 'fulfilled' && homeTeamsResult.value) {
+      await mergeParentHomeSearchTeams(teamsById, homeTeamsResult.value.teams || [], user);
+    }
+
+    if (streamVolunteerTeamsResult.status === 'fulfilled') {
+      normalizeTeams(streamVolunteerTeamsResult.value).forEach((team) => {
+        if (canUserDiscoverTeamInAppSearch(team, user)) teamsById.set(team.id, team);
+      });
+    }
+
+    if (!teamsById.size) {
+      const firstError = directAccessTeamsResult.status === 'rejected'
+        ? directAccessTeamsResult.reason
+        : homeTeamsResult.status === 'rejected'
+          ? homeTeamsResult.reason
+          : streamVolunteerTeamsResult.status === 'rejected'
+            ? streamVolunteerTeamsResult.reason
+            : null;
+      if (firstError) throw firstError;
+    }
+
+    cachedTeams = Array.from(teamsById.values())
+      .sort((a, b) => a.name.localeCompare(b.name));
+    cachedTeamsLoadedAt = Date.now();
+    cachedTeamsUserKey = userCacheKey;
+    return cachedTeams;
+  })();
+
+  try {
+    return await cachedTeamsPromise;
+  } finally {
+    if (cachedTeamsPromiseUserKey === userCacheKey) {
+      cachedTeamsPromise = null;
+      cachedTeamsPromiseUserKey = '';
+    }
   }
-
-  if (homeTeamsResult.status === 'fulfilled' && homeTeamsResult.value) {
-    await mergeParentHomeSearchTeams(teamsById, homeTeamsResult.value.teams || [], user);
-  }
-
-  if (streamVolunteerTeamsResult.status === 'fulfilled') {
-    normalizeTeams(streamVolunteerTeamsResult.value).forEach((team) => {
-      if (canUserDiscoverTeamInAppSearch(team, user)) teamsById.set(team.id, team);
-    });
-  }
-
-  if (!teamsById.size) {
-    const firstError = directAccessTeamsResult.status === 'rejected'
-      ? directAccessTeamsResult.reason
-      : homeTeamsResult.status === 'rejected'
-        ? homeTeamsResult.reason
-        : streamVolunteerTeamsResult.status === 'rejected'
-          ? streamVolunteerTeamsResult.reason
-          : null;
-    if (firstError) throw firstError;
-  }
-
-  cachedTeams = Array.from(teamsById.values())
-    .sort((a, b) => a.name.localeCompare(b.name));
-  cachedTeamsLoadedAt = now;
-  cachedTeamsUserKey = userCacheKey;
-  return cachedTeams;
 }
 
 export async function searchAppTeams(queryText: string, appAccessTeams: AppSearchTeam[], user: AuthUser | null): Promise<AppSearchTeam[]> {
@@ -535,6 +553,8 @@ export function resetAppSearchCacheForTests() {
   cachedTeams = null;
   cachedTeamsLoadedAt = 0;
   cachedTeamsUserKey = '';
+  cachedTeamsPromise = null;
+  cachedTeamsPromiseUserKey = '';
   playerSearchCache.clear();
 }
 

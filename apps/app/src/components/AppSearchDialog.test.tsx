@@ -26,10 +26,11 @@ vi.mock('../lib/searchRoutePreload', () => ({
   preloadSearchRoute: preloadSearchRouteMock,
 }));
 
-const { getKnownAppSearchTeamsMock, loadAppSearchTeamsMock, searchAppTeamsMock } = vi.hoisted(() => ({
+const { getKnownAppSearchTeamsMock, loadAppSearchTeamsMock, searchAppTeamsMock, searchAppPlayersMock } = vi.hoisted(() => ({
   getKnownAppSearchTeamsMock: vi.fn((): Array<{ id: string; name: string; sport?: string; zip?: string }> => []),
   loadAppSearchTeamsMock: vi.fn(async () => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
   searchAppTeamsMock: vi.fn(async (_query: string, teams: Array<{ id: string; name: string; sport?: string; zip?: string }>) => teams),
+  searchAppPlayersMock: vi.fn(async () => []),
 }));
 
 vi.mock('../lib/searchService', () => ({
@@ -53,7 +54,7 @@ vi.mock('../lib/searchService', () => ({
   getKnownAppSearchTeams: getKnownAppSearchTeamsMock,
   loadAppSearchTeams: loadAppSearchTeamsMock,
   searchAppTeams: searchAppTeamsMock,
-  searchAppPlayers: vi.fn(async () => []),
+  searchAppPlayers: searchAppPlayersMock,
 }));
 
 const auth: AuthState = {
@@ -82,6 +83,7 @@ describe('AppSearchDialog', () => {
     getKnownAppSearchTeamsMock.mockReturnValue([]);
     loadAppSearchTeamsMock.mockResolvedValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
     searchAppTeamsMock.mockImplementation(async (_query, teams) => teams);
+    searchAppPlayersMock.mockResolvedValue([]);
     preloadSearchRouteMock.mockImplementation(async () => true);
   });
 
@@ -149,6 +151,7 @@ describe('AppSearchDialog', () => {
       </MemoryRouter>
     );
 
+    await screen.findByRole('button', { name: /Rockets/ });
     const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
     fireEvent.keyDown(dialog, { key: 'ArrowDown' });
 
@@ -184,7 +187,7 @@ describe('AppSearchDialog', () => {
     expect(navigateMock).toHaveBeenCalledWith('/teams/team-2');
   });
 
-  it('does not load teams on open and waits for typing before bounded team search queries', async () => {
+  it('starts loading accessible teams on open and reuses that warm load for the first query', async () => {
     const onClose = vi.fn();
 
     render(
@@ -194,11 +197,36 @@ describe('AppSearchDialog', () => {
     );
 
     expect(await screen.findAllByRole('button', { name: /Browse Teams/ })).not.toHaveLength(0);
-    expect(loadAppSearchTeamsMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
     expect(searchAppTeamsMock).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
-    await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledWith('ro', expect.arrayContaining([
+      expect.objectContaining({ id: 'team-2', name: 'Rockets' })
+    ]), null));
+    expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not block the first player search on slow team hydration', async () => {
+    const onClose = vi.fn();
+    let releaseHydration!: (teams: Array<{ id: string; name: string; sport?: string; zip?: string }>) => void;
+    loadAppSearchTeamsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseHydration = resolve;
+    }));
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+
+    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledWith('ro', expect.any(Map), null));
+    expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1);
+    expect(searchAppTeamsMock).toHaveBeenCalledWith('ro', [], null);
+
+    releaseHydration([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
     await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledWith('ro', expect.arrayContaining([
       expect.objectContaining({ id: 'team-2', name: 'Rockets' })
     ]), null));

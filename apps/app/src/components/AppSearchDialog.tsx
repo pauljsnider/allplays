@@ -39,6 +39,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const searchRequestId = useRef(0);
   const openedAtRef = useRef(Date.now());
   const preloadedRoutesRef = useRef(new Set<string>());
+  const baseTeamsRef = useRef<AppSearchTeam[]>([]);
+  const hydratedTeamsPromiseRef = useRef<Promise<AppSearchTeam[]> | null>(null);
   const navigate = useNavigate();
 
   const results = useMemo(
@@ -52,17 +54,31 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     if (!open) return;
     openedAtRef.current = Date.now();
     preloadedRoutesRef.current = new Set<string>();
+    hydratedTeamsPromiseRef.current = null;
     setQuery('');
     setPlayers([]);
     setPlayersError('');
     setPlayersLoading(false);
     const knownTeams = getKnownAppSearchTeams(auth.user);
+    baseTeamsRef.current = knownTeams;
     setBaseTeams(knownTeams);
     setTeams(knownTeams);
     setActiveIndex(0);
     setHelpRoleFilter('all');
     setTeamsLoading(false);
     setTeamsError('');
+
+    const hydratedTeamsPromise = loadAppSearchTeams(auth.user)
+      .then((loadedTeams) => mergeSearchTeams(knownTeams, loadedTeams))
+      .then((loadedTeams) => {
+        baseTeamsRef.current = loadedTeams;
+        setBaseTeams(loadedTeams);
+        setTeams((currentTeams) => mergeSearchTeams(currentTeams, loadedTeams));
+        return loadedTeams;
+      })
+      .catch(() => knownTeams);
+
+    hydratedTeamsPromiseRef.current = hydratedTeamsPromise;
   }, [auth.user, open]);
 
   useEffect(() => {
@@ -80,50 +96,60 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       return;
     }
 
+    const initialAccessibleTeams = baseTeamsRef.current;
     setTeamsLoading(true);
     setTeamsError('');
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
-      loadAppSearchTeams(auth.user)
-        .catch(() => baseTeams)
-        .then(async (loadedTeams) => {
-          const accessibleTeams = mergeSearchTeams(baseTeams, loadedTeams);
-          const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
-          const results = await Promise.allSettled([
-            searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
-            searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
-          ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
-          return results;
-        })
-        .then(([teamsResult, playersResult]) => {
-          if (requestId !== searchRequestId.current) return;
+      const runSearch = async (accessibleTeams: AppSearchTeam[], options: { teamsLoadingDone?: boolean; playersLoadingDone?: boolean } = {}) => {
+        const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
+        const [teamsResult, playersResult] = await Promise.allSettled([
+          searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
+          searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
+        ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
 
-          if (teamsResult.status === 'fulfilled') {
-            setTeams(teamsResult.value);
-            setTeamsError('');
-          } else {
-            setTeams([]);
-            setTeamsError(teamsResult.reason?.message || 'Team search unavailable.');
-          }
+        if (requestId !== searchRequestId.current) return;
 
-          if (playersResult.status === 'fulfilled') {
-            setPlayers(playersResult.value);
-          } else {
-            setPlayers([]);
-            setPlayersError(getPlayerSearchError(playersResult.reason));
-          }
-        })
-        .finally(() => {
+        if (teamsResult.status === 'fulfilled') {
+          setTeams(teamsResult.value);
+          setTeamsError('');
+        } else {
+          setTeams([]);
+          setTeamsError(teamsResult.reason?.message || 'Team search unavailable.');
+        }
+
+        if (playersResult.status === 'fulfilled') {
+          setPlayers(playersResult.value);
+          setPlayersError('');
+        } else {
+          setPlayers([]);
+          setPlayersError(getPlayerSearchError(playersResult.reason));
+        }
+
+        if (options.teamsLoadingDone && requestId === searchRequestId.current) {
+          setTeamsLoading(false);
+        }
+        if (options.playersLoadingDone && requestId === searchRequestId.current) {
+          setPlayersLoading(false);
+        }
+      };
+
+      void runSearch(initialAccessibleTeams, { teamsLoadingDone: false, playersLoadingDone: true });
+
+      void (hydratedTeamsPromiseRef.current || loadAppSearchTeams(auth.user)
+        .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams))
+        .catch(() => initialAccessibleTeams))
+        .then((hydratedTeams) => runSearch(hydratedTeams, { teamsLoadingDone: true, playersLoadingDone: false }))
+        .catch(() => {
           if (requestId === searchRequestId.current) {
             setTeamsLoading(false);
-            setPlayersLoading(false);
           }
         });
     }, 180);
 
     return () => window.clearTimeout(timeoutId);
-  }, [auth.user, baseTeams, open, query]);
+  }, [auth.user, open, query]);
 
   useEffect(() => {
     setActiveIndex(0);
