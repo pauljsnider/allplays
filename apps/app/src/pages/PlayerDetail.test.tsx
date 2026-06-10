@@ -386,6 +386,8 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     const getPublicProfileCard = () => screen.getByRole('link', { name: /Public athlete profile/i });
     expect(getPublicProfileCard().getAttribute('href')).toBe('#');
+    expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('true');
+    expect(getPublicProfileCard().getAttribute('tabindex')).toBe('-1');
     expect(getPublicProfileCard().className).toContain('pointer-events-none');
     expect(screen.getByText('Save a public profile to enable sharing.')).toBeTruthy();
 
@@ -411,6 +413,8 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }));
     expect(getPublicProfileCard().getAttribute('href')).toBe('#');
+    expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('true');
+    expect(getPublicProfileCard().getAttribute('tabindex')).toBe('-1');
     expect(getPublicProfileCard().className).toContain('pointer-events-none');
     expect(screen.getByText('Save a public profile to enable sharing.')).toBeTruthy();
   });
