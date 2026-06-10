@@ -2214,6 +2214,38 @@ function buildLiveScoreUpdateDescription(score: GameScoreSnapshot) {
   return `Score update: Home ${normalizeGameScoreValue(score.homeScore)}, Away ${normalizeGameScoreValue(score.awayScore)}.`;
 }
 
+function isFinalLiveTrackingStatus(value: unknown) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === 'completed' || normalized === 'final';
+}
+
+function assertGameAllowsLivePublishing(game: Record<string, any> | null | undefined) {
+  if (isFinalLiveTrackingStatus(game?.status) || isFinalLiveTrackingStatus(game?.liveStatus)) {
+    throw new Error('Live play-by-play is unavailable after the game is final.');
+  }
+}
+
+function buildLiveTrackingGamePatch(game: Record<string, any> | null | undefined, _user: AuthUser, now: Date) {
+  const payload: Record<string, unknown> = {};
+  if (String(game?.liveStatus || '').trim().toLowerCase() !== 'live') {
+    payload.liveStatus = 'live';
+  }
+  if (game?.liveHasData !== true) {
+    payload.liveHasData = true;
+  }
+  if (!game?.liveStartedAt) {
+    payload.liveStartedAt = now;
+  }
+  return payload;
+}
+
+async function loadGameForLivePublishing(teamId: string, gameId: string) {
+  if (isNativeRuntime()) {
+    return nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`);
+  }
+  return Promise.resolve(getGame(teamId, gameId));
+}
+
 export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string, score: GameScoreSnapshot, user: AuthUser, previousScore?: Partial<GameScoreSnapshot> | null) {
   if (!teamId || !gameId) {
     throw new Error('A scheduled game is required before posting live play-by-play.');
@@ -2222,6 +2254,10 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
     throw new Error('Sign in before posting live play-by-play.');
   }
 
+  const currentGame = await loadGameForLivePublishing(teamId, gameId);
+  assertGameAllowsLivePublishing(currentGame);
+  const now = new Date();
+  const liveGamePatch = buildLiveTrackingGamePatch(currentGame, user, now);
   const payload = {
     type: 'score_update',
     description: buildLiveScoreUpdateDescription(score),
@@ -2231,14 +2267,20 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
     previousAwayScore: previousScore?.awayScore !== undefined ? normalizeGameScoreValue(previousScore.awayScore) : null,
     createdBy: user.uid,
     createdByName: user.displayName || user.email || 'Staff',
-    createdAt: new Date()
+    createdAt: now
   };
 
   try {
+    if (Object.keys(liveGamePatch).length) {
+      await withTimeout(Promise.resolve(updateGame(teamId, gameId, liveGamePatch)), 'Live status sync');
+    }
     await withTimeout(Promise.resolve(broadcastLiveEvent(teamId, gameId, payload)), 'Live score event');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     console.warn('[schedule-service] Falling back to REST live score event publish:', error);
+    if (Object.keys(liveGamePatch).length) {
+      await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, liveGamePatch);
+    }
     await nativeCreateDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`, payload);
   }
 
@@ -2313,18 +2355,21 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
         transaction.get(statsRef)
       ]);
       const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+      assertGameAllowsLivePublishing(gameData);
       const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
       const awayScore = normalizeGameScoreValue(gameData.awayScore) + (teamSide === 'away' ? 2 : 0);
       const homeScore = normalizeGameScoreValue(gameData.homeScore) + (teamSide === 'home' ? 2 : 0);
       const playerPoints = normalizeGameScoreValue(statsData?.stats?.pts) + 2;
       const scoreUpdatedAt = new Date();
+      const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, scoreUpdatedAt);
       const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user });
 
       transaction.set(gameRef, {
         homeScore,
         awayScore,
         scoreUpdatedAt,
-        scoreUpdatedBy: user.uid
+        scoreUpdatedBy: user.uid,
+        ...liveGamePatch
       }, { merge: true });
       transaction.set(statsRef, {
         playerName,
@@ -2352,19 +2397,22 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
       nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
       nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`)
     ]);
+    assertGameAllowsLivePublishing(gameDoc);
     const awayScore = normalizeGameScoreValue(gameDoc?.awayScore) + (teamSide === 'away' ? 2 : 0);
     const homeScore = normalizeGameScoreValue(gameDoc?.homeScore) + (teamSide === 'home' ? 2 : 0);
     const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
     const playerPoints = normalizeGameScoreValue(existingStats.pts) + 2;
     existingStats.pts = playerPoints;
     const scoreUpdatedAt = new Date();
+    const liveGamePatch = buildLiveTrackingGamePatch(gameDoc, user, scoreUpdatedAt);
     const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user });
 
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
       homeScore,
       awayScore,
       scoreUpdatedAt,
-      scoreUpdatedBy: user.uid
+      scoreUpdatedBy: user.uid,
+      ...liveGamePatch
     });
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`, {
       playerName,
