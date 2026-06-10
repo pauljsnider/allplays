@@ -688,7 +688,13 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   });
   const canPreviewPublishedPublicProfile = persistedPublicProfileReady;
   const canSharePublicProfile = persistedPublicProfileReady;
-  const requiresPublishBeforeSharing = hasUnsavedPublishChanges || hasPersistedPrivateShareUrl || (privacy === 'public' && persistedPrivacy !== 'public');
+  const shareRequiresSavedPublicProfile = privacy === 'public' && (
+    hasUnsavedPublishChanges ||
+    saving ||
+    awaitingPersistedPublish ||
+    persistedPrivacy !== 'public'
+  );
+  const requiresPublishBeforeSharing = shareRequiresSavedPublicProfile || (privacy !== 'public' && hasPersistedPrivateShareUrl);
   const latestPublicShareStateRef = useRef({
     canSharePublicProfile: false,
     persistedPublicProfileUrl: ''

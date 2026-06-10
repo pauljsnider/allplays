@@ -472,6 +472,8 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('target')).toBeNull();
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('rel')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Publish and save this profile before the public share link becomes available.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
 
