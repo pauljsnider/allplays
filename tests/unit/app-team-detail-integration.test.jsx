@@ -120,12 +120,12 @@ function model() {
             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true }
         ],
         upcomingEvents: [
-            { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false }
+            { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, statTrackerConfigId: 'cfg-basketball', statTrackerConfigLabel: 'Varsity Basketball', statTrackerConfigBaseType: 'Basketball', statTrackerConfigExists: true, statTrackerConfigIsBasketball: true }
         ],
         recentResults: [
-            { id: 'game-final', type: 'game', title: 'vs. Wolves', date: new Date('2026-05-01T18:00:00Z'), location: 'Main Gym', opponent: 'Wolves', status: 'completed', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: false, publicCalendar: false, homeScore: 42, awayScore: 35, isCancelled: false }
+            { id: 'game-final', type: 'game', title: 'vs. Wolves', date: new Date('2026-05-01T18:00:00Z'), location: 'Main Gym', opponent: 'Wolves', status: 'completed', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: false, publicCalendar: false, homeScore: 42, awayScore: 35, isCancelled: false, statTrackerConfigId: '', statTrackerConfigLabel: 'No config assigned', statTrackerConfigBaseType: '', statTrackerConfigExists: false, statTrackerConfigIsBasketball: false }
         ],
-        nextEvent: { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false },
+        nextEvent: { id: 'game-1', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, statTrackerConfigId: 'cfg-basketball', statTrackerConfigLabel: 'Varsity Basketball', statTrackerConfigBaseType: 'Basketball', statTrackerConfigExists: true, statTrackerConfigIsBasketball: true },
         record: { label: '2100', wins: 4, losses: 2, ties: 1, gamesPlayed: 7, winPercentage: 64.3 },
         standings: {
             enabled: true,
@@ -145,6 +145,15 @@ function model() {
             items: [{ id: 'item-1', title: 'Bring ball', description: 'For warmups', isComplete: false }]
         }],
         sponsors: [{ id: 'sponsor-1', name: 'Pizza Place', description: 'After the game', imageUrl: 'https://img.example.test/pizza.png', websiteUrl: 'https://pizza.example.test' }],
+        statTrackerConfigs: [{
+            id: 'cfg-basketball',
+            name: 'Varsity Basketball',
+            baseType: 'Basketball',
+            isBasketball: true,
+            columnCount: 4,
+            columnNames: ['PTS', 'REB', 'AST', 'STL'],
+            assignedUpcomingGames: [{ gameId: 'game-1', title: 'vs. Falcons', date: nextDate }]
+        }],
         canManageTeam: false,
         staffPermissions: null,
         counts: { games: 8, practices: 3, completedGames: 7 }
@@ -678,7 +687,7 @@ describe('React app TeamDetail page', () => {
         managerModel.canManageTeam = true;
         managerModel.upcomingEvents = [
             managerModel.upcomingEvents[0],
-            { id: 'game-2', type: 'game', title: 'at Tigers', date: new Date('2100-06-03T18:00:00Z'), location: 'North Gym', opponent: 'Tigers', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false }
+            { id: 'game-2', type: 'game', title: 'at Tigers', date: new Date('2100-06-03T18:00:00Z'), location: 'North Gym', opponent: 'Tigers', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, statTrackerConfigId: '', statTrackerConfigLabel: 'No config assigned', statTrackerConfigBaseType: '', statTrackerConfigExists: false, statTrackerConfigIsBasketball: false }
         ];
         managerModel.nextEvent = managerModel.upcomingEvents[0];
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
@@ -724,6 +733,52 @@ describe('React app TeamDetail page', () => {
         expect(scheduleServiceMocks.sendStaffRsvpReminder).toHaveBeenCalledTimes(1);
         expect(scheduleServiceMocks.sendStaffRsvpReminder).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1', teamId: 'team-1' }), managerAuth.user, managerAuth.profile);
         expect(container.textContent).toContain('RSVP reminder sent to team chat and 4 parent/guardian emails.');
+    });
+
+    it('shows staff-only stat tracker config summaries and game assignments', async () => {
+        const managerAuth = {
+            ...auth,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
+            roles: ['coach'],
+            isParent: false,
+            isCoach: true
+        };
+        const managerModel = model();
+        managerModel.canManageTeam = true;
+        managerModel.upcomingEvents = [
+            managerModel.upcomingEvents[0],
+            { id: 'game-2', type: 'game', title: 'at Tigers', date: new Date('2100-06-03T18:00:00Z'), location: 'North Gym', opponent: 'Tigers', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, statTrackerConfigId: 'cfg-deleted', statTrackerConfigLabel: 'Missing config (cfg-deleted)', statTrackerConfigBaseType: '', statTrackerConfigExists: false, statTrackerConfigIsBasketball: false }
+        ];
+        managerModel.statTrackerConfigs = [{
+            id: 'cfg-basketball',
+            name: 'Varsity Basketball',
+            baseType: 'Basketball',
+            isBasketball: true,
+            columnCount: 4,
+            columnNames: ['PTS', 'REB', 'AST', 'STL'],
+            assignedUpcomingGames: [{ gameId: 'game-1', title: 'vs. Falcons', date: new Date('2100-06-01T18:00:00Z') }]
+        }];
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
+
+        const { container } = await renderTeamDetail(managerAuth);
+        await clickButton(container, 'Schedule');
+        expect(container.textContent).toContain('Varsity Basketball');
+        expect(container.textContent).toContain('Basketball');
+        expect(container.textContent).toContain('Missing config (cfg-deleted)');
+
+        await clickButton(container, 'View config');
+        expect(container.textContent).toContain('Stat tracker configs');
+        expect(container.textContent).toContain('Basketball tracker routing');
+        expect(container.textContent).toContain('4 columns · PTS, REB, AST +1');
+        expect(container.textContent).toContain('vs. Falcons · Tue, Jun 1');
+        expect(container.textContent).toContain('Missing config assignments');
+
+        teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(model());
+        const hidden = await renderTeamDetail();
+        await clickButton(hidden.container, 'Schedule');
+        expect(hidden.container.textContent).not.toContain('Varsity Basketball');
+        await clickButton(hidden.container, 'More');
+        expect(hidden.container.textContent).not.toContain('Stat tracker configs');
     });
 
     it('hides inline RSVP reminders for parents and events with no missing players', async () => {

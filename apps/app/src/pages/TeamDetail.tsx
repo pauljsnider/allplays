@@ -334,7 +334,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       </section>
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
-      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
+      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => setActiveTab('more')} /> : null}
       {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
@@ -415,7 +415,7 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
   );
 }
 
-function ScheduleTab({ model, auth }: { model: TeamDetailModel; auth: AuthState }) {
+function ScheduleTab({ model, auth, onOpenStatTrackerConfigs }: { model: TeamDetailModel; auth: AuthState; onOpenStatTrackerConfigs: () => void }) {
   const events = [...model.upcomingEvents.slice(0, 8), ...model.recentResults.slice(0, 3)];
   const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), [model.team.id]);
   return (
@@ -428,7 +428,7 @@ function ScheduleTab({ model, auth }: { model: TeamDetailModel; auth: AuthState 
         <Link to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} className="secondary-button !min-h-9 text-xs">Open</Link>
       </div>
       <div className="mt-3 space-y-2">
-        {events.length ? events.map((event) => <TeamEventRow key={`${event.id}-${event.date.toISOString()}`} event={event} model={model} auth={auth} reminderPreviewLoader={reminderPreviewLoader} />) : (
+        {events.length ? events.map((event) => <TeamEventRow key={`${event.id}-${event.date.toISOString()}`} event={event} model={model} auth={auth} reminderPreviewLoader={reminderPreviewLoader} onOpenStatTrackerConfigs={onOpenStatTrackerConfigs} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No team events found.</div>
         )}
       </div>
@@ -586,8 +586,14 @@ function InsightsTab({ model, loading, error }: { model: TeamDetailModel; loadin
 }
 
 function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, sponsorsLoading, sponsorsError, onTeamDetailRefresh }: { model: TeamDetailModel; auth: AuthState; staffPermissionsLoading: boolean; staffPermissionsError: string; sponsorsLoading: boolean; sponsorsError: string; onTeamDetailRefresh: () => Promise<void> }) {
+  const statTrackerConfigs = model.statTrackerConfigs || [];
+  const orphanedConfigAssignments = model.canManageTeam
+    ? model.upcomingEvents.filter((event) => event.type === 'game' && event.statTrackerConfigId && !event.statTrackerConfigExists)
+    : [];
+
   return (
     <div className="space-y-4">
+      {model.canManageTeam ? <StatTrackerConfigsCard configs={statTrackerConfigs} orphanedAssignments={orphanedConfigAssignments} /> : null}
       {model.canManageTeam && !model.staffPermissions && staffPermissionsLoading ? (
         <section className="app-card p-4">
           <div className="flex items-center gap-3 text-sm font-semibold text-gray-600">
@@ -665,6 +671,74 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
       ) : null}
     </div>
   );
+}
+
+function StatTrackerConfigsCard({ configs, orphanedAssignments }: { configs: TeamDetailModel['statTrackerConfigs']; orphanedAssignments: TeamDetailModel['upcomingEvents'] }) {
+  const safeConfigs = configs || [];
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-gray-950">Stat tracker configs</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Read-only view of this team&apos;s tracker setups, sport routing, and scheduled game assignments.</div>
+        </div>
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{safeConfigs.length} config{safeConfigs.length === 1 ? '' : 's'}</span>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        {safeConfigs.length ? safeConfigs.map((config) => (
+          <div key={config.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="text-sm font-black text-gray-950">{config.name}</div>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-gray-700">{config.baseType || 'Custom'}</span>
+                  {config.isBasketball ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-amber-800">Basketball tracker routing</span> : null}
+                </div>
+              </div>
+              <span className="rounded-full bg-primary-50 px-2.5 py-1 text-xs font-black text-primary-700">{formatConfigColumnSummary(config.columnCount, config.columnNames)}</span>
+            </div>
+            <div className="mt-3 text-xs font-semibold text-gray-600">Columns: <span className="font-black text-gray-900">{config.columnNames.length ? config.columnNames.join(', ') : 'None configured'}</span></div>
+            <div className="mt-3">
+              <div className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Assigned upcoming games</div>
+              {config.assignedUpcomingGames.length ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {config.assignedUpcomingGames.map((game) => (
+                    <span key={`${config.id}-${game.gameId}`} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-gray-700">
+                      {game.title} · {formatEventDate(game.date)}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 text-xs font-semibold text-gray-500">No upcoming games assigned.</div>
+              )}
+            </div>
+          </div>
+        )) : (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No stat tracker configs found for this team.</div>
+        )}
+
+        {orphanedAssignments.length ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <div className="text-[11px] font-black uppercase tracking-[0.04em] text-rose-700">Missing config assignments</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {orphanedAssignments.map((event) => (
+                <span key={event.id} className="rounded-full bg-white px-2.5 py-1 text-xs font-black text-rose-700">{event.title} · {event.statTrackerConfigId}</span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function formatConfigColumnSummary(columnCount: number, columnNames: string[]) {
+  if (!columnCount) return 'No columns';
+  const preview = columnNames.slice(0, 3).join(', ');
+  const remainder = columnCount - Math.min(columnNames.length, 3);
+  return `${columnCount} column${columnCount === 1 ? '' : 's'}${preview ? ` · ${preview}${remainder > 0 ? ` +${remainder}` : ''}` : ''}`;
 }
 
 function InlineDeferredLoading({ copy }: { copy: string }) {
@@ -1299,7 +1373,7 @@ function SummaryStat({ icon: Icon, label, value }: { icon: LucideIcon; label: st
   );
 }
 
-function TeamEventRow({ event, model, auth, reminderPreviewLoader }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState; reminderPreviewLoader: ReturnType<typeof createStaffRsvpReminderPreviewLoader> }) {
+function TeamEventRow({ event, model, auth, reminderPreviewLoader, onOpenStatTrackerConfigs }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState; reminderPreviewLoader: ReturnType<typeof createStaffRsvpReminderPreviewLoader>; onOpenStatTrackerConfigs: () => void }) {
   const childId = '';
   const teamId = model.team.id;
   const eventPath = getEventDetailPath({ teamId, id: event.id, childId });
@@ -1320,12 +1394,35 @@ function TeamEventRow({ event, model, auth, reminderPreviewLoader }: { event: Te
               <span>{event.date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
               <span className="truncate">{event.location}</span>
             </div>
+            {model.canManageTeam && event.type === 'game' ? <TeamEventStatConfigSummary event={event} onOpenStatTrackerConfigs={onOpenStatTrackerConfigs} /> : null}
           </div>
           {event.homeScore !== null && event.awayScore !== null ? <div className="text-sm font-black text-gray-950">{event.homeScore}-{event.awayScore}</div> : null}
           <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
         </Link>
       </div>
       <TeamEventReminderAction event={event} model={model} auth={auth} reminderPreviewLoader={reminderPreviewLoader} />
+    </div>
+  );
+}
+
+function TeamEventStatConfigSummary({ event, onOpenStatTrackerConfigs }: { event: TeamDetailEvent; onOpenStatTrackerConfigs: () => void }) {
+  const pillClassName = event.statTrackerConfigId
+    ? (event.statTrackerConfigExists ? 'bg-primary-50 text-primary-700' : 'bg-rose-50 text-rose-700')
+    : 'bg-gray-100 text-gray-700';
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+      <span className={`rounded-full px-2 py-0.5 font-black ${pillClassName}`}>{event.statTrackerConfigLabel}</span>
+      {event.statTrackerConfigIsBasketball ? <span className="rounded-full bg-amber-100 px-2 py-0.5 font-black text-amber-800">Basketball</span> : null}
+      {event.statTrackerConfigId && event.statTrackerConfigExists ? (
+        <button type="button" className="font-black text-primary-700" onClick={(clickEvent) => {
+          clickEvent.preventDefault();
+          clickEvent.stopPropagation();
+          onOpenStatTrackerConfigs();
+        }}>
+          View config
+        </button>
+      ) : null}
     </div>
   );
 }

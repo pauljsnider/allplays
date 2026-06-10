@@ -334,11 +334,22 @@ describe('React app team detail model', () => {
         expect(model.linkedPlayers.map((player) => player.id)).toEqual(['player-1']);
         expect(model.record).toMatchObject({ wins: 1, losses: 0, ties: 0, gamesPlayed: 1 });
         expect(model.upcomingEvents.map((event) => event.id)).toEqual(['game-1', 'practice-1']);
-        expect(model.upcomingEvents[0]).toMatchObject({ shareable: true, isPrivate: false, publicCalendar: false, liveStatus: '' });
+        expect(model.upcomingEvents[0]).toMatchObject({ shareable: true, isPrivate: false, publicCalendar: false, liveStatus: '', statTrackerConfigLabel: 'No config assigned', statTrackerConfigExists: false });
         expect(model.standings.currentRow.record).toBe('1-0');
         expect(model.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
         expect(model.trackingSummaries[0].items[0]).toMatchObject({ title: 'Bring ball', isComplete: true });
         expect(model.sponsors[0].imageUrl).toBe('https://img.example.test/pizza.png');
+        expect(model.statTrackerConfigs).toEqual([
+            expect.objectContaining({
+                id: 'basketball',
+                name: 'Basketball',
+                baseType: 'Custom',
+                isBasketball: false,
+                columnCount: 1,
+                columnNames: ['pts'],
+                assignedUpcomingGames: []
+            })
+        ]);
         expect(model.canManageTeam).toBe(false);
     });
 
@@ -409,6 +420,86 @@ describe('React app team detail model', () => {
         expect(model.recentResults.map((event) => event.id)).toEqual(['scored-past', 'final-game']);
         expect(model.counts).toMatchObject({ games: 4, practices: 1, completedGames: 1 });
         expect(model.sponsors.map((sponsor) => sponsor.id)).toEqual(['s1', 's2', 's3', 's4']);
+    });
+
+    it('builds read-only stat tracker config summaries for migrated and legacy shapes', () => {
+        const model = buildTeamDetailModel({
+            teamId: 'team-1',
+            team: {
+                name: 'Bears',
+                sport: 'Basketball',
+                ownerId: 'coach-1',
+                adminEmails: ['coach@example.com']
+            },
+            games: [
+                { id: 'game-1', opponent: 'Falcons', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-basketball' },
+                { id: 'game-2', opponent: 'Tigers', date: new Date('2100-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' },
+                { id: 'game-3', opponent: 'Orphans', date: new Date('2100-06-03T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-missing' },
+                { id: 'stale-game', opponent: 'Past Tigers', date: new Date('2020-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' }
+            ],
+            configs: [
+                {
+                    id: 'cfg-basketball',
+                    name: 'Varsity Basketball',
+                    baseType: 'Basketball',
+                    columns: ['PTS', 'REB', 'AST']
+                },
+                {
+                    id: 'cfg-legacy',
+                    name: 'Legacy Soccer',
+                    baseType: 'Soccer',
+                    columns: [
+                        { label: 'Goals', acronym: 'GOALS' },
+                        { name: 'Shots', key: 'SHOTS' }
+                    ],
+                    statDefinitions: [
+                        { id: 'goals', label: 'Goals', acronym: 'GOALS' },
+                        { id: 'shots', label: 'Shots', acronym: 'SHOTS' },
+                        { id: 'shotpct', label: 'Shot%', acronym: 'Shot%', formula: '(GOALS/SHOTS)*100' }
+                    ]
+                }
+            ],
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }
+        });
+
+        expect(model.statTrackerConfigs).toEqual([
+            expect.objectContaining({
+                id: 'cfg-legacy',
+                name: 'Legacy Soccer',
+                baseType: 'Soccer',
+                isBasketball: false,
+                columnCount: 2,
+                columnNames: ['GOALS', 'SHOTS'],
+                assignedUpcomingGames: [
+                    expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })
+                ]
+            }),
+            expect.objectContaining({
+                id: 'cfg-basketball',
+                name: 'Varsity Basketball',
+                baseType: 'Basketball',
+                isBasketball: true,
+                columnCount: 3,
+                columnNames: ['PTS', 'REB', 'AST'],
+                assignedUpcomingGames: [
+                    expect.objectContaining({ gameId: 'game-1', title: 'vs. Falcons' })
+                ]
+            })
+        ]);
+        expect(model.statTrackerConfigs.find((config) => config.id === 'cfg-legacy').assignedUpcomingGames)
+            .toEqual([expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })]);
+        expect(model.upcomingEvents.find((event) => event.id === 'game-1')).toMatchObject({
+            statTrackerConfigId: 'cfg-basketball',
+            statTrackerConfigLabel: 'Varsity Basketball',
+            statTrackerConfigExists: true,
+            statTrackerConfigIsBasketball: true
+        });
+        expect(model.upcomingEvents.find((event) => event.id === 'game-3')).toMatchObject({
+            statTrackerConfigId: 'cfg-missing',
+            statTrackerConfigLabel: 'Missing config (cfg-missing)',
+            statTrackerConfigExists: false,
+            statTrackerConfigIsBasketball: false
+        });
     });
 
     it('adds staff permissions only for users with full team access', () => {

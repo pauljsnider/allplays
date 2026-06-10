@@ -103,6 +103,7 @@ const model = {
   leaderboards: [],
   trackingSummaries: [],
   sponsors: [],
+  statTrackerConfigs: [],
   canManageTeam: false,
   staffPermissions: null,
   counts: { games: 0, practices: 0, completedGames: 0 }
