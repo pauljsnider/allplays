@@ -83,6 +83,14 @@ const user = {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    dbMocks.getGame.mockResolvedValue({
+        id: 'game-1',
+        status: 'scheduled',
+        liveStatus: 'scheduled',
+        liveHasData: false,
+        period: 'Q2',
+        liveClockMs: 321000
+    });
     vi.stubGlobal('window', {
         setTimeout: globalThis.setTimeout.bind(globalThis),
         clearTimeout: globalThis.clearTimeout.bind(globalThis),
@@ -127,8 +135,15 @@ describe('React app schedule score updates', () => {
             awayScore: 2
         });
 
+        expect(dbMocks.updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+            liveStatus: 'live',
+            liveHasData: true,
+            liveStartedAt: expect.any(Date)
+        }));
         expect(dbMocks.broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
             type: 'score_update',
+            period: 'Q2',
+            gameClockMs: 321000,
             description: 'Score update: Home 5, Away 2.',
             homeScore: 5,
             awayScore: 2,
