@@ -402,6 +402,13 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
   const [athleteProfileShareState, setAthleteProfileShareState] = useState({ hasUnsavedPublishChanges: false, saving: false });
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
+
+  useEffect(() => {
+    if (hasPersistedPublicProfile(data.athleteProfile.profile, data.athleteProfile.shareUrl)) {
+      setAthleteProfileShareState({ hasUnsavedPublishChanges: false, saving: false });
+    }
+  }, [data.athleteProfile.profile, data.athleteProfile.shareUrl]);
+
   return (
     <div className="player-section-content space-y-3">
       <section className="app-card p-3">
