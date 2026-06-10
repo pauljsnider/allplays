@@ -456,6 +456,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(publicProfileCard.getAttribute('aria-disabled')).toBe('true');
     expect(publicProfileCard.getAttribute('tabindex')).toBe('-1');
     expect(publicProfileCard.className).toContain('pointer-events-none');
+    expect(screen.getByText('Publish and save this profile to enable sharing.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();

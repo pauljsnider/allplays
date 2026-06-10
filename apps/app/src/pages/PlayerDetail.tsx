@@ -677,15 +677,16 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   const normalizedShareUrl = String(data.athleteProfile.shareUrl || '').trim();
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, normalizedShareUrl);
   const hasPersistedShareUrl = !!normalizedShareUrl;
-  const hasPersistedPrivateShareUrl = hasPersistedShareUrl && persistedPrivacy !== 'public';
+  const hasPersistedSavedPublicProfile = !!persistedPublicProfileUrl;
+  const hasPersistedPrivateShareUrl = hasPersistedShareUrl && !hasPersistedSavedPublicProfile;
   const isPublishingNewPublicProfile = privacy === 'public' && persistedPrivacy !== 'public';
   const persistedPublicProfileReady = isPersistedPublicProfileReady(existing, normalizedShareUrl, {
     hasUnsavedPublishChanges,
     saving
   });
   const requiresPublishBeforeSharing = hasUnsavedPublishChanges || hasPersistedPrivateShareUrl;
-  const canPreviewPublishedPublicProfile = persistedPrivacy === 'public' && persistedPublicProfileReady;
-  const canSharePublicProfile = persistedPrivacy === 'public' && persistedPublicProfileReady;
+  const canPreviewPublishedPublicProfile = hasPersistedSavedPublicProfile && persistedPublicProfileReady;
+  const canSharePublicProfile = hasPersistedSavedPublicProfile && persistedPublicProfileReady;
   const latestPublicShareStateRef = useRef({
     canSharePublicProfile: false,
     persistedPublicProfileUrl: ''
