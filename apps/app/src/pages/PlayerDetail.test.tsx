@@ -373,6 +373,12 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     await screen.findByText('Sam Player');
     fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
+    expect(publicProfileCard.getAttribute('href')).toBe('#');
+    expect(publicProfileCard.className).toContain('pointer-events-none');
+    expect(screen.getByText('Save a public profile to enable sharing.')).toBeTruthy();
+
     fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
     await screen.findByText('What others see');
 

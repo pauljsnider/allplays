@@ -382,6 +382,7 @@ const profilePanels: Array<{ id: ProfilePanelId; label: string }> = [
 
 function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
+  const hasPublishedAthleteProfile = data.athleteProfile.profile?.privacy === 'public' && !!data.athleteProfile.shareUrl;
   return (
     <div className="player-section-content space-y-3">
       <section className="app-card p-3">
@@ -421,9 +422,9 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
           <CardText title="Full builder" detail="Open the legacy builder for headshot and highlight uploads." />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
-        <a href={data.athleteProfile.shareUrl || '#'} target="_blank" rel="noreferrer" className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${data.athleteProfile.shareUrl ? '' : 'pointer-events-none opacity-60'}`}>
+        <a href={hasPublishedAthleteProfile ? data.athleteProfile.shareUrl : '#'} target="_blank" rel="noreferrer" className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${hasPublishedAthleteProfile ? '' : 'pointer-events-none opacity-60'}`}>
           <IconBox icon={Share2} />
-          <CardText title="Public athlete profile" detail={data.athleteProfile.shareUrl ? 'Open the shareable athlete profile.' : 'Save a public profile to enable sharing.'} />
+          <CardText title="Public athlete profile" detail={hasPublishedAthleteProfile ? 'Open the shareable athlete profile.' : 'Save a public profile to enable sharing.'} />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <Link to="/parent-tools/certificates" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
