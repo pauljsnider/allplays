@@ -248,7 +248,7 @@ describe('AppSearchDialog', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('button', { name: /Bears/ })).toBeTruthy();
+    await waitFor(() => expect(getKnownAppSearchTeamsMock).toHaveBeenCalledWith(userA));
 
     rerender(
       <MemoryRouter>
@@ -259,6 +259,25 @@ describe('AppSearchDialog', () => {
     releaseHydration([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
     await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('button', { name: /Rockets/ })).toBeNull();
+  });
+
+  it('does not rerun hydrated searches when accessible teams stay the same', async () => {
+    const onClose = vi.fn();
+    const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+
+    getKnownAppSearchTeamsMock.mockReturnValue(initialTeams);
+    loadAppSearchTeamsMock.mockResolvedValue([...initialTeams]);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'zzzz' } });
+
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
   });
 
   it('does not let the initial cold search overwrite hydrated search results', async () => {
@@ -309,6 +328,6 @@ describe('AppSearchDialog', () => {
 
     await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(2));
     expect(screen.queryByRole('button', { name: /Rockets/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Bears/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Bears/ })).toBeTruthy();
   });
 });

@@ -153,7 +153,14 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       void (hydratedTeamsPromiseRef.current || loadAppSearchTeams(auth.user)
         .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams))
         .catch(() => initialAccessibleTeams))
-        .then((hydratedTeams) => runSearch(hydratedTeams, { phase: 'hydrated', teamsLoadingDone: true, playersLoadingDone: true }))
+        .then((hydratedTeams) => {
+          if (requestId !== searchRequestId.current) return;
+          if (hasSameTeamScope(initialAccessibleTeams, hydratedTeams)) {
+            setTeamsLoading(false);
+            return;
+          }
+          return runSearch(hydratedTeams, { phase: 'hydrated', teamsLoadingDone: true, playersLoadingDone: true });
+        })
         .catch(() => {
           if (requestId === searchRequestId.current) {
             setTeamsLoading(false);
@@ -484,6 +491,12 @@ function mergeSearchTeams(...teamLists: AppSearchTeam[][]) {
     if (team?.id) teamsById.set(team.id, team);
   });
   return Array.from(teamsById.values());
+}
+
+function hasSameTeamScope(currentTeams: AppSearchTeam[], nextTeams: AppSearchTeam[]) {
+  if (currentTeams.length !== nextTeams.length) return false;
+  const currentTeamIds = new Set(currentTeams.map((team) => team.id).filter(Boolean));
+  return nextTeams.every((team) => currentTeamIds.has(team.id));
 }
 
 function getPlayerSearchError(error: any) {
