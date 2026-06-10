@@ -69,6 +69,10 @@ const rsvpBadgeClasses: Record<RsvpResponse, string> = {
   not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
 };
 
+function getPersistedPublicProfileUrl(profile: Record<string, any> | null | undefined, shareUrl: string | null | undefined) {
+  return profile?.privacy === 'public' && shareUrl ? shareUrl : '';
+}
+
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
@@ -382,7 +386,7 @@ const profilePanels: Array<{ id: ProfilePanelId; label: string }> = [
 
 function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
-  const hasPersistedPublishedAthleteProfile = data.athleteProfile.profile?.privacy === 'public' && !!data.athleteProfile.shareUrl;
+  const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   return (
     <div className="player-section-content space-y-3">
       <section className="app-card p-3">
@@ -422,9 +426,9 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
           <CardText title="Full builder" detail="Open the legacy builder for headshot and highlight uploads." />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
-        <a href={hasPersistedPublishedAthleteProfile ? data.athleteProfile.shareUrl : '#'} target="_blank" rel="noreferrer" className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${hasPersistedPublishedAthleteProfile ? '' : 'pointer-events-none opacity-60'}`}>
+        <a href={persistedPublicProfileUrl || '#'} target="_blank" rel="noreferrer" className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${persistedPublicProfileUrl ? '' : 'pointer-events-none opacity-60'}`}>
           <IconBox icon={Share2} />
-          <CardText title="Public athlete profile" detail={hasPersistedPublishedAthleteProfile ? 'Open the shareable athlete profile.' : 'Save a public profile to enable sharing.'} />
+          <CardText title="Public athlete profile" detail={persistedPublicProfileUrl ? 'Open the shareable athlete profile.' : 'Save a public profile to enable sharing.'} />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <Link to="/parent-tools/certificates" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
@@ -628,7 +632,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     resetHeadshot ||
     !!highlightClipFile
   );
-  const persistedPublicProfileUrl = persistedPrivacy === 'public' && data.athleteProfile.shareUrl ? data.athleteProfile.shareUrl : '';
+  const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, data.athleteProfile.shareUrl);
   const canPreviewPublishedPublicProfile = !!persistedPublicProfileUrl && !hasUnsavedPublishChanges;
   const canSharePublicProfile = canPreviewPublishedPublicProfile && !saving;
 

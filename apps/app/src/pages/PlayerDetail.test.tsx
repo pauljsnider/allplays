@@ -399,6 +399,7 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'public' }));
 
+    expect(getPublicProfileCard().getAttribute('href')).toBe('#');
     const saveFirstButton = screen.getByRole('button', { name: 'Save to publish before sharing' });
     expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
