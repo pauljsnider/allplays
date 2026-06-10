@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
     getAssignmentClaims: vi.fn(),
+    getGame: vi.fn(),
     getGames: vi.fn(),
     getPracticePacketCompletions: vi.fn(),
     getPracticeSessions: vi.fn(),
