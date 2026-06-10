@@ -442,7 +442,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
           className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${persistedPublicProfileAvailable ? '' : 'pointer-events-none opacity-60'}`}
         >
           <IconBox icon={Share2} />
-          <CardText title="Public athlete profile" detail={persistedPublicProfileAvailable ? 'Open the shareable athlete profile.' : 'Save a public profile to enable sharing.'} />
+          <CardText title="Public athlete profile" detail={persistedPublicProfileAvailable ? 'Open the shareable athlete profile.' : 'Publish and save this profile to enable sharing.'} />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <Link to="/parent-tools/certificates" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
@@ -936,7 +936,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
           ) : hasUnsavedPublishChanges ? (
             <button type="button" className="secondary-button justify-center" disabled>
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
-              Save to publish before sharing
+              Publish changes before sharing
             </button>
           ) : (
             <a href={canPreviewPublishedPublicProfile ? persistedPublicProfileUrl : data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
@@ -948,7 +948,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
         {privacy === 'public' && awaitingPersistedPublish ? (
           <p className="text-center text-xs font-semibold text-gray-500">Waiting for refresh to confirm the public share link.</p>
         ) : privacy === 'public' && hasUnsavedPublishChanges ? (
-          <p className="text-center text-xs font-semibold text-gray-500">Publish this profile before the public share link becomes available.</p>
+          <p className="text-center text-xs font-semibold text-gray-500">Publish and save this profile before the public share link becomes available.</p>
         ) : null}
       </form>
     </section>
