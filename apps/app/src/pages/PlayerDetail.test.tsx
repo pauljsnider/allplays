@@ -375,8 +375,7 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Open Full Builder' })).toHaveAttribute(
-      'href',
+    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(
       'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1'
     );
 
@@ -385,7 +384,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     const saveFirstButton = screen.getByRole('button', { name: 'Save to publish before sharing' });
     expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
-    expect(saveFirstButton).toBeDisabled();
+    expect((saveFirstButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });
