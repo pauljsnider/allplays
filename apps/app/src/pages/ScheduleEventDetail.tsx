@@ -8,6 +8,7 @@ import {
   claimParentScheduleAssignmentSlot,
   createParentScheduleRideOffer,
   loadParentPracticePacket,
+  loadStaffPracticeAttendance,
   loadParentScheduleEventDetail,
   loadParentScheduleAssignments,
   loadParentScheduleRideOffers,
@@ -27,8 +28,11 @@ import {
   publishLiveScoreUpdateEvent,
   recordPlayerScoringStat,
   saveScheduledGameLineupDraftForApp,
+  saveStaffPracticeAttendance,
   updateGameScore,
   updateParentScheduleRideRequestStatus,
+  type PracticeAttendancePlayer,
+  type StaffPracticeAttendance,
   type RideOfferInput,
   type ParentPracticePacket,
   type ParentPracticePacketChild,
@@ -2273,10 +2277,17 @@ function ScoreStepper({ label, value, onDecrease, onIncrease, disabled }: { labe
 
 function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[] }) {
   const [packet, setPacket] = useState<ParentPracticePacket | null>(null);
+  const [attendance, setAttendance] = useState<StaffPracticeAttendance | null>(null);
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
+  const [attendanceStatus, setAttendanceStatus] = useState<string | null>(null);
+  const [attendanceError, setAttendanceError] = useState<string | null>(null);
+  const [savingAttendance, setSavingAttendance] = useState(false);
+  const [savingAttendancePlayerId, setSavingAttendancePlayerId] = useState<string | null>(null);
   const [loadingPacket, setLoadingPacket] = useState(true);
   const [packetStatus, setPacketStatus] = useState<string | null>(null);
   const [packetError, setPacketError] = useState<string | null>(null);
   const [busyChildId, setBusyChildId] = useState<string | null>(null);
+  const canManageAttendance = Boolean(auth.user && event.isTeamAdmin && event.type === 'practice' && event.isDbGame);
 
   const refreshPacket = useCallback(async (showLoading = true) => {
     if (showLoading) setLoadingPacket(true);
@@ -2296,6 +2307,30 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
     setPacketStatus(null);
     refreshPacket();
   }, [refreshPacket]);
+
+  const refreshAttendance = useCallback(async (showLoading = true) => {
+    if (!canManageAttendance || !auth.user) {
+      setAttendance(null);
+      setAttendanceError(null);
+      setLoadingAttendance(false);
+      return;
+    }
+    if (showLoading) setLoadingAttendance(true);
+    setAttendanceError(null);
+    try {
+      setAttendance(await loadStaffPracticeAttendance(event, auth.user));
+    } catch (error: any) {
+      setAttendance(null);
+      setAttendanceError(error?.message || 'Unable to load practice attendance.');
+    } finally {
+      if (showLoading) setLoadingAttendance(false);
+    }
+  }, [auth.user, canManageAttendance, event]);
+
+  useEffect(() => {
+    setAttendanceStatus(null);
+    void refreshAttendance();
+  }, [refreshAttendance]);
 
   const selectedChild = packet?.children.find((child) => child.id === event.childId) || packet?.children[0] || null;
   const completionChildIds = getCompletedPacketChildIds(packet?.completions || []);
@@ -2322,6 +2357,40 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
     }
   };
 
+  const updateAttendanceStatus = async (player: PracticeAttendancePlayer, status: 'present' | 'late' | 'absent') => {
+    if (!auth.user || !attendance) return;
+    const nextPlayers = attendance.players.map((candidate) => (
+      candidate.playerId === player.playerId
+        ? {
+          ...candidate,
+          status,
+          checkedInAt: status === 'present' || status === 'late' ? (candidate.checkedInAt || new Date()) : null
+        }
+        : candidate
+    ));
+    const nextAttendance = {
+      ...attendance,
+      checkedInCount: nextPlayers.filter((candidate) => candidate.status === 'present' || candidate.status === 'late').length,
+      players: nextPlayers
+    };
+    setSavingAttendance(true);
+    setSavingAttendancePlayerId(player.playerId);
+    setAttendanceStatus(null);
+    setAttendanceError(null);
+    setAttendance(nextAttendance);
+    try {
+      const saved = await saveStaffPracticeAttendance(event, auth.user, nextAttendance);
+      setAttendance(saved);
+      setAttendanceStatus(`${player.displayName} marked ${status}.`);
+    } catch (error: any) {
+      setAttendance(attendance);
+      setAttendanceError(error?.message || 'Unable to save practice attendance.');
+    } finally {
+      setSavingAttendance(false);
+      setSavingAttendancePlayerId(null);
+    }
+  };
+
   return (
     <section id="practice-packet-panel" className="app-card overflow-hidden p-0 scroll-mt-28">
       <div className={`border-b px-3 py-3 sm:px-4 ${packet ? selectedComplete ? 'border-emerald-100 bg-emerald-50' : 'border-blue-100 bg-blue-50' : 'border-gray-100 bg-white'}`}>
@@ -2343,6 +2412,17 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
       </div>
 
       <div className="p-3 sm:p-4">
+        {attendanceStatus ? <Status tone="success" message={attendanceStatus} /> : null}
+        {attendanceError ? <div className="mt-2"><Status tone="error" message={attendanceError} /></div> : null}
+        {canManageAttendance ? (
+          <PracticeAttendancePanel
+            attendance={attendance}
+            loading={loadingAttendance}
+            saving={savingAttendance}
+            savingPlayerId={savingAttendancePlayerId}
+            onSelectStatus={updateAttendanceStatus}
+          />
+        ) : null}
         {packetStatus ? <Status tone="success" message={packetStatus} /> : null}
         {packetError ? <div className="mt-2"><Status tone="error" message={packetError} /></div> : null}
         {loadingPacket ? (
@@ -2399,6 +2479,61 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
         )}
       </div>
     </section>
+  );
+}
+
+function PracticeAttendancePanel({ attendance, loading, saving, savingPlayerId, onSelectStatus }: {
+  attendance: StaffPracticeAttendance | null;
+  loading: boolean;
+  saving: boolean;
+  savingPlayerId: string | null;
+  onSelectStatus: (player: PracticeAttendancePlayer, status: 'present' | 'late' | 'absent') => Promise<void>;
+}) {
+  if (loading && !attendance) {
+    return <div className="mb-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading practice attendance...</div>;
+  }
+  if (!attendance) return null;
+
+  return (
+    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-amber-700">Practice attendance</div>
+          <div className="mt-1 text-sm font-black text-gray-950">Mark each player present, late, or absent.</div>
+        </div>
+        <span className="inline-flex min-h-8 items-center rounded-full border border-amber-200 bg-white px-3 text-xs font-black text-amber-900">
+          {attendance.checkedInCount}/{attendance.rosterSize} checked in
+        </span>
+      </div>
+      <div className="mt-3 space-y-2">
+        {attendance.players.map((player) => {
+          const busy = savingPlayerId === player.playerId;
+          return (
+            <div key={player.playerId} className="rounded-xl border border-amber-100 bg-white p-3" data-testid={`practice-attendance-row-${player.playerId}`}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="text-sm font-black text-gray-950">{player.playerNumber ? `#${player.playerNumber} ` : ''}{player.displayName}</div>
+                  <div className="mt-1 text-xs font-bold text-gray-500">{player.status === 'absent' ? 'Absent' : player.status === 'late' ? 'Late' : 'Present'}</div>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5 sm:min-w-[220px]">
+                  {(['present', 'late', 'absent'] as const).map((status) => (
+                    <button
+                      key={status}
+                      type="button"
+                      className={`min-h-8 rounded-full border px-2 text-[11px] font-black transition ${player.status === status ? 'border-amber-300 bg-amber-100 text-amber-900' : 'border-gray-200 bg-white text-gray-600 hover:border-amber-200 hover:bg-amber-50 hover:text-amber-900'}`}
+                      disabled={saving}
+                      onClick={() => onSelectStatus(player, status)}
+                    >
+                      {busy && player.status !== status ? 'Saving' : status === 'present' ? 'Present' : status === 'late' ? 'Late' : 'Absent'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
