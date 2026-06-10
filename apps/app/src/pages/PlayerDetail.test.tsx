@@ -374,6 +374,11 @@ describe('PlayerDetail athlete profile season selection', () => {
     await screen.findByText('What others see');
 
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open Full Builder' })).toHaveAttribute(
+      'href',
+      'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1'
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'public' }));
 

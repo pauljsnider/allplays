@@ -606,6 +606,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const persistedPrivacy = existing?.privacy === 'public' ? 'public' : 'private';
   const hasUnsavedPrivacyChange = privacy !== persistedPrivacy;
   const hasPublicShare = persistedPrivacy === 'public' && !!shareUrl;
+  const publicProfileUrl = persistedPrivacy === 'public' ? shareUrl : '';
 
   useEffect(() => {
     return () => {
@@ -888,9 +889,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
               Save to publish before sharing
             </button>
           ) : (
-            <a href={shareUrl || data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
+            <a href={publicProfileUrl || data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
-              {shareUrl ? 'Preview Public Page' : 'Open Full Builder'}
+              {publicProfileUrl ? 'Preview Public Page' : 'Open Full Builder'}
             </a>
           )}
         </div>
