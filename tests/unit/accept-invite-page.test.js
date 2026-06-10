@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createInviteProcessor } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=42';";
+const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=43';";
 
 class MockClassList {
     constructor(initial = []) {
@@ -104,7 +104,7 @@ const URLSearchParams = deps.URLSearchParams;
 const setTimeout = deps.setTimeout;
 ` + match[1]
         .replace(
-            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=20';",
+            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=21';",
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
@@ -112,7 +112,7 @@ const setTimeout = deps.setTimeout;
             'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
         )
         .replace(
-            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=5';",
+            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=6';",
             'const { createInviteProcessor } = deps.acceptInviteFlow;'
         )
         .replace(
@@ -200,11 +200,11 @@ async function bootAcceptInvite({
             valid: true,
             type: 'parent_invite',
             data: {
-                teamId: 'team-1',
-                playerNum: '22'
+                code: 'AB12CD34',
+                type: 'parent_invite'
             }
         }),
-        redeemParentInvite: vi.fn().mockResolvedValue(undefined),
+        redeemParentInvite: vi.fn().mockResolvedValue({ success: true, teamId: 'team-1', playerNum: '22' }),
         redeemHouseholdInvite: vi.fn().mockResolvedValue(undefined),
         redeemAdminInviteAtomically: vi.fn(),
         updateUserProfile: vi.fn().mockResolvedValue(undefined),
@@ -300,12 +300,37 @@ describe('accept-invite page parent flow', () => {
 
         expect(db.validateAccessCode).toHaveBeenCalledOnce();
         expect(db.redeemParentInvite).toHaveBeenCalledOnce();
-        expect(db.redeemParentInvite).toHaveBeenCalledWith('parent-1', 'ab12cd34');
+        expect(db.redeemParentInvite).toHaveBeenCalledWith('parent-1', 'ab12cd34', 'parent@example.com');
         expect(db.getTeam).toHaveBeenCalledWith('team-1');
         expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
         expect(elements.get('success-message').textContent).toContain("#22");
         expect(elements.get('success-message').textContent).toContain('Tigers');
         expect(window.location.href).toBe('http://example.com/parent-dashboard.html');
+    });
+
+    it('surfaces a signed-in parent invite email mismatch without relying on pre-auth metadata', async () => {
+        const mismatchMessage = 'This invite was sent to invited@example.com. Sign in with that email to accept it.';
+        const { elements, db } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=ab12cd34&type=parent',
+            authUser: { uid: 'parent-mismatch', email: 'other@example.com' },
+            authCallbackCount: 2,
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: true,
+                    type: 'parent_invite',
+                    data: {
+                        code: 'AB12CD34',
+                        type: 'parent_invite'
+                    }
+                }),
+                redeemParentInvite: vi.fn().mockRejectedValue(new Error(mismatchMessage))
+            }
+        });
+
+        expect(db.validateAccessCode).toHaveBeenCalledWith('ab12cd34');
+        expect(db.redeemParentInvite).toHaveBeenCalledWith('parent-mismatch', 'ab12cd34', 'other@example.com');
+        expect(elements.get('error-state').classList.contains('hidden')).toBe(false);
+        expect(elements.get('error-message').textContent).toBe(mismatchMessage);
     });
 
     it('shows the link-first continue state for signed-out parent invite links', async () => {
@@ -341,7 +366,7 @@ describe('accept-invite page parent flow', () => {
 
         expect(authenticated.db.validateAccessCode).toHaveBeenCalledOnce();
         expect(authenticated.db.redeemParentInvite).toHaveBeenCalledOnce();
-        expect(authenticated.db.redeemParentInvite).toHaveBeenCalledWith('parent-2', 'AB12CD34');
+        expect(authenticated.db.redeemParentInvite).toHaveBeenCalledWith('parent-2', 'AB12CD34', 'family@example.com');
         expect(authenticated.window.location.href).toBe('http://example.com/parent-dashboard.html');
     });
 });

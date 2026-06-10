@@ -29,16 +29,17 @@ function createDependencies(overrides = {}) {
 
 describe('executeEmailPasswordSignup', () => {
 
-    it('rejects parent invite signup when signup email does not match invite email before creating auth user', async () => {
+    it('rolls back signup when parent invite redemption rejects a mismatched email', async () => {
+        const mismatchError = new Error('This invite was sent to invited@example.com. Sign in with that email to accept it.');
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
         const dependencies = createDependencies({
-            validateAccessCode: vi.fn().mockResolvedValue({
-                valid: true,
-                type: 'parent_invite',
-                data: {
-                    code: 'PARENTCODE',
-                    email: 'Invited@Example.com'
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
                 }
-            })
+            }),
+            redeemParentInvite: vi.fn().mockRejectedValue(mismatchError)
         });
         const auth = { currentUser: null };
 
@@ -48,25 +49,35 @@ describe('executeEmailPasswordSignup', () => {
             activationCode: 'PARENTCODE',
             auth,
             dependencies
-        })).rejects.toThrow('This invite was sent to invited@example.com. Sign up with that email to accept it.');
+        })).rejects.toThrow('This invite was sent to invited@example.com. Sign in with that email to accept it.');
 
-        expect(dependencies.createUserWithEmailAndPassword).not.toHaveBeenCalled();
-        expect(dependencies.redeemParentInvite).not.toHaveBeenCalled();
+        expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
+        expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'attacker@example.com');
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
         expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
     });
 
-    it('rejects admin invite signup when signup email does not match invite email before creating auth user', async () => {
+    it('rolls back signup when admin invite redemption rejects a mismatched email', async () => {
+        const mismatchError = new Error('This invite was sent to admin@example.com. Sign in with that email to accept it.');
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
         const dependencies = createDependencies({
             validateAccessCode: vi.fn().mockResolvedValue({
                 valid: true,
                 type: 'admin_invite',
                 codeId: 'code-admin-3',
                 data: {
-                    teamId: 'team-42',
-                    email: 'admin@example.com'
+                    type: 'admin_invite'
                 }
-            })
+            }),
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-123',
+                    delete: deleteAuthUser
+                }
+            }),
+            redeemAdminInviteAcceptance: vi.fn().mockRejectedValue(mismatchError)
         });
         const auth = { currentUser: null };
 
@@ -76,25 +87,18 @@ describe('executeEmailPasswordSignup', () => {
             activationCode: 'ADMIN003',
             auth,
             dependencies
-        })).rejects.toThrow('This invite was sent to admin@example.com. Sign up with that email to accept it.');
+        })).rejects.toThrow('This invite was sent to admin@example.com. Sign in with that email to accept it.');
 
-        expect(dependencies.createUserWithEmailAndPassword).not.toHaveBeenCalled();
-        expect(dependencies.redeemAdminInviteAcceptance).not.toHaveBeenCalled();
+        expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
+        expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledTimes(1);
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
         expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
         expect(dependencies.sendEmailVerification).not.toHaveBeenCalled();
     });
 
-    it('accepts invite signup when email differs only by case or whitespace', async () => {
-        const dependencies = createDependencies({
-            validateAccessCode: vi.fn().mockResolvedValue({
-                valid: true,
-                type: 'parent_invite',
-                data: {
-                    code: 'PARENTCODE',
-                    email: ' invited@example.com '
-                }
-            })
-        });
+    it('passes the signup email through to parent invite redemption', async () => {
+        const dependencies = createDependencies();
         const auth = {
             currentUser: {
                 email: 'Invited@Example.com',
@@ -111,7 +115,7 @@ describe('executeEmailPasswordSignup', () => {
         });
 
         expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
-        expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE');
+        expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'Invited@Example.com');
     });
 
     it('throws when parent invite linking fails so signup does not report success', async () => {
@@ -202,7 +206,7 @@ describe('executeEmailPasswordSignup', () => {
         });
 
         expect(result.user.uid).toBe('user-123');
-        expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE');
+        expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'parent@example.com');
         expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);
         expect(reload).toHaveBeenCalledTimes(1);
         expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
@@ -236,7 +240,6 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.redeemAdminInviteAcceptance).toHaveBeenCalledWith(expect.objectContaining({
             userId: 'user-123',
             userEmail: 'newadmin@example.com',
-            teamId: 'team-42',
             codeId: 'code-admin-1'
         }));
         expect(dependencies.redeemAdminInviteAcceptance.mock.calls[0][0]).not.toHaveProperty('markAccessCodeAsUsed');

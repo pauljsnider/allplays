@@ -1,23 +1,24 @@
 import { hasFullTeamAccess } from './team-access.js?v=1';
 
-function normalizeEmail(email) {
+function normalizeInviteEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
 
-function assertInviteEmailMatches(validation, authEmail) {
-    const invitedEmail = normalizeEmail(validation?.data?.email);
-    if (!invitedEmail) {
-        return;
-    }
-
-    const signedInEmail = normalizeEmail(authEmail);
-    if (signedInEmail === invitedEmail) {
-        return;
-    }
-
-    throw new Error(`This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+function getInviteEmailMismatchMessage(invitedEmail) {
+    return `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`;
 }
 
+function assertInviteEmailMatches(invitedEmail, authEmail) {
+    const normalizedInvitedEmail = normalizeInviteEmail(invitedEmail);
+    if (!normalizedInvitedEmail) {
+        return;
+    }
+
+    const normalizedAuthEmail = normalizeInviteEmail(authEmail);
+    if (!normalizedAuthEmail || normalizedAuthEmail !== normalizedInvitedEmail) {
+        throw new Error(getInviteEmailMismatchMessage(normalizedInvitedEmail));
+    }
+}
 
 function getHouseholdInviteRedemptionMessage(error) {
     const rawMessage = String(error?.message || '');
@@ -67,14 +68,15 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         throw new Error(validation.message || 'Invalid or expired invite code');
     }
 
-    assertInviteEmailMatches(validation, authEmail);
-
     if (validation.type === 'parent_invite') {
-        await redeemParentInvite(userId, code);
-        const team = await getTeam(validation.data.teamId);
+        assertInviteEmailMatches(validation.data?.email, authEmail);
+
+        const redeemResult = await redeemParentInvite(userId, code, authEmail);
+        const teamId = redeemResult?.teamId || null;
+        const team = teamId ? await getTeam(teamId) : null;
         return {
             success: true,
-            message: `You've been added to follow ${validation.data.playerNum ? '#' + validation.data.playerNum : 'a player'} on ${team?.name || 'the team'}!`,
+            message: `You've been added to follow ${redeemResult?.playerNum ? '#' + redeemResult.playerNum : 'a player'} on ${team?.name || redeemResult?.teamName || 'the team'}!`,
             redirectUrl: 'parent-dashboard.html'
         };
     }
@@ -92,16 +94,22 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
             throw new Error(getHouseholdInviteRedemptionMessage(error));
         }
 
-        const teamId = redeemResult?.teamId || validation.data.teamId;
-        const team = await getTeam(teamId);
+        const teamId = redeemResult?.teamId || null;
+        const team = teamId ? await getTeam(teamId) : null;
+        const playerLabel = redeemResult?.playerNum || validation.data?.playerNum
+            ? `#${redeemResult?.playerNum || validation.data?.playerNum}`
+            : redeemResult?.playerName || validation.data?.playerName || 'a player';
+
         return {
             success: true,
-            message: `You've been added to follow ${validation.data.playerNum ? '#' + validation.data.playerNum : validation.data.playerName || 'a player'} on ${team?.name || validation.data.teamName || 'the team'}!`,
+            message: `You've been added to follow ${playerLabel} on ${team?.name || redeemResult?.teamName || validation.data?.teamName || 'the team'}!`,
             redirectUrl: 'parent-dashboard.html'
         };
     }
 
     if (validation.type === 'admin_invite') {
+        assertInviteEmailMatches(validation.data?.email, authEmail);
+
         if (typeof redeemAdminInviteAtomically !== 'function') {
             throw new Error('Missing atomic admin invite redemption handler');
         }
@@ -111,7 +119,7 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
             throw new Error('Failed to redeem admin invite atomically');
         }
 
-        const teamId = redeemResult.teamId || validation?.data?.teamId || null;
+        const teamId = redeemResult.teamId || null;
         const [team, profile] = await Promise.all([
             typeof getTeam === 'function' && teamId ? getTeam(teamId) : null,
             typeof getUserProfile === 'function' ? getUserProfile(userId) : null

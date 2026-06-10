@@ -34,7 +34,7 @@ vi.mock('../../js/firebase.js?v=17', async (importOriginal) => {
     };
 });
 
-vi.mock('../../js/db.js?v=42', () => ({
+vi.mock('../../js/db.js?v=43', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
@@ -96,7 +96,7 @@ describe('loginWithGoogle parent invite failure cleanup', () => {
 
         await expect(loginWithGoogle('PARENTCODE')).rejects.toThrow('parent invite link failed');
 
-        expect(redeemParentInviteMock).toHaveBeenCalledWith('user-123', 'PARENTCODE');
+        expect(redeemParentInviteMock).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'parent@example.com');
         expect(updateUserProfileMock).not.toHaveBeenCalled();
         expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
         expect(deleteMock).toHaveBeenCalledTimes(1);
@@ -171,7 +171,7 @@ describe('loginWithGoogle parent invite failure cleanup', () => {
 
         await expect(handleGoogleRedirectResult()).rejects.toThrow('parent invite link failed');
 
-        expect(redeemParentInviteMock).toHaveBeenCalledWith('user-123', 'PARENTCODE');
+        expect(redeemParentInviteMock).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'parent@example.com');
         expect(updateUserProfileMock).not.toHaveBeenCalled();
         expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
         expect(deleteMock).toHaveBeenCalledTimes(1);

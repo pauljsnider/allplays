@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 const { validateAccessCodeCandidates } = await import('../../functions/access-code-validation.cjs');
 
 describe('access code validation service', () => {
-    it('returns only the minimal acceptance payload for a redeemable invite', () => {
+    it('returns only generic pre-auth invite state for a redeemable invite', () => {
         const result = validateAccessCodeCandidates([
             {
                 id: 'invite-1',
@@ -30,15 +30,15 @@ describe('access code validation service', () => {
             type: 'parent_invite',
             data: {
                 code: 'PARENT1',
-                email: 'parent@example.com',
-                teamId: 'team-1',
-                teamName: 'Bears',
-                playerId: 'player-1',
-                playerName: 'Pat Player',
-                playerNum: '7',
                 type: 'parent_invite'
             }
         });
+        expect(result.data).not.toHaveProperty('email');
+        expect(result.data).not.toHaveProperty('teamId');
+        expect(result.data).not.toHaveProperty('teamName');
+        expect(result.data).not.toHaveProperty('playerId');
+        expect(result.data).not.toHaveProperty('playerName');
+        expect(result.data).not.toHaveProperty('playerNum');
         expect(result.data).not.toHaveProperty('phone');
         expect(result.data).not.toHaveProperty('generatedBy');
     });

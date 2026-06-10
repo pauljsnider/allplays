@@ -36,7 +36,7 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=17', () => firebaseMocks);
-vi.mock('../../js/db.js?v=42', () => dbMocks);
+vi.mock('../../js/db.js?v=43', () => dbMocks);
 
 const { signup, loginWithGoogle, handleGoogleRedirectResult } = await import('../../js/auth.js');
 
@@ -76,7 +76,7 @@ describe('auth signup parent invite failure handling', () => {
         dbMocks.redeemParentInvite.mockRejectedValue(new Error('Team or Player not found'));
 
         await expect(signup('parent@example.com', 'password123', 'PARENT1')).rejects.toThrow('Team or Player not found');
-        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-1', 'PARENT1');
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-1', 'PARENT1', 'parent@example.com');
         expect(deleteMock).toHaveBeenCalledTimes(1);
         expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
@@ -103,7 +103,7 @@ describe('auth signup parent invite failure handling', () => {
         dbMocks.updateUserProfile.mockRejectedValue(new Error('profile write failed'));
 
         await expect(signup('parent@example.com', 'secret123', 'PARENT01')).resolves.toEqual({ user });
-        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-1', 'PARENT01');
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-1', 'PARENT01', 'parent@example.com');
         expect(deleteMock).not.toHaveBeenCalled();
         expect(firebaseMocks.signOut).not.toHaveBeenCalled();
         expect(firebaseMocks.sendEmailVerification).toHaveBeenCalledWith(user);
@@ -168,7 +168,7 @@ describe('auth signup parent invite failure handling', () => {
         dbMocks.redeemParentInvite.mockRejectedValue(new Error('Team or Player not found'));
 
         await expect(loginWithGoogle('PARENT1')).rejects.toThrow('Team or Player not found');
-        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-1', 'PARENT1');
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-1', 'PARENT1', 'parent@example.com');
         expect(deleteMock).toHaveBeenCalledTimes(1);
         expect(firebaseMocks.signOut).toHaveBeenCalledWith(firebaseMocks.auth);
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
@@ -183,7 +183,7 @@ describe('auth signup parent invite failure handling', () => {
             type: 'parent_invite',
             data: {
                 code: 'PARENT1',
-                email: 'invited@example.com'
+                type: 'parent_invite'
             }
         });
         firebaseMocks.signInWithPopup.mockResolvedValue({
@@ -200,8 +200,10 @@ describe('auth signup parent invite failure handling', () => {
             }
         });
 
-        await expect(loginWithGoogle('PARENT1')).rejects.toThrow('This invite was sent to invited@example.com. Sign up with that email to accept it.');
-        expect(dbMocks.redeemParentInvite).not.toHaveBeenCalled();
+        dbMocks.redeemParentInvite.mockRejectedValue(new Error('This invite was sent to invited@example.com. Sign in with that email to accept it.'));
+
+        await expect(loginWithGoogle('PARENT1')).rejects.toThrow('This invite was sent to invited@example.com. Sign in with that email to accept it.');
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-mismatch', 'PARENT1', 'other@example.com');
         expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
         expect(dbMocks.updateUserProfile).not.toHaveBeenCalled();
         expect(deleteMock).toHaveBeenCalledTimes(1);
@@ -224,7 +226,7 @@ describe('auth signup parent invite failure handling', () => {
         await expect(signup('parent2@example.com', 'password123', 'PARENT1')).resolves.toEqual({
             user: { uid: 'user-3', delete: expect.any(Function) }
         });
-        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-3', 'PARENT1');
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('user-3', 'PARENT1', 'parent2@example.com');
         expect(firebaseMocks.signOut).not.toHaveBeenCalled();
     });
 
@@ -254,7 +256,7 @@ describe('auth signup parent invite failure handling', () => {
         await expect(loginWithGoogle('PARENT1')).resolves.toMatchObject({
             user: { uid: 'google-user-2' }
         });
-        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-2', 'PARENT1');
+        expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-2', 'PARENT1', 'parent2@example.com');
         expect(deleteMock).not.toHaveBeenCalled();
         expect(firebaseMocks.signOut).not.toHaveBeenCalled();
     });

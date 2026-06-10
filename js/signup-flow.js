@@ -1,24 +1,3 @@
-function normalizeEmail(email) {
-    return String(email || '').trim().toLowerCase();
-}
-
-function assertInviteEmailMatchesSignup(validation, signupEmail) {
-    if (validation?.type !== 'parent_invite' && validation?.type !== 'admin_invite') {
-        return;
-    }
-
-    const invitedEmail = normalizeEmail(validation?.data?.email);
-    if (!invitedEmail) {
-        return;
-    }
-
-    if (normalizeEmail(signupEmail) === invitedEmail) {
-        return;
-    }
-
-    throw new Error(`This invite was sent to ${invitedEmail}. Sign up with that email to accept it.`);
-}
-
 export async function executeEmailPasswordSignup({
     email,
     password,
@@ -48,8 +27,6 @@ export async function executeEmailPasswordSignup({
         throw new Error(validation.message || 'Invalid activation code');
     }
 
-    assertInviteEmailMatchesSignup(validation, email);
-
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const userId = userCredential.user.uid;
 
@@ -73,7 +50,7 @@ export async function executeEmailPasswordSignup({
 
     if (validation.type === 'parent_invite') {
         try {
-            await redeemParentInvite(userId, validation.data.code);
+            await redeemParentInvite(userId, activationCode, email);
         } catch (e) {
             console.error('Error linking parent:', e);
             await cleanupFailedParentInviteSignup(userCredential?.user);
@@ -95,7 +72,6 @@ export async function executeEmailPasswordSignup({
             await redeemAdminInviteAcceptance({
                 userId,
                 userEmail: email,
-                teamId: validation?.data?.teamId,
                 codeId: validation.codeId,
                 getTeam,
                 getUserProfile

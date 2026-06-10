@@ -15,9 +15,9 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=17';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=42';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=3';
-import { redeemAdminInviteAcceptance } from './admin-invite.js?v=4';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=43';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=4';
+import { redeemAdminInviteAcceptance } from './admin-invite.js?v=5';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
 
 async function cleanupFailedNewUser(user, context) {
@@ -43,30 +43,9 @@ async function cleanupFailedNewUser(user, context) {
     }
 }
 
-function normalizeSignupEmail(email) {
-    return String(email || '').trim().toLowerCase();
-}
-
-function assertInviteEmailMatchesGoogleSignup(validation, signupEmail) {
-    if (validation?.type !== 'parent_invite' && validation?.type !== 'admin_invite') {
-        return;
-    }
-
-    const invitedEmail = normalizeSignupEmail(validation?.data?.email);
-    if (!invitedEmail) {
-        return;
-    }
-
-    if (normalizeSignupEmail(signupEmail) === invitedEmail) {
-        return;
-    }
-
-    throw new Error(`This invite was sent to ${invitedEmail}. Sign up with that email to accept it.`);
-}
-
 async function linkParentInviteOrRollback(user, parentInviteCode) {
     try {
-        await redeemParentInvite(user.uid, parentInviteCode);
+        await redeemParentInvite(user.uid, parentInviteCode, user.email);
     } catch (inviteLinkError) {
         console.error('Error linking parent:', inviteLinkError);
         clearPendingActivationCode();
@@ -193,18 +172,10 @@ async function processGoogleAuthResult(result, activationCode = null) {
             throw new Error(validation.message || 'Invalid activation code');
         }
 
-        try {
-            assertInviteEmailMatchesGoogleSignup(validation, result.user.email);
-        } catch (emailMismatchError) {
-            clearPendingActivationCode();
-            await cleanupFailedNewUser(result.user, 'invite email mismatch');
-            throw emailMismatchError;
-        }
-
         const userId = result.user.uid;
 
         if (validation.type === 'parent_invite') {
-            await linkParentInviteOrRollback(result.user, validation.data.code);
+            await linkParentInviteOrRollback(result.user, validation.data?.code || code);
 
             // Best-effort profile write after invite redemption.
             try {
@@ -222,7 +193,6 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 await redeemAdminInviteAcceptance({
                     userId,
                     userEmail: result.user.email,
-                    teamId: validation.data.teamId,
                     codeId: validation.codeId,
                     getTeam,
                     getUserProfile

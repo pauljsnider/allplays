@@ -3459,9 +3459,6 @@ export async function redeemAdminInviteAtomicPersistence({
     userEmail,
     codeId
 }) {
-    if (!teamId) {
-        throw new Error('Missing teamId for admin invite persistence');
-    }
     if (!userId) {
         throw new Error('Missing userId for admin invite persistence');
     }
@@ -3474,22 +3471,18 @@ export async function redeemAdminInviteAtomicPersistence({
         throw new Error('Missing user email for admin invite persistence');
     }
 
-    const teamRef = doc(db, "teams", teamId);
     const userRef = doc(db, "users", userId);
     const codeRef = doc(db, "accessCodes", codeId);
     let userGrantApplied = false;
     let userAlreadyCoachedTeam = false;
     let userAlreadyHadCoachRole = false;
+    let resolvedTeamId = String(teamId || '').trim();
     try {
-        const [teamSnapshot, codeSnapshot, userSnapshot] = await Promise.all([
-            getDoc(teamRef),
+        const [codeSnapshot, userSnapshot] = await Promise.all([
             getDoc(codeRef),
             getDoc(userRef)
         ]);
 
-        if (!teamSnapshot.exists()) {
-            throw new Error('Team not found for admin invite persistence');
-        }
         if (!codeSnapshot.exists()) {
             throw new Error('Access code not found for admin invite persistence');
         }
@@ -3499,8 +3492,18 @@ export async function redeemAdminInviteAtomicPersistence({
             throw new Error('Access code is not an admin invite');
         }
 
-        if ((codeData.teamId || null) !== teamId) {
+        resolvedTeamId = String(codeData.teamId || '').trim();
+        if (!resolvedTeamId) {
+            throw new Error('Admin invite is missing teamId');
+        }
+        if (teamId && resolvedTeamId !== teamId) {
             throw new Error('Access code team does not match admin invite target');
+        }
+
+        const teamRef = doc(db, "teams", resolvedTeamId);
+        const teamSnapshot = await getDoc(teamRef);
+        if (!teamSnapshot.exists()) {
+            throw new Error('Team not found for admin invite persistence');
         }
 
         const invitedEmail = String(codeData.email || '').trim().toLowerCase();
@@ -3522,12 +3525,12 @@ export async function redeemAdminInviteAtomicPersistence({
         const existingUserData = userSnapshot.exists() ? (userSnapshot.data() || {}) : {};
         const existingCoachOf = Array.isArray(existingUserData.coachOf) ? existingUserData.coachOf : [];
         const existingRoles = Array.isArray(existingUserData.roles) ? existingUserData.roles : [];
-        userAlreadyCoachedTeam = existingCoachOf.includes(teamId);
+        userAlreadyCoachedTeam = existingCoachOf.includes(resolvedTeamId);
         userAlreadyHadCoachRole = existingRoles.includes('coach');
 
         const userGrantTimestamp = Timestamp.now();
         await setDoc(userRef, {
-            coachOf: arrayUnion(teamId),
+            coachOf: arrayUnion(resolvedTeamId),
             roles: arrayUnion('coach'),
             updatedAt: userGrantTimestamp
         }, { merge: true });
@@ -3550,7 +3553,7 @@ export async function redeemAdminInviteAtomicPersistence({
             if (latestCodeData.type !== 'admin_invite') {
                 throw new Error('Access code is not an admin invite');
             }
-            if ((latestCodeData.teamId || null) !== teamId) {
+            if ((latestCodeData.teamId || null) !== resolvedTeamId) {
                 throw new Error('Access code team does not match admin invite target');
             }
             const latestInvitedEmail = String(latestCodeData.email || '').trim().toLowerCase();
@@ -3578,6 +3581,12 @@ export async function redeemAdminInviteAtomicPersistence({
                 usedAt: now
             });
         });
+
+        return {
+            success: true,
+            teamId: resolvedTeamId,
+            teamName: teamSnapshot.data()?.name || null
+        };
     } catch (error) {
         let rollbackError = null;
         if (userGrantApplied) {
@@ -3586,7 +3595,7 @@ export async function redeemAdminInviteAtomicPersistence({
             };
 
             if (!userAlreadyCoachedTeam) {
-                rollbackUpdate.coachOf = arrayRemove(teamId);
+                rollbackUpdate.coachOf = arrayRemove(resolvedTeamId);
             }
             if (!userAlreadyHadCoachRole) {
                 rollbackUpdate.roles = arrayRemove('coach');
@@ -3877,12 +3886,24 @@ export async function inviteCoParentToAthlete(primaryParentUid, teamId, playerId
 }
 
 
-export async function redeemParentInvite(userId, code) {
+function normalizeInviteEmail(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function getInviteEmailMismatchMessage(invitedEmail) {
+    return `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`;
+}
+
+export async function redeemParentInvite(userId, code, authEmail = null) {
     console.log('[redeemParentInvite] start', { userId, code });
 
     const codeDoc = await getValidatedAccessCodeDoc(code);
     const codeRef = codeDoc.ref;
     let codeData;
+
+    const resolvedAuthEmail = normalizeInviteEmail(
+        authEmail || auth.currentUser?.email || (await getUserProfile(userId))?.email
+    );
 
     // 2. Atomically claim code before side effects
     await runTransaction(db, async (transaction) => {
@@ -3902,6 +3923,11 @@ export async function redeemParentInvite(userId, code) {
             throw new Error("Code has expired");
         }
 
+        const invitedEmail = normalizeInviteEmail(latestCodeData.email);
+        if (invitedEmail && (!resolvedAuthEmail || invitedEmail !== resolvedAuthEmail)) {
+            throw new Error(getInviteEmailMismatchMessage(invitedEmail));
+        }
+
         transaction.update(codeRef, {
             used: true,
             usedBy: userId,
@@ -3918,13 +3944,15 @@ export async function redeemParentInvite(userId, code) {
         playerId: codeData.playerId,
         generatedBy: codeData.generatedBy
     });
+    let team = null;
+    let player = null;
     try {
         // 3. Get Team & Player details for caching
         console.log('[redeemParentInvite] fetching team & player', {
             teamId: codeData.teamId,
             playerId: codeData.playerId
         });
-        const [team, player] = await Promise.all([
+        [team, player] = await Promise.all([
             getTeam(codeData.teamId),
             getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
         ]);
@@ -4031,7 +4059,14 @@ export async function redeemParentInvite(userId, code) {
     }
 
     console.log('[redeemParentInvite] access code marked used', { codeId: codeDoc.id });
-    return { success: true, teamId: codeData.teamId };
+    return {
+        success: true,
+        teamId: codeData.teamId,
+        teamName: team?.name || null,
+        playerId: codeData.playerId || null,
+        playerName: player?.name || null,
+        playerNum: player?.number ?? codeData.playerNum ?? null
+    };
 }
 
 function normalizeHouseholdInviteEmail(email) {

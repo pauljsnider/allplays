@@ -28,5 +28,7 @@ describe('access code atomic redemption guard', () => {
         expect(afterFunction).toContain('if (latestCodeData.used || latestCodeData.revoked === true');
         expect(afterFunction).toContain('if (isAccessCodeExpired(latestCodeData.expiresAt))');
         expect(afterFunction).toContain('throw new Error("Code has expired")');
+        expect(afterFunction).toContain('if (invitedEmail && (!resolvedAuthEmail || invitedEmail !== resolvedAuthEmail))');
+        expect(afterFunction).toContain('throw new Error(getInviteEmailMismatchMessage(invitedEmail))');
     });
 });

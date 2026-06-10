@@ -14,7 +14,7 @@ import {
 } from './db.js?v=42';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=17';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=20';
+import { checkAuth } from './auth.js?v=21';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
