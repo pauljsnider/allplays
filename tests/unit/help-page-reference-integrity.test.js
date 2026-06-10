@@ -17,12 +17,16 @@ function extractReferenceFiles(html) {
 describe('help page reference integrity', () => {
     it('keeps the file-by-file page reference discoverable from help center', () => {
         const helpHtml = readRepoFile('help.html');
-        expect(helpHtml).toContain('href="help-page-reference.html"');
+        expect(helpHtml).toContain('id="help-page-reference-link"');
+        expect(helpHtml).toContain("pageReferenceLink.href = buildWorkflowHref('help-page-reference.html');");
         expect(helpHtml).toContain('View file-by-file page reference');
     });
 
     it('lists only shipped html files in help-page-reference.html', () => {
         const referenceHtml = readRepoFile('help-page-reference.html');
+        expect(referenceHtml).toContain('data-help-back-link');
+        expect(referenceHtml).toContain('./js/help-context.js?v=1');
+
         const referencedFiles = extractReferenceFiles(referenceHtml);
 
         expect(referencedFiles).toContain('edit-schedule.html');

@@ -151,7 +151,7 @@
           </div>
           <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
             <p id="help-summary" class="text-sm text-slate-600"></p>
-            <a href="help-page-reference.html" class="text-sm font-semibold text-primary-700 hover:text-primary-800">View file-by-file page reference</a>
+            <a id="help-page-reference-link" href="help-page-reference.html" class="text-sm font-semibold text-primary-700 hover:text-primary-800">View file-by-file page reference</a>
           </div>
         </section>
 
@@ -451,6 +451,7 @@
         const grid = document.getElementById('help-grid');
         const empty = document.getElementById('help-empty');
         const summary = document.getElementById('help-summary');
+        const pageReferenceLink = document.getElementById('help-page-reference-link');
 
         function escapeHtml(v){return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 
@@ -485,6 +486,14 @@
             return query ? `${file}?${query}` : file;
         }
 
+        function syncPageReferenceLink() {
+            if (!pageReferenceLink) {
+                return;
+            }
+
+            pageReferenceLink.href = buildWorkflowHref('help-page-reference.html');
+        }
+
         function render() {
             const q = (searchInput.value || '').toLowerCase().trim();
             const role = roleSelect.value;
@@ -516,6 +525,7 @@
         }
 
         applyRoleFromUrl();
+        syncPageReferenceLink();
         searchInput.addEventListener('input', render);
         roleSelect.addEventListener('change', render);
         render();
