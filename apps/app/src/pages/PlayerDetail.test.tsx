@@ -460,11 +460,13 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(publicProfileCard.getAttribute('rel')).toBeNull();
     expect(publicProfileCard.className).toContain('pointer-events-none');
     expect(screen.getByText('Publish and save this profile to enable sharing.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
     expect((publishBeforeSharingButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('Publish and save this profile before the public share link becomes available.')).toBeTruthy();
+    expect(playerServiceMocks.saveParentAthleteProfileDraft).not.toHaveBeenCalled();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'private' }));

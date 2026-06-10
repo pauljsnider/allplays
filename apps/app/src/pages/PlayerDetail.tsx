@@ -86,6 +86,25 @@ function hasPendingPublicProfilePublish({ hasUnsavedPublishChanges = false, savi
   return hasUnsavedPublishChanges || saving;
 }
 
+function requiresSavedPublicProfileForSharing({
+  draftPrivacy,
+  persistedPrivacy,
+  shareUrl,
+  hasUnsavedPublishChanges = false,
+  saving = false
+}: {
+  draftPrivacy: 'private' | 'public';
+  persistedPrivacy: 'private' | 'public';
+  shareUrl: string | null | undefined;
+  hasUnsavedPublishChanges?: boolean;
+  saving?: boolean;
+}) {
+  if (draftPrivacy === 'public') {
+    return persistedPrivacy !== 'public' || hasPendingPublicProfilePublish({ hasUnsavedPublishChanges, saving });
+  }
+  return persistedPrivacy !== 'public' && !!String(shareUrl || '').trim();
+}
+
 function isPersistedPublicProfileReady(
   profile: Record<string, any> | null | undefined,
   shareUrl: string | null | undefined,
@@ -696,11 +715,14 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     hasUnsavedPublishChanges,
     saving: saving || awaitingPersistedPublish
   });
-  const shareRequiresSavedPublicProfile = privacy === 'public' && (
-    hasPendingPersistedPublicProfile ||
-    persistedPrivacy !== 'public'
-  );
-  const requiresPublishBeforeSharing = shareRequiresSavedPublicProfile || (privacy !== 'public' && hasPersistedPrivateShareUrl);
+  const requiresPublishBeforeSharing = requiresSavedPublicProfileForSharing({
+    draftPrivacy: privacy,
+    persistedPrivacy,
+    shareUrl: normalizedShareUrl,
+    hasUnsavedPublishChanges,
+    saving: saving || awaitingPersistedPublish
+  });
+  const shareRequiresSavedPublicProfile = privacy === 'public' && requiresPublishBeforeSharing;
   const latestPublicShareStateRef = useRef({
     canSharePublicProfile: false,
     persistedPublicProfileUrl: ''
