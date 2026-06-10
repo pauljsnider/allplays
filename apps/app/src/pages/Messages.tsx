@@ -420,6 +420,9 @@ function ChatWindow({
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState(DEFAULT_TEAM_CONVERSATION_ID);
   const [recipientOptions, setRecipientOptions] = useState<ChatRecipientOption[]>([]);
+  const [recipientOptionsLoading, setRecipientOptionsLoading] = useState(false);
+  const [recipientOptionsLoaded, setRecipientOptionsLoaded] = useState(false);
+  const [recipientOptionsError, setRecipientOptionsError] = useState<string | null>(null);
   const [selectedRecipientTarget, setSelectedRecipientTarget] = useState<ChatTargetType>('full_team');
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
   const [liveMessages, setLiveMessages] = useState<ChatMessage[]>([]);
@@ -479,6 +482,9 @@ function ChatWindow({
   const initialSnapshotLoadedRef = useRef(false);
   const pendingScrollRef = useRef(false);
   const stickToLatestRef = useRef(true);
+  const recipientOptionsPromiseRef = useRef<Promise<ChatRecipientOption[]> | null>(null);
+  const recipientOptionsRequestIdRef = useRef(0);
+  const currentTeamIdRef = useRef(teamId);
   const programmaticScrollRef = useRef(false);
   const mountedRef = useRef(true);
   const scheduledScrollFrameRef = useRef<number | null>(null);
@@ -506,6 +512,56 @@ function ChatWindow({
   const audienceSummary = useMemo(() => getAudienceSummaryText(audienceMetadata, recipientOptions), [audienceMetadata, recipientOptions]);
   const mediaEntries = useMemo(() => collectThreadMedia(messages), [messages]);
   const teamName = team?.name || inboxTeam?.name || 'Team chat';
+
+  const ensureRecipientOptionsLoaded = useCallback(async () => {
+    if (!canModerate) return [] as ChatRecipientOption[];
+    if (recipientOptionsLoaded) return recipientOptions;
+    if (recipientOptionsPromiseRef.current) return recipientOptionsPromiseRef.current;
+
+    const requestTeamId = teamId;
+    const requestId = recipientOptionsRequestIdRef.current + 1;
+    recipientOptionsRequestIdRef.current = requestId;
+    setRecipientOptionsLoading(true);
+    setRecipientOptionsError(null);
+    const request = loadChatRecipientOptions(requestTeamId)
+      .then((options) => {
+        if (
+          mountedRef.current
+          && currentTeamIdRef.current === requestTeamId
+          && recipientOptionsRequestIdRef.current === requestId
+        ) {
+          setRecipientOptions(options);
+          setRecipientOptionsLoaded(true);
+        }
+        return options;
+      })
+      .catch((loadError: any) => {
+        const message = loadError?.message || 'Unable to load recipient options.';
+        if (
+          mountedRef.current
+          && currentTeamIdRef.current === requestTeamId
+          && recipientOptionsRequestIdRef.current === requestId
+        ) {
+          setRecipientOptionsLoaded(false);
+          setRecipientOptionsError(message);
+        }
+        throw loadError;
+      })
+      .finally(() => {
+        if (recipientOptionsPromiseRef.current === request) {
+          recipientOptionsPromiseRef.current = null;
+        }
+        if (
+          mountedRef.current
+          && currentTeamIdRef.current === requestTeamId
+          && recipientOptionsRequestIdRef.current === requestId
+        ) {
+          setRecipientOptionsLoading(false);
+        }
+      });
+    recipientOptionsPromiseRef.current = request;
+    return request;
+  }, [canModerate, recipientOptions, recipientOptionsLoaded, teamId]);
 
   const setVoiceDraftTranscript = useCallback((transcript: string) => {
     const normalizedTranscript = String(transcript || '').trim();
@@ -631,6 +687,10 @@ function ChatWindow({
   }, [clearScheduledScrollTimeouts, maybeScrollToLatest]);
 
   useEffect(() => {
+    currentTeamIdRef.current = teamId;
+  }, [teamId]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadContext() {
@@ -641,6 +701,12 @@ function ChatWindow({
       setSelectedConversationId(preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID);
       setOlderMessages([]);
       setLiveMessages([]);
+      recipientOptionsPromiseRef.current = null;
+      recipientOptionsRequestIdRef.current += 1;
+      setRecipientOptions([]);
+      setRecipientOptionsLoading(false);
+      setRecipientOptionsLoaded(false);
+      setRecipientOptionsError(null);
       initialSnapshotLoadedRef.current = false;
       pendingScrollRef.current = true;
       stickToLatestRef.current = true;
@@ -664,11 +730,8 @@ function ChatWindow({
           }
           return DEFAULT_TEAM_CONVERSATION_ID;
         });
-        if (context.canModerate) {
-          const options = await loadChatRecipientOptions(teamId);
-          if (!cancelled) setRecipientOptions(options);
-        } else {
-          setRecipientOptions([]);
+        if (!context.canModerate) {
+          setRecipientOptionsLoaded(true);
         }
       } catch (loadError: any) {
         if (!cancelled) {
@@ -1101,6 +1164,7 @@ function ChatWindow({
     setEmailStatus(null);
     setEmailHistoryStatus(null);
     setSelectedEmailDraftId('');
+    void ensureRecipientOptionsLoaded().catch(() => undefined);
     void reloadEmailDrafts();
     void reloadEmailTemplates();
     void reloadSentEmailHistory();
@@ -1551,7 +1615,10 @@ function ChatWindow({
         onAttach={() => setShowAttachSheet(true)}
         onRemoveFile={removeFile}
         onVoice={toggleVoiceCapture}
-        onAudience={() => setShowAudienceSheet(true)}
+        onAudience={() => {
+          setShowAudienceSheet(true);
+          void ensureRecipientOptionsLoaded().catch(() => undefined);
+        }}
         onTeamEmail={openEmailSheet}
         onMention={insertAllPlaysMention}
       />
@@ -1574,8 +1641,13 @@ function ChatWindow({
           selectedTarget={selectedRecipientTarget}
           selectedRecipientIds={selectedRecipientIds}
           recipientOptions={recipientOptions}
+          recipientOptionsLoading={recipientOptionsLoading}
+          recipientOptionsError={recipientOptionsError}
           onTargetChange={handleAudienceTargetChange}
           onRecipientsChange={setSelectedRecipientIds}
+          onRetryRecipientOptions={() => {
+            void ensureRecipientOptionsLoaded().catch(() => undefined);
+          }}
           onClose={() => setShowAudienceSheet(false)}
         />
       ) : null}
@@ -1613,6 +1685,8 @@ function ChatWindow({
           savingTemplate={emailSavingTemplate}
           loadingHistory={emailLoadingHistory}
           loadingTemplates={emailLoadingTemplates}
+          recipientOptionsLoading={recipientOptionsLoading}
+          recipientOptionsError={recipientOptionsError}
           status={emailStatus}
           historyStatus={emailHistoryStatus}
           sentEmails={sentEmails}
@@ -1629,6 +1703,9 @@ function ChatWindow({
           onRefreshDrafts={reloadEmailDrafts}
           onRefreshHistory={reloadSentEmailHistory}
           onRefreshTemplates={reloadEmailTemplates}
+          onRetryRecipientOptions={() => {
+            void ensureRecipientOptionsLoaded().catch(() => undefined);
+          }}
           onStatusClose={() => setEmailStatus(null)}
           onHistoryStatusClose={() => setEmailHistoryStatus(null)}
           onClose={() => setShowEmailSheet(false)}
@@ -1717,6 +1794,8 @@ function TeamEmailSheet({
   savingTemplate,
   loadingHistory,
   loadingTemplates,
+  recipientOptionsLoading,
+  recipientOptionsError,
   status,
   historyStatus,
   sentEmails,
@@ -1733,6 +1812,7 @@ function TeamEmailSheet({
   onRefreshDrafts,
   onRefreshHistory,
   onRefreshTemplates,
+  onRetryRecipientOptions,
   onStatusClose,
   onHistoryStatusClose,
   onClose
@@ -1749,6 +1829,8 @@ function TeamEmailSheet({
   savingTemplate: boolean;
   loadingHistory: boolean;
   loadingTemplates: boolean;
+  recipientOptionsLoading: boolean;
+  recipientOptionsError: string | null;
   status: ChatStatus | null;
   historyStatus: ChatStatus | null;
   sentEmails: SentTeamEmail[];
@@ -1765,6 +1847,7 @@ function TeamEmailSheet({
   onRefreshDrafts: () => void;
   onRefreshHistory: () => void;
   onRefreshTemplates: () => void;
+  onRetryRecipientOptions: () => void;
   onStatusClose: () => void;
   onHistoryStatusClose: () => void;
   onClose: () => void;
@@ -1773,7 +1856,12 @@ function TeamEmailSheet({
   const draftAudienceSupported = audienceMetadata.targetType === 'individuals';
   const missingSelectedRecipients = audienceMetadata.targetType === 'individuals' && audienceMetadata.recipientIds.length === 0;
   const canSendEmail = Boolean(subject.trim() && body.trim()) && !missingSelectedRecipients && !sending;
-  const canSaveDraft = draftAudienceSupported && Boolean(subject.trim() && body.trim()) && !missingSelectedRecipients && !savingDraft;
+  const canSaveDraft = draftAudienceSupported
+    && !recipientOptionsLoading
+    && !recipientOptionsError
+    && Boolean(subject.trim() && body.trim())
+    && !missingSelectedRecipients
+    && !savingDraft;
   const canSaveTemplate = Boolean(templateName.trim() && subject.trim() && body.trim()) && !savingTemplate;
 
   useEffect(() => {
@@ -1792,6 +1880,19 @@ function TeamEmailSheet({
         <div className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-700">
           Audience: {audienceSummary}
         </div>
+        {recipientOptionsLoading ? (
+          <div className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-bold text-gray-500">
+            <Loader2 className="mr-2 inline h-4 w-4 animate-spin" aria-hidden="true" />
+            Loading recipient options...
+          </div>
+        ) : recipientOptionsError ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+            <div>{recipientOptionsError}</div>
+            <button type="button" className="ghost-button mt-2 !h-8 !min-h-8 !px-2 text-xs" onClick={onRetryRecipientOptions}>
+              Retry recipient load
+            </button>
+          </div>
+        ) : null}
         <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -2521,15 +2622,21 @@ function AudienceSheet({
   selectedTarget,
   selectedRecipientIds,
   recipientOptions,
+  recipientOptionsLoading,
+  recipientOptionsError,
   onTargetChange,
   onRecipientsChange,
+  onRetryRecipientOptions,
   onClose
 }: {
   selectedTarget: ChatTargetType;
   selectedRecipientIds: string[];
   recipientOptions: ChatRecipientOption[];
+  recipientOptionsLoading: boolean;
+  recipientOptionsError: string | null;
   onTargetChange: (target: ChatTargetType) => void;
   onRecipientsChange: (ids: string[]) => void;
+  onRetryRecipientOptions: () => void;
   onClose: () => void;
 }) {
   const toggleRecipient = (recipientId: string) => {
@@ -2569,7 +2676,19 @@ function AudienceSheet({
       {selectedTarget === 'individuals' ? (
         <>
           <div className="mt-4 max-h-72 overflow-y-auto rounded-xl border border-gray-200">
-            {recipientOptions.length ? recipientOptions.map((option) => (
+            {recipientOptionsLoading ? (
+              <div className="p-3 text-sm font-semibold text-gray-500">
+                <Loader2 className="mr-2 inline h-4 w-4 animate-spin" aria-hidden="true" />
+                Loading recipient options...
+              </div>
+            ) : recipientOptionsError ? (
+              <div className="p-3 text-sm font-semibold text-rose-700">
+                <div>{recipientOptionsError}</div>
+                <button type="button" className="ghost-button mt-3 !h-8 !min-h-8 !px-2 text-xs" onClick={onRetryRecipientOptions}>
+                  Retry recipient load
+                </button>
+              </div>
+            ) : recipientOptions.length ? recipientOptions.map((option) => (
               <label key={option.id} className="flex cursor-pointer items-center gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0">
                 <input
                   type="checkbox"
@@ -2586,7 +2705,7 @@ function AudienceSheet({
               <div className="p-3 text-sm font-semibold text-gray-500">No roster or community members are available yet.</div>
             )}
           </div>
-          {needsSelectedRecipient ? (
+          {needsSelectedRecipient && !recipientOptionsLoading && !recipientOptionsError ? (
             <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
               Choose at least one selected member, or switch back to Full team.
             </div>
@@ -2594,7 +2713,7 @@ function AudienceSheet({
         </>
       ) : null}
 
-      <button type="button" className="primary-button mt-4 w-full" onClick={onClose} disabled={needsSelectedRecipient}>Done</button>
+      <button type="button" className="primary-button mt-4 w-full" onClick={onClose} disabled={needsSelectedRecipient || recipientOptionsLoading}>Done</button>
     </Sheet>
   );
 }
