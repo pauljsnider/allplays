@@ -573,15 +573,16 @@ function EmptyTeams() {
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <Link to="/accept-invite" className="secondary-button justify-center !min-h-9 text-xs">Accept invite</Link>
             <Link to="/home" className="ghost-button justify-center !min-h-9 text-xs">Back to Home</Link>
-            <button
-              type="button"
+            <a
+              href="https://allplays.ai/teams.html"
               className="ghost-button justify-center !min-h-9 text-xs"
-              onClick={() => {
+              onClick={(event) => {
+                event.preventDefault();
                 void openPublicUrl('https://allplays.ai/teams.html');
               }}
             >
               Browse teams
-            </button>
+            </a>
           </div>
         </div>
       </div>
