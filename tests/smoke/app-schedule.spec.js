@@ -455,6 +455,22 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
+                export async function loadStaffPracticeAttendance(event) {
+                    window.__scheduleCalls.attendance = (window.__scheduleCalls.attendance || []).concat({ action: 'load', eventId: event?.id || null });
+                    return [];
+                }
+
+                export async function saveStaffPracticeAttendance(event, user, attendance) {
+                    const saved = Array.isArray(attendance) ? attendance.map((entry) => ({ ...entry })) : [];
+                    window.__scheduleCalls.attendance = (window.__scheduleCalls.attendance || []).concat({
+                        action: 'save',
+                        eventId: event?.id || null,
+                        userId: user?.uid || null,
+                        count: saved.length
+                    });
+                    return saved;
+                }
+
                 export async function markParentPracticePacketComplete(packet, user, child) {
                     const completion = {
                         id: user.uid + '__' + child.id,
