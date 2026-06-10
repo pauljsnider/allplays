@@ -396,8 +396,9 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(builderUrl);
-    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).not.toBe(shareUrl);
+    expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('This saved share link stays private until you publish and save the profile.')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'public' }));
 
@@ -634,10 +635,12 @@ describe('PlayerDetail athlete profile season selection', () => {
     }));
 
     expect(await screen.findByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
-    expect(getPublicProfileCard().getAttribute('href')).toBe(shareUrl);
-    expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('false');
-    expect(getPublicProfileCard().getAttribute('tabindex')).toBeNull();
-    expect(getPublicProfileCard().className).not.toContain('pointer-events-none');
+    await waitFor(() => {
+      expect(getPublicProfileCard().getAttribute('href')).toBe(shareUrl);
+      expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('false');
+      expect(getPublicProfileCard().getAttribute('tabindex')).toBeNull();
+      expect(getPublicProfileCard().className).not.toContain('pointer-events-none');
+    });
     expect(screen.getByText('Open the shareable athlete profile.')).toBeTruthy();
   });
 
@@ -891,7 +894,9 @@ describe('PlayerDetail athlete profile season selection', () => {
       expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     });
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(builderUrl);
+    expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('This saved share link stays private until you publish and save the profile.')).toBeTruthy();
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe('#');
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
   });
