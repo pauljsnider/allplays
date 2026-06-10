@@ -451,6 +451,8 @@ describe('PlayerDetail athlete profile season selection', () => {
     const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
     const publishBeforeSharingButton = screen.getByRole('button', { name: 'Publish changes before sharing' });
 
+    fireEvent.click(publicProfileCard);
+
     expect(publicProfileCard.getAttribute('href')).toBe('#');
     expect(publicProfileCard.getAttribute('aria-disabled')).toBe('true');
     expect(publicProfileCard.getAttribute('tabindex')).toBe('-1');
