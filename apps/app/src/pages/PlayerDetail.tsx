@@ -657,6 +657,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   );
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = hasPersistedPublicProfile(existing, data.athleteProfile.shareUrl);
+  const isPublishingNewPublicProfile = privacy === 'public' && persistedPrivacy !== 'public';
   const persistedPublicProfileReady = isPersistedPublicProfileReady(existing, data.athleteProfile.shareUrl, {
     hasUnsavedPublishChanges,
     saving
@@ -691,7 +692,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     }
     setSaving(true);
     setStatus(null);
-    setAwaitingPersistedPublish(privacy === 'public' && !persistedPublicProfileReady);
+    setAwaitingPersistedPublish(isPublishingNewPublicProfile);
     try {
       await saveParentAthleteProfileDraft({
         user: auth.user,
