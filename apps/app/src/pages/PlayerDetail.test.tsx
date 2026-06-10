@@ -838,4 +838,61 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(builderUrl);
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
   });
+
+  it('removes stale public share actions after a refresh returns a private persisted profile with an old share URL', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+    const builderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';
+
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData({
+        athleteProfile: {
+          profile: {
+            id: 'profile-1',
+            athlete: { name: 'Sam Player' },
+            bio: {},
+            privacy: 'public',
+            clips: [],
+            seasons: [{ seasonKey: 'team-current::player-current' }]
+          },
+          shareUrl,
+          builderUrl,
+          seasonOptions: buildDetailData().athleteProfile.seasonOptions
+        }
+      }))
+      .mockResolvedValueOnce(buildDetailData({
+        athleteProfile: {
+          profile: {
+            id: 'profile-1',
+            athlete: { name: 'Sam Player' },
+            bio: {},
+            privacy: 'private',
+            clips: [],
+            seasons: [{ seasonKey: 'team-current::player-current' }]
+          },
+          shareUrl,
+          builderUrl,
+          seasonOptions: buildDetailData().athleteProfile.seasonOptions
+        }
+      }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    expect(screen.getByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe(shareUrl);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh player' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    });
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(builderUrl);
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe('#');
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
+  });
 });

@@ -404,9 +404,12 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
   const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
 
   useEffect(() => {
-    if (hasPersistedPublicProfile(data.athleteProfile.profile, data.athleteProfile.shareUrl)) {
-      setAthleteProfileShareState({ hasUnsavedPublishChanges: false, saving: false });
-    }
+    setAthleteProfileShareState((current) => {
+      if (!current.hasUnsavedPublishChanges && !current.saving) {
+        return current;
+      }
+      return { hasUnsavedPublishChanges: false, saving: false };
+    });
   }, [data.athleteProfile.profile, data.athleteProfile.shareUrl]);
 
   return (
