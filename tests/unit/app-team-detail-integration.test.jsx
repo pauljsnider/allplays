@@ -8,7 +8,16 @@ const teamDetailMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn(),
     loadTeamDetailInsights: vi.fn(),
     loadTeamDetailSponsors: vi.fn(),
+    loadTeamRosterParentInvites: vi.fn(),
     loadTeamStaffPermissions: vi.fn(),
+    createRosterParentInviteForApp: vi.fn(),
+    deactivateRosterPlayerForApp: vi.fn(),
+    reactivateRosterPlayerForApp: vi.fn(),
+    grantScorekeeperAccessForApp: vi.fn(),
+    revokeScorekeeperAccessForApp: vi.fn(),
+    grantVideographerAccessForApp: vi.fn(),
+    revokeVideographerAccessForApp: vi.fn(),
+    inviteTeamAdminForApp: vi.fn(),
     saveTeamScheduleNotificationsForApp: vi.fn(),
     buildPublicTeamGamesIcsUrl: vi.fn((teamId) => `https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs?teamId=${encodeURIComponent(teamId)}`),
     canExposePublicFanFeed: vi.fn((team, events = []) => (events || []).some((event) => event?.type === 'game' && event?.visibility !== 'private' && event?.isPrivate !== true && event?.status !== 'deleted' && event?.liveStatus !== 'deleted' && ((team?.isPublic !== false && team?.active !== false) || event?.isPublic === true || event?.shareable === true || event?.publicCalendar === true)))
@@ -33,7 +42,16 @@ vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
     loadParentTeamDetail: teamDetailMocks.loadParentTeamDetail,
     loadTeamDetailInsights: teamDetailMocks.loadTeamDetailInsights,
     loadTeamDetailSponsors: teamDetailMocks.loadTeamDetailSponsors,
+    loadTeamRosterParentInvites: teamDetailMocks.loadTeamRosterParentInvites,
     loadTeamStaffPermissions: teamDetailMocks.loadTeamStaffPermissions,
+    createRosterParentInviteForApp: teamDetailMocks.createRosterParentInviteForApp,
+    deactivateRosterPlayerForApp: teamDetailMocks.deactivateRosterPlayerForApp,
+    reactivateRosterPlayerForApp: teamDetailMocks.reactivateRosterPlayerForApp,
+    grantScorekeeperAccessForApp: teamDetailMocks.grantScorekeeperAccessForApp,
+    revokeScorekeeperAccessForApp: teamDetailMocks.revokeScorekeeperAccessForApp,
+    grantVideographerAccessForApp: teamDetailMocks.grantVideographerAccessForApp,
+    revokeVideographerAccessForApp: teamDetailMocks.revokeVideographerAccessForApp,
+    inviteTeamAdminForApp: teamDetailMocks.inviteTeamAdminForApp,
     saveTeamScheduleNotificationsForApp: teamDetailMocks.saveTeamScheduleNotificationsForApp,
     buildPublicTeamGamesIcsUrl: teamDetailMocks.buildPublicTeamGamesIcsUrl,
     canExposePublicFanFeed: teamDetailMocks.canExposePublicFanFeed
@@ -262,6 +280,15 @@ beforeEach(() => {
         players: [],
         emailSentCount: 0
     });
+    teamDetailMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
+    teamDetailMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
+    teamDetailMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
+    teamDetailMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
+    teamDetailMocks.grantScorekeeperAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.revokeScorekeeperAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.grantVideographerAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.revokeVideographerAccessForApp.mockResolvedValue(undefined);
+    teamDetailMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
     teamDetailMocks.saveTeamScheduleNotificationsForApp.mockResolvedValue({
         enabled: true,
         reminderHours: 24,

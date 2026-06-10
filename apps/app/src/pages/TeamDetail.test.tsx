@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamDetail } from './TeamDetail';
@@ -8,13 +8,17 @@ import type { AuthState } from '../lib/types';
 const teamDetailServiceMocks = vi.hoisted(() => ({
   buildPublicTeamGamesIcsUrl: vi.fn(() => 'https://calendar.example.test/team.ics'),
   canExposePublicFanFeed: vi.fn(() => true),
+  createRosterParentInviteForApp: vi.fn(),
+  deactivateRosterPlayerForApp: vi.fn(),
   grantScorekeeperAccessForApp: vi.fn(),
   grantVideographerAccessForApp: vi.fn(),
   inviteTeamAdminForApp: vi.fn(),
   loadParentTeamDetail: vi.fn(),
   loadTeamDetailInsights: vi.fn(),
   loadTeamDetailSponsors: vi.fn(),
+  loadTeamRosterParentInvites: vi.fn(),
   loadTeamStaffPermissions: vi.fn(),
+  reactivateRosterPlayerForApp: vi.fn(),
   revokeScorekeeperAccessForApp: vi.fn(),
   revokeVideographerAccessForApp: vi.fn(),
   saveTeamScheduleNotificationsForApp: vi.fn()
@@ -83,10 +87,13 @@ const model = {
     }
   },
   players: [
-    { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true }
+    { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true, active: true }
+  ],
+  inactivePlayers: [
+    { id: 'player-2', name: 'Sam Bench', number: '12', photoUrl: null, position: 'Wing', isLinked: false, active: false }
   ],
   linkedPlayers: [
-    { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true }
+    { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null, position: 'Guard', isLinked: true, active: true }
   ],
   upcomingEvents: [],
   recentResults: [],
@@ -111,8 +118,12 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(model);
     teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [] });
     teamDetailServiceMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
+    teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
     teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(null);
     teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
+    teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
+    teamDetailServiceMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
+    teamDetailServiceMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.grantScorekeeperAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeScorekeeperAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.grantVideographerAccessForApp.mockResolvedValue({ success: true });
@@ -148,5 +159,102 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets team staff deactivate and reactivate players from the roster tab', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce(managedModel)
+      .mockResolvedValueOnce({
+        ...managedModel,
+        players: [],
+        inactivePlayers: [
+          managedModel.inactivePlayers[0],
+          { ...managedModel.players[0], active: false }
+        ]
+      })
+      .mockResolvedValueOnce(managedModel);
+    vi.spyOn(window, 'confirm')
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Deactivate' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.deactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-1'));
+    expect(await screen.findByText('Pat Star deactivated.')).toBeTruthy();
+    expect(await screen.findByText('Inactive roster')).toBeTruthy();
+
+    const reactivateButtons = await screen.findAllByRole('button', { name: 'Reactivate' });
+    fireEvent.click(reactivateButtons[0]);
+
+    await waitFor(() => expect(teamDetailServiceMocks.reactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-2'));
+    expect(await screen.findByText('Sam Bench reactivated.')).toBeTruthy();
+  });
+
+  it('loads roster invite summaries only once per roster visit when the result is empty', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('button', { name: 'Invite parent' })).toBeTruthy();
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
+  });
+
+  it('passes the signed-in user to parent invite creation and refreshes summaries after success', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamRosterParentInvites
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ playerId: 'player-1', status: 'pending', acceptedParentCount: 0, pendingInviteCount: 1, latestPendingCode: 'ABCD1234' }]);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    expect(await screen.findByRole('button', { name: 'Invite parent' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Invite parent' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.createRosterParentInviteForApp).toHaveBeenCalledWith('team-1', auth.user, expect.objectContaining({ id: 'player-1', number: '9' })));
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Parent invite is ready to copy or share.')).toBeTruthy();
   });
 });

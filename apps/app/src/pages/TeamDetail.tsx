@@ -29,7 +29,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -57,6 +57,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [sponsorsLoading, setSponsorsLoading] = useState(false);
   const [sponsorsError, setSponsorsError] = useState('');
   const [sponsorsLoaded, setSponsorsLoaded] = useState(false);
+  const [rosterInviteLoading, setRosterInviteLoading] = useState(false);
+  const [rosterInviteError, setRosterInviteError] = useState('');
+  const [rosterInviteAttempted, setRosterInviteAttempted] = useState(false);
+  const [rosterInviteSummaries, setRosterInviteSummaries] = useState<Record<string, TeamRosterParentInviteSummary>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +80,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setSponsorsLoading(false);
           setSponsorsError('');
           setSponsorsLoaded(false);
+          setRosterInviteLoading(false);
+          setRosterInviteError('');
+          setRosterInviteAttempted(false);
+          setRosterInviteSummaries({});
         }
       } catch (loadError: any) {
         if (!cancelled) {
@@ -89,6 +97,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setSponsorsLoading(false);
           setSponsorsError('');
           setSponsorsLoaded(false);
+          setRosterInviteLoading(false);
+          setRosterInviteError('');
+          setRosterInviteAttempted(false);
+          setRosterInviteSummaries({});
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -175,6 +187,34 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   }, [activeTab, Boolean(model), sponsorsLoaded, teamId]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadRosterInvitesForTab() {
+      if (!teamId || activeTab !== 'roster' || !model?.canManageTeam || rosterInviteLoading || rosterInviteAttempted) return;
+      setRosterInviteLoading(true);
+      setRosterInviteError('');
+      try {
+        const summaries = await loadTeamRosterParentInvites(teamId, auth.user);
+        if (!cancelled) {
+          setRosterInviteSummaries(Object.fromEntries(summaries.map((summary) => [summary.playerId, summary])));
+          setRosterInviteAttempted(true);
+        }
+      } catch (loadError: any) {
+        if (!cancelled) setRosterInviteError(loadError?.message || 'Unable to load parent invite status.');
+      } finally {
+        if (!cancelled) {
+          setRosterInviteLoading(false);
+          setRosterInviteAttempted(true);
+        }
+      }
+    }
+
+    void loadRosterInvitesForTab();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, authUserId, model?.canManageTeam, teamId, rosterInviteLoading, rosterInviteAttempted, auth.user]);
+
+  useEffect(() => {
     const scroll = () => {
       try {
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -208,6 +248,21 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     setModel(mergedModel);
     setStaffPermissionsError('');
     setStaffPermissionsLoading(false);
+  }
+
+  async function refreshRosterInvites() {
+    if (!teamId || !model?.canManageTeam) return;
+    setRosterInviteLoading(true);
+    setRosterInviteError('');
+    setRosterInviteAttempted(true);
+    try {
+      const summaries = await loadTeamRosterParentInvites(teamId, auth.user);
+      setRosterInviteSummaries(Object.fromEntries(summaries.map((summary) => [summary.playerId, summary])));
+    } catch (loadError: any) {
+      setRosterInviteError(loadError?.message || 'Unable to load parent invite status.');
+    } finally {
+      setRosterInviteLoading(false);
+    }
   }
 
   const tabBadges = useMemo(() => ({
@@ -280,7 +335,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} /> : null}
-      {activeTab === 'roster' ? <RosterTab model={model} /> : null}
+      {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
     </div>
@@ -381,7 +436,47 @@ function ScheduleTab({ model, auth }: { model: TeamDetailModel; auth: AuthState 
   );
 }
 
-function RosterTab({ model }: { model: TeamDetailModel }) {
+function RosterTab({
+  model,
+  authUser,
+  onRefresh,
+  rosterInviteLoading,
+  rosterInviteError,
+  rosterInviteSummaries,
+  onInviteCreated
+}: {
+  model: TeamDetailModel;
+  authUser: AuthState['user'];
+  onRefresh: () => Promise<void>;
+  rosterInviteLoading: boolean;
+  rosterInviteError: string;
+  rosterInviteSummaries: Record<string, TeamRosterParentInviteSummary>;
+  onInviteCreated: () => Promise<void>;
+}) {
+  const [pendingPlayerId, setPendingPlayerId] = useState('');
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  async function togglePlayerActiveState(player: TeamDetailPlayer) {
+    const action = player.active ? 'deactivate' : 'reactivate';
+    const confirmed = window.confirm(`${action === 'deactivate' ? 'Deactivate' : 'Reactivate'} ${player.name}?`);
+    if (!confirmed) return;
+    setPendingPlayerId(player.id);
+    setStatus(null);
+    try {
+      if (player.active) {
+        await deactivateRosterPlayerForApp(model.team.id, player.id);
+      } else {
+        await reactivateRosterPlayerForApp(model.team.id, player.id);
+      }
+      await onRefresh();
+      setStatus({ success: true, message: `${player.name} ${player.active ? 'deactivated' : 'reactivated'}.` });
+    } catch (saveError: any) {
+      setStatus({ success: false, message: saveError?.message || `Unable to ${action} ${player.name}.` });
+    } finally {
+      setPendingPlayerId('');
+    }
+  }
+
   return (
     <section className="app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -389,13 +484,34 @@ function RosterTab({ model }: { model: TeamDetailModel }) {
           <div className="text-sm font-black text-gray-950">Roster</div>
           <div className="mt-0.5 text-xs font-semibold text-gray-500">Player photos, numbers, linked-player shortcuts, and profile drill-in.</div>
         </div>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.players.length} players</span>
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.players.length} active</span>
       </div>
+      {status ? (
+        <div className={`mt-3 rounded-xl border p-3 text-xs font-semibold ${status.success ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
+          {status.message}
+        </div>
+      ) : null}
+      {model.canManageTeam && rosterInviteLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading parent invite status…</div> : null}
+      {model.canManageTeam && rosterInviteError ? <div className="mt-3 text-xs font-black text-rose-700">{rosterInviteError}</div> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} player={player} />) : (
+        {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
+      {model.canManageTeam && model.inactivePlayers.length ? (
+        <div className="mt-4 border-t border-gray-200 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-black text-gray-950">Inactive roster</div>
+              <div className="mt-0.5 text-xs font-semibold text-gray-500">Inactive players stay attached to history and can be restored anytime.</div>
+            </div>
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.inactivePlayers.length} inactive</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {model.inactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />)}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1350,19 +1466,136 @@ function buildTeamReminderScheduleEvent(event: TeamDetailEvent, model: TeamDetai
   };
 }
 
-function PlayerRow({ teamId, player }: { teamId: string; player: TeamDetailPlayer }) {
+function PlayerRow({
+  teamId,
+  teamName,
+  authUser,
+  player,
+  canManageTeam = false,
+  pending = false,
+  onToggleActive,
+  inviteSummary,
+  onInviteCreated
+}: {
+  teamId: string;
+  teamName: string;
+  authUser: AuthState['user'];
+  player: TeamDetailPlayer;
+  canManageTeam?: boolean;
+  pending?: boolean;
+  onToggleActive?: (player: TeamDetailPlayer) => Promise<void>;
+  inviteSummary?: TeamRosterParentInviteSummary;
+  onInviteCreated: () => Promise<void>;
+}) {
+  const [creatingInvite, setCreatingInvite] = useState(false);
+  const [inviteResult, setInviteResult] = useState<CreateRosterParentInviteForAppResult | null>(null);
+  const [inviteStatus, setInviteStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  const effectiveStatus = inviteResult?.status || inviteSummary?.status || 'none';
+  const statusLabel = effectiveStatus === 'accepted' ? 'Accepted' : effectiveStatus === 'pending' ? 'Pending invite' : 'No parent linked';
+  const statusClassName = effectiveStatus === 'accepted'
+    ? 'bg-emerald-50 text-emerald-700'
+    : effectiveStatus === 'pending'
+      ? 'bg-amber-50 text-amber-700'
+      : 'bg-gray-100 text-gray-700';
+
+  async function createInvite() {
+    if (creatingInvite) return;
+    setCreatingInvite(true);
+    setInviteStatus(null);
+    try {
+      const result = await createRosterParentInviteForApp(teamId, authUser || null, player);
+      setInviteResult(result);
+      setInviteStatus({ success: true, message: result.autoLinked ? 'Existing parent linked automatically.' : 'Parent invite is ready to copy or share.' });
+      await onInviteCreated();
+    } catch (error: any) {
+      setInviteStatus({ success: false, message: error?.message || 'Unable to create a parent invite.' });
+    } finally {
+      setCreatingInvite(false);
+    }
+  }
+
+  async function copyInvite(kind: 'code' | 'link') {
+    const value = kind === 'code' ? inviteResult?.code : inviteResult?.inviteUrl;
+    if (!value) return;
+    const result = await copyPublicText(value);
+    setInviteStatus({ success: result === 'copied', message: result === 'copied' ? `${kind === 'code' ? 'Invite code' : 'Invite link'} copied.` : `Unable to copy the ${kind}.` });
+  }
+
+  async function shareInvite() {
+    if (!inviteResult?.inviteUrl) return;
+    const result = await sharePublicUrl({
+      title: `${player.name} parent invite`,
+      text: `Join ${teamName} on ALL PLAYS for ${player.name}`,
+      url: inviteResult.inviteUrl,
+      clipboardText: inviteResult.inviteUrl
+    });
+    if (result === 'shared') {
+      setInviteStatus({ success: true, message: 'Share sheet opened.' });
+      return;
+    }
+    if (result === 'copied') {
+      setInviteStatus({ success: true, message: 'Invite link copied.' });
+      return;
+    }
+    setInviteStatus({ success: false, message: 'Unable to share the invite from this device.' });
+  }
+
   return (
-    <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
-      <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-black text-gray-950">{player.number ? `#${player.number} ` : ''}{player.name}</span>
-          {player.isLinked ? <span className="rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">Yours</span> : null}
-        </span>
-        <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{player.position || 'Player profile'}</span>
-      </span>
-      <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
-    </Link>
+    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 flex-1 items-center gap-3 transition hover:text-primary-700">
+          <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-black text-gray-950">{player.number ? `#${player.number} ` : ''}{player.name}</span>
+              {player.isLinked ? <span className="rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black text-white">Yours</span> : null}
+              {!player.active ? <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-black text-gray-700">Inactive</span> : null}
+            </span>
+            <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{player.position || 'Player profile'}</span>
+          </span>
+          <ChevronRight className="h-4 w-4 flex-none text-gray-300" aria-hidden="true" />
+        </Link>
+        {canManageTeam && onToggleActive ? (
+          <button
+            type="button"
+            className={`inline-flex min-h-10 flex-none items-center justify-center rounded-lg px-3 text-xs font-black ${player.active ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'} disabled:cursor-not-allowed disabled:opacity-60`}
+            onClick={() => void onToggleActive(player)}
+            disabled={pending}
+          >
+            {pending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : player.active ? 'Deactivate' : 'Reactivate'}
+          </button>
+        ) : null}
+      </div>
+      {canManageTeam ? (
+        <div className="mt-3 rounded-lg border border-white/80 bg-white p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className={`rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.04em] ${statusClassName}`}>{statusLabel}</span>
+            {player.active ? (
+              <button type="button" className="secondary-button !min-h-8 text-xs" disabled={creatingInvite} onClick={createInvite}>
+                {creatingInvite ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+                {effectiveStatus === 'pending' || inviteResult ? 'Regenerate invite' : 'Invite parent'}
+              </button>
+            ) : null}
+          </div>
+          {inviteSummary?.status === 'accepted' && inviteSummary.acceptedParentCount > 0 ? <div className="mt-2 text-xs font-semibold text-emerald-700">{inviteSummary.acceptedParentCount} linked parent{inviteSummary.acceptedParentCount === 1 ? '' : 's'}.</div> : null}
+          {inviteSummary?.status === 'pending' && inviteSummary.pendingInviteCount > 0 && !inviteResult ? <div className="mt-2 text-xs font-semibold text-amber-700">{inviteSummary.pendingInviteCount} pending invite{inviteSummary.pendingInviteCount === 1 ? '' : 's'}.</div> : null}
+          {!player.active ? <div className="mt-2 text-xs font-semibold text-gray-500">Reactivate the player to send a parent invite.</div> : null}
+          {inviteResult ? (
+            <div className="mt-3 rounded-lg border border-primary-100 bg-primary-50 p-3">
+              <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Invite code</div>
+              <div className="mt-1 font-mono text-sm font-black text-gray-950">{inviteResult.code}</div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInvite('code')}>Copy code</button>
+                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInvite('link')}>Copy link</button>
+                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={shareInvite}>Share</button>
+              </div>
+            </div>
+          ) : null}
+          {inviteStatus ? <div className={`mt-2 text-xs font-black ${inviteStatus.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{inviteStatus.message}</div> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
