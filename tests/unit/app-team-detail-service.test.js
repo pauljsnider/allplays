@@ -173,10 +173,10 @@ describe('React app team detail model', () => {
         expect(getTeam).toHaveBeenCalledTimes(2);
     });
 
-    it('normalizes and saves team schedule reminder defaults with the legacy payload', async () => {
+    it('normalizes and saves team schedule reminder defaults without rewriting existing events', async () => {
         updateTeam.mockResolvedValue(undefined);
         getEvents.mockResolvedValue([
-            { id: 'game-1', type: 'game', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled' },
+            { id: 'game-1', type: 'game', date: new Date('2000-06-01T18:00:00Z'), status: 'completed' },
             { id: 'practice-1', type: 'practice', date: new Date('2100-06-02T18:00:00Z'), status: 'cancelled' }
         ]);
         updateGame.mockResolvedValue(undefined);
@@ -191,28 +191,9 @@ describe('React app team detail model', () => {
                 delivery: 'team_chat'
             }
         });
-        expect(getEvents).toHaveBeenCalledWith('team-1');
-        expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', {
-            scheduleNotifications: expect.objectContaining({
-                enabled: false,
-                reminderHours: 24,
-                delivery: 'team_chat',
-                reminderStatus: 'disabled',
-                nextReminderAt: null,
-                lastAction: 'updated'
-            })
-        });
-        expect(updateEvent).toHaveBeenCalledWith('team-1', 'practice-1', {
-            scheduleNotifications: expect.objectContaining({
-                enabled: false,
-                reminderHours: 24,
-                delivery: 'team_chat',
-                reminderStatus: 'canceled',
-                nextReminderAt: null,
-                reminderCanceled: true,
-                lastAction: 'cancelled'
-            })
-        });
+        expect(getEvents).not.toHaveBeenCalled();
+        expect(updateGame).not.toHaveBeenCalled();
+        expect(updateEvent).not.toHaveBeenCalled();
         expect(saved).toMatchObject({
             enabled: false,
             reminderHours: 24,
