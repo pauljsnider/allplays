@@ -809,7 +809,13 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
 
   const shareProfile = async () => {
     const { canSharePublicProfile: shareReady, persistedPublicProfileUrl: shareUrl } = latestPublicShareStateRef.current;
-    const shareBlockedByUnsavedPublish = privacy !== 'public' || persistedPrivacy !== 'public' || hasPendingPersistedPublicProfile;
+    const shareBlockedByUnsavedPublish = requiresSavedPublicProfileForSharing({
+      draftPrivacy: privacy,
+      persistedPrivacy,
+      shareUrl: normalizedShareUrl,
+      hasUnsavedPublishChanges,
+      saving: saving || awaitingPersistedPublish
+    });
     if (shareBlockedByUnsavedPublish || !shareReady || !shareUrl) return;
     try {
       const result = await sharePublicUrl({

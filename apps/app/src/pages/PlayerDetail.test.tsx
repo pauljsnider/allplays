@@ -681,6 +681,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect((screen.getByRole('button', { name: 'Refresh player' }) as HTMLButtonElement).disabled).toBe(true);
     expect(getPublicProfileCard().getAttribute('href')).toBe('#');
     expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('true');
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
 
     refreshDeferred.resolve(buildDetailData({
       athleteProfile: {
