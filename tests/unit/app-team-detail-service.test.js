@@ -137,7 +137,6 @@ describe('React app team detail model', () => {
             confirmedTeamMembers: [
                 {
                     id: 'parent-1',
-                    parentTeamIds: ['team-1'],
                     parentPlayerKeys: ['team-1::player-1']
                 },
                 {

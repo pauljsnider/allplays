@@ -942,16 +942,13 @@ function getAcceptedParentPlayerIds(member: any, teamId: string) {
     if (playerId) linkedPlayerIds.add(playerId);
   });
 
-  const parentTeamIds = Array.isArray(member?.parentTeamIds) ? member.parentTeamIds.map((value: any) => cleanString(value)) : [];
   const parentPlayerKeys = Array.isArray(member?.parentPlayerKeys) ? member.parentPlayerKeys : [];
-  if (parentTeamIds.includes(normalizedTeamId)) {
-    parentPlayerKeys.forEach((value: any) => {
-      const [keyTeamId, keyPlayerId] = cleanString(value).split('::');
-      if (keyTeamId === normalizedTeamId && keyPlayerId) {
-        linkedPlayerIds.add(keyPlayerId);
-      }
-    });
-  }
+  parentPlayerKeys.forEach((value: any) => {
+    const [keyTeamId, keyPlayerId] = cleanString(value).split('::');
+    if (keyTeamId === normalizedTeamId && keyPlayerId) {
+      linkedPlayerIds.add(keyPlayerId);
+    }
+  });
 
   return [...linkedPlayerIds];
 }
