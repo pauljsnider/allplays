@@ -432,7 +432,7 @@ describe('ScheduleEventDetail practice attendance', () => {
   });
 
   it('optimistically disables all attendance buttons and sends the latest roster snapshot while saving', async () => {
-    let resolveSave: (() => void) | null = null;
+    let resolveSave: () => void = () => {};
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         id: 'practice-1',
@@ -496,7 +496,7 @@ describe('ScheduleEventDetail practice attendance', () => {
     expect(within(rowTwo).getByRole('button', { name: 'Late' })).toBeDisabled();
     expect(screen.getByText('1/2 checked in')).toBeTruthy();
 
-    resolveSave?.();
+    resolveSave();
 
     await waitFor(() => {
       expect(screen.getByText('Avery Smith marked present.')).toBeTruthy();
