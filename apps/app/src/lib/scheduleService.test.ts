@@ -25,6 +25,8 @@ vi.mock('../../../../js/db.js', () => ({
   getGame: vi.fn(),
   getGames: vi.fn(),
   getPracticePacketCompletions: vi.fn(),
+  getPracticeSession: vi.fn(),
+  getPracticeSessionByEvent: vi.fn(),
   getPracticeSessions: vi.fn(),
   getPlayers: vi.fn(),
   getRsvpBreakdownByPlayer: vi.fn(),
@@ -46,6 +48,7 @@ vi.mock('../../../../js/db.js', () => ({
   submitRsvpForPlayer: vi.fn(),
   broadcastLiveEvent: vi.fn(),
   updateGame: vi.fn(),
+  updatePracticeAttendance: vi.fn(),
   updateTeam: vi.fn(),
   upsertPracticePacketCompletion: vi.fn()
 }));
@@ -84,11 +87,11 @@ vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 vi.mock('./appDataCache', () => ({ getCachedAppData: vi.fn(), loadCachedAppData: vi.fn(), clearAppDataCache: vi.fn() }));
 
-import { updateGame, getGame, getGames, getPlayers, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeams, submitRsvpForPlayer } from '../../../../js/db.js';
+import { updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeams, submitRsvpForPlayer, updatePracticeAttendance } from '../../../../js/db.js';
 import { fetchAndParseCalendar } from '../../../../js/utils.js';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, loadStaffScheduleRsvpBreakdown, recordPlayerScoringStat, resolveParentGameRoute, saveScheduledGameLineupDraftForApp, submitStaffScheduleRsvpOverride } from './scheduleService';
+import { buildPlayerScoringLiveEvent, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, recordPlayerScoringStat, resolveParentGameRoute, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride } from './scheduleService';
 
 describe('parent game route resolution', () => {
   beforeEach(() => {
@@ -422,5 +425,84 @@ describe('staff RSVP management', () => {
   it('rejects coach-only staff without admin write access', async () => {
     await expect(submitStaffScheduleRsvpOverride({ ...event, isTeamAdmin: false }, user as any, 'player-override', 'going')).rejects.toThrow('Only team owners and admins can manage player RSVPs.');
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
+  });
+});
+
+describe('staff practice attendance', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] };
+  const event = {
+    id: 'practice-1',
+    teamId: 'team-1',
+    type: 'practice',
+    isDbGame: true,
+    isTeamStaff: true,
+    practiceSessionId: 'session-1'
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('loads roster-backed attendance and defaults unrecorded players to absent', async () => {
+    vi.mocked(getPracticeSession).mockResolvedValue({
+      id: 'session-1',
+      attendance: {
+        players: [
+          { playerId: 'p1', status: 'present', checkedInAt: new Date('2026-06-04T17:55:00Z') },
+          { playerId: 'p2', status: 'late', checkedInAt: new Date('2026-06-04T18:03:00Z') }
+        ]
+      }
+    } as any);
+    vi.mocked(getPlayers).mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', jerseyNumber: '1', isActive: true },
+      { id: 'p2', name: 'Blake Jones', jerseyNumber: '2', isActive: true },
+      { id: 'p3', name: 'Casey Brown', jerseyNumber: '3', isActive: true },
+      { id: 'p4', name: 'Inactive Player', jerseyNumber: '4', active: false }
+    ] as any);
+
+    const result = await loadStaffPracticeAttendance(event, user as any);
+
+    expect(result).toMatchObject({
+      sessionId: 'session-1',
+      rosterSize: 3,
+      checkedInCount: 2
+    });
+    expect(result.players).toEqual([
+      expect.objectContaining({ playerId: 'p1', status: 'present' }),
+      expect.objectContaining({ playerId: 'p2', status: 'late' }),
+      expect.objectContaining({ playerId: 'p3', status: 'absent' })
+    ]);
+  });
+
+  it('persists normalized present, late, and absent statuses through practice attendance updates', async () => {
+    vi.mocked(updatePracticeAttendance).mockResolvedValue(undefined as any);
+
+    const result = await saveStaffPracticeAttendance(event, user as any, {
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      rosterSize: 3,
+      checkedInCount: 1,
+      players: [
+        { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'present' },
+        { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'late' },
+        { playerId: 'p3', displayName: 'Casey Brown', playerNumber: '3', status: 'absent' }
+      ]
+    });
+
+    expect(updatePracticeAttendance).toHaveBeenCalledWith(
+      'team-1',
+      'session-1',
+      expect.objectContaining({
+        rosterSize: 3,
+        checkedInCount: 2,
+        players: [
+          expect.objectContaining({ playerId: 'p1', status: 'present' }),
+          expect.objectContaining({ playerId: 'p2', status: 'late' }),
+          expect.objectContaining({ playerId: 'p3', status: 'absent', checkedInAt: null })
+        ]
+      })
+    );
+    expect(result.checkedInCount).toBe(2);
   });
 });

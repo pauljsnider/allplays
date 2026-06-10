@@ -3,6 +3,7 @@ import {
   getGame,
   getGames,
   getPracticePacketCompletions,
+  getPracticeSession,
   getPracticeSessionByEvent,
   getPracticeSessions,
   getPlayers,
@@ -24,6 +25,7 @@ import {
   submitRsvpForPlayer,
   broadcastLiveEvent,
   updateGame,
+  updatePracticeAttendance,
   updateTeam,
   upsertPracticePacketCompletion,
   postSharedGameCancellationNotification,
@@ -174,6 +176,26 @@ export type ParentPracticePacket = {
   homePacket: PracticeHomePacket;
   completions: PracticePacketCompletion[];
   children: ParentPracticePacketChild[];
+};
+
+export type PracticeAttendanceStatus = 'present' | 'late' | 'absent';
+
+export type PracticeAttendancePlayer = {
+  playerId: string;
+  displayName: string;
+  playerNumber?: string | null;
+  status: PracticeAttendanceStatus;
+  checkedInAt?: unknown;
+  note?: string | null;
+};
+
+export type StaffPracticeAttendance = {
+  sessionId: string;
+  teamId: string;
+  eventId: string;
+  rosterSize: number;
+  checkedInCount: number;
+  players: PracticeAttendancePlayer[];
 };
 
 export type GameScoreInput = {
@@ -2705,6 +2727,174 @@ export async function releaseParentScheduleAssignmentClaim(event: ParentSchedule
 
 function getPracticePacketSessionId(event: ParentScheduleEvent) {
   return compactString(event.practiceSessionId) || compactString(event.id);
+}
+
+function normalizePracticeAttendanceStatus(value: unknown): PracticeAttendanceStatus {
+  return value === 'present' || value === 'late' ? value : 'absent';
+}
+
+function assertPracticeAttendanceManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  if (event.type !== 'practice') {
+    throw new Error('Practice attendance is only available for practice sessions.');
+  }
+  if (!event.isDbGame) {
+    throw new Error('Practice attendance opens after this event is tracked in the schedule.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before managing practice attendance.');
+  }
+  if (!event.isTeamStaff) {
+    throw new Error('Only team coaches and admins can manage practice attendance.');
+  }
+}
+
+async function loadPracticeSessionForAttendance(event: ParentScheduleEvent) {
+  const sessionId = compactString(event.practiceSessionId);
+  if (sessionId) {
+    return readWithNativeFallback(
+      `practice session ${event.teamId}/${sessionId}`,
+      () => Promise.resolve(getPracticeSession(event.teamId, sessionId)),
+      () => nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/practiceSessions/${encodeURIComponent(sessionId)}`)
+    );
+  }
+  return readWithNativeFallback(
+    `practice session by event ${event.teamId}/${event.id}`,
+    () => Promise.resolve(getPracticeSessionByEvent(event.teamId, event.id)),
+    async () => {
+      const sessions = await nativeListCollection(`teams/${encodeURIComponent(event.teamId)}/practiceSessions`);
+      return sessions.find((session) => compactString(session?.eventId) === event.id) || null;
+    }
+  );
+}
+
+function buildStaffPracticeAttendance(session: any, players: any[], event: ParentScheduleEvent): StaffPracticeAttendance {
+  const attendancePlayers = Array.isArray(session?.attendance?.players) ? session.attendance.players : [];
+  const attendanceByPlayerId = new Map(attendancePlayers
+    .map((player: any) => {
+      const playerId = compactString(player?.playerId);
+      return playerId ? [playerId, player] : null;
+    })
+    .filter(Boolean) as Array<[string, any]>);
+
+  const rosterPlayers = (Array.isArray(players) ? players : [])
+    .filter(isActiveRosterPlayer)
+    .map((player: any) => {
+      const playerId = compactString(player?.id);
+      if (!playerId) return null;
+      const saved = attendanceByPlayerId.get(playerId);
+      return {
+        playerId,
+        displayName: normalizePlayerName(player),
+        playerNumber: normalizePlayerNumber(player),
+        status: normalizePracticeAttendanceStatus(saved?.status),
+        checkedInAt: saved?.checkedInAt || null,
+        note: compactString(saved?.note) || null
+      };
+    })
+    .filter(Boolean) as PracticeAttendancePlayer[];
+
+  rosterPlayers.sort((left, right) => {
+    const leftNumber = compactString(left.playerNumber);
+    const rightNumber = compactString(right.playerNumber);
+    if (leftNumber && rightNumber && leftNumber !== rightNumber) {
+      return leftNumber.localeCompare(rightNumber, undefined, { numeric: true, sensitivity: 'base' });
+    }
+    if (leftNumber && !rightNumber) return -1;
+    if (!leftNumber && rightNumber) return 1;
+    return left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' });
+  });
+
+  const checkedInCount = rosterPlayers.filter((player) => player.status === 'present' || player.status === 'late').length;
+
+  return {
+    sessionId: compactString(session?.id) || getPracticePacketSessionId(event) || event.id,
+    teamId: event.teamId,
+    eventId: event.id,
+    rosterSize: rosterPlayers.length,
+    checkedInCount,
+    players: rosterPlayers
+  };
+}
+
+export async function loadStaffPracticeAttendance(event: ParentScheduleEvent, user: AuthUser | null): Promise<StaffPracticeAttendance> {
+  assertPracticeAttendanceManagementEvent(event, user);
+  const [session, players] = await Promise.all([
+    loadPracticeSessionForAttendance(event),
+    loadPlayers(event.teamId)
+  ]);
+  if (!session?.id) {
+    throw new Error('Practice attendance is not linked to a session yet.');
+  }
+  return buildStaffPracticeAttendance(session, players, event);
+}
+
+export async function saveStaffPracticeAttendance(event: ParentScheduleEvent, user: AuthUser | null, attendance: StaffPracticeAttendance): Promise<StaffPracticeAttendance> {
+  assertPracticeAttendanceManagementEvent(event, user);
+  const sessionId = compactString(attendance?.sessionId) || getPracticePacketSessionId(event);
+  if (!sessionId) {
+    throw new Error('Practice attendance is not linked to a session yet.');
+  }
+
+  const players = (Array.isArray(attendance?.players) ? attendance.players : [])
+    .map((player) => ({
+      playerId: compactString(player?.playerId),
+      displayName: compactString(player?.displayName) || 'Player',
+      playerNumber: compactString(player?.playerNumber ?? '') || null,
+      status: normalizePracticeAttendanceStatus(player?.status),
+      checkedInAt: player?.status === 'present' || player?.status === 'late'
+        ? (player?.checkedInAt || new Date())
+        : null,
+      note: compactString(player?.note) || null
+    }))
+    .filter((player) => player.playerId);
+
+  const payload = {
+    rosterSize: players.length,
+    checkedInCount: players.filter((player) => player.status === 'present' || player.status === 'late').length,
+    editedAt: new Date(),
+    players
+  };
+
+  try {
+    await withTimeout(Promise.resolve(updatePracticeAttendance(event.teamId, sessionId, payload)), 'Practice attendance save');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST practice attendance save:', error);
+    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/practiceSessions/${encodeURIComponent(sessionId)}`, {
+      attendance: {
+        rosterSize: payload.rosterSize,
+        checkedInCount: payload.checkedInCount,
+        updatedAt: new Date(),
+        editedAt: payload.editedAt,
+        players: payload.players.map((player) => ({
+          playerId: player.playerId,
+          displayName: player.displayName,
+          status: player.status,
+          checkedInAt: player.checkedInAt,
+          note: player.note || null
+        }))
+      },
+      attendancePlayers: payload.checkedInCount,
+      aiContext: {
+        presentPlayerIds: payload.players.filter((player) => player.status === 'present' || player.status === 'late').map((player) => player.playerId),
+        attendanceSummary: {
+          present: payload.players.filter((player) => player.status === 'present').length,
+          late: payload.players.filter((player) => player.status === 'late').length,
+          absent: payload.players.filter((player) => player.status === 'absent').length
+        }
+      },
+      updatedAt: new Date()
+    });
+  }
+
+  return {
+    sessionId,
+    teamId: event.teamId,
+    eventId: event.id,
+    rosterSize: payload.rosterSize,
+    checkedInCount: payload.checkedInCount,
+    players
+  };
 }
 
 function getPracticePacketChildren(events: ParentScheduleEvent[], fallbackEvent: ParentScheduleEvent): ParentPracticePacketChild[] {

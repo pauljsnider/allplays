@@ -11,6 +11,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   claimParentScheduleAssignmentSlot: vi.fn(),
   createParentScheduleRideOffer: vi.fn(),
   loadParentPracticePacket: vi.fn(),
+  loadStaffPracticeAttendance: vi.fn(),
   loadParentScheduleAssignments: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
   loadParentScheduleRideOffers: vi.fn(),
@@ -30,6 +31,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   publishLiveScoreUpdateEvent: vi.fn(),
   recordPlayerScoringStat: vi.fn(),
   saveScheduledGameLineupDraftForApp: vi.fn(),
+  saveStaffPracticeAttendance: vi.fn(),
   updateGameScore: vi.fn(),
   updateParentScheduleRideRequestStatus: vi.fn()
 }));
@@ -308,5 +310,92 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
 
     expect(screen.queryByText('Staff RSVP overrides')).toBeNull();
     expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown).not.toHaveBeenCalled();
+  });
+});
+
+describe('ScheduleEventDetail practice attendance', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('lets coaches mark practice players present, late, or absent from the More tab', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        eventKey: 'team-1::practice-1::staff-team-team-1::2026-06-04T18:00:00.000Z::practice',
+        type: 'practice',
+        title: 'Finishing session',
+        childId: 'staff-team-team-1',
+        childName: 'Team schedule',
+        isTeamStaff: true,
+        practiceSessionId: 'session-1',
+        practiceAttendanceSummary: '1/2 present'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      rosterSize: 2,
+      checkedInCount: 1,
+      players: [
+        { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'present', checkedInAt: new Date('2026-06-04T17:55:00Z') },
+        { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'absent', checkedInAt: null }
+      ]
+    });
+    scheduleServiceMocks.saveStaffPracticeAttendance.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      rosterSize: 2,
+      checkedInCount: 2,
+      players: [
+        { playerId: 'p1', displayName: 'Avery Smith', playerNumber: '1', status: 'present', checkedInAt: new Date('2026-06-04T17:55:00Z') },
+        { playerId: 'p2', displayName: 'Blake Jones', playerNumber: '2', status: 'late', checkedInAt: new Date('2026-06-04T18:05:00Z') }
+      ]
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Mark each player present, late, or absent.')).toBeTruthy();
+    });
+
+    const row = screen.getByTestId('practice-attendance-row-p2');
+    fireEvent.click(within(row).getByRole('button', { name: 'Late' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.saveStaffPracticeAttendance).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'practice-1', practiceSessionId: 'session-1' }),
+        auth.user,
+        expect.objectContaining({
+          players: expect.arrayContaining([
+            expect.objectContaining({ playerId: 'p2', status: 'late' })
+          ])
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Blake Jones marked late.')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('2/2 checked in')).toBeTruthy();
+    });
   });
 });
