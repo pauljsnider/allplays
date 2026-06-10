@@ -9,7 +9,12 @@ const dbMocks = vi.hoisted(() => ({
     updateTeamFeeRecipient: vi.fn()
 }));
 
+const stripeServiceMocks = vi.hoisted(() => ({
+    initiateTeamFeeCheckout: vi.fn()
+}));
+
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/stripe-service.js', () => stripeServiceMocks);
 vi.mock('../../js/team-access.js', () => ({
     hasFullTeamAccess: (user: any, team: any) => Boolean(user?.isAdmin || user?.uid === team?.ownerId)
 }));
@@ -19,6 +24,7 @@ import {
     buildBalanceAdjustmentUpdate,
     buildOfflineTeamFeeRefundUpdate,
     buildManualPaymentUpdate,
+    initiateStaffTeamFeeCheckout,
     loadTeamFeeManagementModel,
     recordOfflineTeamFeePayment,
     recordOfflineTeamFeeRefund,
@@ -28,6 +34,7 @@ import {
 describe('React app team fee offline payment service', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        stripeServiceMocks.initiateTeamFeeCheckout.mockReset();
     });
 
     it('builds a partial offline payment update with the legacy ledger shape', () => {
@@ -238,7 +245,7 @@ describe('React app team fee offline payment service', () => {
     it('loads batches and recipients only for fee managers', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.listTeamFeeBatches.mockResolvedValue([{ id: 'batch-1', title: 'Dues', amountCents: 10000 }]);
-        dbMocks.listTeamFeeRecipients.mockResolvedValue([{ id: 'recipient-1', playerName: 'Pat Star', amountDueCents: 10000, amountPaidCents: 2500 }]);
+        dbMocks.listTeamFeeRecipients.mockResolvedValue([{ id: 'recipient-1', playerName: 'Pat Star', amountDueCents: 10000, amountPaidCents: 2500, collectionMode: 'online_stripe', checkoutUrl: 'https://pay.example.test/team-fee', checkoutStatus: 'open' }]);
         dbMocks.getPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Pat Star', number: '12', active: true },
             { id: 'player-2', name: 'Inactive Player', active: false }
@@ -252,8 +259,36 @@ describe('React app team fee offline payment service', () => {
         expect(model.recipients[0]).toMatchObject({
             id: 'recipient-1',
             playerName: 'Pat Star',
-            remainingBalanceCents: 7500
+            remainingBalanceCents: 7500,
+            collectionMode: 'online_stripe',
+            checkoutUrl: 'https://pay.example.test/team-fee',
+            checkoutStatus: 'open'
         });
+    });
+
+    it('initiates a staff team fee checkout only for fee managers', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        stripeServiceMocks.initiateTeamFeeCheckout.mockResolvedValue('https://checkout.stripe.test/team-fee');
+
+        await expect(initiateStaffTeamFeeCheckout({
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        })).resolves.toEqual({ success: true, checkoutUrl: 'https://checkout.stripe.test/team-fee' });
+
+        expect(stripeServiceMocks.initiateTeamFeeCheckout).toHaveBeenCalledWith({
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1'
+        });
+
+        await expect(initiateStaffTeamFeeCheckout({
+            teamId: 'team-1',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
+            user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: [] }
+        })).rejects.toThrow('do not have access');
     });
 
     it('creates a simple fee batch using the legacy document shape', async () => {
