@@ -463,6 +463,14 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('Publish and save this profile before the public share link becomes available.')).toBeTruthy();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
 
+    fireEvent.click(screen.getByRole('button', { name: 'private' }));
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe('#');
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByRole('button', { name: 'Edit Profile' }));
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe('#');
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
