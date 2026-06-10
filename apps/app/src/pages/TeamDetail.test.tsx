@@ -8,6 +8,7 @@ import type { AuthState } from '../lib/types';
 const teamDetailServiceMocks = vi.hoisted(() => ({
   buildPublicTeamGamesIcsUrl: vi.fn(() => 'https://calendar.example.test/team.ics'),
   canExposePublicFanFeed: vi.fn(() => true),
+  createRosterParentInviteForApp: vi.fn(),
   deactivateRosterPlayerForApp: vi.fn(),
   grantScorekeeperAccessForApp: vi.fn(),
   grantVideographerAccessForApp: vi.fn(),
@@ -15,6 +16,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   loadParentTeamDetail: vi.fn(),
   loadTeamDetailInsights: vi.fn(),
   loadTeamDetailSponsors: vi.fn(),
+  loadTeamRosterParentInvites: vi.fn(),
   loadTeamStaffPermissions: vi.fn(),
   reactivateRosterPlayerForApp: vi.fn(),
   revokeScorekeeperAccessForApp: vi.fn(),
@@ -116,8 +118,10 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(model);
     teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [] });
     teamDetailServiceMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
+    teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
     teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(null);
     teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
+    teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
     teamDetailServiceMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.grantScorekeeperAccessForApp.mockResolvedValue({ success: true });
@@ -199,5 +203,58 @@ describe('TeamDetail', () => {
 
     await waitFor(() => expect(teamDetailServiceMocks.reactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-2'));
     expect(await screen.findByText('Sam Bench reactivated.')).toBeTruthy();
+  });
+
+  it('loads roster invite summaries only once per roster visit when the result is empty', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('button', { name: 'Invite parent' })).toBeTruthy();
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
+  });
+
+  it('passes the signed-in user to parent invite creation and refreshes summaries after success', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamRosterParentInvites
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ playerId: 'player-1', status: 'pending', acceptedParentCount: 0, pendingInviteCount: 1, latestPendingCode: 'ABCD1234' }]);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    expect(await screen.findByRole('button', { name: 'Invite parent' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Invite parent' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.createRosterParentInviteForApp).toHaveBeenCalledWith('team-1', auth.user, expect.objectContaining({ id: 'player-1', number: '9' })));
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Parent invite is ready to copy or share.')).toBeTruthy();
   });
 });

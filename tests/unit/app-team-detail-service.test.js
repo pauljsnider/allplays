@@ -16,6 +16,7 @@ vi.mock('../../js/db.js', () => ({
     getAdSpaceSponsors: vi.fn(),
     getConfigs: vi.fn(),
     getGames: vi.fn(),
+    inviteParent: vi.fn(),
     getLocalAttractionSponsors: vi.fn(),
     getPlayers: vi.fn(),
     getPlayerTrackingStatuses: vi.fn(),
@@ -53,9 +54,9 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, updateEvent, updateGame, updateTeam } from '../../js/db.js';
+import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 beforeEach(() => {
@@ -102,6 +103,25 @@ describe('React app team detail model', () => {
         await expect(inviteTeamAdminForApp('', 'coach@example.com')).rejects.toThrow('Team ID is required.');
         await expect(inviteTeamAdminForApp('team-1', '   ')).rejects.toThrow('Admin email is required.');
         expect(inviteAdmin).not.toHaveBeenCalled();
+    });
+
+    it('requires full team access before creating parent invites in the app helper', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteParent.mockResolvedValue({ code: 'ABCD1234', autoLinked: false, existingUser: false, teamName: 'Bears', playerName: 'Pat Star' });
+
+        await expect(createRosterParentInviteForApp('team-1', { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] }, { id: 'player-1', number: '9' })).rejects.toThrow('You do not have permission to invite parents for this team.');
+        expect(inviteParent).not.toHaveBeenCalled();
+
+        const result = await createRosterParentInviteForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, { id: 'player-1', number: '9' });
+        expect(inviteParent).toHaveBeenCalledWith('team-1', 'player-1', '9', '', 'Parent');
+        expect(result).toMatchObject({
+            code: 'ABCD1234',
+            inviteUrl: 'http://localhost:3000/app#/accept-invite?code=ABCD1234&type=parent',
+            status: 'pending'
+        });
     });
 
     it('wraps scorekeeper and roster active-state mutations with app validation', async () => {

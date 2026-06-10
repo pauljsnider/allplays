@@ -504,11 +504,16 @@ export async function inviteTeamAdminForApp(teamId: string, email: string): Prom
   };
 }
 
-export async function createRosterParentInviteForApp(teamId: string, player: Pick<TeamDetailPlayer, 'id' | 'number'>): Promise<CreateRosterParentInviteForAppResult> {
+export async function createRosterParentInviteForApp(teamId: string, user: AuthUser | null, player: Pick<TeamDetailPlayer, 'id' | 'number'>): Promise<CreateRosterParentInviteForAppResult> {
   const normalizedTeamId = cleanString(teamId);
   const normalizedPlayerId = cleanString(player?.id);
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedPlayerId) throw new Error('Player ID is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to invite parents for this team.');
+  }
 
   const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), '', 'Parent');
   const code = cleanString(inviteResult?.code).toUpperCase();
