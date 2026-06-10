@@ -636,6 +636,9 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(await screen.findByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
     expect(getPublicProfileCard().getAttribute('href')).toBe(shareUrl);
     expect(getPublicProfileCard().getAttribute('aria-disabled')).toBe('false');
+    expect(getPublicProfileCard().getAttribute('tabindex')).toBeNull();
+    expect(getPublicProfileCard().className).not.toContain('pointer-events-none');
+    expect(screen.getByText('Open the shareable athlete profile.')).toBeTruthy();
   });
 
   it('keeps sharing disabled when a publish refresh still returns a private profile', async () => {
