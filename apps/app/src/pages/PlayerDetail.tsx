@@ -603,7 +603,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     ].filter(Boolean);
     return items;
   }, [achievements, data.child.playerName, dominantHand, existing?.clips?.length, graduationYear, headline, highlightClipFile, hometown, name, position, selectedSeasonKeys.length]);
-  const hasPublicShare = privacy === 'public' && !!shareUrl;
+  const hasPublicShare = existing?.privacy === 'public' && privacy === 'public' && !!shareUrl;
 
   useEffect(() => {
     return () => {

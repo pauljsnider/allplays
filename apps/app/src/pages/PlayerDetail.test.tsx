@@ -348,4 +348,37 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('• 1 season of stats and game clips')).toBeTruthy();
     expect(screen.getByText('• 1 highlight clip')).toBeTruthy();
   });
+
+  it('keeps sharing gated until the public privacy change is saved', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'private',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+
+    expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Preview Public Page' })).toBeTruthy();
+  });
 });
