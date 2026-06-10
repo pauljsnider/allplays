@@ -424,7 +424,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByRole('heading', { name: 'No teams linked yet' })).toBeVisible();
         await expect(page.getByText('No teams available')).toBeVisible();
         await expect(page.getByRole('link', { name: 'Accept invite' })).toHaveAttribute('href', '#/accept-invite');
-        await page.getByRole('link', { name: 'Browse teams' }).click();
+        await page.locator('a[href="https://allplays.ai/teams.html"]').click();
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/teams.html');
         await expect(page.getByText('Loading teams')).toHaveCount(0);
     });

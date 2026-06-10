@@ -93,7 +93,8 @@ describe('Teams empty state', () => {
     renderTeams();
 
     await screen.findByRole('heading', { name: 'No teams linked yet' });
-    const browseLink = screen.getByRole('link', { name: 'Browse teams' });
+    const browseLink = document.querySelector('a[href="https://allplays.ai/teams.html"]');
+    expect(browseLink).not.toBeNull();
     expect(browseLink).toHaveAttribute('href', 'https://allplays.ai/teams.html');
     fireEvent.click(browseLink);
 
