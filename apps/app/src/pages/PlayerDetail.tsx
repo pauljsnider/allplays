@@ -399,8 +399,9 @@ const profilePanels: Array<{ id: ProfilePanelId; label: string }> = [
 
 function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
+  const [athleteProfileShareState, setAthleteProfileShareState] = useState({ hasUnsavedPublishChanges: false, saving: false });
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
-  const persistedPublicProfileAvailable = hasPersistedPublicProfile(data.athleteProfile.profile, data.athleteProfile.shareUrl);
+  const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
   return (
     <div className="player-section-content space-y-3">
       <section className="app-card p-3">
@@ -430,7 +431,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
       </section>
 
       {activePanel === 'edit' ? <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} /> : null}
-      {activePanel === 'athlete' ? <AthleteProfileBuilderCard data={data} auth={auth} onChanged={onChanged} /> : null}
+      {activePanel === 'athlete' ? <AthleteProfileBuilderCard data={data} auth={auth} onChanged={onChanged} onShareStateChange={setAthleteProfileShareState} /> : null}
       {activePanel === 'family' ? <CoParentInviteCard data={data} auth={auth} /> : null}
       {activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
@@ -441,7 +442,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <a
-          href={persistedPublicProfileUrl || '#'}
+          href={persistedPublicProfileAvailable ? persistedPublicProfileUrl : '#'}
           target={persistedPublicProfileAvailable ? '_blank' : undefined}
           rel={persistedPublicProfileAvailable ? 'noreferrer' : undefined}
           aria-disabled={!persistedPublicProfileAvailable}
@@ -552,7 +553,7 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
   );
 }
 
-function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void>; onShareStateChange: (state: { hasUnsavedPublishChanges: boolean; saving: boolean }) => void }) {
   const existing = data.athleteProfile.profile;
   const currentSeasonKey = `${data.child.teamId || ''}::${data.child.playerId || ''}`;
   const seasonOptions = useMemo(() => {
@@ -663,6 +664,16 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   });
   const canPreviewPublishedPublicProfile = persistedPublicProfileReady;
   const canSharePublicProfile = persistedPublicProfileReady;
+
+  useEffect(() => {
+    onShareStateChange({
+      hasUnsavedPublishChanges,
+      saving: saving || awaitingPersistedPublish
+    });
+    return () => {
+      onShareStateChange({ hasUnsavedPublishChanges: false, saving: false });
+    };
+  }, [awaitingPersistedPublish, hasUnsavedPublishChanges, onShareStateChange, saving]);
 
   useEffect(() => {
     return () => {
