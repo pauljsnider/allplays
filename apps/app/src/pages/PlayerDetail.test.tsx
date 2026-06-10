@@ -387,5 +387,6 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(saveFirstButton).toBeDisabled();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });
 });

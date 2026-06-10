@@ -605,8 +605,8 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   }, [achievements, data.child.playerName, dominantHand, existing?.clips?.length, graduationYear, headline, highlightClipFile, hometown, name, position, selectedSeasonKeys.length]);
   const persistedPrivacy = existing?.privacy === 'public' ? 'public' : 'private';
   const hasUnsavedPrivacyChange = privacy !== persistedPrivacy;
-  const hasPublicShare = persistedPrivacy === 'public' && !!shareUrl;
   const publicProfileUrl = persistedPrivacy === 'public' ? shareUrl : '';
+  const canSharePublicProfile = !!publicProfileUrl && !hasUnsavedPrivacyChange && !saving;
 
   useEffect(() => {
     return () => {
@@ -673,12 +673,12 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   };
 
   const shareProfile = async () => {
-    if (!shareUrl) return;
+    if (!canSharePublicProfile) return;
     try {
       const result = await sharePublicUrl({
         title: `${name || data.child.playerName || 'Athlete'} profile`,
         text: 'Take a look at this athlete profile on ALL PLAYS.',
-        url: shareUrl
+        url: publicProfileUrl
       });
       if (result === 'shared') {
         setStatus({ tone: 'success', message: 'Public athlete profile shared.' });
@@ -878,7 +878,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
             {saving ? 'Saving' : privacy === 'public' ? 'Publish Athlete Profile' : 'Save Athlete Profile'}
           </button>
-          {hasPublicShare && !hasUnsavedPrivacyChange ? (
+          {canSharePublicProfile ? (
             <button type="button" className="secondary-button justify-center" onClick={shareProfile}>
               <Share2 className="h-4 w-4" aria-hidden="true" />
               Share Public Profile
