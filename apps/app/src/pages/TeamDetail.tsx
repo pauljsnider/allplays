@@ -586,13 +586,14 @@ function InsightsTab({ model, loading, error }: { model: TeamDetailModel; loadin
 }
 
 function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, sponsorsLoading, sponsorsError, onTeamDetailRefresh }: { model: TeamDetailModel; auth: AuthState; staffPermissionsLoading: boolean; staffPermissionsError: string; sponsorsLoading: boolean; sponsorsError: string; onTeamDetailRefresh: () => Promise<void> }) {
+  const statTrackerConfigs = model.statTrackerConfigs || [];
   const orphanedConfigAssignments = model.canManageTeam
     ? model.upcomingEvents.filter((event) => event.type === 'game' && event.statTrackerConfigId && !event.statTrackerConfigExists)
     : [];
 
   return (
     <div className="space-y-4">
-      {model.canManageTeam ? <StatTrackerConfigsCard configs={model.statTrackerConfigs} orphanedAssignments={orphanedConfigAssignments} /> : null}
+      {model.canManageTeam ? <StatTrackerConfigsCard configs={statTrackerConfigs} orphanedAssignments={orphanedConfigAssignments} /> : null}
       {model.canManageTeam && !model.staffPermissions && staffPermissionsLoading ? (
         <section className="app-card p-4">
           <div className="flex items-center gap-3 text-sm font-semibold text-gray-600">
@@ -673,6 +674,8 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
 }
 
 function StatTrackerConfigsCard({ configs, orphanedAssignments }: { configs: TeamDetailModel['statTrackerConfigs']; orphanedAssignments: TeamDetailModel['upcomingEvents'] }) {
+  const safeConfigs = configs || [];
+
   return (
     <section className="app-card p-4">
       <div className="flex items-start justify-between gap-3">
@@ -680,11 +683,11 @@ function StatTrackerConfigsCard({ configs, orphanedAssignments }: { configs: Tea
           <div className="text-sm font-black text-gray-950">Stat tracker configs</div>
           <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Read-only view of this team&apos;s tracker setups, sport routing, and scheduled game assignments.</div>
         </div>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{configs.length} config{configs.length === 1 ? '' : 's'}</span>
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{safeConfigs.length} config{safeConfigs.length === 1 ? '' : 's'}</span>
       </div>
 
       <div className="mt-3 space-y-3">
-        {configs.length ? configs.map((config) => (
+        {safeConfigs.length ? safeConfigs.map((config) => (
           <div key={config.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
