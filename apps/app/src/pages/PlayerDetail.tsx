@@ -78,6 +78,14 @@ function hasPersistedPublicProfile(profile: Record<string, any> | null | undefin
   return !!getPersistedPublicProfileUrl(profile, shareUrl);
 }
 
+function isPersistedPublicProfileReady(
+  profile: Record<string, any> | null | undefined,
+  shareUrl: string | null | undefined,
+  { hasUnsavedPublishChanges = false, saving = false }: { hasUnsavedPublishChanges?: boolean; saving?: boolean } = {}
+) {
+  return hasPersistedPublicProfile(profile, shareUrl) && !hasUnsavedPublishChanges && !saving;
+}
+
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
   const [data, setData] = useState<ParentPlayerDetailData | null>(null);
@@ -649,8 +657,8 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   );
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = hasPersistedPublicProfile(existing, data.athleteProfile.shareUrl);
-  const canPreviewPublishedPublicProfile = persistedPublicProfileAvailable && !hasUnsavedPublishChanges;
-  const canSharePublicProfile = persistedPublicProfileAvailable && !hasUnsavedPublishChanges && !saving;
+  const canPreviewPublishedPublicProfile = isPersistedPublicProfileReady(existing, data.athleteProfile.shareUrl, { hasUnsavedPublishChanges });
+  const canSharePublicProfile = isPersistedPublicProfileReady(existing, data.athleteProfile.shareUrl, { hasUnsavedPublishChanges, saving });
 
   useEffect(() => {
     return () => {

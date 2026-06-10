@@ -419,6 +419,40 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('Publish and save this profile to enable sharing.')).toBeTruthy();
   });
 
+  it('does not expose a stale share action when public is only toggled locally', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'private',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl,
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+  });
+
   it('requires saving updated public profile content before sharing the public link', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
 
