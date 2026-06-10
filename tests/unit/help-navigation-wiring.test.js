@@ -29,7 +29,8 @@ describe('help navigation wiring', () => {
         const helpHtml = readRepoFile('help.html');
         expect(helpHtml).toContain("new URLSearchParams(window.location.search).get('role')");
         expect(helpHtml).toContain('option.value.toLowerCase() === requestedRoleKey');
-        expect(helpHtml).toMatch(/applyRoleFromUrl\(\);\s*searchInput\.addEventListener/);
+        expect(helpHtml).toContain("pageReferenceLink.href = buildWorkflowHref('help-page-reference.html');");
+        expect(helpHtml).toMatch(/applyRoleFromUrl\(\);\s*syncPageReferenceLink\(\);\s*searchInput\.addEventListener/);
     });
 
     it('renders multi-page help portal links', () => {

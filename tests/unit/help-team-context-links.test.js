@@ -30,6 +30,10 @@ function readWorkflowLinks(document) {
     return Array.from(document.querySelectorAll('#help-grid article a')).map((link) => new URL(link.href));
 }
 
+function readPageReferenceLink(document) {
+    return new URL(document.getElementById('help-page-reference-link').href);
+}
+
 function bootStaticPage(relativePath, search = '') {
     const html = readRepoFile(relativePath);
     const dom = new JSDOM(html, {
@@ -57,6 +61,16 @@ describe('help team-context deep links', () => {
             expect(link.searchParams.get('teamId')).toBe('TEAM123');
             expect(link.searchParams.get('role')).toBe('parent');
         });
+    });
+
+    it('preserves team context on the page-reference link', () => {
+        const document = bootHelpPage('?context=team&teamId=TEAM123&role=coach');
+
+        const link = readPageReferenceLink(document);
+        expect(link.pathname).toBe('/help-page-reference.html');
+        expect(link.searchParams.get('context')).toBe('team');
+        expect(link.searchParams.get('teamId')).toBe('TEAM123');
+        expect(link.searchParams.get('role')).toBe('coach');
     });
 
     it('restores workflow cards with original team context after clearing a zero-match search', () => {
@@ -100,10 +114,22 @@ describe('help team-context deep links', () => {
         expect(link.searchParams.get('role')).toBe('coach');
     });
 
+    it('preserves team context on the page-reference back link', () => {
+        const { document } = bootStaticPage('help-page-reference.html', '?context=team&teamId=TEAM123&role=coach');
+
+        preserveHelpBackLinkContext(document, '?context=team&teamId=TEAM123&role=coach');
+
+        const link = new URL(document.querySelector('[data-help-back-link]').href);
+        expect(link.pathname).toBe('/help.html');
+        expect(link.searchParams.get('context')).toBe('team');
+        expect(link.searchParams.get('teamId')).toBe('TEAM123');
+        expect(link.searchParams.get('role')).toBe('coach');
+    });
+
     it('wires help context preservation into every workflow back link', () => {
         const repoRoot = process.cwd();
         const htmlPages = readdirSync(repoRoot)
-            .filter((file) => /^workflow-.*\.html$/.test(file) || file === 'help-team-operations.html')
+            .filter((file) => /^workflow-.*\.html$/.test(file) || file === 'help-team-operations.html' || file === 'help-page-reference.html')
             .sort();
 
         expect(htmlPages.length).toBeGreaterThan(0);
