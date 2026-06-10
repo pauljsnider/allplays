@@ -15,7 +15,12 @@ const playerServiceMocks = vi.hoisted(() => ({
   updateParentPlayerEditableProfile: vi.fn()
 }));
 
+const publicActionMocks = vi.hoisted(() => ({
+  sharePublicUrl: vi.fn()
+}));
+
 vi.mock('../lib/playerService', () => playerServiceMocks);
+vi.mock('../lib/publicActions', () => publicActionMocks);
 
 import { PlayerDetail } from './PlayerDetail';
 import type { AuthState } from '../lib/types';
@@ -124,6 +129,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     playerServiceMocks.saveParentAthleteProfileDraft.mockResolvedValue({
       shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1'
     });
+    publicActionMocks.sharePublicUrl.mockResolvedValue('shared');
     window.scrollTo = vi.fn();
     window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
       callback(0);
@@ -168,7 +174,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect((priorSeason as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(currentSeason);
-    fireEvent.click(screen.getByRole('button', { name: 'Save Athlete Profile' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
 
     await waitFor(() => {
       expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
@@ -231,7 +237,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect((currentSeason as HTMLInputElement).checked).toBe(true);
     expect((priorSeason as HTMLInputElement).checked).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save Athlete Profile' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
 
     await waitFor(() => {
       expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
@@ -268,7 +274,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     const fallbackSeason = await screen.findByLabelText('Sam Player Current Team');
     expect((fallbackSeason as HTMLInputElement).checked).toBe(true);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save Athlete Profile' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
 
     await waitFor(() => {
       expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
@@ -277,5 +283,69 @@ describe('PlayerDetail athlete profile season selection', () => {
         })
       }));
     });
+  });
+
+  it('shares the published athlete profile through the native share helper', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'public',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Share Public Profile' }));
+
+    await waitFor(() => {
+      expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
+        title: 'Sam Player profile',
+        text: 'Take a look at this athlete profile on ALL PLAYS.',
+        url: 'https://allplays.ai/athlete-profile.html?profileId=profile-1'
+      });
+    });
+  });
+
+  it('shows the publish disclosure before confirming a public profile', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player', headline: '2028 Guard' },
+          bio: { position: 'Guard', hometown: 'Kansas City' },
+          privacy: 'private',
+          clips: [{ id: 'clip-1', title: 'Step back' }],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+
+    expect(await screen.findByText('What others see')).toBeTruthy();
+    expect(screen.getByText('Publishing makes this read-only athlete profile public at the share link.')).toBeTruthy();
+    expect(screen.getByText('• 1 season of stats and game clips')).toBeTruthy();
+    expect(screen.getByText('• 1 highlight clip')).toBeTruthy();
   });
 });

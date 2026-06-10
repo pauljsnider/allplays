@@ -50,6 +50,7 @@ import {
   type ParentScheduleEvent,
   type RsvpResponse
 } from '../lib/scheduleLogic';
+import { sharePublicUrl } from '../lib/publicActions';
 import type { AuthState } from '../lib/types';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
@@ -588,6 +589,21 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const headshotLabel = headshotFile
     ? 'New headshot selected. Save to publish it.'
     : (existingHeadshotUrl && !resetHeadshot ? 'Custom athlete profile headshot' : 'Using linked season photo');
+  const publicSummary = useMemo(() => {
+    const items = [
+      name || data.child.playerName || 'Athlete name',
+      headline,
+      position,
+      graduationYear ? `Class of ${graduationYear}` : '',
+      hometown,
+      dominantHand ? `${dominantHand} hand` : '',
+      achievements,
+      selectedSeasonKeys.length ? `${selectedSeasonKeys.length} season${selectedSeasonKeys.length === 1 ? '' : 's'} of stats and game clips` : '',
+      (existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0) ? `${(existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0)} highlight clip${(existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0) === 1 ? '' : 's'}` : ''
+    ].filter(Boolean);
+    return items;
+  }, [achievements, data.child.playerName, dominantHand, existing?.clips?.length, graduationYear, headline, highlightClipFile, hometown, name, position, selectedSeasonKeys.length]);
+  const hasPublicShare = privacy === 'public' && !!shareUrl;
 
   useEffect(() => {
     return () => {
@@ -650,6 +666,31 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
       setStatus({ tone: 'error', message: error?.message || 'Unable to save athlete profile.' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const shareProfile = async () => {
+    if (!shareUrl) return;
+    try {
+      const result = await sharePublicUrl({
+        title: `${name || data.child.playerName || 'Athlete'} profile`,
+        text: 'Take a look at this athlete profile on ALL PLAYS.',
+        url: shareUrl
+      });
+      if (result === 'shared') {
+        setStatus({ tone: 'success', message: 'Public athlete profile shared.' });
+        return;
+      }
+      if (result === 'copied') {
+        setStatus({ tone: 'success', message: 'Public athlete profile link copied.' });
+        return;
+      }
+      if (result === 'cancelled') {
+        return;
+      }
+      setStatus({ tone: 'error', message: 'Unable to share the public athlete profile right now.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to share the public athlete profile right now.' });
     }
   };
 
@@ -808,6 +849,14 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             })}
           </div>
         </div>
+        <div className="rounded-2xl border border-primary-100 bg-primary-50/60 p-3">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">What others see</div>
+          <p className="mt-1 text-sm font-semibold text-gray-700">Publishing makes this read-only athlete profile public at the share link.</p>
+          <ul className="mt-3 space-y-1 text-xs font-semibold text-gray-600">
+            {publicSummary.map((item) => <li key={item}>• {item}</li>)}
+          </ul>
+          <p className="mt-3 text-xs font-semibold text-gray-500">Private keeps the profile off the public page. Public matches the legacy athlete profile share behavior.</p>
+        </div>
         <div className="athlete-profile-privacy grid grid-cols-2 gap-2">
           {(['private', 'public'] as const).map((option) => (
             <button
@@ -824,12 +873,19 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
         <div className="athlete-profile-actions grid gap-2 sm:grid-cols-2">
           <button type="submit" className="primary-button justify-center" disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-            {saving ? 'Saving' : 'Save Athlete Profile'}
+            {saving ? 'Saving' : privacy === 'public' ? 'Publish Athlete Profile' : 'Save Athlete Profile'}
           </button>
-          <a href={shareUrl || data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
-            <ExternalLink className="h-4 w-4" aria-hidden="true" />
-            {shareUrl ? 'Open Share Page' : 'Open Full Builder'}
-          </a>
+          {hasPublicShare ? (
+            <button type="button" className="secondary-button justify-center" onClick={shareProfile}>
+              <Share2 className="h-4 w-4" aria-hidden="true" />
+              Share Public Profile
+            </button>
+          ) : (
+            <a href={shareUrl || data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              {shareUrl ? 'Preview Public Page' : 'Open Full Builder'}
+            </a>
+          )}
         </div>
       </form>
     </section>
