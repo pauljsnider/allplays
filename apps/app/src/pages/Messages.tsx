@@ -2226,44 +2226,26 @@ function MessageAvatar({ message, label }: { message: ChatMessage; label: string
 
 function InlineAttachmentVideo({ src, label }: { src: string; label: string }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [shouldPreloadMetadata, setShouldPreloadMetadata] = useState(false);
+  const [shouldLoadVideo, setShouldLoadVideo] = useState(false);
 
-  useEffect(() => {
-    if (shouldPreloadMetadata) return undefined;
-    const video = videoRef.current;
-    if (!video || typeof IntersectionObserver === 'undefined') return undefined;
-
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting && (typeof entry.intersectionRatio !== 'number' || entry.intersectionRatio >= 0.5))) {
-        setShouldPreloadMetadata(true);
-        observer.disconnect();
-      }
-    }, {
-      threshold: 0.5
-    });
-
-    observer.observe(video);
-    return () => observer.disconnect();
-  }, [shouldPreloadMetadata]);
-
-  const armMetadataPreload = useCallback(() => {
-    setShouldPreloadMetadata(true);
+  const armVideoLoad = useCallback(() => {
+    setShouldLoadVideo(true);
   }, []);
 
   return (
     <video
       ref={videoRef}
       controls
-      preload={shouldPreloadMetadata ? 'metadata' : 'none'}
+      preload={shouldLoadVideo ? 'metadata' : 'none'}
       className="max-h-72 w-full"
-      src={src}
+      src={shouldLoadVideo ? src : undefined}
       aria-label={label}
       data-chat-attachment-url={src}
-      onFocus={armMetadataPreload}
-      onMouseEnter={armMetadataPreload}
-      onPlay={armMetadataPreload}
-      onPointerDown={armMetadataPreload}
-      onTouchStart={armMetadataPreload}
+      onFocus={armVideoLoad}
+      onMouseEnter={armVideoLoad}
+      onPlay={armVideoLoad}
+      onPointerDown={armVideoLoad}
+      onTouchStart={armVideoLoad}
     />
   );
 }
