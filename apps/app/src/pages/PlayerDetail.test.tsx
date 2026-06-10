@@ -449,6 +449,9 @@ describe('PlayerDetail athlete profile season selection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'public' }));
 
     const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
+    const publishBeforeSharingButton = screen.getByRole('button', { name: 'Publish changes before sharing' });
+    fireEvent.click(publishBeforeSharingButton);
+
     expect(publicProfileCard.getAttribute('href')).toBe('#');
     expect(publicProfileCard.getAttribute('aria-disabled')).toBe('true');
     expect(publicProfileCard.getAttribute('tabindex')).toBe('-1');
@@ -456,7 +459,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
-    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((publishBeforeSharingButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('Publish and save this profile before the public share link becomes available.')).toBeTruthy();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });

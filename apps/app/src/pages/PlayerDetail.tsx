@@ -676,15 +676,16 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   );
   const normalizedShareUrl = String(data.athleteProfile.shareUrl || '').trim();
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, normalizedShareUrl);
-  const hasSavedShareUrl = !!normalizedShareUrl;
+  const hasPersistedShareUrl = !!normalizedShareUrl;
+  const hasPersistedPrivateShareUrl = hasPersistedShareUrl && persistedPrivacy !== 'public';
   const isPublishingNewPublicProfile = privacy === 'public' && persistedPrivacy !== 'public';
   const persistedPublicProfileReady = isPersistedPublicProfileReady(existing, normalizedShareUrl, {
     hasUnsavedPublishChanges,
     saving
   });
-  const requiresPublishBeforeSharing = hasUnsavedPublishChanges || (hasSavedShareUrl && persistedPrivacy !== 'public');
-  const canPreviewPublishedPublicProfile = persistedPublicProfileReady;
-  const canSharePublicProfile = persistedPublicProfileReady;
+  const requiresPublishBeforeSharing = hasUnsavedPublishChanges || hasPersistedPrivateShareUrl;
+  const canPreviewPublishedPublicProfile = persistedPrivacy === 'public' && persistedPublicProfileReady;
+  const canSharePublicProfile = persistedPrivacy === 'public' && persistedPublicProfileReady;
   const latestPublicShareStateRef = useRef({
     canSharePublicProfile: false,
     persistedPublicProfileUrl: ''
@@ -1002,7 +1003,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
           <p className="text-center text-xs font-semibold text-gray-500">Waiting for refresh to confirm the public share link.</p>
         ) : privacy === 'public' && hasUnsavedPublishChanges ? (
           <p className="text-center text-xs font-semibold text-gray-500">Publish and save this profile before the public share link becomes available.</p>
-        ) : hasSavedShareUrl && persistedPrivacy !== 'public' ? (
+        ) : hasPersistedPrivateShareUrl ? (
           <p className="text-center text-xs font-semibold text-gray-500">This saved share link stays private until you publish and save the profile.</p>
         ) : null}
       </form>
