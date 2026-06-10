@@ -904,4 +904,42 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe('#');
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
   });
+
+  it('does not re-enable sharing when a private saved profile already has a share url and only local privacy is toggled to public', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'private',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl,
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Publish and save this profile before the public share link becomes available.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe('#');
+    expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+  });
 });
