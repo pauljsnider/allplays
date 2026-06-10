@@ -1,4 +1,5 @@
 import { createTeamFeeBatch, getPlayers, getTeam, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from '../../../../js/db.js';
+import { initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 import type { AuthUser } from './types';
 
@@ -16,6 +17,9 @@ export type TeamFeeRecipientSummary = {
   parentName: string;
   parentEmail: string;
   status: string;
+  collectionMode: string;
+  checkoutUrl: string;
+  checkoutStatus: string;
   amountDueCents: number;
   amountPaidCents: number;
   remainingBalanceCents: number;
@@ -426,6 +430,29 @@ export async function recordOfflineTeamFeeRefund({ teamId, batchId, recipient, r
   return updates;
 }
 
+export async function initiateStaffTeamFeeCheckout({ teamId, batchId, recipientId, user }: {
+  teamId: string;
+  batchId: string;
+  recipientId: string;
+  user: AuthUser | null;
+}) {
+  if (!teamId || !batchId || !recipientId) {
+    throw new Error('Missing required fields for team fee checkout.');
+  }
+
+  const team = await Promise.resolve(getTeam(teamId));
+  if (!hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have access to generate team fee checkout links.');
+  }
+
+  const checkoutUrl = await initiateTeamFeeCheckout({ teamId, batchId, recipientId });
+  if (!checkoutUrl) {
+    throw new Error('Failed to get checkout URL.');
+  }
+
+  return { success: true as const, checkoutUrl };
+}
+
 function toBatchSummary(batch: any): TeamFeeBatchSummary {
   return {
     id: String(batch?.id || ''),
@@ -446,6 +473,9 @@ function toRecipientSummary(recipient: any): TeamFeeRecipientSummary {
     parentName: normalizeString(recipient?.parentName),
     parentEmail: normalizeString(recipient?.parentEmail),
     status: normalizeString(recipient?.status) || 'unpaid',
+    collectionMode: normalizeString(recipient?.collectionMode || recipient?.paymentMode),
+    checkoutUrl: normalizeString(recipient?.checkoutUrl || recipient?.paymentLink || recipient?.paymentUrl),
+    checkoutStatus: normalizeString(recipient?.checkoutStatus),
     amountDueCents,
     amountPaidCents,
     remainingBalanceCents: Number.isFinite(explicitBalance) ? Math.max(0, explicitBalance) : Math.max(0, amountDueCents - amountPaidCents),

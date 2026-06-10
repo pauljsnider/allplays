@@ -7,13 +7,20 @@ import type { AuthState } from '../lib/types';
 
 const teamFeesServiceMocks = vi.hoisted(() => ({
   createTeamFeeBatchForApp: vi.fn(),
+  initiateStaffTeamFeeCheckout: vi.fn(),
   loadTeamFeeManagementModel: vi.fn(),
   recordOfflineTeamFeePayment: vi.fn(),
   recordTeamFeeBalanceAdjustment: vi.fn(),
   recordOfflineTeamFeeRefund: vi.fn()
 }));
 
+const publicActionMocks = vi.hoisted(() => ({
+  copyPublicText: vi.fn(),
+  sharePublicUrl: vi.fn()
+}));
+
 vi.mock('../lib/teamFeesService', () => teamFeesServiceMocks);
+vi.mock('../lib/publicActions', () => publicActionMocks);
 
 const auth: AuthState = {
   user: {
@@ -56,11 +63,15 @@ describe('TeamFees recipient queue', () => {
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockReset();
     teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockReset();
     teamFeesServiceMocks.createTeamFeeBatchForApp.mockReset();
+    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockReset();
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockReset();
     teamFeesServiceMocks.recordOfflineTeamFeePayment.mockResolvedValue(undefined);
     teamFeesServiceMocks.recordTeamFeeBalanceAdjustment.mockResolvedValue(undefined);
     teamFeesServiceMocks.recordOfflineTeamFeeRefund.mockResolvedValue(undefined);
     teamFeesServiceMocks.createTeamFeeBatchForApp.mockResolvedValue({ id: 'batch-2' });
+    teamFeesServiceMocks.initiateStaffTeamFeeCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://checkout.stripe.test/generated' });
+    publicActionMocks.copyPublicText.mockResolvedValue('copied');
+    publicActionMocks.sharePublicUrl.mockResolvedValue('shared');
     teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
       team: { id: 'team-1', name: 'Bears' },
       batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
@@ -78,6 +89,9 @@ describe('TeamFees recipient queue', () => {
           parentName: 'Una Parent',
           parentEmail: 'una@example.com',
           status: 'unpaid',
+          collectionMode: 'online_stripe',
+          checkoutUrl: '',
+          checkoutStatus: '',
           amountDueCents: 10000,
           amountPaidCents: 0,
           remainingBalanceCents: 10000,
@@ -89,6 +103,9 @@ describe('TeamFees recipient queue', () => {
           parentName: 'Part Parent',
           parentEmail: 'part@example.com',
           status: 'partial',
+          collectionMode: 'offline_manual',
+          checkoutUrl: '',
+          checkoutStatus: '',
           amountDueCents: 10000,
           amountPaidCents: 2500,
           remainingBalanceCents: 7500,
@@ -100,6 +117,9 @@ describe('TeamFees recipient queue', () => {
           parentName: 'Pay Parent',
           parentEmail: 'pay@example.com',
           status: 'paid',
+          collectionMode: 'online_stripe',
+          checkoutUrl: '',
+          checkoutStatus: 'paid',
           amountDueCents: 10000,
           amountPaidCents: 10000,
           remainingBalanceCents: 0,
@@ -122,6 +142,72 @@ describe('TeamFees recipient queue', () => {
     expect(screen.getByDisplayValue('100.00')).toBeTruthy();
     expect(screen.getByDisplayValue('75.00')).toBeTruthy();
     expect(screen.getAllByText('Positive credits reduce what is owed. Negative charges increase it.')).toHaveLength(3);
+    expect(within(queue).getByRole('button', { name: 'Generate & share link' })).toBeTruthy();
+    expect(within(queue).getByText('This fee is marked for offline collection only, so no Stripe checkout link can be generated from the app.')).toBeTruthy();
+  });
+
+  it('generates and shares a staff checkout link with the public URL only', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
+        selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
+        canManageFees: true,
+        rosterPlayers: [],
+        recipients: [{
+          id: 'recipient-1',
+          playerName: 'Pat Star',
+          parentName: 'Pat Parent',
+          parentEmail: 'pat@example.com',
+          status: 'unpaid',
+          collectionMode: 'online_stripe',
+          checkoutUrl: '',
+          checkoutStatus: '',
+          amountDueCents: 10000,
+          amountPaidCents: 0,
+          remainingBalanceCents: 10000,
+          paymentLedger: []
+        }]
+      })
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
+        selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
+        canManageFees: true,
+        rosterPlayers: [],
+        recipients: [{
+          id: 'recipient-1',
+          playerName: 'Pat Star',
+          parentName: 'Pat Parent',
+          parentEmail: 'pat@example.com',
+          status: 'unpaid',
+          collectionMode: 'online_stripe',
+          checkoutUrl: 'https://checkout.stripe.test/generated',
+          checkoutStatus: 'open',
+          amountDueCents: 10000,
+          amountPaidCents: 0,
+          remainingBalanceCents: 10000,
+          paymentLedger: []
+        }]
+      });
+
+    renderTeamFees();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate & share link' }));
+
+    expect(await screen.findByText('Shared checkout link for Pat Star.')).toBeTruthy();
+    expect(teamFeesServiceMocks.initiateStaffTeamFeeCheckout).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      batchId: 'batch-1',
+      recipientId: 'recipient-1',
+      user: auth.user
+    });
+    expect(publicActionMocks.sharePublicUrl).toHaveBeenCalledWith({
+      title: 'Pat Star fee checkout',
+      text: '',
+      url: 'https://checkout.stripe.test/generated',
+      clipboardText: 'https://checkout.stripe.test/generated'
+    });
   });
 
   it('creates a fee batch from the native form using selected roster recipients', async () => {
