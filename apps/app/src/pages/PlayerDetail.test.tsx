@@ -403,6 +403,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect((saveFirstButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Publish this profile before the public share link becomes available.')).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Open Full Builder' })).toBeNull();
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();

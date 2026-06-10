@@ -918,6 +918,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             </a>
           )}
         </div>
+        {privacy === 'public' && hasUnsavedPublishChanges ? (
+          <p className="text-center text-xs font-semibold text-gray-500">Publish this profile before the public share link becomes available.</p>
+        ) : null}
       </form>
     </section>
   );
