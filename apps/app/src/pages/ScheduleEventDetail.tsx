@@ -30,6 +30,8 @@ import {
   saveScheduledGameLineupDraftForApp,
   saveStaffPracticeAttendance,
   completeGameWrapupForApp,
+  loadGameDayLiveEventsForApp,
+  saveGameDaySubstitutionForApp,
   updateGameScore,
   updateParentScheduleRideRequestStatus,
   type PracticeAttendancePlayer,
@@ -45,11 +47,13 @@ import {
   type LineupDraftPreviewResult
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
+import { buildRotationPlanFromGamePlan } from '../../../../js/game-plan-interop.js';
 import {
   assignLineupPlayer,
   buildLineupAiPrompt,
   buildLineupEditorAssignments,
   buildLineupEditorPlayers,
+  buildProjectedPlayingTimeSummary,
   buildRoundRobinLineup,
   clearLineupPlayer,
   getLineupAiModel,
@@ -58,6 +62,7 @@ import {
   moveLineupPlayer,
   parseAiLineupPlan
 } from '../lib/gameDayLineupBuilder';
+import { applyLiveSubstitution, getSubstitutionOptions } from '../../../../js/game-day-live-substitutions.js';
 import {
   buildAppWrapupCompletionPayload,
   generateGameWrapupArtifactsForApp,
@@ -2191,6 +2196,10 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupComp
             <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
           ) : null}
 
+          {canPublishLineup ? (
+            <GameDaySubstitutionPanel auth={auth} event={event} />
+          ) : null}
+
           {canCancelGame ? (
             <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2694,6 +2703,260 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
           <ReportMarkdownText text={summary} compact />
         </div>
       ) : null}
+    </div>
+  );
+}
+
+type GameDayLogEntry = {
+  id: string;
+  createdAtMs: number;
+  timeLabel: string;
+  period: string;
+  kind: 'substitution' | 'score' | 'stat' | 'note';
+  text: string;
+};
+
+function toGameDayTimestamp(value: unknown) {
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof (value as { toDate?: unknown }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  const parsed = new Date(String(value)).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatGameDayTimeLabel(value: unknown) {
+  const timestamp = toGameDayTimestamp(value);
+  if (!timestamp) return '';
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function buildGameDayLogEntries(coachingNotes: ParentScheduleEvent['coachingNotes'] = [], liveEvents: ParentScheduleEvent['liveEvents'] = []) {
+  const noteEntries: GameDayLogEntry[] = (Array.isArray(coachingNotes) ? coachingNotes : []).map((note, index) => ({
+    id: `note-${index}-${String(note?.createdAt || '')}`,
+    createdAtMs: toGameDayTimestamp(note?.createdAt),
+    timeLabel: formatGameDayTimeLabel(note?.createdAt),
+    period: String(note?.period || '').trim(),
+    kind: note?.type === 'substitution' ? 'substitution' : 'note',
+    text: String(note?.text || '').trim()
+  }));
+
+  const liveEntries: GameDayLogEntry[] = (Array.isArray(liveEvents) ? liveEvents : []).map((entry, index) => ({
+    id: String(entry?.eventId || entry?.id || `event-${index}`),
+    createdAtMs: toGameDayTimestamp(entry?.createdAt),
+    timeLabel: formatGameDayTimeLabel(entry?.createdAt),
+    period: String(entry?.period || '').trim(),
+    kind: entry?.type === 'score_update' ? 'score' : 'stat',
+    text: String(entry?.description || '').trim() || [entry?.playerName, entry?.stat || entry?.type].filter(Boolean).join(' ')
+  }));
+
+  return [...noteEntries, ...liveEntries]
+    .filter((entry) => entry.text)
+    .sort((left, right) => right.createdAtMs - left.createdAtMs || left.id.localeCompare(right.id));
+}
+
+function formatSubstitutionPlayer(player: { name?: string; number?: string | null } | null | undefined) {
+  if (!player) return 'Player';
+  return `${player.number ? `#${player.number} ` : ''}${player.name || 'Player'}`;
+}
+
+function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const formationId = event.gamePlan?.publishedFormationId || event.gamePlan?.formationId || '';
+  const [players, setPlayers] = useState<Array<{ id: string; name: string; number?: string | null }>>([]);
+  const [rotationPlan, setRotationPlan] = useState<Record<string, any>>(() => event.rotationPlan || buildRotationPlanFromGamePlan(event.gamePlan || {}));
+  const [rotationActual, setRotationActual] = useState<Record<string, any>>(() => event.rotationActual || {});
+  const [coachingNotes, setCoachingNotes] = useState<any[]>(() => Array.isArray(event.coachingNotes) ? event.coachingNotes : []);
+  const [liveEvents, setLiveEvents] = useState<any[]>(() => Array.isArray(event.liveEvents) ? event.liveEvents : []);
+  const [period, setPeriod] = useState('');
+  const [outPlayerId, setOutPlayerId] = useState('');
+  const [inPlayerId, setInPlayerId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+
+  const periods = useMemo(() => Object.keys(rotationPlan || {}), [rotationPlan]);
+  const activePeriod = period || periods[0] || '';
+  const projectedTime = useMemo(() => buildProjectedPlayingTimeSummary(formationId, event.gamePlan || null, players as any), [formationId, event.gamePlan, players]);
+  const subOptions = useMemo(() => getSubstitutionOptions({
+    period: activePeriod,
+    rotationPlan,
+    rotationActual,
+    players
+  }), [activePeriod, rotationPlan, rotationActual, players]);
+  const logEntries = useMemo(() => buildGameDayLogEntries(coachingNotes, liveEvents), [coachingNotes, liveEvents]);
+
+  useEffect(() => {
+    const nextPlan = event.rotationPlan || buildRotationPlanFromGamePlan(event.gamePlan || {});
+    setRotationPlan(nextPlan);
+    setRotationActual(event.rotationActual || {});
+    setCoachingNotes(Array.isArray(event.coachingNotes) ? event.coachingNotes : []);
+    setLiveEvents(Array.isArray(event.liveEvents) ? event.liveEvents : []);
+    setPeriod('');
+    setOutPlayerId('');
+    setInPlayerId('');
+    setStatus(null);
+  }, [event.eventKey, event.gamePlan, event.rotationPlan, event.rotationActual, event.coachingNotes, event.liveEvents]);
+
+  useEffect(() => {
+    if (!auth.user || !formationId) {
+      setPlayers([]);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId),
+      loadGameDayLiveEventsForApp(event.teamId, event.id)
+    ])
+      .then(([preview, loadedLiveEvents]) => {
+        if (cancelled) return;
+        const loadedPlayers = buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []);
+        setPlayers(loadedPlayers.map((player) => ({ id: player.id, name: player.name, number: player.number || null })));
+        setLiveEvents(Array.isArray(loadedLiveEvents) ? loadedLiveEvents : []);
+      })
+      .catch((error: any) => {
+        if (cancelled) return;
+        setPlayers([]);
+        setStatus({ tone: 'error', message: error?.message || 'Unable to load substitution data.' });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [auth.user, event, formationId]);
+
+  useEffect(() => {
+    if (period && periods.includes(period)) return;
+    setPeriod(periods[0] || '');
+  }, [period, periods]);
+
+  useEffect(() => {
+    if (!subOptions.onFieldPlayers.some((player: any) => player.id === outPlayerId)) {
+      setOutPlayerId(subOptions.onFieldPlayers[0]?.id || '');
+    }
+    if (!subOptions.offFieldPlayers.some((player: any) => player.id === inPlayerId)) {
+      setInPlayerId(subOptions.offFieldPlayers[0]?.id || '');
+    }
+  }, [subOptions.onFieldPlayers, subOptions.offFieldPlayers, outPlayerId, inPlayerId]);
+
+  const executeSubstitution = async () => {
+    if (!auth.user || !activePeriod || !outPlayerId || !inPlayerId) return;
+    const now = new Date();
+    const result = applyLiveSubstitution({
+      period: activePeriod,
+      outId: outPlayerId,
+      inId: inPlayerId,
+      rotationPlan,
+      rotationActual,
+      players,
+      now
+    });
+    if (!result) {
+      setStatus({ tone: 'error', message: 'Choose an on-field player and an available substitute.' });
+      return;
+    }
+
+    const note = {
+      type: 'substitution',
+      period: activePeriod,
+      text: `${formatSubstitutionPlayer(result.inPlayer)} for ${formatSubstitutionPlayer(result.outPlayer)} at ${result.position}`,
+      createdAt: now.toISOString(),
+      createdBy: auth.user.uid,
+      createdByName: auth.user.displayName || auth.user.email || 'Staff'
+    };
+    const nextNotes = [...coachingNotes, note];
+    setSaving(true);
+    setStatus(null);
+    try {
+      const saved = await saveGameDaySubstitutionForApp(event.teamId, event.id, auth.user, {
+        rotationPlan: result.rotationPlan,
+        rotationActual: result.rotationActual,
+        coachingNotes: nextNotes
+      });
+      setRotationPlan(saved.rotationPlan || result.rotationPlan);
+      setRotationActual(saved.rotationActual || result.rotationActual);
+      setCoachingNotes(saved.coachingNotes || nextNotes);
+      setStatus({ tone: 'success', message: 'Substitution saved to the shared game-day log.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save substitution.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-2xl border border-cyan-200 bg-cyan-50/70 p-3" data-testid="game-day-substitution-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-cyan-700">Substitution plan</div>
+          <div className="mt-1 text-sm font-semibold text-gray-950">Run the published lineup rotation and live log from the same game-day fields as the web command center.</div>
+        </div>
+        <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-cyan-700 shadow-sm">{loading ? 'Loading' : `${periods.length} periods`}</span>
+      </div>
+
+      {periods.length && players.length ? (
+        <>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            <label className="text-xs font-black uppercase tracking-[0.04em] text-cyan-700">
+              Period
+              <select className="mt-1 min-h-11 w-full rounded-xl border border-cyan-200 bg-white px-3 text-sm font-semibold text-gray-900" value={activePeriod} onChange={(changeEvent) => setPeriod(changeEvent.target.value)} disabled={saving}>
+                {periods.map((candidate) => <option key={candidate} value={candidate}>{candidate}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-black uppercase tracking-[0.04em] text-cyan-700">
+              Out
+              <select className="mt-1 min-h-11 w-full rounded-xl border border-cyan-200 bg-white px-3 text-sm font-semibold text-gray-900" value={outPlayerId} onChange={(changeEvent) => setOutPlayerId(changeEvent.target.value)} disabled={saving || !subOptions.onFieldPlayers.length}>
+                {subOptions.onFieldPlayers.map((player: any) => <option key={player.id} value={player.id}>{formatSubstitutionPlayer(player)}</option>)}
+              </select>
+            </label>
+            <label className="text-xs font-black uppercase tracking-[0.04em] text-cyan-700">
+              In
+              <select className="mt-1 min-h-11 w-full rounded-xl border border-cyan-200 bg-white px-3 text-sm font-semibold text-gray-900" value={inPlayerId} onChange={(changeEvent) => setInPlayerId(changeEvent.target.value)} disabled={saving || !subOptions.offFieldPlayers.length}>
+                {subOptions.offFieldPlayers.map((player: any) => <option key={player.id} value={player.id}>{formatSubstitutionPlayer(player)}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button type="button" className="primary-button min-h-11 px-4 text-sm" onClick={executeSubstitution} disabled={saving || !outPlayerId || !inPlayerId}>
+              {saving ? 'Saving sub' : 'Execute sub'}
+            </button>
+            <span className="text-xs font-semibold text-gray-500">Writes rotationPlan, rotationActual, and coachingNotes for web/app handoff.</span>
+          </div>
+        </>
+      ) : (
+        <div className="mt-3 rounded-xl border border-cyan-100 bg-white p-3 text-sm font-semibold text-gray-600">
+          Publish a lineup first to enable live substitution planning.
+        </div>
+      )}
+
+      {projectedTime.length ? (
+        <div className="mt-3 rounded-xl border border-cyan-100 bg-white p-3">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Projected playing time</div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {projectedTime.slice(0, 8).map((row) => (
+              <div key={row.playerId} className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-2 py-2 text-sm font-semibold">
+                <span className="min-w-0 truncate">{row.playerNumber ? `#${row.playerNumber} ` : ''}{row.playerName}</span>
+                <span className="flex-none tabular-nums text-gray-700">{Math.round(row.minutes)} min</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mt-3 rounded-xl border border-cyan-100 bg-white p-3">
+        <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Live log</div>
+        <div className="mt-2 space-y-2">
+          {logEntries.length ? logEntries.slice(0, 8).map((entry) => (
+            <div key={entry.id} className="rounded-lg border border-gray-100 bg-gray-50 px-2 py-2">
+              <div className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">{entry.kind}{entry.period ? ` · ${entry.period}` : ''}{entry.timeLabel ? ` · ${entry.timeLabel}` : ''}</div>
+              <div className="mt-0.5 text-sm font-semibold text-gray-900">{entry.text}</div>
+            </div>
+          )) : <div className="text-sm font-semibold text-gray-500">Subs and score events will appear here in game order.</div>}
+        </div>
+      </div>
+
+      {status ? <div className={`mt-3 text-sm font-semibold ${status.tone === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>{status.message}</div> : null}
     </div>
   );
 }

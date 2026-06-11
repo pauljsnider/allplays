@@ -188,6 +188,24 @@ export type ParentScheduleEvent = {
     publishedRecipientParentIds?: string[];
     publishedReadBy?: string[];
   } | null;
+  rotationPlan?: Record<string, any> | null;
+  rotationActual?: Record<string, any> | null;
+  coachingNotes?: Array<{
+    text: string;
+    type?: string;
+    period?: string | null;
+    createdAt?: Date | string | null;
+  }>;
+  liveEvents?: Array<{
+    id?: string;
+    eventId?: string;
+    type?: string;
+    period?: string | null;
+    description?: string;
+    playerName?: string;
+    stat?: string;
+    createdAt?: Date | string | number | null;
+  }>;
 };
 
 export type CalendarScheduleEntry = ParentScheduleEvent & {

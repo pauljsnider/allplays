@@ -426,6 +426,20 @@ async function mockScheduleModules(page, options = {}) {
                     return preview;
                 }
 
+                export async function loadGameDayLiveEventsForApp(teamId, gameId) {
+                    window.__scheduleCalls.liveEvents = (window.__scheduleCalls.liveEvents || []).concat({ action: 'load', teamId, gameId });
+                    return [];
+                }
+
+                export async function saveGameDaySubstitutionForApp(teamId, gameId, user, payload) {
+                    window.__scheduleCalls.liveEvents = (window.__scheduleCalls.liveEvents || []).concat({ action: 'substitution', teamId, gameId, userId: user?.uid || null, payload });
+                    return {
+                        rotationPlan: payload?.rotationPlan || {},
+                        rotationActual: payload?.rotationActual || {},
+                        coachingNotes: payload?.coachingNotes || []
+                    };
+                }
+
                 export async function completeGameWrapupForApp(teamId, gameId, payload, user) {
                     window.__scheduleCalls.wrapup = (window.__scheduleCalls.wrapup || []).concat({
                         teamId,
