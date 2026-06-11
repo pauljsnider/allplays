@@ -503,6 +503,47 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
   });
 
+  it('does not expose the public share action when only the local privacy toggle changes', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'private',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl,
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+
+    const publicProfileCard = screen.getByRole('link', { name: /Public athlete profile/i });
+    fireEvent.click(publicProfileCard);
+
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(publicProfileCard.getAttribute('href')).toBe('#');
+    expect(publicProfileCard.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('Publish and save this profile before the public share link becomes available.')).toBeTruthy();
+    expect(playerServiceMocks.saveParentAthleteProfileDraft).not.toHaveBeenCalled();
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+  });
+
   it('requires saving updated public profile content before sharing the public link', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
 
