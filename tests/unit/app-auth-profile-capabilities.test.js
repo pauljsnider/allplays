@@ -420,6 +420,27 @@ describe('React app auth/profile capability parity', () => {
         ]);
     });
 
+    it('routes the basketball sideline tracker capability to the native game hub lineup and sub flow', () => {
+        const capabilities = readProjectFile('apps/app/src/data/capabilities.ts');
+        const capabilityPage = readProjectFile('apps/app/src/pages/CapabilityPage.tsx');
+        const scheduleEventDetail = readProjectFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+
+        expectContains(capabilities, [
+            "capability('track-basketball', 'Basketball sideline tracker', 'track-basketball.html', 'Tracking', 'Starting five setup, published-lineup substitutions, on-court rotation, playing-time visibility, and shared live log handoff in the app game hub.', ['Starting five', 'Published lineup handoff', 'Substitutions', 'On-court rotation', 'Playing-time visibility', 'Shared live log'], '/schedule', 'native-shell', staffRoles)",
+            "'track-basketball'"
+        ]);
+        expectContains(capabilityPage, [
+            "capability.status === 'native-shell'",
+            'Open app route'
+        ]);
+        expectContains(scheduleEventDetail, [
+            'Lineup builder',
+            'Substitution plan',
+            'Projected playing time',
+            'Writes rotationPlan, rotationActual, and coachingNotes'
+        ]);
+    });
+
     it('covers parent-dashboard.html schedule capabilities and filters in the React app schedule', () => {
         const legacyParentDashboard = readProjectFile('parent-dashboard.html');
         const schedulePage = readProjectFile('apps/app/src/pages/Schedule.tsx');
