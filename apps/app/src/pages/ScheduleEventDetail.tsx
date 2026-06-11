@@ -213,6 +213,10 @@ export function shouldAutosaveLineupDraft(isDirty: boolean, formationId: string,
   return Boolean(isDirty && String(formationId || '').trim());
 }
 
+export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<string, any> | null | undefined, previewGamePlan: Record<string, any> | null | undefined) {
+  return !hasLineupDraft(existingGamePlan) && hasLineupDraft(previewGamePlan);
+}
+
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
   const [searchParams] = useSearchParams();
@@ -1959,10 +1963,10 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
         if (cancelled) return;
         setPreview(result);
         latestPreviewRef.current = result;
-        const seeded = buildLineupEditorAssignments(formationId, event.gamePlan || result.gamePlan || null);
+        const seeded = buildLineupEditorAssignments(formationId, result.gamePlan || event.gamePlan || null);
         setDraftLineups(seeded);
         latestDraftRef.current = seeded;
-        dirtyRef.current = false;
+        dirtyRef.current = shouldAutosaveGeneratedLineupDraft(event.gamePlan, result.gamePlan);
       })
       .catch((error: any) => {
         if (cancelled) return;

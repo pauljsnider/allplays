@@ -53,7 +53,7 @@ vi.mock('../lib/scheduleHub', () => ({
   getPublicPlayerHref: vi.fn(() => '#')
 }));
 
-import { ScheduleEventDetail, shouldAutosaveLineupDraft, shouldPersistLineupDraft } from './ScheduleEventDetail';
+import { ScheduleEventDetail, shouldAutosaveGeneratedLineupDraft, shouldAutosaveLineupDraft, shouldPersistLineupDraft } from './ScheduleEventDetail';
 import type { AuthState } from '../lib/types';
 
 const auth: AuthState = {
@@ -124,6 +124,18 @@ describe('ScheduleEventDetail lineup draft guards', () => {
 
   it('allows autosave scheduling for cleared drafts after the user edits the lineup', () => {
     expect(shouldAutosaveLineupDraft(true, 'basketball-5v5', {})).toBe(true);
+  });
+
+  it('autosaves a generated lineup draft when the saved game has no existing draft', () => {
+    expect(shouldAutosaveGeneratedLineupDraft(
+      { lineups: {}, publishedLineups: {}, publishedVersion: 0 },
+      { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' } }
+    )).toBe(true);
+
+    expect(shouldAutosaveGeneratedLineupDraft(
+      { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1' } },
+      { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' } }
+    )).toBe(false);
   });
 });
 
