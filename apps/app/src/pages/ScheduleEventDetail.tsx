@@ -2595,7 +2595,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
       setLoadingHomePlayers(true);
       try {
         const players = await loadHomeScoringPlayers(event.teamId, event.id);
-        if (!cancelled) setHomePlayers(players);
+        if (!cancelled) setHomePlayers(Array.isArray(players) ? players : []);
       } catch (error) {
         console.warn('[schedule-event-detail] Unable to load home scoring players:', error);
         if (!cancelled) setHomePlayers([]);
