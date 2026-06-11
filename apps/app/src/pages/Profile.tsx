@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -39,7 +39,12 @@ import {
   saveProfileDocument,
   uploadProfilePhoto
 } from '../lib/profileService';
-import { enablePushNotificationsForUser } from '../lib/pushService';
+import {
+  enablePushNotificationsForUser,
+  getPushNotificationPermissionStatus,
+  openPushNotificationSettings,
+  type PushNotificationPermissionStatus
+} from '../lib/pushService';
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -98,6 +103,8 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [profileStatus, setProfileStatus] = useState<Status | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<Status | null>(null);
   const [notificationStatus, setNotificationStatus] = useState<Status | null>(null);
+  const [pushPermissionStatus, setPushPermissionStatus] = useState<PushNotificationPermissionStatus | null>(null);
+  const [pushPermissionLoading, setPushPermissionLoading] = useState(false);
   const [passwordStatus, setPasswordStatus] = useState<Status | null>(null);
   const [inviteStatus, setInviteStatus] = useState<Status | null>(null);
   const [accountMergeStatus, setAccountMergeStatus] = useState<Status | null>(null);
@@ -134,6 +141,39 @@ export function Profile({ auth }: { auth: AuthState }) {
   const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && Boolean(selectedNotificationTeam);
   const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && loadedNotificationTeamId === selectedTeamId;
   const selectedTeamPreferencesLoading = alertsReady && Boolean(selectedTeamId) && !selectedTeamPreferencesHydrated;
+  const nativePushEnabled = isNative && pushPermissionStatus?.state === 'enabled';
+  const nativePushBlocked = isNative && pushPermissionStatus?.state === 'blocked';
+  const nativePushUnsupported = isNative && pushPermissionStatus?.state === 'unsupported';
+
+  const refreshPushPermissionStatus = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (!isNative || activeProfileSection !== 'alerts') {
+      setPushPermissionStatus(null);
+      setPushPermissionLoading(false);
+      return null;
+    }
+
+    if (!options.silent) {
+      setPushPermissionLoading(true);
+    }
+
+    try {
+      const nextStatus = await getPushNotificationPermissionStatus();
+      setPushPermissionStatus(nextStatus);
+      return nextStatus;
+    } catch (error) {
+      console.warn('[profile] Unable to load push permission state:', error);
+      setPushPermissionStatus({
+        state: 'unsupported',
+        isNative: true,
+        platform: 'native',
+        canPrompt: false,
+        canOpenSettings: false
+      });
+      return null;
+    } finally {
+      setPushPermissionLoading(false);
+    }
+  }, [activeProfileSection, isNative]);
 
   const selectProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
@@ -164,6 +204,8 @@ export function Profile({ auth }: { auth: AuthState }) {
       setAccountMergeStatus(null);
       setNotificationTeams([]);
       setNotificationTeamsLoaded(false);
+      setPushPermissionStatus(null);
+      setPushPermissionLoading(false);
       setNotificationPreferences(emptyPreferences);
       setLoadedNotificationTeamId('');
       setSelectedTeamId('');
@@ -206,6 +248,31 @@ export function Profile({ auth }: { auth: AuthState }) {
       cancelled = true;
     };
   }, [user]);
+
+  useEffect(() => {
+    void refreshPushPermissionStatus();
+  }, [refreshPushPermissionStatus]);
+
+  useEffect(() => {
+    if (!isNative || activeProfileSection !== 'alerts') {
+      return;
+    }
+
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'hidden') {
+        return;
+      }
+      void refreshPushPermissionStatus({ silent: true });
+    };
+
+    window.addEventListener('focus', refreshOnReturn);
+    document.addEventListener('visibilitychange', refreshOnReturn);
+
+    return () => {
+      window.removeEventListener('focus', refreshOnReturn);
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+    };
+  }, [activeProfileSection, isNative, refreshPushPermissionStatus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -552,12 +619,19 @@ export function Profile({ auth }: { auth: AuthState }) {
 
     try {
       await enablePushNotificationsForUser(user.uid);
+      await refreshPushPermissionStatus({ silent: true });
       setNotificationStatus({ message: 'Push is enabled on this device.', tone: 'success' });
     } catch (error: any) {
+      await refreshPushPermissionStatus({ silent: true });
       setNotificationStatus({ message: error?.message || 'Failed to enable push on this device.', tone: 'error' });
     } finally {
       setBusy('');
     }
+  };
+
+  const openDeviceSettingsForPush = async (statusMessage = 'Open device settings, allow notifications, then return here. We will refresh this screen when you come back.') => {
+    setNotificationStatus({ message: statusMessage, tone: 'neutral' });
+    await openPushNotificationSettings();
   };
 
   const turnOnGameDayAlerts = async () => {
@@ -572,6 +646,24 @@ export function Profile({ auth }: { auth: AuthState }) {
     setNotificationStatus(null);
 
     try {
+      const currentPermissionStatus = isNative
+        ? (pushPermissionStatus || await getPushNotificationPermissionStatus())
+        : null;
+
+      if (currentPermissionStatus) {
+        setPushPermissionStatus(currentPermissionStatus);
+      }
+
+      if (currentPermissionStatus?.state === 'blocked') {
+        await openDeviceSettingsForPush('Notifications are turned off in device settings. Open device settings to finish turning on game-day alerts.');
+        return;
+      }
+
+      if (currentPermissionStatus?.state === 'unsupported') {
+        setNotificationStatus({ message: 'Push notifications are not supported on this device.', tone: 'error' });
+        return;
+      }
+
       const currentPreferences = loadedNotificationTeamId === teamId
         ? notificationPreferences
         : await loadNotificationPreferences(user.uid, teamId);
@@ -581,11 +673,13 @@ export function Profile({ auth }: { auth: AuthState }) {
       });
 
       await enablePushNotificationsForUser(user.uid);
+      await refreshPushPermissionStatus({ silent: true });
       const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
       setNotificationPreferences(saved);
       setLoadedNotificationTeamId(teamId);
       setNotificationStatus({ message: 'Game-day alerts are on for this team.', tone: 'success' });
     } catch (error: any) {
+      await refreshPushPermissionStatus({ silent: true });
       setNotificationStatus({ message: error?.message || 'Failed to turn on game-day alerts.', tone: 'error' });
     } finally {
       setBusy('');
@@ -940,20 +1034,40 @@ export function Profile({ auth }: { auth: AuthState }) {
                   ))}
                 </select>
               </label>
+              {isNative ? <NativePushPermissionCard permissionStatus={pushPermissionStatus} loading={pushPermissionLoading} onOpenSettings={openDeviceSettingsForPush} onRefresh={() => void refreshPushPermissionStatus()} /> : null}
               <div className="rounded-2xl border border-gray-200 bg-white p-3">
                 <div className="text-sm font-black text-gray-900">Device push</div>
-                <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Register this device for push notifications without changing team alert preferences.</p>
-                <button type="button" className="secondary-button mt-3" onClick={enablePushOnDevice} disabled={busy === 'push-device' || !user}>
-                  {busy === 'push-device' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-                  Enable push on this device
-                </button>
+                <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">
+                  {nativePushEnabled
+                    ? 'Notifications are already allowed on this device. Refresh registration if this device recently changed accounts.'
+                    : nativePushBlocked
+                      ? 'Notifications are turned off in device settings. Open settings to re-enable them for ALL PLAYS.'
+                      : nativePushUnsupported
+                        ? 'This device does not support push notifications in the native shell.'
+                        : 'Register this device for push notifications without changing team alert preferences.'}
+                </p>
+                {nativePushUnsupported ? null : nativePushBlocked ? (
+                  <button type="button" className="secondary-button mt-3" onClick={() => void openDeviceSettingsForPush()}>
+                    <Upload className="h-4 w-4" aria-hidden="true" />
+                    Open device settings
+                  </button>
+                ) : (
+                  <button type="button" className="secondary-button mt-3" onClick={enablePushOnDevice} disabled={busy === 'push-device' || !user}>
+                    {busy === 'push-device' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
+                    {nativePushEnabled ? 'Refresh push registration' : 'Enable push on this device'}
+                  </button>
+                )}
               </div>
               <div className="rounded-2xl border border-primary-100 bg-primary-50 p-3">
                 <div className="text-sm font-black text-primary-900">Game-day alerts</div>
-                <p className="mt-1 text-sm font-semibold leading-6 text-primary-800">One tap enables push on this device and turns on schedule changes and live score updates for the selected team.</p>
-                <button type="button" className="primary-button mt-3" onClick={turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
+                <p className="mt-1 text-sm font-semibold leading-6 text-primary-800">
+                  {nativePushBlocked
+                    ? 'Notifications are blocked in device settings. Open settings, allow notifications, then return here to finish game-day alerts.'
+                    : 'One tap enables push on this device and turns on schedule changes and live score updates for the selected team.'}
+                </p>
+                <button type="button" className="primary-button mt-3" onClick={nativePushBlocked ? () => void openDeviceSettingsForPush('Notifications are turned off in device settings. Open device settings to finish turning on game-day alerts.') : turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
                   {busy === 'game-day-alerts' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
-                  Turn on game-day alerts
+                  {nativePushBlocked ? 'Open device settings to finish alerts' : 'Turn on game-day alerts'}
                 </button>
               </div>
             </div>
@@ -1170,6 +1284,75 @@ function PreferenceToggle({ label, checked, onChange }: { label: string; checked
       <input className="h-5 w-5 accent-primary-600" type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
       <span className="text-sm font-black text-gray-700">{label}</span>
     </label>
+  );
+}
+
+function NativePushPermissionCard({
+  permissionStatus,
+  loading,
+  onOpenSettings,
+  onRefresh
+}: {
+  permissionStatus: PushNotificationPermissionStatus | null;
+  loading: boolean;
+  onOpenSettings: (statusMessage?: string) => Promise<void>;
+  onRefresh: () => void;
+}) {
+  if (loading && !permissionStatus) {
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3" role="status" aria-live="polite">
+        <div className="flex items-center gap-2 text-sm font-black text-gray-900">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Checking device notification access…
+        </div>
+      </div>
+    );
+  }
+
+  if (!permissionStatus) {
+    return null;
+  }
+
+  if (permissionStatus.state === 'enabled') {
+    return (
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+        <div className="text-sm font-black text-emerald-900">Push is allowed on this device</div>
+        <p className="mt-1 text-sm font-semibold leading-6 text-emerald-800">ALL PLAYS can request push registration here without sending you back through the OS permission prompt.</p>
+      </div>
+    );
+  }
+
+  if (permissionStatus.state === 'blocked') {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+        <div className="text-sm font-black text-amber-900">Notifications are off in device settings</div>
+        <p className="mt-1 text-sm font-semibold leading-6 text-amber-800">ALL PLAYS cannot enable push until notifications are turned back on at the OS level. Open device settings, allow notifications, then return here. This screen refreshes when you come back.</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className="secondary-button" onClick={() => void onOpenSettings()}>
+            Open device settings
+          </button>
+          <button type="button" className="ghost-button" onClick={onRefresh}>
+            Check again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (permissionStatus.state === 'unsupported') {
+    return (
+      <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+        <div className="text-sm font-black text-gray-900">Push is unavailable on this device</div>
+        <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">This native shell cannot register for push notifications right now.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-primary-100 bg-primary-50 p-3">
+      <div className="text-sm font-black text-primary-900">Allow notifications to finish setup</div>
+      <p className="mt-1 text-sm font-semibold leading-6 text-primary-800">The next step will show the iPhone or Android notification prompt. After you allow notifications, ALL PLAYS can finish device registration here.</p>
+    </div>
   );
 }
 

@@ -45,9 +45,22 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             notificationSaves: [],
             notificationLoads: [],
             push: 0,
-            accessCodes: []
+            accessCodes: [],
+            openPushSettings: 0
         };
         window.__appShareCalls = [];
+        window.__mockShellLayout = {
+            isDesktop: false,
+            isNative: false,
+            isDesktopWeb: false
+        };
+        window.__mockPushPermissionStates = [{
+            state: 'prompt',
+            isNative: false,
+            platform: 'web',
+            canPrompt: true,
+            canOpenSettings: false
+        }];
     }, { mockUser: user, mockEmailLink: emailLink });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
@@ -299,6 +312,40 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function enablePushNotificationsForUser() {
                     window.__appProfileCalls.push += 1;
+                }
+
+                export async function getPushNotificationPermissionStatus() {
+                    const queue = window.__mockPushPermissionStates || [];
+                    if (queue.length > 1) {
+                        return queue.shift();
+                    }
+                    return queue[0] || {
+                        state: 'prompt',
+                        isNative: false,
+                        platform: 'web',
+                        canPrompt: true,
+                        canOpenSettings: false
+                    };
+                }
+
+                export async function openPushNotificationSettings() {
+                    window.__appProfileCalls.openPushSettings += 1;
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/useShellLayout\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function useShellLayout() {
+                    return window.__mockShellLayout || {
+                        isDesktop: false,
+                        isNative: false,
+                        isDesktopWeb: false
+                    };
                 }
             `
         });
@@ -637,4 +684,48 @@ test('profile exposes account, notification, invite, verification, password, upl
         reset: ['parent@example.com'],
         signOut: 1
     });
+});
+
+test('profile alerts recover from blocked native notification permissions', async ({ page, baseURL }) => {
+    const user = {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: false,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user });
+    await page.addInitScript(() => {
+        window.__mockShellLayout = {
+            isDesktop: false,
+            isNative: true,
+            isDesktopWeb: false
+        };
+        window.__mockPushPermissionStates = [
+            {
+                state: 'blocked',
+                isNative: true,
+                platform: 'ios',
+                canPrompt: false,
+                canOpenSettings: true
+            },
+            {
+                state: 'enabled',
+                isNative: true,
+                platform: 'ios',
+                canPrompt: false,
+                canOpenSettings: false
+            }
+        ];
+    });
+    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+
+    await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+    await expect(page.getByText('Notifications are off in device settings')).toBeVisible();
+    await page.getByRole('button', { name: 'Open device settings' }).first().click();
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.openPushSettings)).toBe(1);
+
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByText('Push is allowed on this device')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Refresh push registration' })).toBeVisible();
 });
