@@ -4,12 +4,37 @@ import type { NotificationActionPerformedEvent } from '@capacitor-firebase/messa
 import { saveNotificationDeviceToken } from './profileService';
 import { rememberPendingPushRoute, resolvePushNotificationRoute } from './pushNotificationRouting';
 
+export type PushNotificationPermissionState = 'enabled' | 'prompt' | 'blocked' | 'unsupported';
+
+export type PushNotificationPermissionStatus = {
+  state: PushNotificationPermissionState;
+  isNative: boolean;
+  platform: string;
+  canPrompt: boolean;
+  canOpenSettings: boolean;
+};
+
 type PushRegistrationResult = {
   token: string;
   platform: string;
 };
 
 const nativePushTimeoutMs = 15000;
+const iosNotificationSettingsUrl = 'app-settings:';
+const androidNotificationSettingsUrl = 'intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;S.extra_app_package=ai.allplays.lite;end';
+const androidAppSettingsUrl = 'app-settings:';
+
+export class PushPermissionError extends Error {
+  code: 'push-permission-blocked' | 'push-unsupported';
+  permissionStatus: PushNotificationPermissionStatus;
+
+  constructor(message: string, code: 'push-permission-blocked' | 'push-unsupported', permissionStatus: PushNotificationPermissionStatus) {
+    super(message);
+    this.name = 'PushPermissionError';
+    this.code = code;
+    this.permissionStatus = permissionStatus;
+  }
+}
 
 export async function addPushNotificationOpenListener(onRouteOpen: (route: string) => void) {
   if (!Capacitor.isNativePlatform()) {
@@ -50,18 +75,26 @@ export async function enablePushNotificationsForUser(userId: string): Promise<Pu
     };
   }
 
-  const supported = await FirebaseMessaging.isSupported().catch(() => ({ isSupported: true }));
-  if (!supported.isSupported) {
-    throw new Error('Push notifications are not supported on this device.');
+  const permissionStatus = await getPushNotificationPermissionStatus();
+  if (permissionStatus.state === 'unsupported') {
+    throw new PushPermissionError('Push notifications are not supported on this device.', 'push-unsupported', permissionStatus);
+  }
+
+  if (permissionStatus.state === 'blocked') {
+    throw new PushPermissionError('Notifications are turned off in device settings. Open device settings to allow notifications for ALL PLAYS.', 'push-permission-blocked', permissionStatus);
   }
 
   let permissions = await FirebaseMessaging.checkPermissions();
-  if (permissions.receive === 'prompt') {
+  if (permissionStatus.state === 'prompt') {
     permissions = await FirebaseMessaging.requestPermissions();
   }
 
   if (permissions.receive !== 'granted') {
-    throw new Error('Notification permission was not granted.');
+    throw new PushPermissionError(
+      'Notifications are turned off in device settings. Open device settings to allow notifications for ALL PLAYS.',
+      'push-permission-blocked',
+      buildPushPermissionStatus('blocked', Capacitor.getPlatform())
+    );
   }
 
   const token = await getNativeMessagingToken();
@@ -75,6 +108,53 @@ export async function enablePushNotificationsForUser(userId: string): Promise<Pu
   return {
     token,
     platform
+  };
+}
+
+export async function getPushNotificationPermissionStatus(): Promise<PushNotificationPermissionStatus> {
+  if (!Capacitor.isNativePlatform()) {
+    return buildPushPermissionStatus('unsupported', 'web');
+  }
+
+  const platform = Capacitor.getPlatform();
+  const supported = await FirebaseMessaging.isSupported().catch(() => ({ isSupported: true }));
+  if (!supported.isSupported) {
+    return buildPushPermissionStatus('unsupported', platform);
+  }
+
+  const permissions = await FirebaseMessaging.checkPermissions();
+  if (permissions.receive === 'granted') {
+    return buildPushPermissionStatus('enabled', platform);
+  }
+  if (permissions.receive === 'prompt' || permissions.receive === 'prompt-with-rationale') {
+    return buildPushPermissionStatus('prompt', platform);
+  }
+  return buildPushPermissionStatus('blocked', platform);
+}
+
+export async function openPushNotificationSettings(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) {
+    return;
+  }
+
+  const platform = Capacitor.getPlatform();
+  const settingsUrl = platform === 'android' ? androidNotificationSettingsUrl : iosNotificationSettingsUrl;
+  const fallbackUrl = platform === 'android' ? androidAppSettingsUrl : iosNotificationSettingsUrl;
+
+  try {
+    window.location.assign(settingsUrl);
+  } catch {
+    window.location.assign(fallbackUrl);
+  }
+}
+
+function buildPushPermissionStatus(state: PushNotificationPermissionState, platform: string): PushNotificationPermissionStatus {
+  return {
+    state,
+    isNative: platform !== 'web',
+    platform,
+    canPrompt: state === 'prompt',
+    canOpenSettings: state === 'blocked'
   };
 }
 

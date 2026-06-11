@@ -31,7 +31,9 @@ const publicActionsMocks = vi.hoisted(() => ({
 }));
 
 const pushServiceMocks = vi.hoisted(() => ({
-  enablePushNotificationsForUser: vi.fn()
+  enablePushNotificationsForUser: vi.fn(),
+  getPushNotificationPermissionStatus: vi.fn(),
+  openPushNotificationSettings: vi.fn()
 }));
 
 const shellLayoutState = vi.hoisted(() => ({
@@ -159,6 +161,14 @@ describe('Profile invites', () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([]);
     profileServiceMocks.acquireProfilePhoto.mockResolvedValue(new File(['native-photo'], 'native-camera.jpg', { type: 'image/jpeg' }));
     pushServiceMocks.enablePushNotificationsForUser.mockResolvedValue(undefined);
+    pushServiceMocks.getPushNotificationPermissionStatus.mockResolvedValue({
+      state: 'prompt',
+      isNative: false,
+      platform: 'web',
+      canPrompt: true,
+      canOpenSettings: false
+    });
+    pushServiceMocks.openPushNotificationSettings.mockResolvedValue(undefined);
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadParentTeams.mockResolvedValue([]);
     profileServiceMocks.requestAccountMerge.mockResolvedValue(undefined);
@@ -490,6 +500,62 @@ describe('Profile invites', () => {
       liveScore: false,
       schedule: true
     }));
+  });
+
+  it('shows blocked native push recovery and refreshes after returning from settings', async () => {
+    shellLayoutState.isNative = true;
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    pushServiceMocks.getPushNotificationPermissionStatus
+      .mockResolvedValueOnce({
+        state: 'blocked',
+        isNative: true,
+        platform: 'ios',
+        canPrompt: false,
+        canOpenSettings: true
+      })
+      .mockResolvedValueOnce({
+        state: 'enabled',
+        isNative: true,
+        platform: 'ios',
+        canPrompt: false,
+        canOpenSettings: false
+      });
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    expect(await screen.findByText('Notifications are off in device settings')).toBeTruthy();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Open device settings' })[0]);
+
+    await waitFor(() => expect(pushServiceMocks.openPushNotificationSettings).toHaveBeenCalledTimes(1));
+    fireEvent(window, new Event('focus'));
+
+    expect(await screen.findByText('Push is allowed on this device')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Refresh push registration' })).toBeTruthy();
+  });
+
+  it('routes blocked native game-day alerts through device settings instead of saving', async () => {
+    shellLayoutState.isNative = true;
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    pushServiceMocks.getPushNotificationPermissionStatus.mockResolvedValue({
+      state: 'blocked',
+      isNative: true,
+      platform: 'android',
+      canPrompt: false,
+      canOpenSettings: true
+    });
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+    await screen.findByText('Notifications are off in device settings');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open device settings to finish alerts' }));
+
+    await waitFor(() => expect(pushServiceMocks.openPushNotificationSettings).toHaveBeenCalledTimes(1));
+    expect(pushServiceMocks.enablePushNotificationsForUser).not.toHaveBeenCalled();
+    expect(profileServiceMocks.saveNotificationPreferences).not.toHaveBeenCalled();
   });
 
   it('uploads the normalized profile photo instead of the original selection', async () => {
