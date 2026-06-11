@@ -49,6 +49,15 @@ describe('gameDayLineupBuilder', () => {
     });
   });
 
+  it('does not remove a valid same-player slot when the target key has no parsed period', () => {
+    expect(assignLineupPlayer({
+      'Q1-pg': 'p1'
+    }, 'bench', 'p1')).toEqual({
+      'Q1-pg': 'p1',
+      bench: 'p1'
+    });
+  });
+
   it('swaps slot occupants when dragging between assignments', () => {
     expect(moveLineupPlayer({
       'Q1-pg': 'p1',
