@@ -278,7 +278,7 @@ export async function savePlayerCustomRosterFieldValues({
   const team = await Promise.resolve(getTeam(teamId, { includeInactive: true })).catch(() => null);
   const access = buildPlayerAccess(user, teamId, playerId, team);
   if (!access.canEditCustomRosterFields) {
-    throw new Error('Only team staff can edit custom roster fields.');
+    throw new Error('Only team owners and admins can edit custom roster fields.');
   }
 
   const [players, privateProfile, rosterFieldDefinitions] = await Promise.all([
@@ -629,23 +629,29 @@ function normalizeEmail(value: unknown) {
   return String(value || '').trim().toLowerCase();
 }
 
-function isTeamStaffUser(user: AuthUser | null, team: Record<string, any> | null) {
+function isTeamOwnerOrAdminUser(user: AuthUser | null, team: Record<string, any> | null) {
   if (!user?.uid) return false;
   if (isElevatedAppAdmin(user)) return true;
   if (team?.ownerId === user.uid) return true;
   const email = normalizeEmail(user.email);
   const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map(normalizeEmail) : [];
-  if (email && adminEmails.includes(email)) return true;
-  return Array.isArray(user.coachOf) && user.coachOf.map((value) => String(value || '').trim()).includes(String(team?.id || '').trim());
+  return !!(email && adminEmails.includes(email));
+}
+
+function isTeamStaffUser(user: AuthUser | null, team: Record<string, any> | null) {
+  if (isTeamOwnerOrAdminUser(user, team)) return true;
+  return !!(Array.isArray(user?.coachOf) && user.coachOf.map((value) => String(value || '').trim()).includes(String(team?.id || '').trim()));
 }
 
 function buildPlayerAccess(user: AuthUser | null, teamId: string, playerId: string, team: Record<string, any> | null) {
   const linkedParent = isLinkedParent(user, teamId, playerId);
-  const isTeamStaff = isTeamStaffUser(user, team ? { ...team, id: team.id || teamId } : { id: teamId });
+  const resolvedTeam = team ? { ...team, id: team.id || teamId } : { id: teamId };
+  const isTeamStaff = isTeamStaffUser(user, resolvedTeam);
+  const canEditCustomRosterFields = isTeamOwnerOrAdminUser(user, resolvedTeam);
   return {
     isLinkedParent: linkedParent,
     isTeamStaff,
-    canEditCustomRosterFields: isTeamStaff
+    canEditCustomRosterFields
   };
 }
 

@@ -163,7 +163,23 @@ describe('savePlayerCustomRosterFieldValues', () => {
       teamId: 'team-1',
       playerId: 'player-1',
       values: { nickname: 'Speedy' }
-    })).rejects.toThrow('Only team staff can edit custom roster fields.');
+    })).rejects.toThrow('Only team owners and admins can edit custom roster fields.');
+
+    expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
+    expect(dbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
+  });
+
+  it('rejects custom roster field edits from coachOf-only users without team admin rights', async () => {
+    await expect(savePlayerCustomRosterFieldValues({
+      user: {
+        uid: 'coach-2',
+        email: 'assistant@example.com',
+        coachOf: ['team-1']
+      } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      values: { nickname: 'Speedy' }
+    })).rejects.toThrow('Only team owners and admins can edit custom roster fields.');
 
     expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
     expect(dbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
@@ -240,5 +256,21 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       expect.objectContaining({ key: 'jerseySize', value: 'YM' })
     ]);
     expect(detail.access.canEditCustomRosterFields).toBe(true);
+  });
+
+  it('keeps coachOf-only users read-only for custom roster fields', async () => {
+    const detail = await loadParentPlayerDetail({
+      uid: 'coach-2',
+      email: 'assistant@example.com',
+      coachOf: ['team-1'],
+      parentOf: []
+    } as any, 'team-1', 'player-1');
+
+    expect(detail.access.isTeamStaff).toBe(true);
+    expect(detail.access.canEditCustomRosterFields).toBe(false);
+    expect(detail.customRosterFields).toEqual([
+      expect.objectContaining({ key: 'nickname', value: 'Rocket' })
+    ]);
+    expect(detail.customRosterFields.some((field) => field.key === 'jerseySize')).toBe(false);
   });
 });
