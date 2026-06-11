@@ -566,6 +566,7 @@ describe('React app TeamMedia move flow', () => {
         name: 'Album A',
         visibility: 'team',
         itemCount: 1,
+        itemsLoaded: true,
         items: [{ id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' }],
       },
       {
@@ -573,6 +574,7 @@ describe('React app TeamMedia move flow', () => {
         name: 'Album B',
         visibility: 'team',
         itemCount: 0,
+        itemsLoaded: true,
         items: [],
       },
     ],
@@ -608,8 +610,8 @@ describe('React app TeamMedia move flow', () => {
     const initialModel = twoAlbumModel();
     const movedModel = twoAlbumModel();
     movedModel.folders = [
-      { ...initialModel.folders[0], itemCount: 0, items: [] },
-      { ...initialModel.folders[1], itemCount: 1, items: initialModel.folders[0].items },
+      { ...initialModel.folders[0], itemCount: 0, itemsLoaded: true, items: [] },
+      { ...initialModel.folders[1], itemCount: 1, itemsLoaded: true, items: initialModel.folders[0].items },
     ];
     parentToolsServiceMocks.loadTeamMediaForApp
       .mockResolvedValueOnce(initialModel)
@@ -628,9 +630,143 @@ describe('React app TeamMedia move flow', () => {
     });
 
     expect(parentToolsServiceMocks.moveTeamMediaItemForApp).toHaveBeenCalledWith('team-1', 'owned-photo', 'folder-2');
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenLastCalledWith(auth.user, 'team-1', {
+      initialFolderId: 'folder-2',
+      folderIds: ['folder-1', 'folder-2'],
+    });
     expect(container.textContent).toContain('Media item moved to Album B.');
     expect(container.textContent).toContain('Album B');
     expect(container.textContent).toContain('Tipoff');
+
+    await act(async () => root.unmount());
+  });
+
+  it('lazy-loads unopened albums once and reuses the cached album on later switches', async () => {
+    const initialModel = mediaModel({
+      canManage: true,
+      folders: [
+        {
+          id: 'folder-1',
+          name: 'Album A',
+          visibility: 'team',
+          itemCount: 1,
+          itemsLoaded: true,
+          items: [{ id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' }],
+        },
+        {
+          id: 'folder-2',
+          name: 'Album B',
+          visibility: 'team',
+          itemCount: 1,
+          itemsLoaded: false,
+          items: [],
+        },
+      ],
+    });
+    const hydratedModel = mediaModel({
+      canManage: true,
+      folders: [
+        initialModel.folders[0],
+        {
+          id: 'folder-2',
+          name: 'Album B',
+          visibility: 'team',
+          itemCount: 1,
+          itemsLoaded: true,
+          items: [{ id: 'video-1', title: 'Replay', type: 'video_link', url: 'https://example.test/replay', uploadedBy: 'user-1' }],
+        },
+      ],
+    });
+    parentToolsServiceMocks.loadTeamMediaForApp
+      .mockResolvedValueOnce(initialModel)
+      .mockResolvedValueOnce(hydratedModel);
+
+    const { container, root } = await renderTeamMedia(initialModel);
+
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenNthCalledWith(1, auth.user, 'team-1', {
+      initialFolderId: '',
+      folderIds: [],
+    });
+
+    click(Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Album B')));
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenNthCalledWith(2, auth.user, 'team-1', {
+      initialFolderId: 'folder-2',
+      folderIds: ['folder-2'],
+    });
+    expect(container.textContent).toContain('Replay');
+
+    click(Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Album A')));
+    click(Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Album B')));
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(2);
+
+    await act(async () => root.unmount());
+  });
+
+  it('refreshes only the active album after a delete', async () => {
+    globalThis.confirm = vi.fn(() => true);
+    const initialModel = mediaModel({
+      canManage: true,
+      folders: [
+        {
+          id: 'folder-1',
+          name: 'Album A',
+          visibility: 'team',
+          itemCount: 1,
+          itemsLoaded: true,
+          items: [{ id: 'owned-photo', title: 'Tipoff', type: 'photo', url: 'https://example.test/tipoff.jpg', uploadedBy: 'user-1' }],
+        },
+        {
+          id: 'folder-2',
+          name: 'Album B',
+          visibility: 'team',
+          itemCount: 3,
+          itemsLoaded: false,
+          items: [],
+        },
+      ],
+    });
+    const refreshedModel = mediaModel({
+      canManage: true,
+      folders: [
+        {
+          id: 'folder-1',
+          name: 'Album A',
+          visibility: 'team',
+          itemCount: 0,
+          itemsLoaded: true,
+          items: [],
+        },
+        {
+          id: 'folder-2',
+          name: 'Album B',
+          visibility: 'team',
+          itemCount: 3,
+          itemsLoaded: false,
+          items: [],
+        },
+      ],
+    });
+    parentToolsServiceMocks.loadTeamMediaForApp
+      .mockResolvedValueOnce(initialModel)
+      .mockResolvedValueOnce(refreshedModel);
+
+    const { container, root } = await renderTeamMedia(initialModel);
+
+    await act(async () => {
+      container.querySelector('[aria-label="Delete Tipoff"]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    expect(parentToolsServiceMocks.deleteTeamMediaItemForApp).toHaveBeenCalledWith('team-1', expect.objectContaining({ id: 'owned-photo' }));
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenLastCalledWith(auth.user, 'team-1', {
+      initialFolderId: 'folder-1',
+      folderIds: ['folder-1'],
+    });
+    expect(container.textContent).toContain('Media item deleted.');
+    expect(container.textContent).toContain('No media in this album.');
 
     await act(async () => root.unmount());
   });

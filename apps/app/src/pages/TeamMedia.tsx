@@ -67,13 +67,23 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const refresh = async ({ showLoading = model === null, preferredFolderId = '' }: { showLoading?: boolean; preferredFolderId?: string } = {}) => {
+  const refresh = async ({ showLoading = model === null, preferredFolderId = '', folderIdsToLoad = [] }: { showLoading?: boolean; preferredFolderId?: string; folderIdsToLoad?: string[] } = {}) => {
     if (!teamId) return;
     if (showLoading) setLoading(true);
     setError('');
     try {
-      const nextModel = await loadTeamMediaForApp(auth.user, teamId);
-      setModel(nextModel);
+      const nextModel = await loadTeamMediaForApp(auth.user, teamId, {
+        initialFolderId: preferredFolderId || activeFolderId,
+        folderIds: folderIdsToLoad
+      });
+      setModel((currentModel) => ({
+        ...nextModel,
+        folders: nextModel.folders.map((folder) => {
+          if (folder.itemsLoaded || folder.items.length) return { ...folder, itemsLoaded: true };
+          const cachedFolder = currentModel?.folders.find((currentFolder) => currentFolder.id === folder.id && (currentFolder.itemsLoaded || currentFolder.items.length));
+          return cachedFolder ? { ...folder, items: cachedFolder.items, itemCount: cachedFolder.itemCount, itemsLoaded: true } : folder;
+        })
+      }));
       setActiveFolderId((current) => {
         if (preferredFolderId && nextModel.folders.some((folder) => folder.id === preferredFolderId)) return preferredFolderId;
         if (current && nextModel.folders.some((folder) => folder.id === current)) return current;
@@ -130,7 +140,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     try {
       await deleteTeamMediaItemForApp(teamId, item);
       setMessage('Media item deleted.');
-      await refresh({ showLoading: false });
+      await refresh({ showLoading: false, preferredFolderId: activeFolder?.id || '', folderIdsToLoad: activeFolder?.id ? [activeFolder.id] : [] });
     } catch (deleteError: any) {
       setError(deleteError?.message || 'Unable to delete media item.');
     } finally {
@@ -151,7 +161,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setMessage('');
     try {
       await moveTeamMediaItemForApp(teamId, item.id, targetFolderId);
-      await refresh({ showLoading: false, preferredFolderId: targetFolderId });
+      await refresh({ showLoading: false, preferredFolderId: targetFolderId, folderIdsToLoad: [activeFolder?.id || '', targetFolderId].filter(Boolean) });
       const destinationName = model?.folders.find((folder) => folder.id === targetFolderId)?.name || 'the selected album';
       setMessage(`Media item moved to ${destinationName}.`);
     } catch (moveError: any) {
@@ -179,7 +189,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         } : folder)
       } : current);
       setMessage('Album cover saved.');
-      await refresh({ showLoading: false, preferredFolderId: activeFolder.id });
+      await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
     } catch (coverError: any) {
       setError(coverError?.message || 'Unable to save album cover.');
     } finally {
@@ -232,7 +242,8 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, teamId]);
 
   const activeFolder = useMemo(() => model?.folders.find((folder) => folder.id === activeFolderId) || model?.folders[0] || null, [activeFolderId, model]);
-  const allItems = useMemo(() => model?.folders.flatMap((folder) => folder.items.map((item) => ({ ...item, folderName: folder.name || 'Album' }))) || [], [model]);
+  const totalItemCount = useMemo(() => (model?.folders || []).reduce((sum, folder) => sum + (Number(folder.itemCount) || 0), 0), [model]);
+  const loadedItems = useMemo(() => model?.folders.flatMap((folder) => folder.items.map((item) => ({ ...item, folderName: folder.name || 'Album' }))) || [], [model]);
   const mediaTypeCounts = useMemo(() => getMediaTypeCounts(activeFolder?.items || []), [activeFolder]);
   const filteredItems = useMemo(() => (activeFolder?.items || []).filter((item) => matchesMediaTypeFilter(item, selectedMediaType)), [activeFolder, selectedMediaType]);
   const visibleItemIds = useMemo(() => filteredItems.map((item) => item.id).filter(Boolean), [filteredItems]);
@@ -240,7 +251,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const selectedCount = selectedItems.length;
   const selectedMediaTypeLabel = MEDIA_TYPE_FILTERS.find((filter) => filter.id === selectedMediaType)?.label || 'All';
   const emptyStateLabel = selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
-  const featured = activeFolder ? getFolderCoverMedia(activeFolder) || allItems[0] || null : allItems[0] || null;
+  const featured = activeFolder ? getFolderCoverMedia(activeFolder) || loadedItems[0] || null : loadedItems[0] || null;
 
   useEffect(() => {
     setSelectedIds((current) => current.filter((itemId) => visibleItemIds.includes(itemId)));
@@ -263,7 +274,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     try {
       await bulkDeleteTeamMediaItemsForApp(teamId, selectedItems);
       setSelectedIds([]);
-      await refresh({ showLoading: false, preferredFolderId: activeFolder?.id || '' });
+      await refresh({ showLoading: false, preferredFolderId: activeFolder?.id || '', folderIdsToLoad: activeFolder?.id ? [activeFolder.id] : [] });
       setMessage(`${deleteCount} media item${deleteCount === 1 ? '' : 's'} deleted.`);
     } catch (deleteError: any) {
       setError(deleteError?.message || 'Unable to delete selected media items.');
@@ -307,7 +318,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
 
       if (uploaded > 0) {
         const resultMessage = getPhotoUploadMessage(uploaded, failed);
-        await refresh({ showLoading: false, preferredFolderId: activeFolder.id });
+        await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
         if (failed > 0) {
           setError(resultMessage);
           setMessage('');
@@ -354,7 +365,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       }
 
       if (uploaded > 0) {
-        await refresh({ showLoading: false, preferredFolderId: activeFolder.id });
+        await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
         const resultMessage = getFileUploadMessage(uploaded, failed);
         if (failed > 0) {
           setError(resultMessage);
@@ -383,7 +394,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       const folderId = await createTeamMediaAlbumForApp(teamId, { name, visibility: albumVisibility });
       setMessage('Album created. You can add photos, files, or links now.');
       setAlbumName('');
-      await refresh({ showLoading: false, preferredFolderId: String(folderId || '') });
+      await refresh({ showLoading: false, preferredFolderId: String(folderId || ''), folderIdsToLoad: folderId ? [String(folderId)] : [] });
     } catch (albumError: any) {
       setError(albumError?.message || 'Unable to create album. Check your connection and permissions, then try again.');
     } finally {
@@ -402,7 +413,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       setMessage('Media link added.');
       setLinkTitle('');
       setLinkUrl('');
-      await refresh({ showLoading: false });
+      await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
     } catch (linkError: any) {
       setError(linkError?.message || 'Unable to add media link.');
     } finally {
@@ -447,7 +458,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           <div className="min-w-0 flex-1">
             <div className="app-label">Team media</div>
             <h1 className="truncate text-xl font-black leading-tight text-gray-950">{model.team.name || 'Team'} media</h1>
-            <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{model.folders.length} albums - {allItems.length} items</p>
+            <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{model.folders.length} albums - {totalItemCount} items</p>
           </div>
           <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refresh({ showLoading: false })} disabled={Boolean(uploading) || creatingAlbum} aria-label="Refresh media" title="Refresh media">
             <RefreshCw className={`h-4 w-4 ${uploading || creatingAlbum ? 'animate-spin' : ''}`} aria-hidden="true" />
@@ -461,9 +472,13 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               type="button"
               className={`flex min-h-9 flex-none items-center gap-2 rounded-full border px-2 py-1 text-xs font-black ${activeFolder?.id === folder.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-200 bg-gray-50 text-gray-700'}`}
               onClick={() => {
-                setActiveFolderId(folder.id);
                 setSelectedMediaType('all');
                 setSelectedIds([]);
+                if (folder.itemsLoaded || folder.items.length) {
+                  setActiveFolderId(folder.id);
+                  return;
+                }
+                void refresh({ showLoading: false, preferredFolderId: folder.id, folderIdsToLoad: [folder.id] });
               }}
               aria-pressed={activeFolder?.id === folder.id}
             >

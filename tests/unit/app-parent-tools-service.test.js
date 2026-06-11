@@ -721,17 +721,23 @@ describe('React app parent tools service', () => {
         expect(dbMocks.listCertificatesForPlayer).toHaveBeenCalledWith('team-1', 'player-1', { status: 'published', limit: 25 });
     });
 
-    it('loads team media, filters unsafe items, and exposes upload/link helpers', async () => {
+    it('loads only the requested team media album items and leaves other albums lazy', async () => {
         const photoFile = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
         const docFile = new File(['doc'], 'packet.pdf', { type: 'application/pdf' });
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
         dbMocks.getTeamMediaFolders.mockResolvedValue([
-            { id: 'folder-1', name: 'Game photos', visibility: 'team', order: 2 },
-            { id: 'folder-private', name: 'Private', visibility: 'private', order: 1 }
+            { id: 'folder-1', name: 'Game photos', visibility: 'team', order: 2, itemCount: 4 },
+            { id: 'folder-2', name: 'Game video', visibility: 'team', order: 3 },
+            { id: 'folder-3', name: 'Highlights', visibility: 'team', order: 4, itemCount: 2 },
+            { id: 'folder-private', name: 'Private', visibility: 'private', order: 1, itemCount: 9 }
         ]);
         dbMocks.getTeamMediaItems.mockImplementation(async (teamId, folderId) => (folderId === 'folder-1' ? [
             { id: 'bad', title: 'Bad', type: 'photo', url: 'javascript:alert(1)', order: 1 },
             { id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg', order: 0 }
+        ] : folderId === 'folder-2' ? [
+            { id: 'video-1', title: 'Replay', type: 'video_link', url: 'https://video.example.test/replay', order: 0 }
+        ] : folderId === 'folder-3' ? [
+            { id: 'highlight-1', title: 'Highlight', type: 'photo', url: 'https://img.example.test/highlight.jpg', order: 0 }
         ] : []));
         dbMocks.uploadTeamMediaPhoto.mockResolvedValue('photo-2');
         dbMocks.uploadTeamMediaFile.mockResolvedValue('file-1');
@@ -743,12 +749,40 @@ describe('React app parent tools service', () => {
             canManage: false,
             canContribute: true,
             canPostChat: true,
-            folders: [{
-                id: 'folder-1',
-                itemCount: 1,
-                items: [{ id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg' }]
-            }]
+            folders: [
+                {
+                    id: 'folder-1',
+                    itemCount: 1,
+                    itemsLoaded: true,
+                    items: [{ id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg' }]
+                },
+                {
+                    id: 'folder-2',
+                    itemCount: 1,
+                    itemsLoaded: false,
+                    items: []
+                },
+                {
+                    id: 'folder-3',
+                    itemCount: 2,
+                    itemsLoaded: false,
+                    items: []
+                }
+            ]
         });
+        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(2);
+        expect(dbMocks.getTeamMediaItems).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1');
+        expect(dbMocks.getTeamMediaItems).toHaveBeenNthCalledWith(2, 'team-1', 'folder-2');
+
+        await expect(loadTeamMediaForApp(user, 'team-1', { folderIds: ['folder-2'] })).resolves.toMatchObject({
+            folders: [
+                { id: 'folder-1', itemCount: 4, itemsLoaded: false, items: [] },
+                { id: 'folder-2', itemCount: 1, itemsLoaded: true, items: [{ id: 'video-1', title: 'Replay' }] },
+                { id: 'folder-3', itemCount: 2, itemsLoaded: false, items: [] }
+            ]
+        });
+        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(3);
+        expect(dbMocks.getTeamMediaItems).toHaveBeenLastCalledWith('team-1', 'folder-2');
 
         await expect(createTeamMediaAlbumForApp('team-1', { name: '  Spring photos  ', visibility: 'private' })).resolves.toBe('folder-new');
         await uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile);
