@@ -637,7 +637,7 @@ describe('React app Home and player drill-in integration', () => {
         await attachAthleteHighlightClipFile(container, 'highlight.mp4');
         expect(container.textContent).toContain('New headshot selected. Save to publish it.');
         expect(container.textContent).toContain('highlight.mp4 selected. Save to publish it.');
-        await clickButton(container, 'Save Athlete Profile');
+        await clickButton(container, 'Publish Athlete Profile');
         await waitForText(container, 'Saved');
         expect(playerMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
             user: auth.user,
@@ -663,7 +663,7 @@ describe('React app Home and player drill-in integration', () => {
         await waitForText(container, 'Choose an image or video file for the highlight clip.');
         await clickButton(container, 'Use linked season photo');
         await clickButton(container, 'Clear selected clip');
-        await clickButton(container, 'Save Athlete Profile');
+        await clickButton(container, 'Publish Athlete Profile');
         expect(playerMocks.saveParentAthleteProfileDraft).toHaveBeenLastCalledWith(expect.objectContaining({
             profilePhotoFile: null,
             resetProfilePhoto: true,

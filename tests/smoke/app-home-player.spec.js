@@ -556,7 +556,7 @@ test('home dashboard drills into player detail with section submenus', async ({ 
 
     await page.getByRole('button', { name: 'Athlete Profile' }).click();
     await expect(page.getByText('Athlete Profile Builder')).toBeVisible();
-    await page.getByRole('button', { name: 'Save Athlete Profile' }).click();
+    await page.getByRole('button', { name: 'Publish Athlete Profile' }).click();
     await expect(page.getByText('Saved')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Athlete Profile', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByText('Parents can update the player photo')).toBeHidden();

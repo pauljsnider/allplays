@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -50,9 +50,11 @@ import {
   type ParentScheduleEvent,
   type RsvpResponse
 } from '../lib/scheduleLogic';
+import { sharePublicUrl } from '../lib/publicActions';
 import type { AuthState } from '../lib/types';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
+type AthleteProfilePrivacy = 'private' | 'public';
 
 const playerSections: Array<{ id: PlayerSectionId; label: string }> = [
   { id: 'overview', label: 'Overview' },
@@ -67,6 +69,50 @@ const rsvpBadgeClasses: Record<RsvpResponse, string> = {
   not_going: 'border-rose-200 bg-rose-50 text-rose-700',
   not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
 };
+
+function getPersistedPublicProfileUrl(profile: Record<string, any> | null | undefined, shareUrl: string | null | undefined) {
+  const normalizedShareUrl = String(shareUrl || '').trim();
+  return profile?.privacy === 'public' && normalizedShareUrl ? normalizedShareUrl : '';
+}
+
+function hasPersistedPublicProfile(profile: Record<string, any> | null | undefined, shareUrl: string | null | undefined) {
+  return !!getPersistedPublicProfileUrl(profile, shareUrl);
+}
+
+function hasPersistedPrivateProfileShareUrl(profile: Record<string, any> | null | undefined, shareUrl: string | null | undefined) {
+  return profile?.privacy !== 'public' && !!String(shareUrl || '').trim();
+}
+
+function hasPendingPublicProfilePublish({ hasUnsavedPublishChanges = false, saving = false }: { hasUnsavedPublishChanges?: boolean; saving?: boolean } = {}) {
+  return hasUnsavedPublishChanges || saving;
+}
+
+function requiresSavedPublicProfileForSharing({
+  draftPrivacy,
+  persistedPrivacy,
+  shareUrl,
+  hasUnsavedPublishChanges = false,
+  saving = false
+}: {
+  draftPrivacy: AthleteProfilePrivacy;
+  persistedPrivacy: AthleteProfilePrivacy;
+  shareUrl: string | null | undefined;
+  hasUnsavedPublishChanges?: boolean;
+  saving?: boolean;
+}) {
+  if (draftPrivacy === 'public') {
+    return persistedPrivacy !== 'public' || hasPendingPublicProfilePublish({ hasUnsavedPublishChanges, saving });
+  }
+  return persistedPrivacy !== 'public' && !!String(shareUrl || '').trim();
+}
+
+function isPersistedPublicProfileReady(
+  profile: Record<string, any> | null | undefined,
+  shareUrl: string | null | undefined,
+  options: { hasUnsavedPublishChanges?: boolean; saving?: boolean } = {}
+) {
+  return hasPersistedPublicProfile(profile, shareUrl) && !hasPendingPublicProfilePublish(options);
+}
 
 export function PlayerDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', playerId = '' } = useParams();
@@ -381,6 +427,19 @@ const profilePanels: Array<{ id: ProfilePanelId; label: string }> = [
 
 function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
+  const [athleteProfileShareState, setAthleteProfileShareState] = useState({ hasUnsavedPublishChanges: false, saving: false });
+  const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
+  const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
+
+  useEffect(() => {
+    setAthleteProfileShareState((current) => {
+      if (!current.hasUnsavedPublishChanges && !current.saving) {
+        return current;
+      }
+      return { hasUnsavedPublishChanges: false, saving: false };
+    });
+  }, [data.athleteProfile.profile, data.athleteProfile.shareUrl]);
+
   return (
     <div className="player-section-content space-y-3">
       <section className="app-card p-3">
@@ -410,7 +469,15 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
       </section>
 
       {activePanel === 'edit' ? <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} /> : null}
-      {activePanel === 'athlete' ? <AthleteProfileBuilderCard data={data} auth={auth} onChanged={onChanged} /> : null}
+      {activePanel === 'athlete' ? (
+        <AthleteProfileBuilderCard
+          key={`${data.athleteProfile.profile?.id || 'new'}:${data.athleteProfile.profile?.privacy || 'private'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
+          data={data}
+          auth={auth}
+          onChanged={onChanged}
+          onShareStateChange={setAthleteProfileShareState}
+        />
+      ) : null}
       {activePanel === 'family' ? <CoParentInviteCard data={data} auth={auth} /> : null}
       {activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
@@ -420,9 +487,17 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
           <CardText title="Full builder" detail="Open the legacy builder for headshot and highlight uploads." />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
-        <a href={data.athleteProfile.shareUrl || '#'} target="_blank" rel="noreferrer" className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${data.athleteProfile.shareUrl ? '' : 'pointer-events-none opacity-60'}`}>
+        <a
+          href={persistedPublicProfileAvailable ? persistedPublicProfileUrl : '#'}
+          target={persistedPublicProfileAvailable ? '_blank' : undefined}
+          rel={persistedPublicProfileAvailable ? 'noreferrer' : undefined}
+          aria-disabled={!persistedPublicProfileAvailable}
+          tabIndex={persistedPublicProfileAvailable ? undefined : -1}
+          onClick={persistedPublicProfileAvailable ? undefined : (event) => event.preventDefault()}
+          className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${persistedPublicProfileAvailable ? '' : 'pointer-events-none opacity-60'}`}
+        >
           <IconBox icon={Share2} />
-          <CardText title="Public athlete profile" detail={data.athleteProfile.shareUrl ? 'Open the shareable athlete profile.' : 'Save a public profile to enable sharing.'} />
+          <CardText title="Public athlete profile" detail={persistedPublicProfileAvailable ? 'Open the shareable athlete profile.' : 'Publish and save this profile to enable sharing.'} />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <Link to="/parent-tools/certificates" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
@@ -524,7 +599,7 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
   );
 }
 
-function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void>; onShareStateChange: (state: { hasUnsavedPublishChanges: boolean; saving: boolean }) => void }) {
   const existing = data.athleteProfile.profile;
   const currentSeasonKey = `${data.child.teamId || ''}::${data.child.playerId || ''}`;
   const seasonOptions = useMemo(() => {
@@ -568,16 +643,17 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const [hometown, setHometown] = useState(existing?.bio?.hometown || '');
   const [dominantHand, setDominantHand] = useState(existing?.bio?.dominantHand || '');
   const [achievements, setAchievements] = useState(existing?.bio?.achievements || '');
-  const [privacy, setPrivacy] = useState(existing?.privacy === 'public' ? 'public' : 'private');
+  const [privacy, setPrivacy] = useState<AthleteProfilePrivacy>(existing?.privacy === 'public' ? 'public' : 'private');
   const [selectedSeasonKeys, setSelectedSeasonKeys] = useState<string[]>(initialSelectedSeasonKeys);
   const [saving, setSaving] = useState(false);
+  const [awaitingPersistedPublish, setAwaitingPersistedPublish] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
-  const [shareUrl, setShareUrl] = useState(data.athleteProfile.shareUrl || '');
   const [headshotFile, setHeadshotFile] = useState<File | null>(null);
   const [headshotError, setHeadshotError] = useState('');
   const [resetHeadshot, setResetHeadshot] = useState(false);
   const [highlightClipFile, setHighlightClipFile] = useState<File | null>(null);
   const [highlightClipError, setHighlightClipError] = useState('');
+  const persistedPrivacy = existing?.privacy === 'public' ? 'public' : 'private';
   const existingHeadshotUrl = existing?.profilePhotoUrl || '';
   const linkedHeadshotUrl = data.player.photoUrl || '';
   const headshotPreviewUrl = useMemo(() => {
@@ -588,6 +664,84 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
   const headshotLabel = headshotFile
     ? 'New headshot selected. Save to publish it.'
     : (existingHeadshotUrl && !resetHeadshot ? 'Custom athlete profile headshot' : 'Using linked season photo');
+  const publicSummary = useMemo(() => {
+    const items = [
+      name || data.child.playerName || 'Athlete name',
+      headline,
+      position,
+      graduationYear ? `Class of ${graduationYear}` : '',
+      hometown,
+      dominantHand ? `${dominantHand} hand` : '',
+      achievements,
+      selectedSeasonKeys.length ? `${selectedSeasonKeys.length} season${selectedSeasonKeys.length === 1 ? '' : 's'} of stats and game clips` : '',
+      (existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0) ? `${(existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0)} highlight clip${(existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0) === 1 ? '' : 's'}` : ''
+    ].filter(Boolean);
+    return items;
+  }, [achievements, data.child.playerName, dominantHand, existing?.clips?.length, graduationYear, headline, highlightClipFile, hometown, name, position, selectedSeasonKeys.length]);
+  const normalizedExistingName = existing?.athlete?.name || data.player.name || data.child.playerName || '';
+  const normalizedExistingHeadline = existing?.athlete?.headline || '';
+  const normalizedExistingPosition = existing?.bio?.position || '';
+  const normalizedExistingGraduationYear = existing?.bio?.graduationYear || '';
+  const normalizedExistingHometown = existing?.bio?.hometown || '';
+  const normalizedExistingDominantHand = existing?.bio?.dominantHand || '';
+  const normalizedExistingAchievements = existing?.bio?.achievements || '';
+  const normalizedInitialSelectedSeasonKeys = [...initialSelectedSeasonKeys].sort();
+  const normalizedSelectedSeasonKeys = [...selectedSeasonKeys].sort();
+  const hasUnsavedPublishChanges = (
+    privacy !== persistedPrivacy ||
+    name !== normalizedExistingName ||
+    headline !== normalizedExistingHeadline ||
+    position !== normalizedExistingPosition ||
+    graduationYear !== normalizedExistingGraduationYear ||
+    hometown !== normalizedExistingHometown ||
+    dominantHand !== normalizedExistingDominantHand ||
+    achievements !== normalizedExistingAchievements ||
+    normalizedInitialSelectedSeasonKeys.length !== normalizedSelectedSeasonKeys.length ||
+    normalizedInitialSelectedSeasonKeys.some((seasonKey, index) => seasonKey !== normalizedSelectedSeasonKeys[index]) ||
+    !!headshotFile ||
+    resetHeadshot ||
+    !!highlightClipFile
+  );
+  const normalizedShareUrl = String(data.athleteProfile.shareUrl || '').trim();
+  const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, normalizedShareUrl);
+  const hasPersistedPrivateShareUrl = hasPersistedPrivateProfileShareUrl(existing, normalizedShareUrl);
+  const isPublishingNewPublicProfile = privacy === 'public' && persistedPrivacy !== 'public';
+  const persistedPublicProfileReady = isPersistedPublicProfileReady(existing, normalizedShareUrl, {
+    hasUnsavedPublishChanges,
+    saving
+  });
+  const canPreviewPublishedPublicProfile = persistedPublicProfileReady;
+  const canSharePublicProfile = persistedPublicProfileReady;
+  const hasPendingPersistedPublicProfile = hasPendingPublicProfilePublish({
+    hasUnsavedPublishChanges,
+    saving: saving || awaitingPersistedPublish
+  });
+  const requiresPublishBeforeSharing = requiresSavedPublicProfileForSharing({
+    draftPrivacy: privacy,
+    persistedPrivacy,
+    shareUrl: normalizedShareUrl,
+    hasUnsavedPublishChanges,
+    saving: saving || awaitingPersistedPublish
+  });
+  const shareRequiresSavedPublicProfile = privacy === 'public' && requiresPublishBeforeSharing;
+  const latestPublicShareStateRef = useRef({
+    canSharePublicProfile: false,
+    persistedPublicProfileUrl: ''
+  });
+  latestPublicShareStateRef.current = {
+    canSharePublicProfile,
+    persistedPublicProfileUrl
+  };
+
+  useLayoutEffect(() => {
+    onShareStateChange({
+      hasUnsavedPublishChanges,
+      saving: saving || awaitingPersistedPublish
+    });
+    return () => {
+      onShareStateChange({ hasUnsavedPublishChanges: false, saving: false });
+    };
+  }, [awaitingPersistedPublish, hasUnsavedPublishChanges, onShareStateChange, saving]);
 
   useEffect(() => {
     return () => {
@@ -616,8 +770,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
     }
     setSaving(true);
     setStatus(null);
+    setAwaitingPersistedPublish(isPublishingNewPublicProfile);
     try {
-      const result = await saveParentAthleteProfileDraft({
+      await saveParentAthleteProfileDraft({
         user: auth.user,
         teamId: data.child.teamId,
         playerId: data.child.playerId,
@@ -643,13 +798,46 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
       setHeadshotFile(null);
       setResetHeadshot(false);
       setHighlightClipFile(null);
-      setShareUrl(result.shareUrl);
       setStatus({ tone: 'success', message: 'Athlete profile saved.' });
       await onChanged();
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to save athlete profile.' });
     } finally {
       setSaving(false);
+      setAwaitingPersistedPublish(false);
+    }
+  };
+
+  const shareProfile = async () => {
+    const { canSharePublicProfile: shareReady, persistedPublicProfileUrl: shareUrl } = latestPublicShareStateRef.current;
+    const shareBlockedByUnsavedPublish = requiresSavedPublicProfileForSharing({
+      draftPrivacy: privacy,
+      persistedPrivacy,
+      shareUrl: normalizedShareUrl,
+      hasUnsavedPublishChanges,
+      saving: saving || awaitingPersistedPublish
+    });
+    if (shareBlockedByUnsavedPublish || !shareReady || !shareUrl) return;
+    try {
+      const result = await sharePublicUrl({
+        title: `${name || data.child.playerName || 'Athlete'} profile`,
+        text: 'Take a look at this athlete profile on ALL PLAYS.',
+        url: shareUrl
+      });
+      if (result === 'shared') {
+        setStatus({ tone: 'success', message: 'Public athlete profile shared.' });
+        return;
+      }
+      if (result === 'copied') {
+        setStatus({ tone: 'success', message: 'Public athlete profile link copied.' });
+        return;
+      }
+      if (result === 'cancelled') {
+        return;
+      }
+      setStatus({ tone: 'error', message: 'Unable to share the public athlete profile right now.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to share the public athlete profile right now.' });
     }
   };
 
@@ -808,6 +996,14 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
             })}
           </div>
         </div>
+        <div className="rounded-2xl border border-primary-100 bg-primary-50/60 p-3">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">What others see</div>
+          <p className="mt-1 text-sm font-semibold text-gray-700">Publishing makes this read-only athlete profile public at the share link.</p>
+          <ul className="mt-3 space-y-1 text-xs font-semibold text-gray-600">
+            {publicSummary.map((item) => <li key={item}>• {item}</li>)}
+          </ul>
+          <p className="mt-3 text-xs font-semibold text-gray-500">Private keeps the profile off the public page. Public matches the legacy athlete profile share behavior.</p>
+        </div>
         <div className="athlete-profile-privacy grid grid-cols-2 gap-2">
           {(['private', 'public'] as const).map((option) => (
             <button
@@ -824,13 +1020,37 @@ function AthleteProfileBuilderCard({ data, auth, onChanged }: { data: ParentPlay
         <div className="athlete-profile-actions grid gap-2 sm:grid-cols-2">
           <button type="submit" className="primary-button justify-center" disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-            {saving ? 'Saving' : 'Save Athlete Profile'}
+            {saving ? 'Saving' : privacy === 'public' ? 'Publish Athlete Profile' : 'Save Athlete Profile'}
           </button>
-          <a href={shareUrl || data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
-            <ExternalLink className="h-4 w-4" aria-hidden="true" />
-            {shareUrl ? 'Open Share Page' : 'Open Full Builder'}
-          </a>
+          {canSharePublicProfile ? (
+            <button type="button" className="secondary-button justify-center" onClick={shareProfile}>
+              <Share2 className="h-4 w-4" aria-hidden="true" />
+              Share Public Profile
+            </button>
+          ) : awaitingPersistedPublish ? (
+            <button type="button" className="secondary-button justify-center" disabled>
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              Waiting for published profile...
+            </button>
+          ) : requiresPublishBeforeSharing ? (
+            <button type="button" className="secondary-button justify-center" disabled>
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              Publish changes before sharing
+            </button>
+          ) : (
+            <a href={canPreviewPublishedPublicProfile ? persistedPublicProfileUrl : data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="secondary-button justify-center">
+              <ExternalLink className="h-4 w-4" aria-hidden="true" />
+              {canPreviewPublishedPublicProfile ? 'Preview Public Page' : 'Open Full Builder'}
+            </a>
+          )}
         </div>
+        {privacy === 'public' && awaitingPersistedPublish ? (
+          <p className="text-center text-xs font-semibold text-gray-500">Waiting for refresh to confirm the public share link.</p>
+        ) : privacy === 'public' && hasUnsavedPublishChanges ? (
+          <p className="text-center text-xs font-semibold text-gray-500">Publish and save this profile before the public share link becomes available.</p>
+        ) : hasPersistedPrivateShareUrl ? (
+          <p className="text-center text-xs font-semibold text-gray-500">This saved share link stays private until you publish and save the profile.</p>
+        ) : null}
       </form>
     </section>
   );
