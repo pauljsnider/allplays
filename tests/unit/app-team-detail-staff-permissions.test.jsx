@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
@@ -34,6 +34,8 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => ({
 import { TeamDetail } from '../../apps/app/src/pages/TeamDetail.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+const mountedViews = [];
 
 const auth = {
     user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] },
@@ -86,6 +88,7 @@ function makeModel(staffPermissions) {
         trackingSummaries: [],
         sponsors: [],
         canManageTeam: Boolean(staffPermissions),
+        canManageAdmins: Boolean(staffPermissions),
         staffPermissions,
         counts: { games: 0, practices: 0, completedGames: 0 }
     };
@@ -110,6 +113,7 @@ async function renderTeamDetail(staffPermissions) {
         ));
     });
     await flush();
+    mountedViews.push({ container, root });
     return { container, root };
 }
 
@@ -138,6 +142,16 @@ async function clickButton(container, text) {
     });
     await flush();
 }
+
+afterEach(async () => {
+    while (mountedViews.length) {
+        const view = mountedViews.pop();
+        await act(async () => {
+            view.root.unmount();
+        });
+        view.container.remove();
+    }
+});
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -193,9 +207,8 @@ describe('React app TeamDetail staff permissions overview', () => {
         expect(container.textContent).toContain('scorekeeper-1');
         expect(container.textContent).toContain('No Stream & Score volunteers are assigned yet.');
         expect(container.textContent).toContain('No general volunteer permissions are assigned yet.');
-
-        await clickButton(container, 'Manage staff');
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/edit-team.html#teamId=team-1');
+        expect(container.textContent).toContain('Owners and platform admins can manage team admins here in the app.');
+        expect(container.textContent).not.toContain('Manage staff');
     });
 
 
@@ -211,7 +224,7 @@ describe('React app TeamDetail staff permissions overview', () => {
         });
 
         await clickButton(container, 'More');
-        await fillInput(container, 'input[type="email"]', ' Pending@Example.com ');
+        await fillInput(container, '#team-admin-invite-email', ' Pending@Example.com ');
         await clickButton(container, 'Send invite');
 
         expect(container.textContent).toContain('That email is already listed as staff or pending.');
@@ -236,10 +249,10 @@ describe('React app TeamDetail staff permissions overview', () => {
         });
 
         await clickButton(container, 'More');
-        await fillInput(container, 'input[type="email"]', ' NewCoach@Example.com ');
+        await fillInput(container, '#team-admin-invite-email', ' NewCoach@Example.com ');
         await clickButton(container, 'Send invite');
 
-        expect(teamDetailMocks.inviteTeamAdminForApp).toHaveBeenCalledWith('team-1', 'newcoach@example.com');
+        expect(teamDetailMocks.inviteTeamAdminForApp).toHaveBeenCalledWith('team-1', 'newcoach@example.com', auth.user);
         expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
         expect(container.textContent).toContain('Email delivery needs a fallback for newcoach@example.com.');
         await clickButton(container, 'Copy code');
