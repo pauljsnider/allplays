@@ -20,6 +20,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   loadTeamStaffPermissions: vi.fn(),
   reactivateRosterPlayerForApp: vi.fn(),
   revokeScorekeeperAccessForApp: vi.fn(),
+  revokeTeamAdminAccessForApp: vi.fn(),
   revokeVideographerAccessForApp: vi.fn(),
   saveTeamScheduleNotificationsForApp: vi.fn()
 }));
@@ -64,6 +65,7 @@ const auth: AuthState = {
 const model = {
   team: {
     id: 'team-1',
+    ownerId: 'owner-1',
     name: 'Bears',
     sport: 'Basketball',
     photoUrl: null,
@@ -105,6 +107,7 @@ const model = {
   sponsors: [],
   statTrackerConfigs: [],
   canManageTeam: false,
+  canManageAdmins: false,
   staffPermissions: null,
   counts: { games: 0, practices: 0, completedGames: 0 }
 };
@@ -127,6 +130,7 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.grantScorekeeperAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeScorekeeperAccessForApp.mockResolvedValue({ success: true });
+    teamDetailServiceMocks.revokeTeamAdminAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.grantVideographerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeVideographerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.saveTeamScheduleNotificationsForApp.mockResolvedValue(model.team.scheduleNotifications);
@@ -277,5 +281,101 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(teamDetailServiceMocks.createRosterParentInviteForApp).toHaveBeenCalledWith('team-1', auth.user, expect.objectContaining({ id: 'player-1', number: '9' })));
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('Parent invite is ready to copy or share.')).toBeTruthy();
+  });
+
+  it('removes legacy staff link-out and supports native admin invite sharing and removal', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true,
+      canManageAdmins: true,
+      staffPermissions: {
+        staff: [{ label: 'owner@example.com', role: 'Owner' }, { label: 'coach@example.com', role: 'Admin' }],
+        pendingInvites: [],
+        helperPermissions: [],
+        scorekeepingMode: 'selected',
+        scorekeeperGrantTargets: [],
+        videographerGrantTargets: [],
+        hasAnyStaff: true
+      }
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(managedModel.staffPermissions);
+    teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({
+      email: 'newcoach@example.com',
+      status: 'fallback_code',
+      code: 'CODE123',
+      teamName: 'Bears',
+      acceptInviteUrl: 'https://allplays.ai/app#/accept-invite?code=CODE123&type=admin'
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+
+    expect(screen.queryByRole('button', { name: 'Manage staff' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Admin email'), { target: { value: ' NewCoach@Example.com ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.inviteTeamAdminForApp).toHaveBeenCalledWith('team-1', 'newcoach@example.com', auth.user));
+    fireEvent.click(await screen.findByRole('button', { name: 'Share invite' }));
+    const { sharePublicUrl } = await import('../lib/publicActions');
+    expect(sharePublicUrl).toHaveBeenCalledWith({
+      title: 'Bears staff invite',
+      text: 'Join Bears staff on ALL PLAYS',
+      url: 'https://allplays.ai/app#/accept-invite?code=CODE123&type=admin',
+      clipboardText: 'https://allplays.ai/app#/accept-invite?code=CODE123&type=admin'
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(teamDetailServiceMocks.revokeTeamAdminAccessForApp).toHaveBeenCalledWith('team-1', 'coach@example.com', auth.user));
+  });
+
+  it('shows staff permissions read-only for team managers who cannot manage admins', async () => {
+    const managerAuth: AuthState = {
+      ...auth,
+      user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] } as any,
+      roles: ['coach'],
+      isParent: false,
+      isCoach: true
+    };
+    const managedModel = {
+      ...model,
+      canManageTeam: true,
+      canManageAdmins: false,
+      staffPermissions: {
+        staff: [{ label: 'owner@example.com', role: 'Owner' }, { label: 'coach@example.com', role: 'Admin' }],
+        pendingInvites: ['pending@example.com'],
+        helperPermissions: [],
+        scorekeepingMode: 'selected',
+        scorekeeperGrantTargets: [],
+        videographerGrantTargets: [],
+        hasAnyStaff: true
+      }
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(managedModel.staffPermissions);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={managerAuth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+
+    expect(await screen.findByText('Only the team owner or a platform admin can add or remove team admins.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Send invite' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
   });
 });

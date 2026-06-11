@@ -228,6 +228,10 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                     return { success: true };
                 }
 
+                export async function revokeTeamAdminAccessForApp() {
+                    return { success: true };
+                }
+
                 export async function grantVideographerAccessForApp() {
                     return { success: true };
                 }

@@ -51,6 +51,7 @@ export interface AuthUser {
   parentOf?: Array<Record<string, unknown>>;
   coachOf?: string[];
   isAdmin?: boolean;
+  isPlatformAdmin?: boolean;
   teamMediaUploadTeamIds?: string[];
   mediaUploadTeamIds?: string[];
 }
