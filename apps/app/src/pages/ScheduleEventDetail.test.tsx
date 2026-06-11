@@ -623,11 +623,13 @@ describe('ScheduleEventDetail practice timeline', () => {
     });
     expect(screen.getAllByText('Warm-up').length).toBeGreaterThan(0);
     expect(screen.getByText('1 drill · 10 min planned')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add drill' }).disabled).toBe(false);
-    expect(screen.getByRole('button', { name: 'Save live note' }).disabled).toBe(true);
+    const addDrillButton = screen.getByRole('button', { name: 'Add drill' }) as HTMLButtonElement;
+    const saveLiveNoteButton = screen.getByRole('button', { name: 'Save live note' }) as HTMLButtonElement;
+    expect(addDrillButton.disabled).toBe(false);
+    expect(saveLiveNoteButton.disabled).toBe(true);
 
     fireEvent.change(screen.getByLabelText('Live note'), { target: { value: 'Shorten the water break' } });
-    expect(screen.getByRole('button', { name: 'Save live note' }).disabled).toBe(false);
+    expect(saveLiveNoteButton.disabled).toBe(false);
 
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'drill-2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add drill' }));
