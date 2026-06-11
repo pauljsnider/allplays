@@ -61,6 +61,7 @@ import {
   type ParentScheduleEvent,
   type RsvpResponse
 } from '../lib/scheduleLogic';
+import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
 import {
   emptySocialHome,
   filterSocialFeedItems,
@@ -134,6 +135,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
   const [loading, setLoading] = useState(true);
   const [socialLoading, setSocialLoading] = useState(false);
+  const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number } | null>(null);
   const [error, setError] = useState('');
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
@@ -174,6 +176,28 @@ export function Home({ auth }: { auth: AuthState }) {
     refreshHome();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!auth.user) {
+      setOfficialsAccess(null);
+      return;
+    }
+    loadOfficialAssignmentsAccess(auth.user)
+      .then((result) => {
+        if (!cancelled) {
+          setOfficialsAccess({ hasAccess: result.hasAccess, teamCount: result.teamCount });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOfficialsAccess({ hasAccess: false, teamCount: 0 });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user]);
 
   useEffect(() => {
     const section = searchParams.get('section') as HomeSectionId | null;
@@ -316,7 +340,7 @@ export function Home({ auth }: { auth: AuthState }) {
         </section>
       ) : null}
 
-      {!loading && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} /> : null}
+      {!loading && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} officialsAccess={officialsAccess} /> : null}
       {!loading && activeSection === 'feed' ? (
         <FeedSection
           social={social}
@@ -365,12 +389,14 @@ function TodaySection({
   home,
   social,
   socialLoading,
-  onOpenComposer
+  onOpenComposer,
+  officialsAccess
 }: {
   home: ParentHomeModel;
   social: SocialHomeModel;
   socialLoading: boolean;
   onOpenComposer: (type?: SocialPostType) => void;
+  officialsAccess: { hasAccess: boolean; teamCount: number } | null;
 }) {
   const unreadTeams = home.teams
     .filter((team) => Number(team.unreadCount || 0) > 0)
@@ -415,6 +441,23 @@ function TodaySection({
       </section>
 
       <HomeFeedPreview social={social} loading={socialLoading} onOpenComposer={onOpenComposer} />
+
+      {officialsAccess?.hasAccess ? (
+        <Link to="/officials" className="app-card block p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary-50 text-primary-700 ring-1 ring-primary-100">
+              <Flag className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="app-label">Officials</div>
+              <h2 className="mt-1 app-section-title">Manage assignments</h2>
+              <div className="mt-1 text-sm font-semibold text-gray-600">Review upcoming games, respond to pending slots, and claim open officiating assignments.</div>
+              <div className="mt-2 text-xs font-black uppercase tracking-[0.04em] text-primary-700">{officialsAccess.teamCount} linked team{officialsAccess.teamCount === 1 ? '' : 's'}</div>
+            </div>
+            <ChevronRight className="h-5 w-5 flex-none text-gray-400" aria-hidden="true" />
+          </div>
+        </Link>
+      ) : null}
 
       <section className="home-upcoming-section space-y-3">
         <div className="flex items-center justify-between gap-3">

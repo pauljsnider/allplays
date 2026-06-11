@@ -72,6 +72,9 @@ function buildLegacyLinkFallback(link: string) {
         if (path.endsWith('/team-chat.html') && teamId) {
             return buildMessagesRoute(teamId, conversationId);
         }
+        if (path.endsWith('/officials.html')) {
+            return teamId ? `/officials?teamId=${encodeRouteParam(teamId)}` : '/officials';
+        }
         if (path.endsWith('/live-game.html') && gameId) {
             if (teamId) {
                 return buildScheduleEventRoute(teamId, gameId, 'game');

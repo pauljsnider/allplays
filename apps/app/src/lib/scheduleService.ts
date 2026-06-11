@@ -1,5 +1,6 @@
 import {
   getAssignmentClaims,
+  claimOpenOfficiatingSlot,
   getGame,
   getGames,
   getPracticePacketCompletions,
@@ -16,6 +17,7 @@ import {
   addPractice,
   createRideOffer,
   claimAssignmentSlot,
+  respondToOfficiatingAssignment,
   requestRideSpot,
   listRideOffersForEvent,
   updateRideRequestStatus,
@@ -33,7 +35,9 @@ import {
   cancelOccurrence
 } from '../../../../js/db.js';
 import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
-import { db, doc, collection, getDocs, runTransaction, increment, serverTimestamp } from '../../../../js/firebase.js';
+import { db, doc, collection, collectionGroup, getDocs, query, runTransaction, where, increment, serverTimestamp } from '../../../../js/firebase.js';
+import { normalizeOfficialLinkEmail, normalizeOfficialLinkPhone } from '../../../../js/admin-user-official-links.js';
+import { getAssignedOfficiatingSlots, getOpenOfficiatingSlots } from '../../../../js/officiating-utils.js';
 import {
   expandRecurrence,
   extractOpponent,
@@ -118,6 +122,31 @@ export type ParentScheduleLoadResult = {
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
   expandStaffPlayers?: boolean;
+};
+
+export type OfficialAssignmentsAccess = {
+  hasAccess: boolean;
+  teamIds: string[];
+  teamCount: number;
+};
+
+export type OfficialAssignmentItem = {
+  kind: 'assigned' | 'open';
+  teamId: string;
+  teamName: string;
+  gameId: string;
+  slotId: string;
+  position: string;
+  status: string;
+  opponent: string;
+  location: string;
+  date: Date;
+  canClaim: boolean;
+  scheduleReviewRequired: boolean;
+};
+
+export type OfficialAssignmentsResult = OfficialAssignmentsAccess & {
+  assignments: OfficialAssignmentItem[];
 };
 
 export type ParentScheduleEventDetailLoadOptions = ParentScheduleLoadOptions & {
@@ -2925,6 +2954,152 @@ async function nativeReleaseAssignment(event: ParentScheduleEvent, role: string)
   const existing = await nativeGetDocument(path);
   if (!existing) return;
   await nativeDeleteDocument(path);
+}
+
+function extractTeamIdFromOfficialRefPath(path: string) {
+  const parts = String(path || '').split('/').filter(Boolean);
+  const teamIndex = parts.indexOf('teams');
+  return teamIndex >= 0 ? compactString(parts[teamIndex + 1]) : '';
+}
+
+function isUpcomingOfficialGame(game: any, now = new Date()) {
+  const date = normalizeScheduleDate(game?.date);
+  const status = compactString(game?.status).toLowerCase();
+  return Boolean(date && date.getTime() >= now.getTime() && status !== 'cancelled' && status !== 'canceled');
+}
+
+function isEligibleOpenOfficiatingSlotParticipant(team: any = {}, userProfile: Record<string, any> = {}, user: AuthUser) {
+  const uid = compactString(user?.uid);
+  const email = normalizeOfficialLinkEmail(user?.email || '');
+  if (!uid) return false;
+  if (team?.ownerId === uid) return true;
+  if (email && Array.isArray(team?.adminEmails) && team.adminEmails.map((value: unknown) => normalizeOfficialLinkEmail(value)).includes(email)) return true;
+  if (userProfile?.isAdmin === true) return true;
+  if (Array.isArray(userProfile?.parentTeamIds) && userProfile.parentTeamIds.includes(team?.id)) return true;
+  return false;
+}
+
+async function loadOfficialLinkedTeamIds(user: AuthUser, userProfile?: Record<string, any> | null) {
+  const email = normalizeOfficialLinkEmail(user?.email || '');
+  const phone = normalizeOfficialLinkPhone(userProfile?.phone || '');
+  const officialsRef = collectionGroup(db, 'officials');
+  const requests: Promise<any>[] = [];
+
+  if (email) {
+    requests.push(getDocs(query(officialsRef, where('email', '==', email))));
+  }
+  if (phone) {
+    requests.push(getDocs(query(officialsRef, where('phone', '==', phone))));
+  }
+
+  if (!requests.length) {
+    return [];
+  }
+
+  const teamIds = new Set<string>();
+  const results = await Promise.allSettled(requests);
+  results.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    result.value.docs.forEach((docSnap: any) => {
+      const teamId = extractTeamIdFromOfficialRefPath(docSnap?.ref?.path || '');
+      if (teamId) teamIds.add(teamId);
+    });
+  });
+  return Array.from(teamIds);
+}
+
+export async function loadOfficialAssignmentsAccess(user: AuthUser): Promise<OfficialAssignmentsAccess> {
+  const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
+  const teamIds = await loadOfficialLinkedTeamIds(user, userProfile as Record<string, any>);
+  return {
+    hasAccess: teamIds.length > 0,
+    teamIds,
+    teamCount: teamIds.length
+  };
+}
+
+export async function loadOfficialAssignments(user: AuthUser, options: { teamId?: string } = {}): Promise<OfficialAssignmentsResult> {
+  const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
+  const linkedTeamIds = await loadOfficialLinkedTeamIds(user, userProfile as Record<string, any>);
+  const requestedTeamId = compactString(options.teamId);
+  const teamIds = requestedTeamId ? linkedTeamIds.filter((teamId) => teamId === requestedTeamId) : linkedTeamIds;
+
+  if (!linkedTeamIds.length || (requestedTeamId && !teamIds.length)) {
+    return {
+      hasAccess: false,
+      teamIds: [],
+      teamCount: 0,
+      assignments: []
+    };
+  }
+
+  const now = new Date();
+  const teamResults = await Promise.all(teamIds.map(async (teamId) => {
+    const [team, games] = await Promise.all([
+      getTeam(teamId, { includeInactive: true }).catch(() => null),
+      getGames(teamId).catch(() => [])
+    ]);
+    const canClaim = isEligibleOpenOfficiatingSlotParticipant(team || {}, userProfile as Record<string, any>, user);
+    const teamName = compactString(team?.name) || 'Team';
+
+    return (Array.isArray(games) ? games : [])
+      .filter((game) => isUpcomingOfficialGame(game, now))
+      .flatMap((game) => {
+        const eventDate = normalizeScheduleDate(game?.date);
+        if (!eventDate) return [] as OfficialAssignmentItem[];
+
+        const assigned = getAssignedOfficiatingSlots(game, user).map((slot: any) => ({
+          kind: 'assigned' as const,
+          teamId,
+          teamName,
+          gameId: compactString(game?.id),
+          slotId: compactString(slot?.id),
+          position: compactString(slot?.position) || 'Official',
+          status: compactString(slot?.status) || 'pending',
+          opponent: compactString(game?.opponent) || 'TBD',
+          location: compactString(game?.location) || 'Location TBD',
+          date: eventDate,
+          canClaim: false,
+          scheduleReviewRequired: slot?.scheduleReviewRequired === true
+        }));
+
+        const open = canClaim
+          ? getOpenOfficiatingSlots(game).map((slot: any) => ({
+            kind: 'open' as const,
+            teamId,
+            teamName,
+            gameId: compactString(game?.id),
+            slotId: compactString(slot?.id),
+            position: compactString(slot?.position) || 'Official',
+            status: 'open',
+            opponent: compactString(game?.opponent) || 'TBD',
+            location: compactString(game?.location) || 'Location TBD',
+            date: eventDate,
+            canClaim: true,
+            scheduleReviewRequired: false
+          }))
+          : [];
+
+        return [...assigned, ...open];
+      });
+  }));
+
+  return {
+    hasAccess: true,
+    teamIds,
+    teamCount: teamIds.length,
+    assignments: teamResults
+      .flat()
+      .sort((left, right) => left.date.getTime() - right.date.getTime() || left.teamName.localeCompare(right.teamName) || left.position.localeCompare(right.position))
+  };
+}
+
+export async function respondToOfficialAssignmentItem(item: OfficialAssignmentItem, status: 'accepted' | 'declined') {
+  await withTimeout(Promise.resolve(respondToOfficiatingAssignment(item.teamId, item.gameId, item.slotId, status)), 'Officiating response');
+}
+
+export async function claimOfficialAssignmentItem(item: OfficialAssignmentItem, user: AuthUser) {
+  await withTimeout(Promise.resolve(claimOpenOfficiatingSlot(item.teamId, item.gameId, item.slotId, user)), 'Officiating claim');
 }
 
 export async function loadParentScheduleAssignments(event: ParentScheduleEvent) {
