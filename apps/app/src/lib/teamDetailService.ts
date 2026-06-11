@@ -555,7 +555,7 @@ export async function revokeTeamAdminAccessForApp(teamId: string, email: string,
     throw new Error('The team owner cannot be removed from staff access.');
   }
 
-  const nextAdminEmails = normalizeAdminEmailList(team?.adminEmails).filter((value) => value !== normalizedEmail);
+  const nextAdminEmails = normalizeAdminEmailList(team?.adminEmails).filter((value: string) => value !== normalizedEmail);
   await updateTeam(normalizedTeamId, {
     adminEmails: nextAdminEmails,
     updatedAt: new Date()

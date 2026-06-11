@@ -139,6 +139,14 @@ describe('React app team detail model', () => {
             updatedAt: expect.any(Date)
         });
 
+        updateTeam.mockClear();
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', ownerEmail: 'owner@example.com', adminEmails: ['coach@example.com'] });
+        await revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'admin-2', email: 'platform@example.com', roles: ['platformAdmin'] });
+        expect(updateTeam).toHaveBeenCalledWith('team-1', {
+            adminEmails: [],
+            updatedAt: expect.any(Date)
+        });
+
         await expect(revokeTeamAdminAccessForApp('team-1', 'owner@example.com', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] })).rejects.toThrow('The team owner cannot be removed from staff access.');
     });
 
