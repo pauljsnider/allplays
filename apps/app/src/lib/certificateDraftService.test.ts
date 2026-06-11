@@ -51,6 +51,7 @@ describe('certificateDraftService', () => {
   const team = {
     id: 'team-1',
     name: 'Bears',
+    photoUrl: 'https://img/team-logo.png',
     colors: {
       primary: '#0055aa',
       secondary: '#ffcc00'
@@ -117,6 +118,25 @@ describe('certificateDraftService', () => {
       { id: 'header', label: 'Header' }
     ]);
     expect(model.shared.signers).toEqual(shared.signers);
+  });
+
+  it('defaults the foreground image to the team logo when no certificate defaults are saved', async () => {
+    const model = await loadCertificateDraftComposer('team-1', user);
+
+    expect(model.shared.foregroundImageRef).toEqual({
+      url: 'https://img/team-logo.png',
+      source: 'team-logo'
+    });
+  });
+
+  it('preserves an explicit empty foreground image choice from saved defaults', async () => {
+    dbMocks.getCertificateDefaults.mockResolvedValue({
+      foregroundImageRef: null
+    });
+
+    const model = await loadCertificateDraftComposer('team-1', user);
+
+    expect(model.shared.foregroundImageRef).toBeNull();
   });
 
   it('creates one draft certificate per selected player and returns a web studio batch URL', async () => {

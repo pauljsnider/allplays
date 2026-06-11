@@ -238,6 +238,9 @@ export function getCertificateStudioUrl(teamId: string, batchId: string) {
 }
 
 function buildInitialSharedState(team: Record<string, any>, defaults: Record<string, any> | null, signers: Array<Record<string, any>>): CertificateDraftSharedState {
+  const teamLogoUrl = team?.photoUrl || team?.logoUrl || team?.teamLogoUrl || team?.imageUrl || '';
+  const foregroundFallback = teamLogoUrl ? { url: teamLogoUrl, source: 'team-logo' } : null;
+
   return normalizeSharedState({
     templateId: defaults?.templateId || 'banner',
     teamNameOverride: defaults?.teamNameOverride || team?.name || 'Team',
@@ -251,7 +254,7 @@ function buildInitialSharedState(team: Record<string, any>, defaults: Record<str
     },
     fonts: defaults?.fonts || {},
     signers,
-    foregroundImageRef: defaults?.foregroundImageRef || null,
+    foregroundImageRef: pickInitialImageRef('foregroundImageRef', foregroundFallback, defaults),
     backgroundImageRef: defaults?.backgroundImageRef || null,
     backgroundOpacity: defaults?.backgroundOpacity,
     watermarkImageRef: defaults?.watermarkImageRef || null,
@@ -294,4 +297,11 @@ function getDefaultCustomColors(team: Record<string, any>) {
 function getFinitePercent(value: unknown, fallback: number) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : fallback;
+}
+
+function pickInitialImageRef(key: string, fallback: Record<string, any> | null, source: Record<string, any> | null) {
+  if (source && Object.prototype.hasOwnProperty.call(source, key)) {
+    return source[key] || null;
+  }
+  return fallback;
 }
