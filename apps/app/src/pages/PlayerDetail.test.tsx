@@ -359,6 +359,23 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('• 1 highlight clip')).toBeTruthy();
   });
 
+  it('switches the athlete profile save CTA with the selected privacy option', async () => {
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('Athlete Profile Builder');
+
+    expect(screen.getByRole('button', { name: 'Save Athlete Profile' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+    expect(screen.getByRole('button', { name: 'Publish Athlete Profile' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'private' }));
+    expect(screen.getByRole('button', { name: 'Save Athlete Profile' })).toBeTruthy();
+  });
+
   it('keeps an existing private profile share URL gated until the public privacy change is saved', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
     const builderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';

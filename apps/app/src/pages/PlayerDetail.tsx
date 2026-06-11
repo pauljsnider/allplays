@@ -54,6 +54,7 @@ import { sharePublicUrl } from '../lib/publicActions';
 import type { AuthState } from '../lib/types';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
+type AthleteProfilePrivacy = 'private' | 'public';
 
 const playerSections: Array<{ id: PlayerSectionId; label: string }> = [
   { id: 'overview', label: 'Overview' },
@@ -93,8 +94,8 @@ function requiresSavedPublicProfileForSharing({
   hasUnsavedPublishChanges = false,
   saving = false
 }: {
-  draftPrivacy: 'private' | 'public';
-  persistedPrivacy: 'private' | 'public';
+  draftPrivacy: AthleteProfilePrivacy;
+  persistedPrivacy: AthleteProfilePrivacy;
   shareUrl: string | null | undefined;
   hasUnsavedPublishChanges?: boolean;
   saving?: boolean;
@@ -642,7 +643,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   const [hometown, setHometown] = useState(existing?.bio?.hometown || '');
   const [dominantHand, setDominantHand] = useState(existing?.bio?.dominantHand || '');
   const [achievements, setAchievements] = useState(existing?.bio?.achievements || '');
-  const [privacy, setPrivacy] = useState(existing?.privacy === 'public' ? 'public' : 'private');
+  const [privacy, setPrivacy] = useState<AthleteProfilePrivacy>(existing?.privacy === 'public' ? 'public' : 'private');
   const [selectedSeasonKeys, setSelectedSeasonKeys] = useState<string[]>(initialSelectedSeasonKeys);
   const [saving, setSaving] = useState(false);
   const [awaitingPersistedPublish, setAwaitingPersistedPublish] = useState(false);
