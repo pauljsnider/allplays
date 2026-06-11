@@ -57,11 +57,13 @@ export function assignLineupPlayer(lineups: Record<string, string>, targetKey: s
   if (!safeTargetKey || !safePlayerId) return { ...(lineups || {}) };
   const next = { ...(lineups || {}) };
   const periodKey = getPeriodKeyFromSlot(safeTargetKey);
-  Object.entries(next).forEach(([key, value]) => {
-    if (getPeriodKeyFromSlot(key) === periodKey && value === safePlayerId && key !== safeTargetKey) {
-      delete next[key];
-    }
-  });
+  if (periodKey) {
+    Object.entries(next).forEach(([key, value]) => {
+      if (getPeriodKeyFromSlot(key) === periodKey && value === safePlayerId && key !== safeTargetKey) {
+        delete next[key];
+      }
+    });
+  }
   next[safeTargetKey] = safePlayerId;
   return next;
 }

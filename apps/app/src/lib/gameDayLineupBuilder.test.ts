@@ -29,6 +29,17 @@ describe('gameDayLineupBuilder', () => {
     });
   });
 
+  it('does not clear unrelated malformed slot keys when assigning a player', () => {
+    expect(assignLineupPlayer({
+      bench: 'p1',
+      'Q1-pg': 'p2'
+    }, 'Q1-sg', 'p1')).toEqual({
+      bench: 'p1',
+      'Q1-pg': 'p2',
+      'Q1-sg': 'p1'
+    });
+  });
+
   it('swaps slot occupants when dragging between assignments', () => {
     expect(moveLineupPlayer({
       'Q1-pg': 'p1',
