@@ -166,9 +166,9 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
     {
       id: 'certificates',
       label: 'Certificates',
-      detail: 'Awards, AI narratives, publish, print',
-      href: getTeamWebsiteHashHref('certificates.html', teamId),
-      kind: 'website'
+      detail: 'Create drafts and preview in the app, then finish publish and print on the website',
+      href: `/teams/${encodeURIComponent(teamId)}/certificates`,
+      kind: 'native'
     }
   ] : [];
 

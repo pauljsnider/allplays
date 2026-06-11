@@ -25,6 +25,7 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword').then((module) =
 const Schedule = lazy(() => import('./pages/Schedule').then((module) => ({ default: module.Schedule })));
 const ScheduleEventDetail = lazy(() => import('./pages/ScheduleEventDetail').then((module) => ({ default: module.ScheduleEventDetail })));
 const TeamDetail = lazy(() => import('./pages/TeamDetail').then((module) => ({ default: module.TeamDetail })));
+const TeamCertificates = lazy(() => import('./pages/TeamCertificates').then((module) => ({ default: module.TeamCertificates })));
 const TeamDrills = lazy(() => import('./pages/TeamDrills').then((module) => ({ default: module.TeamDrills })));
 const TeamFees = lazy(() => import('./pages/TeamFees').then((module) => ({ default: module.TeamFees })));
 const TeamMedia = lazy(() => import('./pages/TeamMedia').then((module) => ({ default: module.TeamMedia })));
@@ -101,6 +102,7 @@ export default function App() {
         <Route path="/teams" element={shouldDefaultReloadToHome ? <Navigate to="/home" replace /> : <Protected auth={auth}><Teams auth={auth} /></Protected>} />
         <Route path="/teams/browse" element={<Protected auth={auth}><PublicTeamsBrowse /></Protected>} />
         <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
+        <Route path="/teams/:teamId/certificates" element={<Protected auth={auth}><TeamCertificates auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/drills" element={<Protected auth={auth}><TeamDrills auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/fees" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/fees/:batchId" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />

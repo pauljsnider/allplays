@@ -490,11 +490,11 @@ function buildAddWorkflows(): AddWorkflow[] {
     {
       id: 'awards',
       label: 'Awards',
-      detail: 'Certificates and AI narratives',
+      detail: 'Select a team to draft certificates and preview them',
       section: 'Team Ops',
       icon: ClipboardList,
-      kind: 'website',
-      href: legacyUrl('certificates.html'),
+      kind: 'native',
+      href: '/teams',
       badge: 'Coach/Admin'
     }
   ];

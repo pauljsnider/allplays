@@ -210,6 +210,26 @@ describe('TeamDetail', () => {
     expect(await screen.findByText('Sam Bench reactivated.')).toBeTruthy();
   });
 
+  it('links staff to the native certificates draft screen from the team more tab', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      canManageTeam: true
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+
+    expect((await screen.findByRole('link', { name: /awards drafts/i })).getAttribute('href')).toBe('/teams/team-1/certificates');
+  });
+
   it('links staff to the native drill library from the team more tab', async () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
       ...model,
