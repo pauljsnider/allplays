@@ -9,6 +9,7 @@ import {
   Code2,
   Copy,
   DollarSign,
+  Dumbbell,
   ExternalLink,
   ImageIcon,
   LinkIcon,
@@ -618,6 +619,7 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
         <div className="text-sm font-black text-gray-950">Team links</div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <ExternalAction icon={ExternalLink} label="Website team page" detail="Open the current full team.html page." href={model.team.websiteUrl} />
+          {model.canManageTeam ? <InternalAction icon={Dumbbell} label="Drill library" detail="Browse community drills and manage favorites." to={`/teams/${encodeURIComponent(model.team.id)}/drills`} /> : null}
           <InternalAction icon={ImageIcon} label="Media albums" detail="Photos, video links, albums, and files." to={`/teams/${encodeURIComponent(model.team.id)}/media`} />
           <InternalAction icon={DollarSign} label="My fees" detail="Balances, checkout links, installments, and history." to="/parent-tools/fees" />
           <InternalAction icon={Ticket} label="Registrations" detail="Open published team registration forms." to="/parent-tools/registrations" />

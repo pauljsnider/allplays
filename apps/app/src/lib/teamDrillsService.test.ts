@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildTeamDrillPayload, deleteTeamDrillForApp, loadTeamDrillsManagementModel, saveTeamDrillForApp } from './teamDrillsService';
+import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite } from './teamDrillsService';
 
 const dbMocks = vi.hoisted(() => ({
-  createDrill: vi.fn(),
-  deleteDrill: vi.fn(),
+  addDrillFavorite: vi.fn(),
+  getDrill: vi.fn(),
+  getDrillFavorites: vi.fn(),
+  getDrills: vi.fn(),
+  getPublishedDrills: vi.fn(),
   getTeam: vi.fn(),
-  getTeamDrills: vi.fn(),
-  updateDrill: vi.fn(),
-  uploadDrillDiagram: vi.fn()
+  removeDrillFavorite: vi.fn()
 }));
 
 const teamAccessMocks = vi.hoisted(() => ({
@@ -21,93 +22,169 @@ describe('teamDrillsService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'Soccer', ownerId: 'coach-1', adminEmails: ['coach@example.com'] });
-    dbMocks.getTeamDrills.mockResolvedValue([]);
-    dbMocks.createDrill.mockResolvedValue('drill-1');
-    dbMocks.updateDrill.mockResolvedValue(undefined);
-    dbMocks.deleteDrill.mockResolvedValue(undefined);
-    dbMocks.uploadDrillDiagram.mockResolvedValue('https://img.example.test/diagram.png');
+    dbMocks.getDrillFavorites.mockResolvedValue(['drill-2']);
+    dbMocks.getDrills.mockResolvedValue({
+      drills: [{
+        id: 'drill-1',
+        title: 'Rondo 4v2',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'Intermediate',
+        skills: ['passing', 'support'],
+        description: 'Keep the ball moving.',
+        instructions: 'Two-touch max.',
+        setup: { duration: 15, players: '8-10', cones: 6 }
+      }],
+      lastDoc: { id: 'cursor-1' }
+    });
+    dbMocks.getPublishedDrills.mockResolvedValue([]);
+    dbMocks.getDrill.mockImplementation(async (drillId: string) => ({
+      id: drillId,
+      title: drillId === 'drill-2' ? 'Finishing ladder' : 'Other drill',
+      sport: 'Soccer',
+      type: 'Technical',
+      level: 'All',
+      skills: ['finishing'],
+      description: 'Sharpen the final touch.',
+      instructions: 'Rotate lines every 2 reps.',
+      setup: { duration: 12, players: '6-8', cones: 4 }
+    }));
+    dbMocks.addDrillFavorite.mockResolvedValue(undefined);
+    dbMocks.removeDrillFavorite.mockResolvedValue(undefined);
     teamAccessMocks.hasFullTeamAccess.mockReturnValue(true);
   });
 
-  it('builds the same drill payload shape as the legacy editor', () => {
-    expect(buildTeamDrillPayload({
-      title: '  Rondo 4v2  ',
+  it('filters drill fixtures by search text, type, and level', () => {
+    const drills = [
+      {
+        id: 'drill-1',
+        title: 'Rondo 4v2',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'Intermediate',
+        ageGroup: 'All',
+        skills: ['passing', 'support'],
+        description: 'Fast passing under pressure.',
+        instructions: 'Two-touch max.',
+        youtubeUrl: '',
+        diagramUrls: [],
+        attribution: null,
+        setup: { duration: 15, players: '8-10', cones: 6, balls: '', area: '', pinnies: '' }
+      },
+      {
+        id: 'drill-2',
+        title: 'Warm-up lanes',
+        sport: 'Soccer',
+        type: 'Warm-up',
+        level: 'All',
+        ageGroup: 'All',
+        skills: ['dribbling'],
+        description: 'Gentle touches and turns.',
+        instructions: 'Keep it flowing.',
+        youtubeUrl: '',
+        diagramUrls: [],
+        attribution: null,
+        setup: { duration: 10, players: '6-12', cones: 8, balls: '', area: '', pinnies: '' }
+      },
+      {
+        id: 'drill-3',
+        title: 'Finishing ladder',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'Advanced',
+        ageGroup: 'All',
+        skills: ['finishing'],
+        description: 'Close-range finishing pattern.',
+        instructions: 'Finish first time when possible.',
+        youtubeUrl: '',
+        diagramUrls: [],
+        attribution: null,
+        setup: { duration: 12, players: '4-8', cones: 5, balls: '', area: '', pinnies: '' }
+      }
+    ];
+
+    expect(filterDrillSummaries(drills, { searchText: 'finish' }).map((drill) => drill.id)).toEqual(['drill-3']);
+    expect(filterDrillSummaries(drills, { type: 'Technical', level: 'Intermediate' }).map((drill) => drill.id)).toEqual(['drill-1']);
+    expect(filterDrillSummaries(drills, { type: 'Warm-up' }).map((drill) => drill.id)).toEqual(['drill-2']);
+  });
+
+  it('loads a bounded community drill page and merges team-published drills for staff users', async () => {
+    dbMocks.getPublishedDrills.mockResolvedValue([
+      {
+        id: 'drill-3',
+        title: 'Community finishing',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'Intermediate',
+        skills: ['finishing'],
+        description: 'Published by a coach.',
+        instructions: 'Rotate every rep.',
+        setup: { duration: 10, players: '6-8', cones: 4 }
+      }
+    ]);
+
+    const result = await loadTeamDrillLibraryPage('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, {
+      searchText: ' rondo ',
       type: 'Technical',
       level: 'Intermediate',
-      skills: ' passing,  support ,passing ',
-      duration: '18',
-      players: '8-12',
-      cones: '7',
-      description: ' Keep the ball moving. ',
-      instructions: ' Two-touch max. ',
-      youtubeUrl: ' https://example.com/rondo ',
-      publishedToCommunity: true
-    }, 'Soccer')).toEqual({
-      title: 'Rondo 4v2',
+      cursor: { id: 'cursor-0' }
+    });
+
+    expect(dbMocks.getDrills).toHaveBeenCalledWith({
       sport: 'Soccer',
       type: 'Technical',
       level: 'Intermediate',
-      skills: ['passing', 'support'],
-      description: 'Keep the ball moving.',
-      instructions: 'Two-touch max.',
-      publishedToCommunity: true,
-      youtubeUrl: 'https://example.com/rondo',
-      setup: {
-        duration: 18,
-        players: '8-12',
-        cones: 7
-      }
+      searchText: 'rondo',
+      limitCount: 12,
+      startAfterDoc: { id: 'cursor-0' }
     });
-  });
-
-  it('loads team drills only for managers', async () => {
-    dbMocks.getTeamDrills.mockResolvedValue([{ id: 'drill-1', title: 'Keep-away', setup: { duration: 12, players: '8-10', cones: 6 } }]);
-
-    const model = await loadTeamDrillsManagementModel('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
-
-    expect(dbMocks.getTeamDrills).toHaveBeenCalledWith('team-1');
-    expect(model.canManageDrills).toBe(true);
-    expect(model.drills[0]).toEqual(expect.objectContaining({
-      id: 'drill-1',
-      title: 'Keep-away',
+    expect(dbMocks.getPublishedDrills).toHaveBeenCalledWith({
+      sport: 'Soccer',
       type: 'Technical',
-      level: 'All',
-      setup: expect.objectContaining({ duration: 12, players: '8-10', cones: 6 })
-    }));
+      level: 'Intermediate',
+      searchText: 'rondo',
+      limitCount: 12
+    });
+    expect(result.favoriteIds).toEqual(['drill-2']);
+    expect(result.nextCursor).toEqual({ id: 'cursor-1' });
+    expect(result.drills.map((drill) => drill.id)).toEqual(['drill-3', 'drill-1']);
   });
 
-  it('creates a drill, uploads diagrams, and persists the final diagram url list', async () => {
-    const file = new File(['diagram'], 'rondo.png', { type: 'image/png' });
-
-    const drillId = await saveTeamDrillForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, 'Soccer', {
-      title: 'Rondo',
-      type: 'Technical',
-      level: 'All',
-      skills: 'passing',
-      duration: '15',
-      players: '8-10',
-      cones: '5',
-      description: 'Quick passing',
-      instructions: 'Keep shape',
-      youtubeUrl: '',
-      publishedToCommunity: false,
-      existingDiagramUrls: ['https://img.example.test/existing.png'],
-      diagramFiles: [file]
+  it('loads favorite drill details from the shared team favorites store and skips missing drills', async () => {
+    dbMocks.getDrillFavorites.mockResolvedValue(['drill-2', 'missing-drill']);
+    dbMocks.getDrill.mockImplementation(async (drillId: string) => {
+      if (drillId === 'missing-drill') return null;
+      return {
+        id: drillId,
+        title: 'Finishing ladder',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'All',
+        skills: ['finishing'],
+        description: 'Sharpen the final touch.',
+        instructions: 'Rotate lines every 2 reps.',
+        setup: { duration: 12, players: '6-8', cones: 4 }
+      };
     });
 
-    expect(drillId).toBe('drill-1');
-    expect(dbMocks.createDrill).toHaveBeenCalledWith('team-1', expect.objectContaining({ title: 'Rondo', setup: expect.objectContaining({ duration: 15, cones: 5 }) }));
-    expect(dbMocks.uploadDrillDiagram).toHaveBeenCalledWith('team-1', 'drill-1', file);
-    expect(dbMocks.updateDrill).toHaveBeenLastCalledWith('drill-1', {
-      diagramUrls: ['https://img.example.test/existing.png', 'https://img.example.test/diagram.png']
-    });
+    const result = await loadFavoriteDrills('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
+
+    expect(dbMocks.getDrillFavorites).toHaveBeenCalledWith('team-1');
+    expect(dbMocks.getDrill).toHaveBeenCalledWith('drill-2');
+    expect(dbMocks.getDrill).toHaveBeenCalledWith('missing-drill');
+    expect(result.drills).toEqual([
+      expect.objectContaining({
+        id: 'drill-2',
+        title: 'Finishing ladder'
+      })
+    ]);
   });
 
-  it('deletes a drill only when the user still has full team access', async () => {
-    await deleteTeamDrillForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, 'drill-1');
-    expect(dbMocks.deleteDrill).toHaveBeenCalledWith('drill-1');
+  it('writes favorite toggles to the same team-scoped favorites store as the website', async () => {
+    await setTeamDrillFavorite('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, 'drill-2', true);
+    expect(dbMocks.addDrillFavorite).toHaveBeenCalledWith('team-1', 'drill-2');
 
-    teamAccessMocks.hasFullTeamAccess.mockReturnValue(false);
-    await expect(deleteTeamDrillForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, 'drill-1')).rejects.toThrow('You do not have access to manage team drills.');
+    await setTeamDrillFavorite('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, 'drill-2', false);
+    expect(dbMocks.removeDrillFavorite).toHaveBeenCalledWith('team-1', 'drill-2');
   });
 });
