@@ -2,7 +2,6 @@ import { isTeamActive } from '../../../../js/team-visibility.js';
 import {
   db,
   collection,
-  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -898,47 +897,7 @@ async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], 
 }
 
 async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean, teamIds: string[] = []) {
-  const playersRef = collectionGroup(db, 'players');
-  const nameQueryCount = prefixes.length;
-  const playerQueries = prefixes.map((prefix) => getDocs(query(
-    playersRef,
-    orderBy('name'),
-    where('name', '>=', prefix),
-    where('name', '<=', `${prefix}\uf8ff`),
-    limit(playerSearchQueryLimit)
-  )));
-
-  if (isNumeric) {
-    playerQueries.push(getDocs(query(
-      playersRef,
-      orderBy('number'),
-      where('number', '>=', rawQuery),
-      where('number', '<=', `${rawQuery}\uf8ff`),
-      limit(playerSearchQueryLimit)
-    )));
-  }
-
-  const snapshots = await Promise.allSettled(playerQueries);
-  const rejected = snapshots
-    .filter((snapshot: any) => snapshot.status === 'rejected')
-    .map((snapshot: any) => snapshot.reason)
-    .filter(Boolean);
-  const onlyPermissionDeniedFailures = rejected.length > 0
-    && snapshots.every((snapshot: any) => snapshot.status === 'rejected')
-    && rejected.every((error: any) => error?.code === 'permission-denied');
-  if (onlyPermissionDeniedFailures) {
-    return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamIds);
-  }
-
-  const result = buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric);
-  const onlyEmptyPermissionDeniedFailures = result.docs.length === 0
-    && result.rejected.length > 0
-    && result.rejected.every((error: any) => error?.code === 'permission-denied');
-  if (onlyEmptyPermissionDeniedFailures) {
-    return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamIds);
-  }
-
-  return result;
+  return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamIds);
 }
 
 function buildAppSearchPlayersFromDocs(docs: any[], teamsById: Map<string, AppSearchTeam>, user: AuthUser | null, tokens: string[]) {

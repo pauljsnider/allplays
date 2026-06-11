@@ -3,7 +3,7 @@ import { getTeams } from './db.js?v=42';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=2';
 import {
     db,
-    collectionGroup,
+    collection,
     getDocs,
     query,
     where,
@@ -168,6 +168,10 @@ async function loadPlayerSearchDocsByTeam(prefixes, rawQuery, isNumeric, teamsBy
     }));
 
     return buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric);
+}
+
+async function loadPlayerSearchDocs(prefixes, rawQuery, isNumeric, teamsById) {
+    return loadPlayerSearchDocsByTeam(prefixes, rawQuery, isNumeric, teamsById);
 }
 
 function renderResultRow(item, isActive) {
@@ -468,41 +472,7 @@ function openModal({ initialQuery = '' } = {}) {
         const isNumeric = /^[0-9]+$/.test(q);
 
         try {
-            const playersRef = collectionGroup(db, 'players');
-            const queries = [];
-
-            for (const prefix of prefixes) {
-                queries.push(
-                    getDocs(query(
-                        playersRef,
-                        orderBy('name'),
-                        where('name', '>=', prefix),
-                        where('name', '<=', `${prefix}\uf8ff`),
-                        limit(20)
-                    ))
-                );
-            }
-
-            if (isNumeric) {
-                queries.push(
-                    getDocs(query(
-                        playersRef,
-                        orderBy('number'),
-                        where('number', '>=', q),
-                        where('number', '<=', `${q}\uf8ff`),
-                        limit(20)
-                    ))
-                );
-            }
-
-            const snaps = await Promise.allSettled(queries);
-            const baseResult = buildPlayerSearchDocsFromSnapshots(snaps, prefixes.length, isNumeric);
-            const onlyPermissionDeniedFailures = baseResult.docs.length === 0
-                && baseResult.rejected.length > 0
-                && baseResult.rejected.every((error) => (error?.code || '') === 'permission-denied');
-            const result = onlyPermissionDeniedFailures
-                ? await loadPlayerSearchDocsByTeam(prefixes, q, isNumeric, modalState.teamsById)
-                : baseResult;
+            const result = await loadPlayerSearchDocs(prefixes, q, isNumeric, modalState.teamsById);
             if (!modalState || reqId !== modalState.playersReqId) return;
 
             const rejected = result.rejected;
