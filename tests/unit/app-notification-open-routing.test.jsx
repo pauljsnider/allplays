@@ -96,7 +96,7 @@ describe('app notification open routing', () => {
 
     it.each([
         [{ category: 'liveChat', teamId: 'team-1' }, '/messages/team-1'],
-        [{ category: 'liveScore', teamId: 'team-1', gameId: 'game-7' }, '/schedule/team-1/game-7'],
+        [{ category: 'liveScore', teamId: 'team-1', gameId: 'game-7' }, '/schedule/team-1/game-7?section=game'],
         [{ category: 'liveScore', gameId: 'game-7' }, '/games/game-7'],
         [{ category: 'schedule', teamId: 'team-1', eventId: 'event-9' }, '/schedule/team-1/event-9']
     ])('navigates to the expected route when a notification is opened: %o', async (payload, expectedRoute) => {

@@ -49,7 +49,7 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 
-import { ScheduleEventDetail } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+import { ScheduleEventDetail, parseEventDetailSection } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -235,6 +235,14 @@ afterEach(() => {
 });
 
 describe('React app ScheduleEventDetail More tab integration', () => {
+    it('parses only supported event detail sections and falls back to availability', () => {
+        expect(parseEventDetailSection('game')).toBe('game');
+        expect(parseEventDetailSection('rideshare')).toBe('rideshare');
+        expect(parseEventDetailSection('assignments')).toBe('assignments');
+        expect(parseEventDetailSection('invalid')).toBe('availability');
+        expect(parseEventDetailSection(null)).toBe('availability');
+    });
+
     it('renders the practice More tab with text-only sharing wired to the primary top card', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [
@@ -327,6 +335,37 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             { id: 'player-1', name: 'Pat' }
         );
         await waitForText(container, 'Pat marked complete.');
+    });
+
+    it('opens the game hub immediately when the route requests section=game', async () => {
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            events: [
+                event({
+                    liveStatus: 'completed',
+                    homeScore: 4,
+                    awayScore: 2
+                })
+            ]
+        });
+        reportMocks.loadGameReportSections.mockResolvedValue(report());
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1&section=game');
+        await waitForText(container, 'Game hub');
+
+        expect(container.textContent).toContain('Watch replay');
+        expect(container.textContent).toContain('Match report');
+        expect(container.textContent).not.toContain('Is Pat going?');
+    });
+
+    it('falls back to Availability when the route section is invalid', async () => {
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            events: [event()]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1&section=not-real');
+        await waitForText(container, 'Is Pat going?');
+
+        expect(container.textContent).not.toContain('Game hub');
     });
 
     it('renders the completed game More tab with replay and report actions wired to public URLs', async () => {

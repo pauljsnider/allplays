@@ -47,6 +47,7 @@ async function renderGameDetail(initialPath = '/games/game-baseball') {
                 React.createElement('h1', null, 'Availability'),
                 React.createElement('div', null, 'Rideshare'),
                 React.createElement('div', null, 'Assignments'),
+                React.createElement('div', null, 'Game hub'),
                 React.createElement('div', null, 'Live event workflow')
             )
         },
@@ -82,7 +83,7 @@ describe('app GameDetail route resolution', () => {
         });
 
         expect(router.state.location.pathname).toBe('/schedule/team-baseball/game-baseball');
-        expect(router.state.location.search).toBe('?childId=player-1');
+        expect(router.state.location.search).toBe('?childId=player-1&section=game');
         expect(container.textContent).toContain('Availability');
         expect(container.textContent).toContain('Rideshare');
         expect(container.textContent).toContain('Assignments');

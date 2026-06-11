@@ -122,6 +122,16 @@ import type { AuthState } from '../lib/types';
 type EventDetailSectionId = 'availability' | 'rideshare' | 'assignments' | 'game';
 type GameReportSectionId = 'summary' | 'players' | 'plays' | 'opponent' | 'insights' | 'media';
 
+const eventDetailSectionIds = new Set<EventDetailSectionId>(['availability', 'rideshare', 'assignments', 'game']);
+
+export function parseEventDetailSection(section: string | null | undefined): EventDetailSectionId {
+  const normalized = String(section || '').trim().toLowerCase();
+  if (normalized && eventDetailSectionIds.has(normalized as EventDetailSectionId)) {
+    return normalized as EventDetailSectionId;
+  }
+  return 'availability';
+}
+
 function cloneScheduleAssignments(assignments: ScheduleAssignment[] = []) {
   return assignments.map((assignment) => ({
     ...assignment,
@@ -255,7 +265,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<RsvpResponse | null>(null);
-  const [activeSection, setActiveSection] = useState<EventDetailSectionId>('availability');
+  const [activeSection, setActiveSection] = useState<EventDetailSectionId>(() => parseEventDetailSection(searchParams.get('section')));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
   const [staffRsvpBreakdown, setStaffRsvpBreakdown] = useState<StaffScheduleRsvpBreakdown | null>(null);
@@ -298,6 +308,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     loadEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
+
+  useEffect(() => {
+    setActiveSection(parseEventDetailSection(searchParams.get('section')));
+  }, [searchParams]);
 
   const selectedEvent = useMemo(() => {
     if (!events.length) return null;
@@ -2581,7 +2595,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
       setLoadingHomePlayers(true);
       try {
         const players = await loadHomeScoringPlayers(event.teamId, event.id);
-        if (!cancelled) setHomePlayers(players);
+        if (!cancelled) setHomePlayers(Array.isArray(players) ? players : []);
       } catch (error) {
         console.warn('[schedule-event-detail] Unable to load home scoring players:', error);
         if (!cancelled) setHomePlayers([]);

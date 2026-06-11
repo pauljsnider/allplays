@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const scheduleServiceMocks = vi.hoisted(() => ({
@@ -31,6 +31,11 @@ const auth: AuthState = {
   signOut: vi.fn()
 }
 
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{`${location.pathname}${location.search}`}</div>
+}
+
 function renderGameDetail(path = '/games/game-1') {
   return render(
     <MemoryRouter initialEntries={[path]}>
@@ -41,7 +46,9 @@ function renderGameDetail(path = '/games/game-1') {
             <h1>Availability</h1>
             <div>Rideshare</div>
             <div>Assignments</div>
+            <div>Game hub</div>
             <div>Live event workflow</div>
+            <LocationProbe />
           </div>
         )}
         />
@@ -60,7 +67,7 @@ describe('GameDetail route resolution', () => {
     cleanup()
   })
 
-  it('routes /games/:gameId into the schedule event detail workflow', async () => {
+  it('routes /games/:gameId into the schedule event detail workflow with game section context', async () => {
     scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
       teamId: 'team-bears',
       eventId: 'game-1',
@@ -75,6 +82,7 @@ describe('GameDetail route resolution', () => {
       expect(screen.getByText('Live event workflow')).toBeTruthy()
     })
 
+    expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=game')
     expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy()
     expect(screen.getByText('Rideshare')).toBeTruthy()
     expect(screen.getByText('Assignments')).toBeTruthy()
