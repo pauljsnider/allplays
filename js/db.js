@@ -5888,31 +5888,27 @@ export async function updateChatLastRead(userId, teamId) {
  * @returns {Promise<number>} Number of unread messages
  */
 export async function getUnreadChatCount(userId, teamId) {
-    // Get user's last read timestamp
     const userDoc = await getDoc(doc(db, 'users', userId));
     const userData = userDoc.data();
-    const lastRead = userData?.chatLastRead?.[teamId];
-
-    // Query messages after last read
-    // Note: Firestore doesn't support inequality on multiple fields, so we filter senderId in memory
+    const lastRead = userData?.chatLastRead?.[teamId] || null;
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
-    let q;
+    const unreadConstraints = [];
+
     if (lastRead) {
-        q = query(messagesRef, where('createdAt', '>', lastRead));
-    } else {
-        // Never read - get all messages
-        q = query(messagesRef);
+        unreadConstraints.push(where('createdAt', '>', lastRead));
     }
 
-    const snapshot = await getDocs(q);
-    // Filter out own messages in memory
-    let count = 0;
-    snapshot.docs.forEach(doc => {
-        if (doc.data().senderId !== userId) {
-            count++;
-        }
-    });
-    return count;
+    const totalUnreadQuery = query(messagesRef, ...unreadConstraints);
+    const ownUnreadQuery = query(messagesRef, ...unreadConstraints, where('senderId', '==', userId));
+
+    const [totalUnreadSnapshot, ownUnreadSnapshot] = await Promise.all([
+        getCountFromServer(totalUnreadQuery),
+        getCountFromServer(ownUnreadQuery)
+    ]);
+
+    const totalUnread = Number(totalUnreadSnapshot?.data?.().count || 0);
+    const ownUnread = Number(ownUnreadSnapshot?.data?.().count || 0);
+    return Math.max(0, totalUnread - ownUnread);
 }
 
 /**
