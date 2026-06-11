@@ -596,7 +596,7 @@ describe('ScheduleEventDetail practice timeline', () => {
     cleanup();
   });
 
-  it('lets team staff manage the practice timeline and save live notes', async () => {
+  it('lets team admins manage the practice timeline and save live notes', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         id: 'practice-1',
@@ -655,6 +655,36 @@ describe('ScheduleEventDetail practice timeline', () => {
     await waitFor(() => {
       expect(screen.getByText('Shorten the water break', { exact: false })).toBeTruthy();
     });
+  });
+
+  it('hides practice timeline management for coach-only staff without admin write access', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        type: 'practice',
+        title: 'Thursday Practice',
+        isTeamStaff: true,
+        isTeamAdmin: false,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue(null);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Practice timeline')).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('button', { name: 'Add drill' })).toBeNull();
+    expect(practiceTimelineServiceMocks.loadPracticeTimelineModel).not.toHaveBeenCalled();
   });
 });
 

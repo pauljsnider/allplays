@@ -113,6 +113,12 @@ function toDrillOption(drill: any, source: 'community' | 'team'): PracticeTimeli
   };
 }
 
+function unwrapDrillList(value: unknown) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray((value as any)?.drills)) return (value as any).drills;
+  return [];
+}
+
 async function assertPracticeTimelineAccess(teamId: string, user: AuthUser | null) {
   if (!teamId) throw new Error('Missing team context.');
   const team = await Promise.resolve(getTeam(teamId));
@@ -139,8 +145,8 @@ export async function loadPracticeTimelineModel(teamId: string, eventId: string,
     .map((block: PracticeTimelineBlock, index: number) => normalizePracticeTimelineBlock(block, index));
 
   const drillOptions = [
-    ...(Array.isArray(communityDrills) ? communityDrills : []).map((drill) => toDrillOption(drill, 'community')),
-    ...(Array.isArray(teamDrills) ? teamDrills : []).map((drill) => toDrillOption(drill, 'team'))
+    ...unwrapDrillList(communityDrills).map((drill) => toDrillOption(drill, 'community')),
+    ...unwrapDrillList(teamDrills).map((drill) => toDrillOption(drill, 'team'))
   ].filter(Boolean) as PracticeTimelineDrillOption[];
 
   return {

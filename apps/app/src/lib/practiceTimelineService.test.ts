@@ -40,7 +40,7 @@ describe('practiceTimelineService', () => {
         { order: 0, drillId: 'drill-1', drillTitle: 'Warm-up', duration: 10, type: 'Warm-up' }
       ]
     });
-    dbMocks.getDrills.mockResolvedValue([{ id: 'drill-1', title: 'Warm-up', type: 'Warm-up', setup: { duration: 10 } }]);
+    dbMocks.getDrills.mockResolvedValue({ drills: [{ id: 'drill-1', title: 'Warm-up', type: 'Warm-up', setup: { duration: 10 } }], lastDoc: null });
     dbMocks.getTeamDrills.mockResolvedValue([{ id: 'drill-9', title: 'Pattern play', type: 'Tactical', setup: { duration: 15 } }]);
 
     const result = await loadPracticeTimelineModel('team-1', 'practice-1', user);

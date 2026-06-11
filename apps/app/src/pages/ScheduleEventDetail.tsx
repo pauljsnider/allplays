@@ -2453,12 +2453,12 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
-  const canManageTimeline = Boolean(auth.user && event.isDbGame && event.isTeamStaff && !event.isCancelled);
+  const canManageTimeline = Boolean(auth.user && event.isDbGame && event.isTeamAdmin && !event.isCancelled);
   const totalMinutes = getPracticeTimelineTotalMinutes(blocks);
   const activeBlock = blocks[activeDrillIndex] || null;
 
   const refreshTimeline = useCallback(async () => {
-    if (!auth.user || !event.isTeamStaff) {
+    if (!auth.user || !event.isTeamAdmin) {
       setBlocks([]);
       setDrillOptions([]);
       setSessionId(event.practiceSessionId || null);
@@ -2481,7 +2481,7 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
     } finally {
       setLoading(false);
     }
-  }, [auth.user, event.id, event.isTeamStaff, event.practiceSessionId, event.teamId]);
+  }, [auth.user, event.id, event.isTeamAdmin, event.practiceSessionId, event.teamId]);
 
   useEffect(() => {
     setActiveDrillIndex(0);
