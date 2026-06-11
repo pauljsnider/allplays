@@ -3,7 +3,7 @@ import { getTeams } from './db.js?v=42';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=2';
 import {
     db,
-    collectionGroup,
+    collection,
     getDocs,
     query,
     where,
@@ -13,6 +13,7 @@ import {
 
 let cachedTeams = null;
 let cachedTeamsLoadedAt = 0;
+const playerSearchTeamLimit = 8;
 
 let currentUser = null;
 let keyHandlerInstalled = false;
@@ -137,8 +138,31 @@ function buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric) {
     };
 }
 
+function getPlayerSearchTeamIds(rawQuery, teamsById) {
+    const searchableTeams = filterSearchableTeams(Array.from(teamsById.values()), currentUser);
+    if (!searchableTeams.length) return [];
+
+    const privateTeams = searchableTeams.filter((team) => team?.isPublic === false);
+    const publicTeams = searchableTeams.filter((team) => team?.isPublic !== false);
+    const tokens = splitTokens(rawQuery);
+    const rankedPublicTeams = tokens.length === 0
+        ? publicTeams
+        : publicTeams
+            .map((team) => ({
+                team,
+                score: scoreText([team.name, team.sport, team.zip].filter(Boolean).join(' '), tokens)
+            }))
+            .sort((a, b) => b.score - a.score)
+            .map((entry) => entry.team);
+
+    return [...privateTeams, ...rankedPublicTeams]
+        .slice(0, playerSearchTeamLimit)
+        .map((team) => String(team?.id || '').trim())
+        .filter(Boolean);
+}
+
 async function loadPlayerSearchDocsByTeam(prefixes, rawQuery, isNumeric, teamsById) {
-    const teamIds = Array.from(teamsById.keys()).map((teamId) => String(teamId || '').trim()).filter(Boolean);
+    const teamIds = getPlayerSearchTeamIds(rawQuery, teamsById);
     if (teamIds.length === 0) {
         return { docs: [], exhaustiveForNarrowerQueries: false, rejected: [] };
     }
@@ -168,6 +192,10 @@ async function loadPlayerSearchDocsByTeam(prefixes, rawQuery, isNumeric, teamsBy
     }));
 
     return buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric);
+}
+
+async function loadPlayerSearchDocs(prefixes, rawQuery, isNumeric, teamsById) {
+    return loadPlayerSearchDocsByTeam(prefixes, rawQuery, isNumeric, teamsById);
 }
 
 function renderResultRow(item, isActive) {
@@ -468,41 +496,7 @@ function openModal({ initialQuery = '' } = {}) {
         const isNumeric = /^[0-9]+$/.test(q);
 
         try {
-            const playersRef = collectionGroup(db, 'players');
-            const queries = [];
-
-            for (const prefix of prefixes) {
-                queries.push(
-                    getDocs(query(
-                        playersRef,
-                        orderBy('name'),
-                        where('name', '>=', prefix),
-                        where('name', '<=', `${prefix}\uf8ff`),
-                        limit(20)
-                    ))
-                );
-            }
-
-            if (isNumeric) {
-                queries.push(
-                    getDocs(query(
-                        playersRef,
-                        orderBy('number'),
-                        where('number', '>=', q),
-                        where('number', '<=', `${q}\uf8ff`),
-                        limit(20)
-                    ))
-                );
-            }
-
-            const snaps = await Promise.allSettled(queries);
-            const baseResult = buildPlayerSearchDocsFromSnapshots(snaps, prefixes.length, isNumeric);
-            const onlyPermissionDeniedFailures = baseResult.docs.length === 0
-                && baseResult.rejected.length > 0
-                && baseResult.rejected.every((error) => (error?.code || '') === 'permission-denied');
-            const result = onlyPermissionDeniedFailures
-                ? await loadPlayerSearchDocsByTeam(prefixes, q, isNumeric, modalState.teamsById)
-                : baseResult;
+            const result = await loadPlayerSearchDocs(prefixes, q, isNumeric, modalState.teamsById);
             if (!modalState || reqId !== modalState.playersReqId) return;
 
             const rejected = result.rejected;

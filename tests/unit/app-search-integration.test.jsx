@@ -346,7 +346,10 @@ describe('React app shell search', () => {
         await clickButton(container, 'Search');
         const getPlayerSearchCallCount = () => firebaseMocks.getDocs.mock.calls.filter(([request]) => {
             const parts = request?.parts || [];
-            return parts.some((part) => part?.collectionName === 'players');
+            return parts.some((part) => {
+                const collectionName = part?.collectionName;
+                return collectionName === 'players' || String(collectionName || '').endsWith('/players');
+            });
         }).length;
         const baselinePlayerCalls = getPlayerSearchCallCount();
         await fillSearch(container, 'pa');
