@@ -136,6 +136,11 @@ async function waitForText(container, text) {
     for (let index = 0; index < 25; index += 1) {
         if (container.textContent.includes(text)) return;
         await act(async () => {
+            if (vi.isFakeTimers()) {
+                await vi.advanceTimersByTimeAsync(1);
+                await Promise.resolve();
+                return;
+            }
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
     }
