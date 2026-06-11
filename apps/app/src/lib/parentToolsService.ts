@@ -736,23 +736,31 @@ export async function loadTeamMediaForApp(
   }
 
   const itemSets = new Map<string, TeamMediaItem[]>();
+  const fallbackCounts = new Map<string, number>();
   await Promise.all(visibleFolders.map(async (folder: any) => {
     const folderId = compactString(folder?.id);
-    if (!folderId || !requestedFolderIds.has(folderId)) return;
+    if (!folderId) return;
+    const storedCount = getStoredMediaCount(folder);
+    const shouldLoadItems = requestedFolderIds.has(folderId);
+    if (!shouldLoadItems && storedCount !== null) {
+      fallbackCounts.set(folderId, storedCount);
+      return;
+    }
     const items = sortByMediaOrder(await Promise.resolve(getTeamMediaItems(teamId, folderId)).catch(() => []))
       .map(toTeamMediaItem)
       .filter((item: TeamMediaItem) => item.url && isSafeTeamMediaUrl(item.url));
-    itemSets.set(folderId, items);
+    fallbackCounts.set(folderId, items.length);
+    if (shouldLoadItems) itemSets.set(folderId, items);
   }));
 
   const folderCards = visibleFolders.map((folder: any) => {
     const folderId = compactString(folder?.id);
     const loadedItems = itemSets.get(folderId);
-    const fallbackCount = Number(folder?.itemCount ?? folder?.mediaCount ?? folder?.totalItems ?? 0);
+    const fallbackCount = fallbackCounts.get(folderId);
     return {
       ...folder,
       id: folderId,
-      itemCount: loadedItems ? loadedItems.length : Number.isFinite(fallbackCount) && fallbackCount >= 0 ? fallbackCount : 0,
+      itemCount: loadedItems ? loadedItems.length : Number.isFinite(fallbackCount) ? fallbackCount : 0,
       items: loadedItems || [],
       itemsLoaded: Boolean(loadedItems)
     };
@@ -881,6 +889,11 @@ function toTeamMediaItem(item: any): TeamMediaItem {
     title: compactString(item.title || item.fileName || item.name) || (item.type === 'file' ? 'File' : item.type === 'photo' ? 'Photo' : 'Media'),
     type: compactString(item.type || item.mediaType) || 'media'
   };
+}
+
+function getStoredMediaCount(folder: any) {
+  const count = Number(folder?.itemCount ?? folder?.mediaCount ?? folder?.totalItems);
+  return Number.isFinite(count) && count >= 0 ? count : null;
 }
 
 function normalizeFamilyChildren(children: any[]) {
