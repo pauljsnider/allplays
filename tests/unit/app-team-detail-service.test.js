@@ -12,6 +12,7 @@ vi.mock('@capacitor-firebase/authentication', () => ({
 }), { virtual: true });
 
 vi.mock('../../js/db.js', () => ({
+    addPlayer: vi.fn(),
     getAggregatedStatsForGames: vi.fn(),
     getAdSpaceSponsors: vi.fn(),
     getConfigs: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('../../js/db.js', () => ({
     getPlayers: vi.fn(),
     getPlayerTrackingStatuses: vi.fn(),
     getPublicTrackingItems: vi.fn(),
+    getRosterFieldDefinitions: vi.fn(),
     getTeam: vi.fn(),
     getAllUsers: vi.fn(),
     updateTeam: vi.fn(),
@@ -34,7 +36,8 @@ vi.mock('../../js/db.js', () => ({
     revokeScorekeeperAccess: vi.fn(),
     revokeVideographerAccess: vi.fn(),
     deactivatePlayer: vi.fn(),
-    reactivatePlayer: vi.fn()
+    reactivatePlayer: vi.fn(),
+    uploadPlayerPhoto: vi.fn()
 }));
 
 vi.mock('../../js/firebase.js', () => ({
@@ -54,9 +57,9 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
-import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, updateEvent, updateGame, updateTeam } from '../../js/db.js';
+import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, updateEvent, updateGame, updateTeam, uploadPlayerPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 beforeEach(() => {
@@ -167,6 +170,131 @@ describe('React app team detail model', () => {
             inviteUrl: 'http://localhost:3000/app#/accept-invite?code=ABCD1234&type=parent',
             status: 'pending'
         });
+    });
+
+    it('loads normalized roster field definitions only for full team staff', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getRosterFieldDefinitions.mockResolvedValue([
+            {
+                key: 'grad_year',
+                label: 'Grad Year',
+                type: 'menu',
+                options: [{ value: '2028', label: '2028' }],
+                required: true,
+                active: true,
+                sortOrder: 1
+            }
+        ]);
+
+        await expect(loadRosterFieldDefinitionsForApp('team-1', { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] })).rejects.toThrow('You do not have permission to manage roster players for this team.');
+
+        const fields = await loadRosterFieldDefinitionsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] });
+        expect(getRosterFieldDefinitions).toHaveBeenCalledWith('team-1', expect.objectContaining({ id: 'team-1' }));
+        expect(fields).toEqual([
+            expect.objectContaining({
+                key: 'grad_year',
+                label: 'Grad Year',
+                type: 'menu',
+                options: [{ value: '2028', label: '2028' }],
+                required: true
+            })
+        ]);
+    });
+
+    it('creates roster players in the same public doc shape as the legacy roster form without touching private profile docs', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getRosterFieldDefinitions.mockResolvedValue([
+            {
+                key: 'grad_year',
+                label: 'Grad Year',
+                type: 'menu',
+                options: [{ value: '2028', label: '2028' }],
+                required: true,
+                active: true,
+                sortOrder: 1
+            },
+            {
+                key: 'captain',
+                label: 'Captain',
+                type: 'checkbox',
+                options: [],
+                required: false,
+                active: true,
+                sortOrder: 2
+            }
+        ]);
+        uploadPlayerPhoto.mockResolvedValue('https://img.example.test/player-1.png');
+        addPlayer.mockResolvedValue('player-1');
+
+        const photoFile = new File(['abc'], 'player.png', { type: 'image/png' });
+        const result = await addRosterPlayerForApp(' team-1 ', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
+            name: ' Pat Star ',
+            number: ' 9 ',
+            photoFile,
+            rosterFieldValues: {
+                grad_year: '2028',
+                captain: true
+            }
+        });
+
+        expect(uploadPlayerPhoto).toHaveBeenCalledWith(photoFile);
+        expect(addPlayer).toHaveBeenCalledWith('team-1', {
+            name: 'Pat Star',
+            number: '9',
+            photoUrl: 'https://img.example.test/player-1.png',
+            profile: {
+                customFields: {
+                    grad_year: '2028',
+                    captain: true
+                }
+            }
+        });
+        expect(result).toEqual({
+            playerId: 'player-1',
+            player: {
+                name: 'Pat Star',
+                number: '9',
+                photoUrl: 'https://img.example.test/player-1.png',
+                profile: {
+                    customFields: {
+                        grad_year: '2028',
+                        captain: true
+                    }
+                }
+            }
+        });
+    });
+
+    it('validates required roster fields before creating a roster player', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getRosterFieldDefinitions.mockResolvedValue([
+            {
+                key: 'grad_year',
+                label: 'Grad Year',
+                type: 'menu',
+                options: [{ value: '2028', label: '2028' }],
+                required: true,
+                active: true,
+                sortOrder: 1
+            }
+        ]);
+
+        await expect(addRosterPlayerForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
+            name: 'Pat Star',
+            rosterFieldValues: {}
+        })).rejects.toThrow('Grad Year is required.');
+
+        expect(addPlayer).not.toHaveBeenCalled();
+        expect(uploadPlayerPhoto).not.toHaveBeenCalled();
     });
 
     it('treats accepted roster invites as linked when legacy parent scope is stored in parentPlayerKeys', () => {

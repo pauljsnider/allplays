@@ -23,6 +23,7 @@ import {
   Ticket,
   Trophy,
   UserRound,
+  UserPlus,
   Users,
   Zap
 } from 'lucide-react';
@@ -31,7 +32,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { addRosterPlayerForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -495,6 +496,7 @@ function RosterTab({
       ) : null}
       {model.canManageTeam && rosterInviteLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading parent invite status…</div> : null}
       {model.canManageTeam && rosterInviteError ? <div className="mt-3 text-xs font-black text-rose-700">{rosterInviteError}</div> : null}
+      {model.canManageTeam ? <AddPlayerCard teamId={model.team.id} authUser={authUser} onCreated={onRefresh} /> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
@@ -515,6 +517,190 @@ function RosterTab({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function AddPlayerCard({ teamId, authUser, onCreated }: {
+  teamId: string;
+  authUser: AuthState['user'];
+  onCreated: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loadingFields, setLoadingFields] = useState(false);
+  const [fieldsError, setFieldsError] = useState('');
+  const [fields, setFields] = useState<TeamRosterFieldDefinition[]>([]);
+  const [name, setName] = useState('');
+  const [number, setNumber] = useState('');
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [rosterFieldValues, setRosterFieldValues] = useState<Record<string, unknown>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  async function openForm() {
+    setOpen(true);
+    if (fields.length || loadingFields) return;
+    setLoadingFields(true);
+    setFieldsError('');
+    try {
+      setFields(await loadRosterFieldDefinitionsForApp(teamId, authUser || null));
+    } catch (error: any) {
+      setFieldsError(error?.message || 'Unable to load roster fields.');
+    } finally {
+      setLoadingFields(false);
+    }
+  }
+
+  function resetForm() {
+    setName('');
+    setNumber('');
+    setPhotoFile(null);
+    setRosterFieldValues({});
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    setStatus(null);
+    try {
+      await addRosterPlayerForApp(teamId, authUser || null, {
+        name,
+        number,
+        photoFile,
+        rosterFieldValues
+      });
+      await onCreated();
+      setStatus({ success: true, message: `${name.trim() || 'Player'} added to roster.` });
+      resetForm();
+      setOpen(false);
+    } catch (error: any) {
+      setStatus({ success: false, message: error?.message || 'Unable to add player.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-primary-100 bg-primary-50 p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-gray-950">Add player</div>
+          <div className="mt-1 text-xs font-semibold text-gray-600">Create a roster player in the same public team doc shape the legacy roster editor uses.</div>
+        </div>
+        {!open ? (
+          <button type="button" className="primary-button !min-h-10 text-xs" onClick={openForm}>
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
+            Add player
+          </button>
+        ) : (
+          <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => setOpen(false)} disabled={submitting}>
+            Cancel
+          </button>
+        )}
+      </div>
+      {status ? <div className={`mt-3 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{status.message}</div> : null}
+      {open ? (
+        <form className="mt-3 space-y-3" onSubmit={submit}>
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Name</span>
+            <input
+              type="text"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+              placeholder="Player name"
+              required
+              disabled={submitting}
+            />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Jersey number</span>
+            <input
+              type="text"
+              value={number}
+              onChange={(event) => setNumber(event.target.value)}
+              className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+              placeholder="Optional"
+              disabled={submitting}
+            />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Photo</span>
+            <input
+              type="file"
+              accept="image/*"
+              className="mt-2 block w-full text-sm font-semibold text-gray-600 file:mr-4 file:rounded-xl file:border-0 file:bg-white file:px-3 file:py-2 file:text-sm file:font-black file:text-primary-700"
+              onChange={(event) => setPhotoFile(event.target.files?.[0] || null)}
+              disabled={submitting}
+            />
+            <div className="mt-1 text-[11px] font-semibold text-gray-500">Optional. Matches the legacy 5 MB image limit.</div>
+          </label>
+          {loadingFields ? <div className="text-xs font-semibold text-gray-500">Loading roster fields…</div> : null}
+          {fieldsError ? <div className="text-xs font-black text-rose-700">{fieldsError}</div> : null}
+          {fields.map((field) => <RosterFieldInput key={field.key} field={field} value={rosterFieldValues[field.key]} disabled={submitting} onChange={(value) => setRosterFieldValues((current) => ({ ...current, [field.key]: value }))} />)}
+          <button type="submit" className="primary-button !min-h-10 text-xs" disabled={submitting}>
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            Save player
+          </button>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+function RosterFieldInput({
+  field,
+  value,
+  disabled,
+  onChange
+}: {
+  field: TeamRosterFieldDefinition;
+  value: unknown;
+  disabled: boolean;
+  onChange: (value: unknown) => void;
+}) {
+  if (field.type === 'checkbox') {
+    return (
+      <label className="flex items-start gap-3 rounded-xl border border-primary-100 bg-white px-3 py-2">
+        <input
+          type="checkbox"
+          className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          checked={value === true}
+          onChange={(event) => onChange(event.target.checked)}
+          disabled={disabled}
+        />
+        <span>
+          <span className="block text-sm font-black text-gray-950">{field.label}</span>
+          {field.description ? <span className="mt-1 block text-xs font-semibold text-gray-500">{field.description}</span> : null}
+        </span>
+      </label>
+    );
+  }
+
+  return (
+    <label className="block">
+      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">{field.label}{field.required ? ' *' : ''}</span>
+      {field.type === 'menu' ? (
+        <select
+          value={String(value ?? '')}
+          onChange={(event) => onChange(event.target.value)}
+          className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+          disabled={disabled}
+        >
+          <option value="">Select…</option>
+          {field.options.map((option) => <option key={`${field.key}-${option.value}`} value={option.value}>{option.label}</option>)}
+        </select>
+      ) : (
+        <input
+          type={field.type === 'date' ? 'date' : 'text'}
+          value={String(value ?? '')}
+          onChange={(event) => onChange(event.target.value)}
+          className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+          disabled={disabled}
+        />
+      )}
+      {field.description ? <span className="mt-1 block text-[11px] font-semibold text-gray-500">{field.description}</span> : null}
+    </label>
   );
 }
 
