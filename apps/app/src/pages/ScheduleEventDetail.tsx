@@ -2453,7 +2453,7 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
-  const canManageTimeline = Boolean(auth.user && event.isTeamStaff && event.isDbGame && !event.isCancelled);
+  const canManageTimeline = Boolean(auth.user && event.isDbGame && event.isTeamStaff && !event.isCancelled);
   const totalMinutes = getPracticeTimelineTotalMinutes(blocks);
   const activeBlock = blocks[activeDrillIndex] || null;
 
