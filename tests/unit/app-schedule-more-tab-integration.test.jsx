@@ -15,6 +15,7 @@ const scheduleMocks = vi.hoisted(() => ({
     loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
     loadHomeScoringPlayers: vi.fn().mockResolvedValue([]),
     loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
+    loadGameDayLiveEventsForApp: vi.fn().mockResolvedValue([]),
     markParentPracticePacketComplete: vi.fn(),
     publishGamePlanForApp: vi.fn(),
     releaseParentScheduleAssignmentClaim: vi.fn(),
