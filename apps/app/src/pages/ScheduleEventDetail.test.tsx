@@ -367,12 +367,12 @@ describe('ScheduleEventDetail assignments', () => {
       expect(messageRows[1]?.textContent).toContain('Second');
     });
 
-    fireEvent.change(screen.getByLabelText('Live chat message'), { target: { value: 'Let's go Bears' } });
+    fireEvent.change(screen.getByLabelText('Live chat message'), { target: { value: "Let's go Bears" } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => {
       expect(liveGameChatServiceMocks.sendLiveGameChatMessage).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
-        text: 'Let's go Bears',
+        text: "Let's go Bears",
         user: auth.user
       }));
     });
