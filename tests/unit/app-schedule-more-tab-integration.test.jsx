@@ -769,7 +769,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(scheduleMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, 'basketball-5v5', expect.objectContaining({
             lineups: expect.objectContaining({ 'Q1-pg': 'p1', 'Q1-sg': 'p2' })
         }));
-        expect(container.textContent).toContain('Lineup draft autosaved.');
+        await waitForText(container, 'Lineup draft autosaved.');
         expect(buttonByText(container, 'Publish lineup').disabled).toBe(false);
     });
 
