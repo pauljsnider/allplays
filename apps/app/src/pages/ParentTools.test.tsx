@@ -144,7 +144,7 @@ describe('ParentTools access', () => {
         expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
     });
 
-    it('waits for public teams to load before opening the manual request form', async () => {
+    it('opens the manual request form immediately while public teams finish loading', async () => {
         type PublicTeamRow = { id: string; name: string; sport: string };
         const deferredTeams: { resolve: ((value: PublicTeamRow[]) => void) | null } = { resolve: null };
         parentToolsServiceMocks.loadParentAccessTeams.mockImplementation(() => new Promise<PublicTeamRow[]>((resolve) => {
@@ -155,15 +155,17 @@ describe('ParentTools access', () => {
         await screen.findByText('Request player access');
         fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
 
-        expect(screen.queryByLabelText('Team')).toBeNull();
-        expect(screen.getByRole('button', { name: 'Loading public teams...' })).toBeTruthy();
+        const teamSelect = screen.getByLabelText('Team') as HTMLSelectElement;
+        expect(teamSelect).toBeTruthy();
+        expect(teamSelect.disabled).toBe(true);
+        expect(screen.getByRole('option', { name: 'Loading public teams...' })).toBeTruthy();
 
         await waitFor(() => expect(deferredTeams.resolve).toBeTruthy());
         if (!deferredTeams.resolve) throw new Error('Expected public teams loader to be pending.');
         deferredTeams.resolve([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
 
         expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
-        expect(screen.getByLabelText('Team')).toBeTruthy();
+        expect((screen.getByLabelText('Team') as HTMLSelectElement).disabled).toBe(false);
     });
 
     it('still submits request access after the redeem panel is added', async () => {
