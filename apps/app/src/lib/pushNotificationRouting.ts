@@ -31,6 +31,17 @@ function buildMessagesRoute(teamId: string, conversationId?: string) {
     return `${route}?conversationId=${encodeRouteParam(normalizedConversationId)}`;
 }
 
+function buildScheduleEventRoute(teamId: string, eventId: string, section?: string) {
+    const normalizedTeamId = normalizeValue(teamId);
+    const normalizedEventId = normalizeValue(eventId);
+    if (!normalizedTeamId || !normalizedEventId) {
+        return '';
+    }
+    const route = `/schedule/${encodeRouteParam(normalizedTeamId)}/${encodeRouteParam(normalizedEventId)}`;
+    const normalizedSection = normalizeValue(section);
+    return normalizedSection ? `${route}?section=${encodeRouteParam(normalizedSection)}` : route;
+}
+
 function normalizeAppRoute(route: unknown) {
     const value = normalizeValue(route);
     if (!value.startsWith('/')) {
@@ -63,13 +74,13 @@ function buildLegacyLinkFallback(link: string) {
         }
         if (path.endsWith('/live-game.html') && gameId) {
             if (teamId) {
-                return `/schedule/${encodeRouteParam(teamId)}/${encodeRouteParam(gameId)}`;
+                return buildScheduleEventRoute(teamId, gameId, 'game');
             }
             return '/schedule';
         }
         if (path.endsWith('/game-day.html')) {
             if (teamId && gameId) {
-                return `/schedule/${encodeRouteParam(teamId)}/${encodeRouteParam(gameId)}`;
+                return buildScheduleEventRoute(teamId, gameId, 'game');
             }
             if (gameId) {
                 return `/games/${encodeRouteParam(gameId)}`;
@@ -106,7 +117,7 @@ export function resolvePushNotificationRoute(input: unknown) {
     }
     if (category === 'liveScore' && gameId) {
         if (teamId) {
-            return `/schedule/${encodeRouteParam(teamId)}/${encodeRouteParam(gameId)}`;
+            return buildScheduleEventRoute(teamId, gameId, 'game');
         }
         return `/games/${encodeRouteParam(gameId)}`;
     }

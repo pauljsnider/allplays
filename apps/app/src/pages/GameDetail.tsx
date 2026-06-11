@@ -65,8 +65,13 @@ export function GameDetail({ auth }: { auth: AuthState }) {
 
   const redirectTarget = useMemo(() => {
     if (!state.targetRoute) return ''
-    const childQuery = state.targetRoute.childId ? `?childId=${encodeURIComponent(state.targetRoute.childId)}` : ''
-    return `/schedule/${encodeURIComponent(state.targetRoute.teamId)}/${encodeURIComponent(state.targetRoute.eventId)}${childQuery}`
+    const params = new URLSearchParams()
+    if (state.targetRoute.childId) {
+      params.set('childId', state.targetRoute.childId)
+    }
+    params.set('section', 'game')
+    const search = params.toString()
+    return `/schedule/${encodeURIComponent(state.targetRoute.teamId)}/${encodeURIComponent(state.targetRoute.eventId)}${search ? `?${search}` : ''}`
   }, [state.targetRoute])
 
   if (redirectTarget) {
