@@ -498,6 +498,21 @@ describe('mobile lineup draft creation', () => {
     expect(result.gamePlan?.lineups).toEqual({ 'Q1-pg': 'p1' });
   });
 
+  it('persists an empty manual lineup when every slot is cleared', async () => {
+    const result = await saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5', {
+      lineups: {}
+    });
+
+    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', {
+      gamePlan: expect.objectContaining({
+        formationId: 'basketball-5v5',
+        lineups: {},
+        publishedLineups: { 'Q1-pg': 'published-player' }
+      })
+    });
+    expect(result.gamePlan?.lineups).toEqual({});
+  });
+
   it('rejects unsupported events and empty Going player pools', async () => {
     await expect(saveScheduledGameLineupDraftForApp({ ...event, isDbGame: false }, user, 'basketball-5v5')).rejects.toThrow('scheduled game');
     await expect(saveScheduledGameLineupDraftForApp(event, null as any, 'basketball-5v5')).rejects.toThrow('Sign in');

@@ -1974,7 +1974,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   }, [draftLineups]);
 
   const persistDraft = useCallback(async (lineups: Record<string, string>, reason: 'autosave' | 'manual' | 'publish') => {
-    if (!auth.user || !formationId || !Object.keys(lineups).length) return true;
+    if (!auth.user || !formationId) return true;
     setSaving(true);
     if (reason !== 'autosave') setStatus(null);
     try {
@@ -1996,7 +1996,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   }, [auth.user, event, formationId, onGamePlanSaved]);
 
   useEffect(() => {
-    if (!dirtyRef.current || !formationId || !Object.keys(draftLineups).length) return undefined;
+    if (!dirtyRef.current || !formationId) return undefined;
     if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = window.setTimeout(() => {
       void persistDraft(latestDraftRef.current, 'autosave');

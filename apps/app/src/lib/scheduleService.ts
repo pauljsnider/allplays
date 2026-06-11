@@ -307,7 +307,7 @@ function getAvailableLineupPlayers(players: any[]): AutoFilledLineupPlayer[] {
 }
 
 function hasLineupAssignments(gamePlan: Record<string, any> | null | undefined) {
-  return Boolean(gamePlan?.lineups && typeof gamePlan.lineups === 'object' && Object.keys(gamePlan.lineups).length);
+  return Boolean(gamePlan?.lineups && typeof gamePlan.lineups === 'object');
 }
 
 function normalizeLineupAssignments(lineups: Record<string, unknown> | null | undefined) {
@@ -417,11 +417,12 @@ export async function saveScheduledGameLineupDraftForApp(
   ]);
   const availablePlayers = getAvailableLineupPlayers(players);
   const goingPlayers = getGoingLineupPlayers(players, rsvps);
-  const overrideLineups = options?.lineups && typeof options.lineups === 'object'
+  const hasLineupOverride = Boolean(options && Object.prototype.hasOwnProperty.call(options, 'lineups'));
+  const overrideLineups = hasLineupOverride && options?.lineups && typeof options.lineups === 'object'
     ? normalizeLineupAssignments(options.lineups)
     : null;
-  const nextGamePlan = overrideLineups && Object.keys(overrideLineups).length
-    ? buildManualLineupDraft(formationId, overrideLineups, event.gamePlan || {})
+  const nextGamePlan = hasLineupOverride
+    ? buildManualLineupDraft(formationId, overrideLineups || {}, event.gamePlan || {})
     : buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: event.gamePlan || {} });
   const payload: Record<string, unknown> = { gamePlan: nextGamePlan };
 

@@ -20,6 +20,15 @@ describe('gameDayLineupBuilder', () => {
     });
   });
 
+  it('dedupes same-half soccer assignments for hyphenated position ids', () => {
+    expect(assignLineupPlayer({
+      'H1-right-defense': 'p1',
+      'H1-left-defense': 'p2'
+    }, 'H1-left-defense', 'p1')).toEqual({
+      'H1-left-defense': 'p1'
+    });
+  });
+
   it('swaps slot occupants when dragging between assignments', () => {
     expect(moveLineupPlayer({
       'Q1-pg': 'p1',

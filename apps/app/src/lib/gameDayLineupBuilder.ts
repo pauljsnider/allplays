@@ -219,6 +219,8 @@ function parsePeriod(value: string) {
 }
 
 function getPeriodKeyFromSlot(slotKey: string) {
-  const match = /^(.*)-[^-]+$/.exec(compactString(slotKey));
-  return match?.[1] || '';
+  const safeSlotKey = compactString(slotKey);
+  const separatorIndex = safeSlotKey.indexOf('-');
+  if (separatorIndex <= 0) return '';
+  return safeSlotKey.slice(0, separatorIndex);
 }

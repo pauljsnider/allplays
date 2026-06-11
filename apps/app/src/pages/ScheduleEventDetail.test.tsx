@@ -602,4 +602,80 @@ describe('ScheduleEventDetail lineup builder', () => {
       );
     });
   });
+
+  it('autosaves an empty lineup after the last populated slot is cleared', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamStaff: true,
+        gamePlan: {
+          formationId: 'basketball-5v5',
+          lineups: { 'Q1-pg': 'p1' },
+          publishedLineups: { 'Q1-pg': 'p1' },
+          publishedVersion: 1
+        }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: { 'Q1-pg': 'p1' },
+        publishedLineups: { 'Q1-pg': 'p1' },
+        publishedVersion: 1
+      }
+    });
+    scheduleServiceMocks.saveScheduledGameLineupDraftForApp.mockImplementation(async (_event, _user, _formationId, options) => ({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: options?.lineups || {},
+        publishedLineups: { 'Q1-pg': 'p1' },
+        publishedVersion: 1
+      }
+    }));
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Lineup builder')).toBeTruthy();
+    });
+
+    fireEvent.doubleClick(screen.getByTestId('lineup-slot-Q1-pg'));
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledWith(
+        expect.any(Object),
+        auth.user,
+        'basketball-5v5',
+        expect.objectContaining({ lineups: {} })
+      );
+    });
+  });
 });
