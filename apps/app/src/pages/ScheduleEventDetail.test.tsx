@@ -623,6 +623,10 @@ describe('ScheduleEventDetail lineup builder', () => {
         })
       );
     });
+
+    await waitFor(() => {
+      expect(screen.getByText('Lineup draft autosaved.')).toBeTruthy();
+    });
   });
 
   it('disables publish immediately after the last populated lineup slot is cleared', async () => {

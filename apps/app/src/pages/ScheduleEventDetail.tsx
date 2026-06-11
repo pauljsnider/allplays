@@ -1948,7 +1948,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     dirtyRef.current = false;
     latestDraftRef.current = {};
     latestPreviewRef.current = null;
-  }, [event.eventKey, event.gamePlan?.formationId]);
+  }, [event.eventKey]);
 
   useEffect(() => {
     let cancelled = false;
