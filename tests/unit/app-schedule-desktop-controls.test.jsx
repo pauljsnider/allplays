@@ -10,7 +10,9 @@ const scheduleMocks = vi.hoisted(() => ({
     createScheduleImportPractice: vi.fn(),
     loadParentSchedule: vi.fn(),
     removeTeamCalendarUrl: vi.fn(),
-    generateScheduleAiImportRows: vi.fn()
+    generateScheduleAiImportRows: vi.fn(),
+    aiModuleLoads: 0,
+    csvModuleLoads: 0
 }));
 const layoutState = vi.hoisted(() => ({
     isDesktopWeb: true,
@@ -19,9 +21,17 @@ const layoutState = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
-vi.mock('../../apps/app/src/lib/scheduleAiImport.ts', () => ({
-    generateScheduleAiImportRows: scheduleMocks.generateScheduleAiImportRows
-}));
+vi.mock('../../apps/app/src/lib/scheduleAiImport.ts', async () => {
+    scheduleMocks.aiModuleLoads += 1;
+    return {
+        generateScheduleAiImportRows: scheduleMocks.generateScheduleAiImportRows
+    };
+});
+
+vi.mock('../../apps/app/src/lib/scheduleCsvImport.ts', async (importOriginal) => {
+    scheduleMocks.csvModuleLoads += 1;
+    return await importOriginal();
+});
 vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({
     useShellLayout: () => layoutState
 }));
@@ -255,6 +265,17 @@ describe('React app desktop Schedule controls', () => {
         expect(buttonByText(container, 'Show 2 more')).toBeTruthy();
     });
 
+    it('does not load AI or CSV helpers for parent-only initial render', async () => {
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Main Gym');
+
+        expect(scheduleMocks.aiModuleLoads).toBe(0);
+        expect(scheduleMocks.csvModuleLoads).toBe(0);
+        expect(container.textContent).not.toContain('Add external calendar');
+        expect(container.textContent).not.toContain('Draft schedule with AI');
+        expect(container.textContent).not.toContain('Import schedule CSV');
+    });
+
     it('shows staff-only calendar import and refreshes after save', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             children: [
@@ -404,6 +425,7 @@ describe('React app desktop Schedule controls', () => {
 
         const { container } = await renderSchedule();
         await waitForText(container, 'Import schedule CSV');
+        const csvModuleLoadsBeforeUpload = scheduleMocks.csvModuleLoads;
         const input = container.querySelector('input[aria-label="Schedule CSV file"]');
         const file = new File([
             'Type,Date,Start,End,Opponent,Title,Location\n',
@@ -416,9 +438,11 @@ describe('React app desktop Schedule controls', () => {
             input.dispatchEvent(new Event('change', { bubbles: true }));
             await Promise.resolve();
         });
+        await waitForText(container, 'Loaded schedule.csv');
 
         await clickButton(container, 'Preview rows');
         await waitForText(container, 'Game vs Tigers');
+        expect(scheduleMocks.csvModuleLoads).toBe(csvModuleLoadsBeforeUpload + 1);
         expect(container.textContent).toContain('Speed Session');
 
         await clickButton(container, 'Import rows');
@@ -468,12 +492,14 @@ describe('React app desktop Schedule controls', () => {
 
         const { container } = await renderSchedule();
         await waitForText(container, 'Draft schedule with AI');
+        const aiModuleLoadsBeforeGenerate = scheduleMocks.aiModuleLoads;
         const textarea = container.querySelector('textarea[aria-label="Schedule text or AI instructions"]');
         expect(textarea).toBeTruthy();
 
         await changeTextarea(textarea, '4/2 6:30 PM vs Tigers at Field 1');
         await clickButton(container, 'Generate draft rows');
         await waitForText(container, 'AI draft preview 1 row(s)');
+        expect(scheduleMocks.aiModuleLoads).toBe(aiModuleLoadsBeforeGenerate + 1);
         expect(scheduleMocks.generateScheduleAiImportRows).toHaveBeenCalledWith(expect.objectContaining({
             teamName: 'Bears',
             text: '4/2 6:30 PM vs Tigers at Field 1',
@@ -553,6 +579,7 @@ describe('React app desktop Schedule controls', () => {
             input.dispatchEvent(new Event('change', { bubbles: true }));
             await Promise.resolve();
         });
+        await waitForText(container, 'Loaded bad-schedule.csv');
 
         await clickButton(container, 'Preview rows');
         await waitForText(container, 'Start time is invalid.');
@@ -583,6 +610,7 @@ describe('React app desktop Schedule controls', () => {
             input.dispatchEvent(new Event('change', { bubbles: true }));
             await Promise.resolve();
         });
+        await waitForText(container, 'Loaded partial-schedule.csv');
 
         await clickButton(container, 'Preview rows');
         await waitForText(container, 'Game vs Tigers');
