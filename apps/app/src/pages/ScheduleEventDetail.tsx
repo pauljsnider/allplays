@@ -124,6 +124,13 @@ import {
   type PracticeTimelineBlock,
   type PracticeTimelineDrillOption
 } from '../lib/practiceTimelineService';
+import {
+  acquireTrackStatsheetPhoto,
+  analyzeTrackStatsheetPhoto,
+  applyTrackStatsheetImportForApp,
+  loadTrackStatsheetContextForApp,
+  type TrackStatsheetReviewRow
+} from '../lib/statsheetImportService';
 import type { AuthState } from '../lib/types';
 
 type EventDetailSectionId = 'availability' | 'rideshare' | 'assignments' | 'game';
@@ -428,6 +435,21 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
+  const handleStatsheetImported = useCallback((payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => {
+    setEvents((current) => current.map((event) => (
+      event.teamId === decodedTeamId && event.id === decodedEventId
+        ? {
+          ...event,
+          homeScore: payload.homeScore,
+          awayScore: payload.awayScore,
+          status: 'completed',
+          liveStatus: 'completed',
+          ...(payload.statSheetPhotoUrl ? { statSheetPhotoUrl: payload.statSheetPhotoUrl } : {})
+        }
+        : event
+    )));
+  }, [decodedEventId, decodedTeamId]);
+
   const canSubmitRsvp = Boolean(selectedEvent?.isDbGame && !selectedEvent.isCancelled && !selectedEvent.availabilityLocked);
 
   const submitRsvp = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
@@ -658,7 +680,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onWrapupCompleted={handleWrapupCompleted} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
     </div>
   );
@@ -2039,7 +2061,7 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   );
 }
 
-function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupCompleted, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
+function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -2163,6 +2185,8 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupComp
 
           {canWrapup ? <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} /> : null}
 
+          {canWrapup ? <StatsheetImportPanel event={event} onImported={onStatsheetImported} /> : null}
+
           {canPublishLineup ? (
             <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
           ) : null}
@@ -2227,6 +2251,290 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupComp
       {!isPractice ? <GameReportSections event={event} /> : null}
     </section>
   );
+}
+
+function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEvent; onImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const previewUrlRef = useRef<string>('')
+  const [file, setFile] = useState<File | null>(null)
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState('')
+  const [roster, setRoster] = useState<any[]>([])
+  const [columns, setColumns] = useState<string[]>([])
+  const [homeRows, setHomeRows] = useState<TrackStatsheetReviewRow[]>([])
+  const [visitorRows, setVisitorRows] = useState<TrackStatsheetReviewRow[]>([])
+  const [homeScore, setHomeScore] = useState(Math.max(0, Number(event.homeScore ?? 0)))
+  const [awayScore, setAwayScore] = useState(Math.max(0, Number(event.awayScore ?? 0)))
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null)
+  const [matchHint, setMatchHint] = useState('')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [loadingContext, setLoadingContext] = useState(false)
+  const [uploadedPhotoUrl, setUploadedPhotoUrl] = useState('')
+
+  useEffect(() => () => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current)
+    }
+  }, [])
+
+  const ensureContext = useCallback(async () => {
+    if (roster.length && columns.length) {
+      return { roster, columns }
+    }
+    setLoadingContext(true)
+    try {
+      const context = await loadTrackStatsheetContextForApp(event.teamId, event.id)
+      const nextRoster = Array.isArray(context.roster) ? context.roster : []
+      const nextColumns = Array.isArray(context.config?.columns) ? context.config.columns : []
+      setRoster(nextRoster)
+      setColumns(nextColumns)
+      return { roster: nextRoster, columns: nextColumns }
+    } finally {
+      setLoadingContext(false)
+    }
+  }, [columns.length, event.id, event.teamId, roster])
+
+  const setPreviewFile = useCallback((nextFile: File | null) => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current)
+      previewUrlRef.current = ''
+    }
+    setFile(nextFile)
+    if (!nextFile) {
+      setPhotoPreviewUrl('')
+      return
+    }
+    const nextPreviewUrl = URL.createObjectURL(nextFile)
+    previewUrlRef.current = nextPreviewUrl
+    setPhotoPreviewUrl(nextPreviewUrl)
+  }, [])
+
+  useEffect(() => {
+    setPreviewFile(null)
+    setRoster([])
+    setColumns([])
+    setHomeRows([])
+    setVisitorRows([])
+    setHomeScore(Math.max(0, Number(event.homeScore ?? 0)))
+    setAwayScore(Math.max(0, Number(event.awayScore ?? 0)))
+    setMatchHint('')
+    setStatus(null)
+    setUploadedPhotoUrl('')
+  }, [event.eventKey, event.homeScore, event.awayScore, setPreviewFile])
+
+  const handlePhotoSelection = useCallback((nextFile: File | null) => {
+    if (!nextFile) return
+    if (!nextFile.type.startsWith('image/')) {
+      setStatus({ tone: 'error', message: 'Choose an image file.' })
+      return
+    }
+    setPreviewFile(nextFile)
+    setUploadedPhotoUrl('')
+    setHomeRows([])
+    setVisitorRows([])
+    setMatchHint('')
+    setStatus(null)
+  }, [setPreviewFile])
+
+  const handleNativePhotoChoice = async (source: 'camera' | 'photos') => {
+    setStatus(null)
+    try {
+      const nextFile = await acquireTrackStatsheetPhoto(source)
+      handlePhotoSelection(nextFile)
+    } catch (error: any) {
+      if (error?.code === 'cancelled') return
+      if (error?.code === 'unavailable' && source === 'photos') {
+        fileInputRef.current?.click()
+        return
+      }
+      const message = error?.code === 'permission-denied'
+        ? source === 'camera'
+          ? 'Camera permission was denied. Allow camera access to capture a statsheet.'
+          : 'Photo permission was denied. Allow photo library access to choose a statsheet.'
+        : error?.message || 'Statsheet photo could not be loaded right now.'
+      setStatus({ tone: 'error', message })
+    }
+  }
+
+  const handleAnalyze = async () => {
+    if (!file) {
+      setStatus({ tone: 'error', message: 'Choose a statsheet photo first.' })
+      return
+    }
+    setAnalyzing(true)
+    setStatus(null)
+    try {
+      const context = await ensureContext()
+      const review = await analyzeTrackStatsheetPhoto(file, context.roster)
+      setHomeRows(review.homeRows)
+      setVisitorRows(review.visitorRows)
+      setHomeScore((value) => (value > 0 ? value : review.shouldSwap ? review.awayScore : review.homeScore))
+      setAwayScore((value) => (value > 0 ? value : review.shouldSwap ? review.homeScore : review.awayScore))
+      setMatchHint(`Roster matches: home ${review.homeMatches}, visitor ${review.visitorMatches}.`)
+      setStatus({ tone: 'success', message: 'Analysis complete. Review and adjust before applying.' })
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Failed to analyze this statsheet.' })
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
+  const updateRow = (side: 'home' | 'visitor', index: number, patch: Partial<TrackStatsheetReviewRow>) => {
+    const setter = side === 'home' ? setHomeRows : setVisitorRows
+    setter((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)))
+  }
+
+  const handleApply = async (replaceExisting = false) => {
+    if (!file) {
+      setStatus({ tone: 'error', message: 'Choose a statsheet photo first.' })
+      return
+    }
+    setApplying(true)
+    setStatus(null)
+    try {
+      const context = await ensureContext()
+      const result = await applyTrackStatsheetImportForApp({
+        teamId: event.teamId,
+        gameId: event.id,
+        roster: context.roster,
+        columns: context.columns,
+        homeRows,
+        visitorRows,
+        homeScore,
+        awayScore,
+        file,
+        uploadedPhotoUrl,
+        replaceExisting
+      })
+
+      if (result.requiresReplaceConfirmation) {
+        if (replaceExisting) {
+          setStatus({ tone: 'error', message: 'Replacement confirmation could not be completed. Please try again later.' })
+          return
+        }
+        const confirmed = window.confirm('This game already has tracked data. Replace it with the stat sheet results?')
+        if (confirmed) {
+          await handleApply(true)
+        }
+        return
+      }
+
+      setUploadedPhotoUrl(result.uploadedPhotoUrl || '')
+      onImported({
+        homeScore,
+        awayScore,
+        statSheetPhotoUrl: result.uploadedPhotoUrl || null
+      })
+      setStatus({ tone: 'success', message: 'Stats applied to the game.' })
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to apply statsheet stats.' })
+    } finally {
+      setApplying(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3" data-testid="statsheet-import-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">Statsheet import</div>
+          <div className="mt-1 text-sm font-semibold text-gray-950">Capture or upload a paper scoresheet, review the mapped stats, then apply the same legacy statsheet writes inside the app.</div>
+        </div>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => {
+          handlePhotoSelection(event.target.files?.[0] || null)
+          event.target.value = ''
+        }}
+      />
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" className="primary-button min-h-11 px-4 text-sm" onClick={() => void handleNativePhotoChoice('camera')} disabled={analyzing || applying || loadingContext}>
+          Take photo
+        </button>
+        <button type="button" className="secondary-button min-h-11 px-4 text-sm" onClick={() => void handleNativePhotoChoice('photos')} disabled={analyzing || applying || loadingContext}>
+          Choose from library
+        </button>
+        <button type="button" className="secondary-button min-h-11 px-4 text-sm" onClick={() => fileInputRef.current?.click()} disabled={analyzing || applying || loadingContext}>
+          Upload file
+        </button>
+        <button type="button" className="secondary-button min-h-11 px-4 text-sm" onClick={() => void handleAnalyze()} disabled={!file || analyzing || applying || loadingContext}>
+          {analyzing ? 'Analyzing' : 'Analyze photo'}
+        </button>
+      </div>
+
+      {photoPreviewUrl ? (
+        <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
+          <img src={photoPreviewUrl} alt="Statsheet preview" className="max-h-72 w-full rounded-xl object-contain" />
+        </div>
+      ) : null}
+
+      {matchHint ? <div className="mt-3 text-xs font-semibold text-gray-500">{matchHint}</div> : null}
+
+      {homeRows.length ? (
+        <div className="mt-3 space-y-3">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <ScoreStepper label="Final home" value={homeScore} onDecrease={() => setHomeScore((value) => Math.max(0, value - 1))} onIncrease={() => setHomeScore((value) => value + 1)} disabled={applying} />
+            <ScoreStepper label="Final away" value={awayScore} onDecrease={() => setAwayScore((value) => Math.max(0, value - 1))} onIncrease={() => setAwayScore((value) => value + 1)} disabled={applying} />
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+            <div className="border-b border-gray-100 px-3 py-2 text-xs font-black uppercase tracking-[0.04em] text-gray-500">Home rows</div>
+            <div className="divide-y divide-gray-100">
+              {homeRows.map((row, index) => (
+                <div key={`home-${index}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[auto_minmax(0,1fr)_88px_88px_88px_minmax(0,1fr)] sm:items-center">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                    <input type="checkbox" checked={row.include} onChange={(event) => updateRow('home', index, { include: event.target.checked })} />
+                    Include
+                  </label>
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" value={row.name} onChange={(event) => updateRow('home', index, { name: event.target.value })} aria-label={`Home player ${index + 1} name`} />
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" value={row.number} onChange={(event) => updateRow('home', index, { number: event.target.value })} aria-label={`Home player ${index + 1} number`} />
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" type="number" min="0" value={row.totalPoints} onChange={(event) => updateRow('home', index, { totalPoints: Number(event.target.value || 0) })} aria-label={`Home player ${index + 1} points`} />
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" type="number" min="0" value={row.fouls} onChange={(event) => updateRow('home', index, { fouls: Number(event.target.value || 0) })} aria-label={`Home player ${index + 1} fouls`} />
+                  <select className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" value={row.mappedPlayerId} onChange={(event) => updateRow('home', index, { mappedPlayerId: event.target.value })} aria-label={`Home player ${index + 1} roster match`}>
+                    <option value="">Unmatched</option>
+                    {roster.map((player) => <option key={player.id} value={player.id}>{`#${player.number || '-'} ${player.name || 'Player'}`}</option>)}
+                  </select>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
+            <div className="border-b border-gray-100 px-3 py-2 text-xs font-black uppercase tracking-[0.04em] text-gray-500">Visitor rows</div>
+            <div className="divide-y divide-gray-100">
+              {visitorRows.map((row, index) => (
+                <div key={`visitor-${index}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[auto_minmax(0,1fr)_88px_88px_88px] sm:items-center">
+                  <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+                    <input type="checkbox" checked={row.include} onChange={(event) => updateRow('visitor', index, { include: event.target.checked })} />
+                    Include
+                  </label>
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" value={row.name} onChange={(event) => updateRow('visitor', index, { name: event.target.value })} aria-label={`Visitor player ${index + 1} name`} />
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" value={row.number} onChange={(event) => updateRow('visitor', index, { number: event.target.value })} aria-label={`Visitor player ${index + 1} number`} />
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" type="number" min="0" value={row.totalPoints} onChange={(event) => updateRow('visitor', index, { totalPoints: Number(event.target.value || 0) })} aria-label={`Visitor player ${index + 1} points`} />
+                  <input className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900" type="number" min="0" value={row.fouls} onChange={(event) => updateRow('visitor', index, { fouls: Number(event.target.value || 0) })} aria-label={`Visitor player ${index + 1} fouls`} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="primary-button min-h-11 px-4 text-sm" onClick={() => void handleApply()} disabled={applying || analyzing || loadingContext}>
+              {applying ? 'Applying' : 'Apply to game'}
+            </button>
+            <span className="text-xs font-semibold text-gray-500">Existing tracked data will require replacement confirmation.</span>
+          </div>
+        </div>
+      ) : null}
+
+      {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
+    </div>
+  )
 }
 
 function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
