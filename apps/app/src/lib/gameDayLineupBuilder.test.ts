@@ -29,6 +29,15 @@ describe('gameDayLineupBuilder', () => {
     });
   });
 
+  it('dedupes interval periods even when the position id is hyphenated', () => {
+    expect(assignLineupPlayer({
+      "Q2 5'-right-defense": 'p1',
+      "Q2 5'-left-defense": 'p2'
+    }, "Q2 5'-left-defense", 'p1')).toEqual({
+      "Q2 5'-left-defense": 'p1'
+    });
+  });
+
   it('does not clear unrelated malformed slot keys when assigning a player', () => {
     expect(assignLineupPlayer({
       bench: 'p1',
