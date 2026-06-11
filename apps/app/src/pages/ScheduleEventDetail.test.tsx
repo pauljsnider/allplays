@@ -32,6 +32,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   recordPlayerScoringStat: vi.fn(),
   saveScheduledGameLineupDraftForApp: vi.fn(),
   saveStaffPracticeAttendance: vi.fn(),
+  completeGameWrapupForApp: vi.fn(),
   updateGameScore: vi.fn(),
   updateParentScheduleRideRequestStatus: vi.fn()
 }));
@@ -44,6 +45,17 @@ const publicActionMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/gameReportService', () => ({ loadGameReportSections: vi.fn() }));
+const gameWrapupServiceMocks = vi.hoisted(() => ({
+  buildAppWrapupCompletionPayload: vi.fn(({ homeScore, awayScore, postGameNotes }) => ({
+    homeScore,
+    awayScore,
+    postGameNotes,
+    status: 'completed',
+    liveStatus: 'completed'
+  })),
+  generateGameWrapupArtifactsForApp: vi.fn()
+}));
+vi.mock('../lib/gameWrapupService', () => gameWrapupServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/liveGameAnnouncer', () => ({ useLiveGameAnnouncer: vi.fn() }));
 vi.mock('../lib/parentToolsService', () => ({ buildParentScheduleEventIcs: vi.fn(() => 'BEGIN:VCALENDAR') }));
@@ -685,6 +697,123 @@ describe('ScheduleEventDetail practice timeline', () => {
 
     expect(screen.queryByRole('button', { name: 'Add drill' })).toBeNull();
     expect(practiceTimelineServiceMocks.loadPracticeTimelineModel).not.toHaveBeenCalled();
+  });
+});
+
+describe('ScheduleEventDetail wrap-up', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('completes wrap-up with AI artifacts and broadcasts score corrections', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, homeScore: 51, awayScore: 47 })],
+      children: []
+    });
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 52, awayScore: 47 });
+    scheduleServiceMocks.completeGameWrapupForApp.mockResolvedValue({ status: 'completed', liveStatus: 'completed' });
+    gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockResolvedValue({
+      summary: 'Bears finished strong and controlled the glass.',
+      practiceFeedItems: [{ weakness: 'Closeouts', evidence: 'Late rotations', drillCategory: 'Defense', urgency: 'high', addedAt: '2026-06-10T18:00:00.000Z' }]
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Post-game wrap-up')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Final home score up' }));
+    fireEvent.change(screen.getByLabelText('Post-game notes'), { target: { value: '  Finished stronger on the glass.  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete wrap-up' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 52, awayScore: 47 }, auth.user);
+    });
+    expect(scheduleServiceMocks.publishLiveScoreUpdateEvent).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 52, awayScore: 47 }, auth.user, { homeScore: 51, awayScore: 47 });
+    expect(gameWrapupServiceMocks.generateGameWrapupArtifactsForApp).toHaveBeenCalledWith({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      score: { home: 52, away: 47 },
+      notes: 'Finished stronger on the glass.'
+    });
+    expect(scheduleServiceMocks.completeGameWrapupForApp).toHaveBeenCalledWith(
+      'team-1',
+      'game-1',
+      expect.objectContaining({
+        homeScore: 52,
+        awayScore: 47,
+        postGameNotes: 'Finished stronger on the glass.',
+        status: 'completed',
+        liveStatus: 'completed',
+        summary: 'Bears finished strong and controlled the glass.',
+        practiceFeedItems: [expect.objectContaining({ weakness: 'Closeouts', drillCategory: 'Defense' })]
+      }),
+      auth.user
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Wrap-up saved with 1 practice focus item.')).toBeTruthy();
+    });
+  });
+
+  it('completes wrap-up even when AI analysis fails', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, homeScore: 51, awayScore: 47 })],
+      children: []
+    });
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 51, awayScore: 47 });
+    scheduleServiceMocks.completeGameWrapupForApp.mockResolvedValue({ status: 'completed', liveStatus: 'completed' });
+    gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockRejectedValue(new Error('AI unavailable'));
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Post-game wrap-up')).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByLabelText('Post-game notes'), { target: { value: 'Finished stronger on the glass.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete wrap-up' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 51, awayScore: 47 }, auth.user);
+    });
+    await waitFor(() => {
+      expect(scheduleServiceMocks.completeGameWrapupForApp).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({
+          homeScore: 51,
+          awayScore: 47,
+          postGameNotes: 'Finished stronger on the glass.',
+          status: 'completed',
+          liveStatus: 'completed',
+          summary: '',
+          practiceFeedItems: []
+        }),
+        auth.user
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.')).toBeTruthy();
+    });
   });
 });
 
