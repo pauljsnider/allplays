@@ -3022,9 +3022,12 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   const userProfile = await loadProfileDocument(user.uid).catch(() => ({}));
   const linkedTeamIds = await loadOfficialLinkedTeamIds(user, userProfile as Record<string, any>);
   const requestedTeamId = compactString(options.teamId);
-  const teamIds = requestedTeamId ? linkedTeamIds.filter((teamId) => teamId === requestedTeamId) : linkedTeamIds;
+  const linkedRequestedTeamIds = requestedTeamId ? linkedTeamIds.filter((teamId) => teamId === requestedTeamId) : linkedTeamIds;
+  const teamIds = linkedRequestedTeamIds.length
+    ? linkedRequestedTeamIds
+    : (requestedTeamId ? [requestedTeamId] : linkedTeamIds);
 
-  if (!linkedTeamIds.length || (requestedTeamId && !teamIds.length)) {
+  if (!teamIds.length) {
     return {
       hasAccess: false,
       teamIds: [],
@@ -3042,7 +3045,7 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
     const canClaim = isEligibleOpenOfficiatingSlotParticipant(team || {}, userProfile as Record<string, any>, user);
     const teamName = compactString(team?.name) || 'Team';
 
-    return (Array.isArray(games) ? games : [])
+    const assignments = (Array.isArray(games) ? games : [])
       .filter((game) => isUpcomingOfficialGame(game, now))
       .flatMap((game) => {
         const eventDate = normalizeScheduleDate(game?.date);
@@ -3082,14 +3085,34 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
 
         return [...assigned, ...open];
       });
+
+    return {
+      teamId,
+      hasAccess: linkedTeamIds.includes(teamId) || (requestedTeamId === teamId && assignments.some((item) => item.kind === 'assigned')),
+      assignments
+    };
   }));
+
+  const accessibleTeamIds = teamResults
+    .filter((result) => result.hasAccess)
+    .map((result) => result.teamId);
+
+  if (!accessibleTeamIds.length) {
+    return {
+      hasAccess: false,
+      teamIds: [],
+      teamCount: 0,
+      assignments: []
+    };
+  }
 
   return {
     hasAccess: true,
-    teamIds,
-    teamCount: teamIds.length,
+    teamIds: accessibleTeamIds,
+    teamCount: accessibleTeamIds.length,
     assignments: teamResults
-      .flat()
+      .filter((result) => result.hasAccess)
+      .flatMap((result) => result.assignments)
       .sort((left, right) => left.date.getTime() - right.date.getTime() || left.teamName.localeCompare(right.teamName) || left.position.localeCompare(right.position))
   };
 }

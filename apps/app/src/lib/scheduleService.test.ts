@@ -262,6 +262,29 @@ describe('official assignments app service', () => {
     expect(getGames).not.toHaveBeenCalled();
   });
 
+  it('loads assigned slots for a requested team when official directory queries are denied', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: [], phone: '(555) 123-4567' } as any);
+    vi.mocked(getDocs).mockRejectedValue(new Error('Missing or insufficient permissions.'));
+
+    const result = await loadOfficialAssignments(user, { teamId: 'team-alpha' });
+
+    expect(result.hasAccess).toBe(true);
+    expect(result.teamIds).toEqual(['team-alpha']);
+    expect(result.assignments).toEqual([
+      expect.objectContaining({
+        kind: 'assigned',
+        teamId: 'team-alpha',
+        gameId: 'game-assigned',
+        slotId: 'center',
+        position: 'Center Referee',
+        canClaim: false
+      })
+    ]);
+    expect(result.assignments.map((item) => item.kind)).toEqual(['assigned']);
+    expect(getTeam).toHaveBeenCalledWith('team-alpha', { includeInactive: true });
+    expect(getGames).toHaveBeenCalledWith('team-alpha');
+  });
+
   it('delegates accept, decline, and claim writes to legacy officiating actions', async () => {
     const item = {
       kind: 'assigned',
