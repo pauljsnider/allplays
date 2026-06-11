@@ -27,6 +27,8 @@ describe('notification target index core helpers', () => {
 
     it('builds stable target payloads and doc ids from user devices', () => {
         expect(buildNotificationTargetDocId({ uid: 'user-1', deviceId: 'device/1' })).toBe('user-1__device_1');
+        expect(buildNotificationTargetDocId({ uid: '   ', deviceId: 'device-1' })).toBe('');
+        expect(buildNotificationTargetDocId({ uid: 'user-1', deviceId: '!!!' })).toBe('');
         expect(buildNotificationTargetPayload({
             uid: 'user-1',
             teamId: 'team-1',
@@ -50,16 +52,29 @@ describe('notification target index core helpers', () => {
         });
     });
 
-    it('resolves recipients from the team target index instead of per-user preference and device scans', () => {
+    it('guards indexed writes by current team access before syncing targets', () => {
+        const syncSource = functionsSource.slice(
+            functionsSource.indexOf('async function getNotificationTargetTeamAccessMap'),
+            functionsSource.indexOf('exports.syncTeamNotificationTargetsOnPreferenceWrite')
+        );
+
+        expect(syncSource).toContain('teamAccessMap.get(teamId) !== true');
+        expect(syncSource).toContain('teamAccessMap.get(prefSnap.id) !== true');
+        expect(syncSource).toContain('hasParentAccess || hasTeamAdminAccess');
+    });
+
+    it('uses the team target index first and falls back to legacy user scans for missing indexed recipients', () => {
         const targetResolverSource = functionsSource.slice(
-            functionsSource.indexOf('async function getTargetsForCategory'),
+            functionsSource.indexOf('async function getLegacyTargetsForCategory'),
             functionsSource.indexOf('async function pruneInvalidTokens')
         );
 
         expect(targetResolverSource).toContain("firestore.collection(`teams/${teamId}/notificationTargets`)");
         expect(targetResolverSource).toContain("where(`categories.${category}`, '==', true)");
         expect(targetResolverSource).toContain('if (uid === actorUid) return null;');
-        expect(targetResolverSource).not.toContain('users/${uid}/notificationPreferences/${teamId}');
-        expect(targetResolverSource).not.toContain('users/${uid}/notificationDevices');
+        expect(targetResolverSource).toContain('users/${uid}/notificationPreferences/${teamId}');
+        expect(targetResolverSource).toContain('users/${uid}/notificationDevices');
+        expect(targetResolverSource).toContain('const missingUserIds = userIds.filter');
+        expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUserIds, actorUid)');
     });
 });

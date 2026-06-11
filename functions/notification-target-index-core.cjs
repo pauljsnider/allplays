@@ -1,5 +1,12 @@
 const NOTIFICATION_CATEGORIES = Object.freeze(['liveChat', 'liveScore', 'schedule']);
 
+function sanitizeNotificationTargetSegment(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9_-]/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function normalizeNotificationTargetCategories(rawPreferences = {}) {
   return NOTIFICATION_CATEGORIES.reduce((categories, category) => {
     categories[category] = rawPreferences?.[category] === true;
@@ -12,9 +19,10 @@ function hasEnabledNotificationCategory(rawPreferences = {}) {
 }
 
 function buildNotificationTargetDocId({ uid, deviceId }) {
-  const safeUid = String(uid || '').trim().replace(/[^A-Za-z0-9_-]/g, '_');
-  const safeDeviceId = String(deviceId || '').trim().replace(/[^A-Za-z0-9_-]/g, '_');
-  return `${safeUid}__${safeDeviceId}`.replace(/^_+|_+$/g, '').slice(0, 240);
+  const safeUid = sanitizeNotificationTargetSegment(uid);
+  const safeDeviceId = sanitizeNotificationTargetSegment(deviceId);
+  if (!safeUid || !safeDeviceId) return '';
+  return `${safeUid}__${safeDeviceId}`.slice(0, 240);
 }
 
 function buildNotificationTargetPayload({ uid, teamId, deviceId, token, platform = 'web', userAgent = '', preferences = {} }) {
