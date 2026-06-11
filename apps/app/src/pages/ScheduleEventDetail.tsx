@@ -44,6 +44,19 @@ import {
   type LineupDraftPreviewResult
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
+import {
+  assignLineupPlayer,
+  buildLineupAiPrompt,
+  buildLineupEditorAssignments,
+  buildLineupEditorPlayers,
+  buildRoundRobinLineup,
+  clearLineupPlayer,
+  getLineupAiModel,
+  getLineupSlotKey,
+  getOrderedLineupPeriods,
+  moveLineupPlayer,
+  parseAiLineupPlan
+} from '../lib/gameDayLineupBuilder';
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
@@ -191,6 +204,18 @@ type StaffRsvpOverrideStatus = {
   playerId: string;
   message: string;
 };
+
+export function shouldPersistLineupDraft(user: AuthState['user'] | null | undefined, formationId: string, _lineups: Record<string, string>) {
+  return Boolean(user?.uid && String(formationId || '').trim());
+}
+
+export function shouldAutosaveLineupDraft(isDirty: boolean, formationId: string, _lineups: Record<string, string>) {
+  return Boolean(isDirty && String(formationId || '').trim());
+}
+
+export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<string, any> | null | undefined, previewGamePlan: Record<string, any> | null | undefined) {
+  return !hasLineupDraft(existingGamePlan) && hasLineupDraft(previewGamePlan);
+}
 
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
@@ -1826,10 +1851,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
 
           {canPublishLineup ? (
-            <>
-              <GameHubLineupDraftPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
-              <GameHubLineupPublishPanel auth={auth} event={event} onGamePlanPublished={onGamePlanPublished} />
-            </>
+            <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
           ) : null}
 
           {canCancelGame ? (
@@ -1894,39 +1916,64 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
   );
 }
 
-function GameHubLineupDraftPanel({ auth, event, onGamePlanSaved }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanSaved: (gamePlan: Record<string, any>) => void }) {
+function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanSaved: (gamePlan: Record<string, any>) => void }) {
   const [formationId, setFormationId] = useState(event.gamePlan?.formationId || '');
   const [preview, setPreview] = useState<LineupDraftPreviewResult | null>(null);
+  const [draftLineups, setDraftLineups] = useState<Record<string, string>>({});
+  const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
-  const hasPreviewAssignments = Boolean(preview?.positions.some((position) => position.playerId));
-  const canSave = Boolean(auth.user && formationId && hasPreviewAssignments && !event.isCancelled && !saving && !loadingPreview);
+  const saveTimeoutRef = useRef<number | null>(null);
+  const dirtyRef = useRef(false);
+  const latestDraftRef = useRef<Record<string, string>>({});
+  const latestPreviewRef = useRef<LineupDraftPreviewResult | null>(null);
+
+  const formation = LINEUP_FORMATIONS[formationId] || null;
+  const lineupPeriods = useMemo(() => getOrderedLineupPeriods(formationId, preview?.gamePlan || event.gamePlan || null), [formationId, preview?.gamePlan, event.gamePlan]);
+  const editorPlayers = useMemo(() => buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []), [preview?.availablePlayers, preview?.goingPlayers]);
+  const playerById = useMemo(() => new Map(editorPlayers.map((player) => [player.id, player])), [editorPlayers]);
+  const hasSavedDraft = hasLineupDraft(preview?.gamePlan ?? event.gamePlan);
+  const hasDraft = Object.keys(draftLineups).length > 0 || (!dirtyRef.current && hasSavedDraft);
+  const statusCopy = getLineupPublishStatus(event.gamePlan);
 
   useEffect(() => {
     setFormationId(event.gamePlan?.formationId || '');
     setPreview(null);
+    setDraftLineups({});
+    setSelectedPlayerId('');
     setStatus(null);
-  }, [event.eventKey, event.gamePlan?.formationId]);
+    dirtyRef.current = false;
+    latestDraftRef.current = {};
+    latestPreviewRef.current = null;
+  }, [event.eventKey]);
 
   useEffect(() => {
     let cancelled = false;
     if (!auth.user || !formationId || event.isCancelled) {
       setPreview(null);
+      setDraftLineups({});
       return undefined;
     }
 
     setLoadingPreview(true);
-    setStatus(null);
     loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId)
       .then((result) => {
-        if (!cancelled) setPreview(result);
+        if (cancelled) return;
+        setPreview(result);
+        latestPreviewRef.current = result;
+        const seeded = buildLineupEditorAssignments(formationId, result.gamePlan || event.gamePlan || null);
+        setDraftLineups(seeded);
+        latestDraftRef.current = seeded;
+        dirtyRef.current = shouldAutosaveGeneratedLineupDraft(event.gamePlan, result.gamePlan);
       })
       .catch((error: any) => {
-        if (!cancelled) {
-          setPreview(null);
-          setStatus({ tone: 'error', message: error?.message || 'Unable to preview the lineup draft.' });
-        }
+        if (cancelled) return;
+        setPreview(null);
+        setDraftLineups({});
+        setStatus({ tone: 'error', message: error?.message || 'Unable to load the lineup builder.' });
       })
       .finally(() => {
         if (!cancelled) setLoadingPreview(false);
@@ -1935,91 +1982,86 @@ function GameHubLineupDraftPanel({ auth, event, onGamePlanSaved }: { auth: AuthS
     return () => { cancelled = true; };
   }, [auth.user, event, formationId]);
 
-  const saveDraft = async () => {
-    if (!auth.user || !canSave) return;
+  useEffect(() => {
+    latestDraftRef.current = draftLineups;
+  }, [draftLineups]);
+
+  const persistDraft = useCallback(async (lineups: Record<string, string>, reason: 'autosave' | 'manual' | 'publish') => {
+    if (!shouldPersistLineupDraft(auth.user, formationId, lineups)) return true;
     setSaving(true);
-    setStatus(null);
+    if (reason !== 'autosave') setStatus(null);
     try {
-      const result = await saveScheduledGameLineupDraftForApp(event, auth.user, formationId);
+      const result = await saveScheduledGameLineupDraftForApp(event, auth.user, formationId, { lineups });
       setPreview(result);
+      latestPreviewRef.current = result;
       if (result.gamePlan) onGamePlanSaved(result.gamePlan);
-      setStatus({ tone: 'success', message: 'Lineup draft saved. Publish is now available when you are ready.' });
+      dirtyRef.current = false;
+      if (reason !== 'publish') {
+        setStatus({ tone: 'success', message: reason === 'autosave' ? 'Lineup draft autosaved.' : 'Lineup draft saved.' });
+      }
+      return true;
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to save lineup draft.' });
+      return false;
     } finally {
       setSaving(false);
     }
+  }, [auth.user, event, formationId, onGamePlanSaved]);
+
+  useEffect(() => {
+    if (!shouldAutosaveLineupDraft(dirtyRef.current, formationId, draftLineups)) return undefined;
+    if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = window.setTimeout(() => {
+      void persistDraft(latestDraftRef.current, 'autosave');
+    }, 800);
+    return () => {
+      if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
+    };
+  }, [draftLineups, formationId, persistDraft]);
+
+  const updateDraft = (nextLineups: Record<string, string>) => {
+    dirtyRef.current = true;
+    setDraftLineups(nextLineups);
   };
 
-  return (
-    <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">Lineup draft</div>
-          <div className="mt-1 text-sm font-semibold text-gray-950">Create a first-period draft from players marked Going.</div>
-          <label className="mt-3 block text-xs font-black uppercase tracking-[0.04em] text-gray-500" htmlFor="game-hub-lineup-formation">Formation</label>
-          <select
-            id="game-hub-lineup-formation"
-            className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 focus:border-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-100"
-            value={formationId}
-            onChange={(event) => setFormationId(event.target.value)}
-            disabled={!auth.user || event.isCancelled || saving}
-          >
-            <option value="">Select formation</option>
-            {Object.values(LINEUP_FORMATIONS).map((formation) => (
-              <option key={formation.id} value={formation.id}>{formation.name}</option>
-            ))}
-          </select>
-        </div>
-        <button
-          type="button"
-          className="min-h-11 rounded-full bg-emerald-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-60"
-          onClick={saveDraft}
-          disabled={!canSave}
-        >
-          {saving ? 'Saving draft' : 'Save draft'}
-        </button>
-      </div>
-      {loadingPreview ? <div className="mt-3 text-sm font-semibold text-gray-500">Loading Going players…</div> : null}
-      {preview && !hasPreviewAssignments ? <div className="mt-3 text-sm font-semibold text-amber-800">No Going players are available to auto-fill this lineup. Mark players Going before saving a draft.</div> : null}
-      {preview && hasPreviewAssignments ? (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-          {preview.positions.map((position) => (
-            <div key={position.id} className="rounded-xl border border-white/80 bg-white px-3 py-2">
-              <div className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">{position.name}</div>
-              <div className="mt-1 text-sm font-black text-gray-950">
-                {position.playerName ? `${position.playerNumber ? `#${position.playerNumber} ` : ''}${position.playerName}` : 'Open'}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {status ? <div className={`mt-3 text-sm font-semibold ${status.tone === 'success' ? 'text-emerald-700' : 'text-amber-800'}`}>{status.message}</div> : null}
-    </div>
-  );
-}
+  const applySelectedPlayerToSlot = (slotKey: string) => {
+    if (!selectedPlayerId) return;
+    updateDraft(assignLineupPlayer(draftLineups, slotKey, selectedPlayerId));
+  };
 
-function GameHubLineupPublishPanel({ auth, event, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
-  const [publishing, setPublishing] = useState(false);
-  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
-  const hasDraft = hasLineupDraft(event.gamePlan);
-  const canPublish = Boolean(auth.user && hasDraft && !event.isCancelled);
-  const statusCopy = getLineupPublishStatus(event.gamePlan);
-  const disabledCopy = !auth.user
-    ? 'Sign in as a coach or admin to publish the lineup.'
-    : event.isCancelled
-      ? 'Cancelled games cannot publish lineup changes.'
-      : !hasDraft
-        ? 'Save a lineup draft before publishing.'
-        : null;
-
-  const publishLineup = async () => {
-    if (!auth.user || !canPublish) return;
-    setPublishing(true);
+  const runAiSuggestion = async () => {
+    if (!formation || !preview?.goingPlayers?.length) return;
+    setAiLoading(true);
     setStatus(null);
     try {
-      const result = await publishGamePlanForApp(event, auth.user);
-      onGamePlanPublished(result.gamePlan);
+      const model = await getLineupAiModel();
+      const prompt = buildLineupAiPrompt({
+        periods: lineupPeriods,
+        positions: formation.positions,
+        goingPlayers: preview.goingPlayers,
+        formationId: formation.id
+      });
+      const result = await model.generateContent(prompt);
+      const suggestion = parseAiLineupPlan(result?.response?.text?.() || '', lineupPeriods, formation.positions, preview.goingPlayers)
+        || buildRoundRobinLineup(lineupPeriods, formation.positions, preview.goingPlayers);
+      updateDraft(suggestion);
+      setStatus({ tone: 'success', message: 'AI lineup suggestion applied. You can still edit every slot.' });
+    } catch {
+      updateDraft(buildRoundRobinLineup(lineupPeriods, formation.positions, preview?.goingPlayers || []));
+      setStatus({ tone: 'success', message: 'AI was unavailable, so a balanced local lineup was applied instead.' });
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const publishLineup = async () => {
+    if (!auth.user || !hasDraft || publishing) return;
+    const saved = await persistDraft(latestDraftRef.current, 'publish');
+    if (!saved) return;
+    setPublishing(true);
+    try {
+      const result = await publishGamePlanForApp({ ...event, gamePlan: latestPreviewRef.current?.gamePlan || event.gamePlan }, auth.user);
+      onGamePlanSaved(result.gamePlan);
       const version = Number.parseInt(String(result.gamePlan?.publishedVersion || ''), 10) || 0;
       setStatus(result.notificationError
         ? { tone: 'error', message: `Lineup saved${version ? ` as v${version}` : ''}, but team chat notification failed: ${result.notificationError}` }
@@ -2032,22 +2074,138 @@ function GameHubLineupPublishPanel({ auth, event, onGamePlanPublished }: { auth:
   };
 
   return (
-    <div className="mt-3 rounded-2xl border border-primary-100 bg-primary-50/60 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">Lineup publish</div>
-          <div className="mt-1 text-sm font-semibold text-gray-950">{statusCopy}</div>
-          {disabledCopy ? <div className="mt-1 text-xs font-semibold text-gray-500">{disabledCopy}</div> : null}
+    <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">Lineup builder</div>
+          <div className="mt-1 text-sm font-semibold text-gray-950">Build, autosave, and publish the shared game-day lineup.</div>
+          <label className="mt-3 block text-xs font-black uppercase tracking-[0.04em] text-gray-500" htmlFor="game-hub-lineup-formation">Formation</label>
+          <select
+            id="game-hub-lineup-formation"
+            className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900"
+            value={formationId}
+            onChange={(changeEvent) => setFormationId(changeEvent.target.value)}
+            disabled={!auth.user || event.isCancelled || saving || publishing}
+          >
+            <option value="">Select formation</option>
+            {Object.values(LINEUP_FORMATIONS).map((option) => (
+              <option key={option.id} value={option.id}>{option.name}</option>
+            ))}
+          </select>
         </div>
-        <button
-          type="button"
-          className="min-h-11 rounded-full bg-primary-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60"
-          onClick={publishLineup}
-          disabled={!canPublish || publishing}
-        >
-          {publishing ? 'Publishing lineup' : 'Publish lineup'}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="min-h-11 rounded-full border border-gray-200 bg-white px-4 text-sm font-black text-gray-700 shadow-sm disabled:opacity-60"
+            onClick={runAiSuggestion}
+            disabled={!formation || !preview?.goingPlayers?.length || aiLoading || saving || publishing}
+          >
+            {aiLoading ? 'Suggesting lineup' : 'AI suggest'}
+          </button>
+          <button
+            type="button"
+            className="min-h-11 rounded-full bg-primary-600 px-4 text-sm font-black text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60"
+            onClick={publishLineup}
+            disabled={!auth.user || !hasDraft || event.isCancelled || publishing || saving}
+          >
+            {publishing ? 'Publishing lineup' : 'Publish lineup'}
+          </button>
+        </div>
       </div>
+      <div className="mt-3 text-sm font-semibold text-gray-700">{statusCopy}</div>
+      {loadingPreview ? <div className="mt-3 text-sm font-semibold text-gray-500">Loading lineup builder…</div> : null}
+      {formation && preview ? (
+        <>
+          <div className="mt-3 rounded-2xl border border-white/80 bg-white p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Available players</div>
+              <div className="text-xs font-semibold text-gray-500">Tap a player, then tap a slot. Drag and drop also works.</div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {editorPlayers.map((player) => {
+                const selected = selectedPlayerId === player.id;
+                return (
+                  <button
+                    key={player.id}
+                    type="button"
+                    draggable
+                    onDragStart={(dragEvent) => dragEvent.dataTransfer.setData('text/plain', JSON.stringify({ playerId: player.id }))}
+                    onClick={() => setSelectedPlayerId(selected ? '' : player.id)}
+                    className={`rounded-full border px-3 py-2 text-xs font-black ${selected ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-700'}`}
+                  >
+                    {player.number ? `#${player.number} ` : ''}{player.name}
+                    <span className={`ml-2 rounded-full px-2 py-0.5 text-[10px] ${player.availability === 'going' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {player.availability === 'going' ? 'Going' : 'Roster'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="mt-3 overflow-x-auto rounded-2xl border border-white/80 bg-white p-3">
+            <table className="min-w-full border-separate border-spacing-2">
+              <thead>
+                <tr>
+                  <th className="text-left text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Position</th>
+                  {lineupPeriods.map((period) => <th key={period} className="text-left text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">{period}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {formation.positions.map((position) => (
+                  <tr key={position.id}>
+                    <td className="pr-2 text-sm font-black text-gray-900">{position.name}</td>
+                    {lineupPeriods.map((period) => {
+                      const slotKey = getLineupSlotKey(period, position.id);
+                      const player = playerById.get(draftLineups[slotKey] || '');
+                      return (
+                        <td key={slotKey}>
+                          <button
+                            type="button"
+                            aria-label={`${period} ${position.name}`}
+                            data-testid={`lineup-slot-${slotKey}`}
+                            className="min-h-20 w-full min-w-28 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-left shadow-sm"
+                            onClick={() => applySelectedPlayerToSlot(slotKey)}
+                            onDoubleClick={() => updateDraft(clearLineupPlayer(draftLineups, slotKey))}
+                            onDragOver={(dragEvent) => dragEvent.preventDefault()}
+                            onDrop={(dropEvent) => {
+                              dropEvent.preventDefault();
+                              try {
+                                const payload = JSON.parse(dropEvent.dataTransfer.getData('text/plain') || '{}');
+                                if (payload.sourceKey) {
+                                  updateDraft(moveLineupPlayer(draftLineups, payload.sourceKey, slotKey));
+                                } else if (payload.playerId) {
+                                  updateDraft(assignLineupPlayer(draftLineups, slotKey, payload.playerId));
+                                }
+                              } catch {
+                                // ignore invalid drops
+                              }
+                            }}
+                          >
+                            <div className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">{period}</div>
+                            {player ? (
+                              <div
+                                draggable
+                                onDragStart={(dragEvent) => dragEvent.dataTransfer.setData('text/plain', JSON.stringify({ playerId: player.id, sourceKey: slotKey }))}
+                                className="mt-1 rounded-xl bg-white px-2 py-2"
+                              >
+                                <div className="text-sm font-black text-gray-950">{player.number ? `#${player.number} ` : ''}{player.name}</div>
+                                <div className="mt-1 text-[11px] font-semibold text-gray-500">Double tap to clear</div>
+                              </div>
+                            ) : (
+                              <div className="mt-2 text-sm font-semibold text-gray-400">Open</div>
+                            )}
+                          </button>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!preview.goingPlayers.length ? <div className="mt-3 text-sm font-semibold text-amber-800">No Going players are available to auto-fill this lineup. Manual roster edits still work.</div> : null}
+        </>
+      ) : null}
       {status ? <div className={`mt-3 text-sm font-semibold ${status.tone === 'success' ? 'text-emerald-700' : 'text-amber-800'}`}>{status.message}</div> : null}
     </div>
   );

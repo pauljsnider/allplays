@@ -58,19 +58,15 @@ afterEach(() => {
 });
 
 describe('CapabilityPage launch CTAs', () => {
-    it('opens stub capability legacy pages through the native-safe public URL flow', async () => {
+    it('keeps the game-planning capability on the in-app route CTA', async () => {
         const { container, root } = await renderCapabilityPage('/capabilities/game-plan');
 
         expect(container.textContent).toContain('Current site page');
         expect(container.textContent).toContain('game-plan.html');
         expect(container.querySelector('a[href="/game-plan.html"]')).toBeNull();
-        expect(container.textContent).not.toContain('Open app route');
-
-        await act(async () => {
-            buttonByText(container, 'Open current page').click();
-        });
-
-        expect(openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/game-plan.html');
+        expect(linkByText(container, 'Open app route').getAttribute('href')).toBe('/schedule');
+        expect(container.textContent).not.toContain('Open current page');
+        expect(openPublicUrl).not.toHaveBeenCalled();
 
         await act(async () => root.unmount());
     });

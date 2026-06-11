@@ -53,7 +53,7 @@ vi.mock('../lib/scheduleHub', () => ({
   getPublicPlayerHref: vi.fn(() => '#')
 }));
 
-import { ScheduleEventDetail } from './ScheduleEventDetail';
+import { ScheduleEventDetail, shouldAutosaveGeneratedLineupDraft, shouldAutosaveLineupDraft, shouldPersistLineupDraft } from './ScheduleEventDetail';
 import type { AuthState } from '../lib/types';
 
 const auth: AuthState = {
@@ -116,6 +116,28 @@ function renderScheduleEventDetail() {
     </MemoryRouter>
   );
 }
+
+describe('ScheduleEventDetail lineup draft guards', () => {
+  it('allows empty lineup drafts to persist when a coach and formation are present', () => {
+    expect(shouldPersistLineupDraft(auth.user, 'basketball-5v5', {})).toBe(true);
+  });
+
+  it('allows autosave scheduling for cleared drafts after the user edits the lineup', () => {
+    expect(shouldAutosaveLineupDraft(true, 'basketball-5v5', {})).toBe(true);
+  });
+
+  it('autosaves a generated lineup draft when the saved game has no existing draft', () => {
+    expect(shouldAutosaveGeneratedLineupDraft(
+      { lineups: {}, publishedLineups: {}, publishedVersion: 0 },
+      { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' } }
+    )).toBe(true);
+
+    expect(shouldAutosaveGeneratedLineupDraft(
+      { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1' } },
+      { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' } }
+    )).toBe(false);
+  });
+});
 
 describe('ScheduleEventDetail assignments', () => {
   beforeEach(() => {
@@ -492,14 +514,248 @@ describe('ScheduleEventDetail practice attendance', () => {
         })
       );
     });
-    expect(within(rowOne).getByRole('button', { name: 'Present' })).toBeDisabled();
-    expect(within(rowTwo).getByRole('button', { name: 'Late' })).toBeDisabled();
+    expect(within(rowOne).getByRole('button', { name: 'Present' })).toHaveProperty('disabled', true);
+    expect(within(rowTwo).getByRole('button', { name: 'Late' })).toHaveProperty('disabled', true);
     expect(screen.getByText('1/2 checked in')).toBeTruthy();
 
     resolveSave();
 
     await waitFor(() => {
       expect(screen.getByText('Avery Smith marked present.')).toBeTruthy();
+    });
+  });
+});
+
+describe('ScheduleEventDetail lineup builder', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('autosaves tapped lineup assignments from the game tab grid', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamStaff: true,
+        gamePlan: {
+          formationId: 'basketball-5v5',
+          lineups: { 'Q1-pg': 'p1' },
+          publishedLineups: {},
+          publishedVersion: 0
+        }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' },
+        { id: 'p2', name: 'Blake Jones', number: '2' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' },
+        { id: 'p2', name: 'Blake Jones', number: '2' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: { 'Q1-pg': 'p1' },
+        publishedLineups: {},
+        publishedVersion: 0
+      }
+    });
+    scheduleServiceMocks.saveScheduledGameLineupDraftForApp.mockImplementation(async (_event, _user, _formationId, options) => ({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' },
+        { id: 'p2', name: 'Blake Jones', number: '2' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' },
+        { id: 'p2', name: 'Blake Jones', number: '2' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: options?.lineups || {},
+        publishedLineups: {},
+        publishedVersion: 0
+      }
+    }));
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Lineup builder')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /#2 Blake Jones/i }));
+    fireEvent.click(screen.getByTestId('lineup-slot-Q1-sg'));
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledWith(
+        expect.any(Object),
+        auth.user,
+        'basketball-5v5',
+        expect.objectContaining({
+          lineups: expect.objectContaining({
+            'Q1-pg': 'p1',
+            'Q1-sg': 'p2'
+          })
+        })
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Lineup draft autosaved.')).toBeTruthy();
+    });
+  });
+
+  it('disables publish immediately after the last populated lineup slot is cleared', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamStaff: true,
+        gamePlan: {
+          formationId: 'basketball-5v5',
+          lineups: { 'Q1-pg': 'p1' },
+          publishedLineups: { 'Q1-pg': 'p1' },
+          publishedVersion: 1
+        }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: { 'Q1-pg': 'p1' },
+        publishedLineups: { 'Q1-pg': 'p1' },
+        publishedVersion: 1
+      }
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Lineup builder')).toBeTruthy();
+    });
+
+    const publishButton = screen.getByRole('button', { name: 'Publish lineup' }) as HTMLButtonElement;
+    expect(publishButton.disabled).toBe(false);
+
+    fireEvent.doubleClick(screen.getByTestId('lineup-slot-Q1-pg'));
+
+    await waitFor(() => {
+      expect(publishButton.disabled).toBe(true);
+    });
+  });
+
+  it('autosaves an empty lineup after the last populated slot is cleared', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamStaff: true,
+        gamePlan: {
+          formationId: 'basketball-5v5',
+          lineups: { 'Q1-pg': 'p1' },
+          publishedLineups: { 'Q1-pg': 'p1' },
+          publishedVersion: 1
+        }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: { 'Q1-pg': 'p1' },
+        publishedLineups: { 'Q1-pg': 'p1' },
+        publishedVersion: 1
+      }
+    });
+    scheduleServiceMocks.saveScheduledGameLineupDraftForApp.mockImplementation(async (_event, _user, _formationId, options) => ({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: options?.lineups || {},
+        publishedLineups: { 'Q1-pg': 'p1' },
+        publishedVersion: 1
+      }
+    }));
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Lineup builder')).toBeTruthy();
+    });
+
+    fireEvent.doubleClick(screen.getByTestId('lineup-slot-Q1-pg'));
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledWith(
+        expect.any(Object),
+        auth.user,
+        'basketball-5v5',
+        expect.objectContaining({ lineups: {} })
+      );
     });
   });
 });
