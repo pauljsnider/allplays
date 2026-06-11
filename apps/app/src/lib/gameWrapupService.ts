@@ -1,6 +1,7 @@
 import { getConfigs, getGame, getGameEvents, getTeam } from '../../../../js/db.js';
 import { buildGameSummaryPrompt, buildPracticeFeedPrompt, buildFinishGamePayload } from '../../../../js/game-day-wrapup.js';
 import { resolveLiveStatConfig } from '../../../../js/live-game-state.js';
+import { resolveSummaryRecipient } from '../../../../js/live-tracker-email.js';
 import { getApp } from '../../../../js/vendor/firebase-app.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
 
@@ -22,6 +23,13 @@ export type GameWrapupArtifacts = {
   practiceFeedItems: PracticeFeedItem[];
 };
 
+export type GameWrapupEmailDraft = {
+  recipientEmail: string;
+  subject: string;
+  body: string;
+  mailto: string;
+};
+
 let aiModelCache: any = null;
 
 export function resetGameWrapupAiModelForTests() {
@@ -38,6 +46,64 @@ export function buildAppWrapupCompletionPayload({ homeScore, awayScore, postGame
     awayScoreValue: String(awayScore),
     postGameNotesValue: postGameNotes
   });
+}
+
+export function buildGameWrapupEmailDraft({
+  teamName,
+  opponentName,
+  gameDate,
+  score,
+  summary,
+  postGameNotes,
+  teamNotificationEmail,
+  userEmail
+}: {
+  teamName: string;
+  opponentName: string;
+  gameDate?: Date | null;
+  score: GameWrapupScore;
+  summary?: string;
+  postGameNotes?: string;
+  teamNotificationEmail?: string | null;
+  userEmail?: string | null;
+}): GameWrapupEmailDraft | null {
+  const recipientEmail = resolveSummaryRecipient({ teamNotificationEmail, userEmail });
+  if (!recipientEmail) {
+    return null;
+  }
+
+  const resolvedTeamName = String(teamName || 'Team').trim() || 'Team';
+  const resolvedOpponentName = String(opponentName || 'Opponent').trim() || 'Opponent';
+  const dateLabel = gameDate instanceof Date && !Number.isNaN(gameDate.getTime())
+    ? gameDate.toLocaleDateString()
+    : new Date().toLocaleDateString();
+  const trimmedSummary = String(summary || '').trim();
+  const trimmedNotes = String(postGameNotes || '').trim();
+  const subject = `${resolvedTeamName} vs ${resolvedOpponentName} - Game Summary`;
+
+  let body = `${resolvedTeamName} Game Summary\n`;
+  body += `Date: ${dateLabel}\n`;
+  body += `Opponent: ${resolvedOpponentName}\n`;
+  body += `Final Score: ${Number(score?.home || 0)} - ${Number(score?.away || 0)}\n`;
+
+  if (trimmedSummary) {
+    body += `\nSUMMARY:\n`;
+    body += `${'='.repeat(40)}\n`;
+    body += `${trimmedSummary}\n`;
+  }
+
+  if (trimmedNotes) {
+    body += `\nPOST-GAME NOTES:\n`;
+    body += `${'='.repeat(40)}\n`;
+    body += `${trimmedNotes}\n`;
+  }
+
+  return {
+    recipientEmail,
+    subject,
+    body,
+    mailto: `mailto:${recipientEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+  };
 }
 
 async function getGameWrapupAiModel() {

@@ -32,6 +32,7 @@ vi.mock('../../../../js/live-game-state.js', () => ({
 import { buildFinishGamePayload, buildGameSummaryPrompt, buildPracticeFeedPrompt } from '../../../../js/game-day-wrapup.js';
 import {
   buildAppWrapupCompletionPayload,
+  buildGameWrapupEmailDraft,
   generateGameWrapupArtifactsForApp,
   resetGameWrapupAiModelForTests
 } from './gameWrapupService';
@@ -64,6 +65,41 @@ describe('gameWrapupService', () => {
       awayScoreValue: '3',
       postGameNotesValue: '  Great defensive shape.  '
     }));
+  });
+
+  it('builds a mailto recap using the legacy recipient fallback', () => {
+    expect(buildGameWrapupEmailDraft({
+      teamName: 'Falcons',
+      opponentName: 'Tigers',
+      gameDate: new Date('2026-06-10T18:00:00Z'),
+      score: { home: 48, away: 42 },
+      summary: 'Falcons controlled the glass late.',
+      postGameNotes: 'Bench energy changed the game.',
+      teamNotificationEmail: 'staff@example.com',
+      userEmail: 'coach@example.com'
+    })).toMatchObject({
+      recipientEmail: 'staff@example.com',
+      subject: 'Falcons vs Tigers - Game Summary'
+    });
+
+    const fallbackDraft = buildGameWrapupEmailDraft({
+      teamName: 'Falcons',
+      opponentName: 'Tigers',
+      gameDate: new Date('2026-06-10T18:00:00Z'),
+      score: { home: 48, away: 42 },
+      summary: 'Falcons controlled the glass late.',
+      postGameNotes: 'Bench energy changed the game.',
+      userEmail: 'coach@example.com'
+    });
+
+    expect(fallbackDraft).toMatchObject({
+      recipientEmail: 'coach@example.com',
+      subject: 'Falcons vs Tigers - Game Summary'
+    });
+    expect(fallbackDraft?.body).toContain('Final Score: 48 - 42');
+    expect(fallbackDraft?.body).toContain('SUMMARY:');
+    expect(fallbackDraft?.body).toContain('POST-GAME NOTES:');
+    expect(fallbackDraft?.mailto).toContain('mailto:coach@example.com?subject=');
   });
 
   it('assembles the same legacy prompts and returns persisted artifacts', async () => {

@@ -55,6 +55,7 @@ const gameWrapupServiceMocks = vi.hoisted(() => ({
     status: 'completed',
     liveStatus: 'completed'
   })),
+  buildGameWrapupEmailDraft: vi.fn(() => null),
   generateGameWrapupArtifactsForApp: vi.fn()
 }));
 vi.mock('../lib/gameWrapupService', () => gameWrapupServiceMocks);
@@ -1128,6 +1129,89 @@ describe('ScheduleEventDetail wrap-up', () => {
     });
     await waitFor(() => {
       expect(screen.getByText('Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.')).toBeTruthy();
+    });
+  });
+
+  it('allows wrap-up to skip AI generation and still complete', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47 })],
+      children: []
+    });
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 51, awayScore: 47 });
+    scheduleServiceMocks.completeGameWrapupForApp.mockResolvedValue({ status: 'completed', liveStatus: 'completed' });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Post-game wrap-up')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Generate AI summary' }));
+    fireEvent.change(screen.getByLabelText('Post-game notes'), { target: { value: 'Finished stronger on the glass.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Complete wrap-up' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.completeGameWrapupForApp).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({
+          homeScore: 51,
+          awayScore: 47,
+          postGameNotes: 'Finished stronger on the glass.',
+          summary: '',
+          practiceFeedItems: []
+        }),
+        auth.user
+      );
+    });
+    expect(gameWrapupServiceMocks.generateGameWrapupArtifactsForApp).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.getByText('Wrap-up saved without AI summary.')).toBeTruthy();
+    });
+  });
+
+  it('offers an email recap using the saved final score and summary', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47, teamNotificationEmail: 'staff@example.com' })],
+      children: []
+    });
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 51, awayScore: 47 });
+    scheduleServiceMocks.completeGameWrapupForApp.mockResolvedValue({ status: 'completed', liveStatus: 'completed' });
+    gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockResolvedValue({
+      summary: 'Bears finished strong and controlled the glass.',
+      practiceFeedItems: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Post-game wrap-up')).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByLabelText('Post-game notes'), { target: { value: 'Finished stronger on the glass.' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Email recap after save' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Complete wrap-up' }));
+
+    await waitFor(() => {
+      expect(gameWrapupServiceMocks.buildGameWrapupEmailDraft).toHaveBeenCalledWith(expect.objectContaining({
+        teamName: 'Bears',
+        opponentName: 'Wolves',
+        score: { home: 51, away: 47 },
+        summary: 'Bears finished strong and controlled the glass.',
+        postGameNotes: 'Finished stronger on the glass.',
+        teamNotificationEmail: 'staff@example.com',
+        userEmail: auth.user?.email
+      }));
     });
   });
 
