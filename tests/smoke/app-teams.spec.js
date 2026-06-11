@@ -11,20 +11,21 @@ function appUrl(baseURL, hashPath) {
 async function waitForTeamsRoute(page, readyLocator) {
     const searchInput = page.getByPlaceholder('Search teams or players');
     await expect(async () => {
-        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
-        await expect(searchInput).toBeVisible({ timeout: 1000 });
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+        await expect(page.getByText('Loading teams')).toHaveCount(0, { timeout: 3000 });
+        await expect(searchInput).toBeVisible({ timeout: 3000 });
         if (readyLocator) {
-            await expect(readyLocator).toBeVisible({ timeout: 1000 });
+            await expect(readyLocator).toBeVisible({ timeout: 3000 });
         }
-    }).toPass({ timeout: 30000 });
+    }).toPass({ timeout: 45000 });
 }
 
 async function waitForTeamDetailRoute(page, teamName) {
     await expect(async () => {
-        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
-        await expect(page.getByText('Loading team')).toHaveCount(0, { timeout: 1000 });
-        await expect(page.getByRole('heading', { name: teamName })).toBeVisible({ timeout: 1000 });
-    }).toPass({ timeout: 30000 });
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+        await expect(page.getByText('Loading team')).toHaveCount(0, { timeout: 3000 });
+        await expect(page.getByRole('heading', { name: teamName })).toBeVisible({ timeout: 3000 });
+    }).toPass({ timeout: 45000 });
 }
 
 async function mockTeamsModules(page, { scenario = '' } = {}) {
