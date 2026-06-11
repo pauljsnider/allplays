@@ -540,8 +540,10 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', 'https://example.test/avatar.png');
     await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.profileLoads)).toBe(1);
 
-    await page.getByRole('button', { name: 'Alerts' }).click();
-    await expect(page.getByText('Notification preferences')).toBeVisible();
+    const alertsTab = page.getByRole('button', { name: 'Alerts' });
+    await alertsTab.click();
+    await expect(alertsTab).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText('Per-team alerts for live chat, score updates, and schedule changes.')).toBeVisible();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
     const gameDayAlertsButton = page.getByRole('button', { name: 'Turn on game-day alerts' });
     await expect(gameDayAlertsButton).toBeEnabled();
