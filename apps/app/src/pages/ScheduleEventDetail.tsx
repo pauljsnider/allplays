@@ -1935,7 +1935,8 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const lineupPeriods = useMemo(() => getOrderedLineupPeriods(formationId, preview?.gamePlan || event.gamePlan || null), [formationId, preview?.gamePlan, event.gamePlan]);
   const editorPlayers = useMemo(() => buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []), [preview?.availablePlayers, preview?.goingPlayers]);
   const playerById = useMemo(() => new Map(editorPlayers.map((player) => [player.id, player])), [editorPlayers]);
-  const hasDraft = hasLineupDraft(event.gamePlan) || Object.keys(draftLineups).length > 0;
+  const hasSavedDraft = hasLineupDraft(preview?.gamePlan ?? event.gamePlan);
+  const hasDraft = Object.keys(draftLineups).length > 0 || (!dirtyRef.current && hasSavedDraft);
   const statusCopy = getLineupPublishStatus(event.gamePlan);
 
   useEffect(() => {
