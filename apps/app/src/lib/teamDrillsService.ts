@@ -1,7 +1,9 @@
-import { createDrill, deleteDrill, getTeam, getTeamDrills, updateDrill, uploadDrillDiagram } from '../../../../js/db.js';
+import { addDrillFavorite, getDrill, getDrillFavorites, getDrills, getTeam, removeDrillFavorite } from '../../../../js/db.js';
 import { DRILL_LEVELS, DRILL_TYPES } from '../../../../js/drill-constants.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 import type { AuthUser } from './types';
+
+const drillLibraryPageSize = 12;
 
 export type TeamDrillSummary = {
   id: string;
@@ -9,20 +11,34 @@ export type TeamDrillSummary = {
   sport: string;
   type: string;
   level: string;
+  ageGroup: string;
   skills: string[];
   description: string;
   instructions: string;
   youtubeUrl: string;
-  publishedToCommunity: boolean;
   diagramUrls: string[];
+  attribution: {
+    source: string;
+    license: string;
+    url: string;
+  } | null;
   setup: {
     duration: number;
     players: string;
     cones: number;
+    balls: string;
+    area: string;
+    pinnies: string;
   };
 };
 
-export type TeamDrillsModel = {
+export type TeamDrillsFilters = {
+  searchText?: string;
+  type?: string;
+  level?: string;
+};
+
+export type TeamDrillsLibraryPage = {
   team: {
     id: string;
     name: string;
@@ -30,23 +46,24 @@ export type TeamDrillsModel = {
   };
   canManageDrills: boolean;
   drills: TeamDrillSummary[];
+  favoriteIds: string[];
+  nextCursor: unknown | null;
+  filters: {
+    searchText: string;
+    type: string;
+    level: string;
+  };
 };
 
-export type TeamDrillFormInput = {
-  id?: string;
-  title: string;
-  type: string;
-  level: string;
-  skills: string;
-  duration: string | number;
-  players: string;
-  cones: string | number;
-  description: string;
-  instructions: string;
-  youtubeUrl: string;
-  publishedToCommunity: boolean;
-  existingDiagramUrls?: string[];
-  diagramFiles?: File[];
+export type TeamFavoriteDrillsModel = {
+  team: {
+    id: string;
+    name: string;
+    sport: string;
+  };
+  canManageDrills: boolean;
+  favoriteIds: string[];
+  drills: TeamDrillSummary[];
 };
 
 function normalizeString(value: unknown) {
@@ -64,48 +81,20 @@ function normalizeSkills(value: unknown) {
   return Array.from(new Set(raw.map((skill) => String(skill || '').trim()).filter(Boolean)));
 }
 
-export function buildTeamDrillPayload(input: TeamDrillFormInput, sport: string) {
-  const type = DRILL_TYPES.includes(input.type) ? input.type : 'Technical';
-  const level = DRILL_LEVELS.includes(input.level) ? input.level : 'All';
-
-  return {
-    title: normalizeString(input.title),
-    sport: normalizeString(sport) || 'Soccer',
-    type,
-    level,
-    skills: normalizeSkills(input.skills),
-    description: normalizeString(input.description),
-    instructions: normalizeString(input.instructions),
-    publishedToCommunity: Boolean(input.publishedToCommunity),
-    youtubeUrl: normalizeString(input.youtubeUrl) || null,
-    setup: {
-      duration: Math.max(1, normalizeWholeNumber(input.duration, 15)),
-      players: normalizeString(input.players),
-      cones: Math.max(0, normalizeWholeNumber(input.cones, 0))
-    }
-  };
+function normalizeFilterValue(value: unknown, allowedValues: string[]) {
+  const normalized = normalizeString(value);
+  return allowedValues.includes(normalized) ? normalized : '';
 }
 
-export async function loadTeamDrillsManagementModel(teamId: string, user: AuthUser | null): Promise<TeamDrillsModel> {
+function normalizeSearchText(value: unknown) {
+  return normalizeString(value).toLowerCase();
+}
+
+async function loadTeamAccess(teamId: string, user: AuthUser | null) {
   if (!teamId) throw new Error('Missing team context.');
 
   const team = await Promise.resolve(getTeam(teamId));
   if (!team?.id) throw new Error('Team not found.');
-
-  const canManageDrills = hasFullTeamAccess(user, team);
-  if (!canManageDrills) {
-    return {
-      team: {
-        id: team.id,
-        name: normalizeString(team.name) || 'Team',
-        sport: normalizeString(team.sport) || 'Soccer'
-      },
-      canManageDrills: false,
-      drills: []
-    };
-  }
-
-  const drills = await Promise.resolve(getTeamDrills(teamId));
 
   return {
     team: {
@@ -113,45 +102,114 @@ export async function loadTeamDrillsManagementModel(teamId: string, user: AuthUs
       name: normalizeString(team.name) || 'Team',
       sport: normalizeString(team.sport) || 'Soccer'
     },
-    canManageDrills: true,
-    drills: (Array.isArray(drills) ? drills : []).map(toTeamDrillSummary)
+    canManageDrills: hasFullTeamAccess(user, team)
   };
 }
 
-export async function saveTeamDrillForApp(teamId: string, user: AuthUser | null, teamSport: string, input: TeamDrillFormInput) {
-  if (!teamId) throw new Error('Missing team context.');
-  const team = await Promise.resolve(getTeam(teamId));
-  if (!hasFullTeamAccess(user, team)) throw new Error('You do not have access to manage team drills.');
+export function filterDrillSummaries(drills: TeamDrillSummary[], filters: TeamDrillsFilters = {}) {
+  const searchText = normalizeSearchText(filters.searchText);
+  const type = normalizeFilterValue(filters.type, DRILL_TYPES as string[]);
+  const level = normalizeFilterValue(filters.level, DRILL_LEVELS as string[]);
 
-  const payload = buildTeamDrillPayload(input, teamSport || team?.sport || 'Soccer');
-  const existingDiagramUrls = Array.isArray(input.existingDiagramUrls) ? input.existingDiagramUrls.filter(Boolean) : [];
-  const diagramFiles = Array.isArray(input.diagramFiles) ? input.diagramFiles.slice(0, Math.max(0, 5 - existingDiagramUrls.length)) : [];
+  return (Array.isArray(drills) ? drills : []).filter((drill) => {
+    if (type && drill.type !== type) return false;
+    if (level && drill.level !== level) return false;
+    if (!searchText) return true;
 
-  let drillId = normalizeString(input.id);
-  if (drillId) {
-    await Promise.resolve(updateDrill(drillId, payload));
-  } else {
-    drillId = await Promise.resolve(createDrill(teamId, payload));
-  }
-
-  if (diagramFiles.length || input.existingDiagramUrls) {
-    const uploadedDiagramUrls: string[] = [];
-    for (const file of diagramFiles) {
-      uploadedDiagramUrls.push(await Promise.resolve(uploadDrillDiagram(teamId, drillId, file)));
-    }
-    await Promise.resolve(updateDrill(drillId, {
-      diagramUrls: [...existingDiagramUrls, ...uploadedDiagramUrls]
-    }));
-  }
-
-  return drillId;
+    return drill.title.toLowerCase().includes(searchText)
+      || drill.description.toLowerCase().includes(searchText)
+      || drill.instructions.toLowerCase().includes(searchText)
+      || drill.skills.some((skill) => skill.toLowerCase().includes(searchText));
+  });
 }
 
-export async function deleteTeamDrillForApp(teamId: string, user: AuthUser | null, drillId: string) {
-  if (!teamId || !normalizeString(drillId)) throw new Error('Missing drill context.');
-  const team = await Promise.resolve(getTeam(teamId));
-  if (!hasFullTeamAccess(user, team)) throw new Error('You do not have access to manage team drills.');
-  await Promise.resolve(deleteDrill(drillId));
+export async function loadTeamDrillLibraryPage(
+  teamId: string,
+  user: AuthUser | null,
+  filters: TeamDrillsFilters & { cursor?: unknown | null } = {}
+): Promise<TeamDrillsLibraryPage> {
+  const access = await loadTeamAccess(teamId, user);
+
+  if (!access.canManageDrills) {
+    return {
+      ...access,
+      drills: [],
+      favoriteIds: [],
+      nextCursor: null,
+      filters: {
+        searchText: normalizeString(filters.searchText),
+        type: normalizeFilterValue(filters.type, DRILL_TYPES as string[]),
+        level: normalizeFilterValue(filters.level, DRILL_LEVELS as string[])
+      }
+    };
+  }
+
+  const normalizedFilters = {
+    searchText: normalizeString(filters.searchText),
+    type: normalizeFilterValue(filters.type, DRILL_TYPES as string[]),
+    level: normalizeFilterValue(filters.level, DRILL_LEVELS as string[])
+  };
+
+  const [favoriteIds, page] = await Promise.all([
+    Promise.resolve(getDrillFavorites(teamId)),
+    Promise.resolve(getDrills({
+      sport: access.team.sport,
+      type: normalizedFilters.type || undefined,
+      level: normalizedFilters.level || undefined,
+      searchText: normalizedFilters.searchText || undefined,
+      limitCount: drillLibraryPageSize,
+      startAfterDoc: filters.cursor || null
+    }))
+  ]);
+
+  return {
+    ...access,
+    drills: (Array.isArray(page?.drills) ? page.drills : []).map(toTeamDrillSummary),
+    favoriteIds: Array.isArray(favoriteIds) ? favoriteIds.map((id) => normalizeString(id)).filter(Boolean) : [],
+    nextCursor: page?.lastDoc || null,
+    filters: normalizedFilters
+  };
+}
+
+export async function loadFavoriteDrills(teamId: string, user: AuthUser | null): Promise<TeamFavoriteDrillsModel> {
+  const access = await loadTeamAccess(teamId, user);
+
+  if (!access.canManageDrills) {
+    return {
+      ...access,
+      favoriteIds: [],
+      drills: []
+    };
+  }
+
+  const favoriteIds = await Promise.resolve(getDrillFavorites(teamId));
+  const favoriteDrills = await Promise.all((Array.isArray(favoriteIds) ? favoriteIds : []).map((drillId) => Promise.resolve(getDrill(drillId))));
+
+  const drills = favoriteDrills
+    .map((drill) => toTeamDrillSummary(drill))
+    .filter((drill) => drill && drill.sport === access.team.sport)
+    .sort((left, right) => left.title.localeCompare(right.title));
+
+  return {
+    ...access,
+    favoriteIds: Array.isArray(favoriteIds) ? favoriteIds.map((id) => normalizeString(id)).filter(Boolean) : [],
+    drills
+  };
+}
+
+export async function setTeamDrillFavorite(teamId: string, user: AuthUser | null, drillId: string, shouldFavorite: boolean) {
+  const access = await loadTeamAccess(teamId, user);
+  if (!access.canManageDrills) throw new Error('You do not have access to manage drill favorites.');
+
+  const normalizedDrillId = normalizeString(drillId);
+  if (!normalizedDrillId) throw new Error('Missing drill context.');
+
+  if (shouldFavorite) {
+    await Promise.resolve(addDrillFavorite(teamId, normalizedDrillId));
+    return;
+  }
+
+  await Promise.resolve(removeDrillFavorite(teamId, normalizedDrillId));
 }
 
 function toTeamDrillSummary(drill: any): TeamDrillSummary {
@@ -161,16 +219,24 @@ function toTeamDrillSummary(drill: any): TeamDrillSummary {
     sport: normalizeString(drill?.sport) || 'Soccer',
     type: normalizeString(drill?.type) || 'Technical',
     level: normalizeString(drill?.level) || 'All',
+    ageGroup: normalizeString(drill?.ageGroup) || 'All',
     skills: normalizeSkills(drill?.skills),
     description: normalizeString(drill?.description),
     instructions: normalizeString(drill?.instructions),
     youtubeUrl: normalizeString(drill?.youtubeUrl),
-    publishedToCommunity: Boolean(drill?.publishedToCommunity),
     diagramUrls: Array.isArray(drill?.diagramUrls) ? drill.diagramUrls.filter(Boolean).map((url: unknown) => String(url)) : [],
+    attribution: drill?.attribution ? {
+      source: normalizeString(drill.attribution.source),
+      license: normalizeString(drill.attribution.license),
+      url: normalizeString(drill.attribution.url)
+    } : null,
     setup: {
-      duration: Math.max(1, normalizeWholeNumber(drill?.setup?.duration, 15)),
+      duration: Math.max(1, normalizeWholeNumber(drill?.setup?.duration, 10)),
       players: normalizeString(drill?.setup?.players),
-      cones: Math.max(0, normalizeWholeNumber(drill?.setup?.cones, 0))
+      cones: Math.max(0, normalizeWholeNumber(drill?.setup?.cones, 0)),
+      balls: normalizeString(drill?.setup?.balls),
+      area: normalizeString(drill?.setup?.area),
+      pinnies: normalizeString(drill?.setup?.pinnies)
     }
   };
 }
