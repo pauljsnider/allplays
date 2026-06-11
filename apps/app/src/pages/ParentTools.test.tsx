@@ -158,8 +158,9 @@ describe('ParentTools access', () => {
         expect(screen.queryByLabelText('Team')).toBeNull();
         expect(screen.getByRole('button', { name: 'Loading public teams...' })).toBeTruthy();
 
-        if (!resolveTeams) throw new Error('Expected public teams loader to be pending.');
-        resolveTeams([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
+        const pendingTeamsResolver = resolveTeams;
+        if (!pendingTeamsResolver) throw new Error('Expected public teams loader to be pending.');
+        pendingTeamsResolver([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
 
         expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
         expect(screen.getByLabelText('Team')).toBeTruthy();
