@@ -1337,6 +1337,7 @@ function getScheduleSourceLabel(game: any) {
 function createScheduleEvent(input: {
   teamId: string;
   teamName: string;
+  teamNotificationEmail?: string | null;
   child: ParentScheduleChild;
   id: string;
   type: 'game' | 'practice';
@@ -1401,6 +1402,7 @@ function createScheduleEvent(input: {
     id: input.id,
     teamId: input.teamId,
     teamName: input.teamName || input.child.teamName || input.teamId,
+    teamNotificationEmail: compactString(input.teamNotificationEmail) || null,
     type: input.type,
     date: input.date,
     endDate,
@@ -1509,6 +1511,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           events.push(createScheduleEvent({
             teamId,
             teamName,
+            teamNotificationEmail: team.notificationEmail || null,
             child,
             id,
             type: 'practice',
@@ -1561,6 +1564,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         events.push(createScheduleEvent({
           teamId,
           teamName,
+          teamNotificationEmail: team.notificationEmail || null,
           child,
           id,
           type,
@@ -1642,6 +1646,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         events.push(createScheduleEvent({
           teamId,
           teamName,
+          teamNotificationEmail: team.notificationEmail || null,
           child,
           id,
           type,
@@ -1674,6 +1679,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
         events.push(createScheduleEvent({
           teamId,
           teamName,
+          teamNotificationEmail: team.notificationEmail || null,
           child,
           id: compactString(session.eventId || session.id),
           type: 'practice',
@@ -1732,6 +1738,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
   return teamChildren.map((child) => createScheduleEvent({
     teamId,
     teamName,
+    teamNotificationEmail: team.notificationEmail || null,
     child,
     id: normalizedId,
     type,
