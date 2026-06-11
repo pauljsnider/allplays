@@ -154,6 +154,7 @@ import {
     getRegistrationUrl,
     loadFamilyShareModel,
     loadParentAccessModel,
+    loadParentAccessTeams,
     loadParentAccessPlayers,
     loadParentCalendarTools,
     loadParentCertificates,
@@ -208,7 +209,7 @@ describe('React app parent tools service', () => {
         expect(getGoogleCalendarFeedUrl(privateFeedUrl)).toBe(`https://calendar.google.com/calendar/render?cid=${encodeURIComponent(privateFeedUrl)}`);
     });
 
-    it('loads public access teams, selectable players, and submits membership requests', async () => {
+    it('loads access requests first, then lazy-loads public teams and players', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValue({
             teams: [
                 { id: 'team-b', name: 'Wolves', isPublic: false },
@@ -227,14 +228,18 @@ describe('React app parent tools service', () => {
         dbMocks.createParentMembershipRequest.mockResolvedValue({ success: true, requestId: 'request-2' });
 
         await expect(loadParentAccessModel(user)).resolves.toMatchObject({
-            teams: [{ id: 'team-a', name: 'Bears', sport: 'Basketball', zip: '66210' }],
+            teams: [],
             requests: [{ id: 'request-1', playerName: 'Pat Star', status: 'pending' }]
         });
+        await expect(loadParentAccessTeams()).resolves.toEqual([
+            { id: 'team-a', name: 'Bears', sport: 'Basketball', zip: '66210' }
+        ]);
         await expect(loadParentAccessPlayers('team-a')).resolves.toEqual([
             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null },
             { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: 'https://img.example.test/sam.png' }
         ]);
-        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ pageSize: 100 });
+        expect(dbMocks.listMyParentMembershipRequests).toHaveBeenCalledWith('user-1');
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ pageSize: 25 });
         await submitParentAccessRequest('team-a', 'player-1', 'Guardian');
         expect(dbMocks.createParentMembershipRequest).toHaveBeenCalledWith('team-a', 'player-1', 'Guardian');
     });

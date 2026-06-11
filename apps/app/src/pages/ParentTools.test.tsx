@@ -17,6 +17,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
     initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
     loadParentAccessModel: vi.fn(),
+    loadParentAccessTeams: vi.fn(),
     loadParentAccessPlayers: vi.fn(),
     loadParentCalendarTools: vi.fn(),
     loadParentCertificates: vi.fn(),
@@ -92,9 +93,11 @@ describe('ParentTools access', () => {
         vi.clearAllMocks();
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         parentToolsServiceMocks.loadParentAccessModel.mockResolvedValue({
-            teams: [{ id: 'team-1', name: 'Bears', sport: 'Soccer' }],
             requests: []
         });
+        parentToolsServiceMocks.loadParentAccessTeams.mockResolvedValue([
+            { id: 'team-1', name: 'Bears', sport: 'Soccer' }
+        ]);
         parentToolsServiceMocks.loadParentAccessPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Sam Player', number: '12' }
         ]);
@@ -138,13 +141,16 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
 
         expect(await screen.findByText('Invite code expired.')).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Send request' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
     });
 
     it('still submits request access after the redeem panel is added', async () => {
         renderParentTools();
 
         await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+        await screen.findByRole('option', { name: 'Bears - Soccer' });
+        fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'team-1' } });
         await screen.findByRole('option', { name: '#12 Sam Player' });
         const submitButton = screen.getByRole('button', { name: 'Send request' });
         expect(submitButton.hasAttribute('disabled')).toBe(false);
@@ -212,13 +218,15 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
         await screen.findByText('Team dues');
         expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
         fireEvent.click(screen.getByRole('button', { name: 'Access' }));
         await screen.findByText('Request player access');
         expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', { name: 'Register' }));
         await screen.findByText('Summer Camp');
@@ -432,5 +440,25 @@ describe('ParentTools access', () => {
 
         expect(await screen.findByText('Summer Camp')).toBeTruthy();
         await waitFor(() => expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2));
+    });
+
+    it('defers public team and player loading until manual access starts', async () => {
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+        expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+        await screen.findByRole('option', { name: 'Bears - Soccer' });
+        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+
+        fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'team-1' } });
+        await screen.findByRole('option', { name: '#12 Sam Player' });
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1');
     });
 });

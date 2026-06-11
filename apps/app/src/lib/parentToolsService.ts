@@ -343,14 +343,16 @@ export function getCertificateUrl(teamId: string, certificateId: string) {
 
 export async function loadParentAccessModel(user: AuthUser | null) {
   if (!user?.uid) return { teams: [], requests: [] };
-  const [{ teams }, requests] = await Promise.all([
-    Promise.resolve(discoverPublicTeams({ pageSize: 100 })),
-    Promise.resolve(listMyParentMembershipRequests(user.uid))
-  ]);
+  const requests = await Promise.resolve(listMyParentMembershipRequests(user.uid));
   return {
-    teams: normalizeAccessTeams(teams),
+    teams: [],
     requests: (requests || []).map(normalizeAccessRequest)
   };
+}
+
+export async function loadParentAccessTeams(): Promise<ParentAccessTeam[]> {
+  const result = await Promise.resolve(discoverPublicTeams({ pageSize: 25 }));
+  return normalizeAccessTeams(result?.teams);
 }
 
 export async function loadParentAccessPlayers(teamId: string): Promise<ParentAccessPlayer[]> {
