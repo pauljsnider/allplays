@@ -205,6 +205,14 @@ type StaffRsvpOverrideStatus = {
   message: string;
 };
 
+export function shouldPersistLineupDraft(user: AuthState['user'] | null | undefined, formationId: string, _lineups: Record<string, string>) {
+  return Boolean(user?.uid && String(formationId || '').trim());
+}
+
+export function shouldAutosaveLineupDraft(isDirty: boolean, formationId: string, _lineups: Record<string, string>) {
+  return Boolean(isDirty && String(formationId || '').trim());
+}
+
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
   const [searchParams] = useSearchParams();
@@ -1974,7 +1982,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   }, [draftLineups]);
 
   const persistDraft = useCallback(async (lineups: Record<string, string>, reason: 'autosave' | 'manual' | 'publish') => {
-    if (!auth.user || !formationId) return true;
+    if (!shouldPersistLineupDraft(auth.user, formationId, lineups)) return true;
     setSaving(true);
     if (reason !== 'autosave') setStatus(null);
     try {
@@ -1996,7 +2004,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   }, [auth.user, event, formationId, onGamePlanSaved]);
 
   useEffect(() => {
-    if (!dirtyRef.current || !formationId) return undefined;
+    if (!shouldAutosaveLineupDraft(dirtyRef.current, formationId, draftLineups)) return undefined;
     if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = window.setTimeout(() => {
       void persistDraft(latestDraftRef.current, 'autosave');
