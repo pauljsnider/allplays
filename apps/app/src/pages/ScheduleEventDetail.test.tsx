@@ -91,8 +91,8 @@ const liveGameReactionsServiceMocks = vi.hoisted(() => ({
 vi.mock('../lib/liveGameReactionsService', () => liveGameReactionsServiceMocks);
 vi.mock('../lib/parentToolsService', () => ({ buildParentScheduleEventIcs: vi.fn(() => 'BEGIN:VCALENDAR') }));
 const scheduleHubMocks = vi.hoisted(() => ({
-  buildGameHubDestinations: vi.fn(() => []),
-  buildPracticeHubDestinations: vi.fn(() => []),
+  buildGameHubDestinations: vi.fn<() => any[]>(() => []),
+  buildPracticeHubDestinations: vi.fn<() => any[]>(() => []),
   getPublicPlayerHref: vi.fn(() => '#')
 }));
 vi.mock('../lib/scheduleHub', () => scheduleHubMocks);
