@@ -52,6 +52,25 @@ export type TrackStatsheetApplyResult = {
     statSheetPhotoUrl: string | null;
 };
 
+type TrackStatsheetAiRow = {
+    number?: unknown;
+    name?: unknown;
+    fouls?: unknown;
+    firstHalfPoints?: unknown;
+    secondHalfPoints?: unknown;
+    otPoints?: unknown;
+    totalPoints?: unknown;
+};
+
+type TrackStatsheetAiResponse = {
+    homePlayers?: TrackStatsheetAiRow[];
+    visitorPlayers?: TrackStatsheetAiRow[];
+    scores?: {
+        homeFinal?: unknown;
+        visitorFinal?: unknown;
+    };
+};
+
 export async function loadTrackStatsheetGameContext(teamId: string, gameId: string): Promise<TrackStatsheetGameContext> {
     if (!teamId || !gameId) {
         throw new Error('Team and game are required.');
@@ -100,14 +119,14 @@ export async function analyzeTrackStatsheetPhoto(file: File, roster: TrackStatsh
     const imagePart = await fileToGenerativePart(file);
     const result = await model.generateContent([buildTrackStatsheetPrompt(), imagePart]);
     const responseText = compactText(result?.response?.text?.() || '');
-    const response = JSON.parse(responseText || '{}');
+    const response = JSON.parse(responseText || '{}') as TrackStatsheetAiResponse;
 
     const parsedHomeRows = (Array.isArray(response.homePlayers) ? response.homePlayers : [])
-        .map((row) => sanitizeTrackStatsheetRow(row))
-        .filter((row) => row.name || row.number || row.totalPoints || row.fouls);
+        .map((row: TrackStatsheetAiRow) => sanitizeTrackStatsheetRow(row))
+        .filter((row: TrackStatsheetReviewRow) => row.name || row.number || row.totalPoints || row.fouls);
     const parsedVisitorRows = (Array.isArray(response.visitorPlayers) ? response.visitorPlayers : [])
-        .map((row) => sanitizeTrackStatsheetRow(row))
-        .filter((row) => row.name || row.number || row.totalPoints || row.fouls);
+        .map((row: TrackStatsheetAiRow) => sanitizeTrackStatsheetRow(row))
+        .filter((row: TrackStatsheetReviewRow) => row.name || row.number || row.totalPoints || row.fouls);
 
     const homeMatches = countRosterMatches(parsedHomeRows, roster);
     const visitorMatches = countRosterMatches(parsedVisitorRows, roster);
@@ -228,7 +247,7 @@ export function countRosterMatches(rows: TrackStatsheetReviewRow[], roster: Trac
     return count;
 }
 
-export function sanitizeTrackStatsheetRow(row: Record<string, any>): TrackStatsheetReviewRow {
+export function sanitizeTrackStatsheetRow(row: TrackStatsheetAiRow): TrackStatsheetReviewRow {
     const totalPoints = Number.isFinite(Number(row?.totalPoints))
         ? Number(row.totalPoints)
         : toNumber(row?.firstHalfPoints) + toNumber(row?.secondHalfPoints) + toNumber(row?.otPoints);

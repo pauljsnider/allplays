@@ -30,4 +30,22 @@ describe('trackStatsheetService', () => {
 
         expect(matches).toBe(2);
     });
+
+    it('sanitizes partial AI rows into bounded review rows', () => {
+        expect(sanitizeTrackStatsheetRow({
+            number: ' 12 ',
+            name: ' Avery Smith ',
+            fouls: 8,
+            firstHalfPoints: '5',
+            secondHalfPoints: '4',
+            otPoints: '1'
+        })).toEqual({
+            number: '12',
+            name: 'Avery Smith',
+            fouls: 5,
+            totalPoints: 10,
+            include: true,
+            mappedPlayerId: ''
+        });
+    });
 });
