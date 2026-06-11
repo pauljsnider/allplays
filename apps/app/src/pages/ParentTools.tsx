@@ -401,33 +401,33 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
             </form>
             {manualRequestOpen ? (
               <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
-                <label className="min-w-0">
-                  <span className="app-label">Team</span>
-                  <select className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} disabled={loadingTeams || !teams.length}>
+                <div className="min-w-0">
+                  <label className="app-label" htmlFor="parent-access-team">Team</label>
+                  <select id="parent-access-team" aria-label="Team" className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} disabled={loadingTeams || !teams.length}>
                     <option value="">{loadingTeams ? 'Loading public teams...' : teams.length ? 'Choose a team' : 'No public teams'}</option>
                     {teams.map((team) => (
                       <option key={team.id} value={team.id}>{team.name}{team.sport ? ` - ${team.sport}` : ''}</option>
                     ))}
                   </select>
-                </label>
-                <label className="min-w-0">
-                  <span className="app-label">Player</span>
-                  <select className="auth-input mt-1" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)} disabled={!selectedTeamId || loadingPlayers}>
+                </div>
+                <div className="min-w-0">
+                  <label className="app-label" htmlFor="parent-access-player">Player</label>
+                  <select id="parent-access-player" aria-label="Player" className="auth-input mt-1" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)} disabled={!selectedTeamId || loadingPlayers}>
                     <option value="">{selectedTeamId ? (loadingPlayers ? 'Loading players...' : players.length ? 'Choose a player' : 'No players found') : 'Choose a team first'}</option>
                     {players.map((player) => (
                       <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>
                     ))}
                   </select>
-                </label>
-                <label className="min-w-0">
-                  <span className="app-label">Relationship</span>
-                  <select className="auth-input mt-1" value={relation} onChange={(event) => setRelation(event.target.value)}>
+                </div>
+                <div className="min-w-0">
+                  <label className="app-label" htmlFor="parent-access-relation">Relationship</label>
+                  <select id="parent-access-relation" aria-label="Relationship" className="auth-input mt-1" value={relation} onChange={(event) => setRelation(event.target.value)}>
                     <option value="Parent">Parent</option>
                     <option value="Guardian">Guardian</option>
                     <option value="Grandparent">Grandparent</option>
                     <option value="Family">Family</option>
                   </select>
-                </label>
+                </div>
                 <button type="submit" className="primary-button lg:col-span-3" disabled={saving || redeeming || loadingTeams || loadingPlayers || !selectedTeamId || !selectedPlayerId}>
                   {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Shield className="h-4 w-4" aria-hidden="true" />}
                   Send request
