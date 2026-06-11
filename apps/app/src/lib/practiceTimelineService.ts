@@ -135,8 +135,8 @@ export async function loadPracticeTimelineModel(teamId: string, eventId: string,
 
   const blocks = (Array.isArray(session?.blocks) ? session.blocks : [])
     .slice()
-    .sort((left, right) => (Number(left?.order) || 0) - (Number(right?.order) || 0))
-    .map((block, index) => normalizePracticeTimelineBlock(block, index));
+    .sort((left: PracticeTimelineBlock, right: PracticeTimelineBlock) => (Number(left?.order) || 0) - (Number(right?.order) || 0))
+    .map((block: PracticeTimelineBlock, index: number) => normalizePracticeTimelineBlock(block, index));
 
   const drillOptions = [
     ...(Array.isArray(communityDrills) ? communityDrills : []).map((drill) => toDrillOption(drill, 'community')),

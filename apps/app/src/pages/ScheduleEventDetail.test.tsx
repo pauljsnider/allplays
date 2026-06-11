@@ -72,6 +72,7 @@ const practiceTimelineServiceMocks = vi.hoisted(() => ({
 vi.mock('../lib/practiceTimelineService', () => practiceTimelineServiceMocks);
 
 import { ScheduleEventDetail, shouldAutosaveGeneratedLineupDraft, shouldAutosaveLineupDraft, shouldPersistLineupDraft } from './ScheduleEventDetail';
+import type { PracticeTimelineBlock } from '../lib/practiceTimelineService';
 import type { AuthState } from '../lib/types';
 
 const auth: AuthState = {
@@ -581,9 +582,9 @@ describe('ScheduleEventDetail practice timeline', () => {
       ]
     });
     practiceTimelineServiceMocks.savePracticeTimelineForApp.mockResolvedValue('session-1');
-    practiceTimelineServiceMocks.appendPracticeTimelineLiveNoteForApp.mockImplementation(async (input) => ({
+    practiceTimelineServiceMocks.appendPracticeTimelineLiveNoteForApp.mockImplementation(async (input: { blocks: PracticeTimelineBlock[]; blockIndex: number; text: string }) => ({
       sessionId: 'session-1',
-      blocks: input.blocks.map((block, index) => (
+      blocks: input.blocks.map((block: PracticeTimelineBlock, index: number) => (
         index === input.blockIndex
           ? { ...block, notesLog: [...(block.notesLog || []), { type: 'text', text: input.text, createdAt: '2026-06-11T06:08:00.000Z' }] }
           : block
