@@ -131,6 +131,15 @@ export type ParentScheduleEvent = {
   liveClockUpdatedAt?: Date | null;
   homeScore?: number | null;
   awayScore?: number | null;
+  postGameNotes?: string | null;
+  summary?: string | null;
+  practiceFeedItems?: Array<{
+    weakness: string;
+    evidence: string;
+    drillCategory: string;
+    urgency: string;
+    addedAt: string;
+  }>;
   canUpdateScore?: boolean;
   isHome?: boolean | null;
   kitColor?: string | null;

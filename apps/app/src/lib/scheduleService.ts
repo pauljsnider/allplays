@@ -1359,6 +1359,9 @@ function createScheduleEvent(input: {
   liveClockUpdatedAt?: unknown;
   homeScore?: unknown;
   awayScore?: unknown;
+  postGameNotes?: string | null;
+  summary?: string | null;
+  practiceFeedItems?: any[];
   isHome?: boolean | null;
   kitColor?: string | null;
   arrivalTime?: unknown;
@@ -1416,6 +1419,9 @@ function createScheduleEvent(input: {
     liveClockUpdatedAt: normalizeScheduleDate(input.liveClockUpdatedAt),
     homeScore: toNullableScore(input.homeScore),
     awayScore: toNullableScore(input.awayScore),
+    postGameNotes: input.postGameNotes || null,
+    summary: input.summary || null,
+    practiceFeedItems: Array.isArray(input.practiceFeedItems) ? input.practiceFeedItems : [],
     canUpdateScore: input.canUpdateScore === true,
     isHome: input.isHome ?? null,
     kitColor: input.kitColor || null,
@@ -1566,6 +1572,9 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           liveClockUpdatedAt: game.liveClockUpdatedAt || null,
           homeScore: game.homeScore ?? null,
           awayScore: game.awayScore ?? null,
+          postGameNotes: game.postGameNotes || null,
+          summary: game.summary || null,
+          practiceFeedItems: Array.isArray(game.practiceFeedItems) ? game.practiceFeedItems : [],
           canUpdateScore: type === 'game' && hasScorekeepingTeamAccess(user, teamWithId, game, null),
           isHome: game.isHome ?? null,
           kitColor: game.kitColor || null,
@@ -2280,6 +2289,31 @@ export async function updateGameScore(teamId: string, gameId: string, score: Gam
   }
 
   return payload;
+}
+
+export async function completeGameWrapupForApp(teamId: string, gameId: string, payload: Record<string, unknown>, user: AuthUser) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before completing wrap-up.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before completing wrap-up.');
+  }
+
+  const wrappedPayload = {
+    ...payload,
+    wrapupUpdatedAt: new Date(),
+    wrapupUpdatedBy: user.uid
+  };
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, wrappedPayload)), 'Wrap-up save');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST wrap-up save:', error);
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, wrappedPayload);
+  }
+
+  return wrappedPayload;
 }
 
 function buildLiveScoreUpdateDescription(score: GameScoreSnapshot) {

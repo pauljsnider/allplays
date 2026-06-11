@@ -426,6 +426,20 @@ async function mockScheduleModules(page, options = {}) {
                     return preview;
                 }
 
+                export async function completeGameWrapupForApp(teamId, gameId, payload, user) {
+                    window.__scheduleCalls.wrapup = (window.__scheduleCalls.wrapup || []).concat({
+                        teamId,
+                        gameId,
+                        payload,
+                        userId: user?.uid || null
+                    });
+                    return {
+                        ...(payload || {}),
+                        status: 'completed',
+                        liveStatus: 'completed'
+                    };
+                }
+
                 export async function publishGamePlanForApp(event, user) {
                     const version = Number.parseInt(String(event?.gamePlan?.publishedVersion || ''), 10) || 0;
                     const gamePlan = {
