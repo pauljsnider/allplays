@@ -76,6 +76,11 @@ const {
   PRE_EVENT_REMINDER_MAX_RUNTIME_MS,
   drainDueReminderPages
 } = require('./pre-event-reminder-dispatcher-core.cjs');
+const {
+  hasEnabledNotificationCategory,
+  buildNotificationTargetDocId,
+  buildNotificationTargetPayload
+} = require('./notification-target-index-core.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -2769,6 +2774,105 @@ function normalizeNotificationPreferences(raw) {
   };
 }
 
+function buildTeamNotificationTargetRef(teamId, uid, deviceId) {
+  return firestore.doc(`teams/${teamId}/notificationTargets/${buildNotificationTargetDocId({ uid, deviceId })}`);
+}
+
+function normalizeNotificationDeviceRecord(deviceId, raw) {
+  const token = String(raw?.token || '').trim();
+  if (!token) return null;
+  return {
+    deviceId,
+    token,
+    platform: String(raw?.platform || 'web').trim() || 'web',
+    userAgent: String(raw?.userAgent || '').trim()
+  };
+}
+
+async function syncNotificationTargetsForPreference(uid, teamId, preferences) {
+  const normalizedPreferences = normalizeNotificationPreferences(preferences);
+  const devicesSnap = await firestore.collection(`users/${uid}/notificationDevices`).get();
+  if (devicesSnap.empty) return;
+
+  const batch = firestore.batch();
+  devicesSnap.docs.forEach((deviceSnap) => {
+    const device = normalizeNotificationDeviceRecord(deviceSnap.id, deviceSnap.data());
+    const targetRef = buildTeamNotificationTargetRef(teamId, uid, deviceSnap.id);
+    if (!device || !hasEnabledNotificationCategory(normalizedPreferences)) {
+      batch.delete(targetRef);
+      return;
+    }
+
+    batch.set(targetRef, {
+      ...buildNotificationTargetPayload({
+        uid,
+        teamId,
+        deviceId: device.deviceId,
+        token: device.token,
+        platform: device.platform,
+        userAgent: device.userAgent,
+        preferences: normalizedPreferences
+      }),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+  await batch.commit();
+}
+
+async function syncNotificationTargetsForDevice(uid, deviceId, rawDevice) {
+  const targetDevice = normalizeNotificationDeviceRecord(deviceId, rawDevice);
+  const prefsSnap = await firestore.collection(`users/${uid}/notificationPreferences`).get();
+  if (prefsSnap.empty) return;
+
+  const batch = firestore.batch();
+  prefsSnap.docs.forEach((prefSnap) => {
+    const targetRef = buildTeamNotificationTargetRef(prefSnap.id, uid, deviceId);
+    const preferences = normalizeNotificationPreferences(prefSnap.data());
+    if (!targetDevice || !hasEnabledNotificationCategory(preferences)) {
+      batch.delete(targetRef);
+      return;
+    }
+
+    batch.set(targetRef, {
+      ...buildNotificationTargetPayload({
+        uid,
+        teamId: prefSnap.id,
+        deviceId,
+        token: targetDevice.token,
+        platform: targetDevice.platform,
+        userAgent: targetDevice.userAgent,
+        preferences
+      }),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  });
+  await batch.commit();
+}
+
+exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
+  .document('users/{uid}/notificationPreferences/{teamId}')
+  .onWrite(async (change, context) => {
+    const { uid, teamId } = context.params;
+    if (!change.after.exists) {
+      await syncNotificationTargetsForPreference(uid, teamId, DEFAULT_NOTIFICATION_PREFERENCES);
+      return null;
+    }
+    await syncNotificationTargetsForPreference(uid, teamId, change.after.data() || {});
+    return null;
+  });
+
+exports.syncTeamNotificationTargetsOnDeviceWrite = functions.firestore
+  .document('users/{uid}/notificationDevices/{deviceId}')
+  .onWrite(async (change, context) => {
+    const { uid, deviceId } = context.params;
+    if (!change.after.exists) {
+      await syncNotificationTargetsForDevice(uid, deviceId, null);
+      return null;
+    }
+    await syncNotificationTargetsForDevice(uid, deviceId, change.after.data() || {});
+    return null;
+  });
+
 function toNumericScore(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
@@ -2895,36 +2999,28 @@ async function getCandidateUserIdsForTeam(teamId) {
 }
 
 async function getTargetsForCategory(teamId, category, actorUid = null) {
+  const targetSnap = await firestore.collection(`teams/${teamId}/notificationTargets`)
+    .where(`categories.${category}`, '==', true)
+    .get();
   const userIds = await getCandidateUserIdsForTeam(teamId);
-  const queryTasks = userIds
-    .filter((uid) => uid && uid !== actorUid)
-    .map(async (uid) => {
-      const prefRef = firestore.doc(`users/${uid}/notificationPreferences/${teamId}`);
-      const devicesRef = firestore.collection(`users/${uid}/notificationDevices`);
-      const [prefSnap, devicesSnap] = await Promise.all([
-        prefRef.get(),
-        devicesRef.get()
-      ]);
-      const prefs = prefSnap.exists
-        ? normalizeNotificationPreferences(prefSnap.data())
-        : DEFAULT_NOTIFICATION_PREFERENCES;
-      if (prefs[category] !== true) return [];
-      return devicesSnap.docs
-        .map((docSnap) => {
-          const data = docSnap.data() || {};
-          const token = String(data.token || '').trim();
-          if (!token) return null;
-          return {
-            uid,
-            deviceId: docSnap.id,
-            token
-          };
-        })
-        .filter(Boolean);
-    });
-
-  const targetGroups = await Promise.all(queryTasks);
-  return targetGroups.flat();
+  const eligibleUserIds = new Set(userIds.filter(Boolean));
+  return targetSnap.docs
+    .map((docSnap) => {
+      const data = docSnap.data() || {};
+      const uid = String(data.uid || '').trim();
+      const deviceId = String(data.deviceId || '').trim();
+      const token = String(data.token || '').trim();
+      if (!uid || !deviceId || !token) return null;
+      if (uid === actorUid) return null;
+      if (!eligibleUserIds.has(uid)) return null;
+      return {
+        uid,
+        deviceId,
+        token,
+        teamId
+      };
+    })
+    .filter(Boolean);
 }
 
 async function pruneInvalidTokens(sendResult, targets) {
@@ -2942,7 +3038,8 @@ async function pruneInvalidTokens(sendResult, targets) {
     const target = targets[index];
     if (!target?.uid || !target?.deviceId) return;
     removals.push(
-      firestore.doc(`users/${target.uid}/notificationDevices/${target.deviceId}`).delete()
+      firestore.doc(`users/${target.uid}/notificationDevices/${target.deviceId}`).delete(),
+      buildTeamNotificationTargetRef(target.teamId, target.uid, target.deviceId).delete()
     );
   });
 
