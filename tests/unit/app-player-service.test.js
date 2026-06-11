@@ -8,11 +8,14 @@ const dbMocks = vi.hoisted(() => ({
     getPlayerTrackingStatuses: vi.fn(),
     getPlayers: vi.fn(),
     getPublicTrackingItems: vi.fn(),
+    getRosterFieldDefinitions: vi.fn(),
     getTeam: vi.fn(),
     inviteCoParentToAthlete: vi.fn(),
     listAthleteProfilesForParent: vi.fn(),
     listCertificatesForPlayer: vi.fn(),
     saveAthleteProfile: vi.fn(),
+    setPlayerPrivateRosterProfileFields: vi.fn(),
+    updatePlayer: vi.fn(),
     updatePlayerProfile: vi.fn(),
     uploadAthleteProfileMedia: vi.fn(),
     uploadPlayerPhoto: vi.fn()
@@ -147,6 +150,7 @@ beforeEach(() => {
         emergencyContact: { name: 'Jamie Parent', phone: '555-0100' },
         medicalInfo: 'Peanut allergy'
     });
+    dbMocks.getRosterFieldDefinitions.mockResolvedValue([]);
     dbMocks.listCertificatesForPlayer.mockResolvedValue([{ id: 'cert-1', title: 'Hustle Award' }]);
     dbMocks.listAthleteProfilesForParent.mockResolvedValue([{
         id: 'profile-1',
