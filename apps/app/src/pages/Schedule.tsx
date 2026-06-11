@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 're
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
-import { generateScheduleAiImportRows } from '../lib/scheduleAiImport';
 import { getCachedAppData, loadCachedAppData } from '../lib/appDataCache';
 import { startUxTimer } from '../lib/uxTiming';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -29,14 +28,6 @@ import {
   type ScheduleTimeRange,
   type ScheduleViewMode
 } from '../lib/scheduleLogic';
-import {
-  SCHEDULE_CSV_IMPORT_FIELDS,
-  buildScheduleImportPreview,
-  inferScheduleCsvMapping,
-  parseCsvText,
-  type ScheduleCsvImportMapping,
-  type ScheduleCsvImportPreviewRow
-} from '../lib/scheduleCsvImport';
 import type { AuthState } from '../lib/types';
 
 const filterOptions: Array<{ value: ParentScheduleFilter; label: string }> = [
@@ -71,6 +62,61 @@ const rsvpBadgeClasses: Record<RsvpResponse, string> = {
   not_going: 'border-rose-200 bg-rose-50 text-rose-700',
   not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
 };
+
+type ScheduleCsvImportFieldKey = 'startDateTime' | 'date' | 'startTime' | 'endTime' | 'eventType' | 'opponent' | 'title' | 'location' | 'arrivalTime' | 'isHome' | 'notes';
+type ScheduleCsvImportMapping = Partial<Record<ScheduleCsvImportFieldKey, string>>;
+type ScheduleCsvImportNormalizedRow = {
+  rowNumber: number;
+  eventType: 'game' | 'practice';
+  startsAt: string;
+  endsAt: string | null;
+  opponent: string | null;
+  title: string | null;
+  location: string | null;
+  arrivalTime: string | null;
+  isHome: boolean | null;
+  notes: string | null;
+};
+type ScheduleCsvImportPreviewRow = {
+  rowNumber: number;
+  draft: Record<string, string>;
+  normalized: ScheduleCsvImportNormalizedRow;
+  errors: string[];
+};
+
+const SCHEDULE_CSV_IMPORT_FIELDS: Array<{ key: ScheduleCsvImportFieldKey; label: string }> = [
+  { key: 'startDateTime', label: 'Start Date & Time' },
+  { key: 'date', label: 'Date' },
+  { key: 'startTime', label: 'Start Time' },
+  { key: 'endTime', label: 'End Time' },
+  { key: 'eventType', label: 'Event Type' },
+  { key: 'opponent', label: 'Opponent' },
+  { key: 'title', label: 'Title' },
+  { key: 'location', label: 'Location' },
+  { key: 'arrivalTime', label: 'Arrival Time' },
+  { key: 'isHome', label: 'Home / Away' },
+  { key: 'notes', label: 'Notes' }
+];
+
+type ScheduleCsvImportModule = typeof import('../lib/scheduleCsvImport');
+type ScheduleAiImportModule = typeof import('../lib/scheduleAiImport');
+
+let scheduleCsvImportModulePromise: Promise<ScheduleCsvImportModule> | null = null;
+let scheduleAiImportModulePromise: Promise<ScheduleAiImportModule> | null = null;
+
+function loadScheduleCsvImportModule() {
+  if (!scheduleCsvImportModulePromise) {
+    scheduleCsvImportModulePromise = import('../lib/scheduleCsvImport');
+  }
+  return scheduleCsvImportModulePromise;
+}
+
+function loadScheduleAiImportModule() {
+  if (!scheduleAiImportModulePromise) {
+    scheduleAiImportModulePromise = import('../lib/scheduleAiImport');
+  }
+  return scheduleAiImportModulePromise;
+}
 
 export function Schedule({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
@@ -229,6 +275,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setScheduleImportPreviewSource(null);
     if (!file) return;
     try {
+      const { parseCsvText, inferScheduleCsvMapping } = await loadScheduleCsvImportModule();
       const parsed = parseCsvText(await file.text());
       setCsvHeaders(parsed.headers);
       setCsvRows(parsed.rows);
@@ -239,7 +286,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   };
 
-  const handleCsvPreview = () => {
+  const handleCsvPreview = async () => {
+    const { buildScheduleImportPreview } = await loadScheduleCsvImportModule();
     const preview = buildScheduleImportPreview({
       rows: csvRows,
       mapping: csvMapping,
@@ -295,6 +343,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
     setProcessingAiImport(true);
     try {
+      const { generateScheduleAiImportRows } = await loadScheduleAiImportModule();
       const result = await generateScheduleAiImportRows({
         teamName: selectedCalendarTeam.teamName,
         text: aiScheduleText,
