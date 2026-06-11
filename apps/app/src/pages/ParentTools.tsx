@@ -264,10 +264,10 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
     }
   }, []);
 
-  const openManualRequest = useCallback(async () => {
+  const openManualRequest = useCallback(() => {
     setManualRequestOpen(true);
     if (!teams.length && !loadingTeams) {
-      await loadTeams();
+      void loadTeams();
     }
   }, [loadTeams, loadingTeams, teams.length]);
 

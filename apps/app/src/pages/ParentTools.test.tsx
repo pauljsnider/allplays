@@ -158,6 +158,8 @@ describe('ParentTools access', () => {
         const teamSelect = screen.getByLabelText('Team') as HTMLSelectElement;
         expect(teamSelect).toBeTruthy();
         expect(teamSelect.disabled).toBe(true);
+        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
         expect(screen.getByRole('option', { name: 'Loading public teams...' })).toBeTruthy();
 
         await waitFor(() => expect(deferredTeams.resolve).toBeTruthy());
