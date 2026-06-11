@@ -12,4 +12,12 @@ describe('legacy global player search scoping', () => {
         expect(source).toContain('const result = await loadPlayerSearchDocs(prefixes, q, isNumeric, modalState.teamsById);');
         expect(source).not.toContain("collectionGroup(db, 'players')");
     });
+
+    it('limits legacy player fan-out to a bounded set of searchable teams', () => {
+        expect(source).toContain('const playerSearchTeamLimit = 8;');
+        expect(source).toContain('function getPlayerSearchTeamIds(rawQuery, teamsById)');
+        expect(source).toContain('filterSearchableTeams(Array.from(teamsById.values()), currentUser)');
+        expect(source).toContain('.slice(0, playerSearchTeamLimit)');
+        expect(source).toContain('const teamIds = getPlayerSearchTeamIds(rawQuery, teamsById);');
+    });
 });

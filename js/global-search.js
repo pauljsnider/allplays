@@ -13,6 +13,7 @@ import {
 
 let cachedTeams = null;
 let cachedTeamsLoadedAt = 0;
+const playerSearchTeamLimit = 8;
 
 let currentUser = null;
 let keyHandlerInstalled = false;
@@ -137,8 +138,31 @@ function buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric) {
     };
 }
 
+function getPlayerSearchTeamIds(rawQuery, teamsById) {
+    const searchableTeams = filterSearchableTeams(Array.from(teamsById.values()), currentUser);
+    if (!searchableTeams.length) return [];
+
+    const privateTeams = searchableTeams.filter((team) => team?.isPublic === false);
+    const publicTeams = searchableTeams.filter((team) => team?.isPublic !== false);
+    const tokens = splitTokens(rawQuery);
+    const rankedPublicTeams = tokens.length === 0
+        ? publicTeams
+        : publicTeams
+            .map((team) => ({
+                team,
+                score: scoreText([team.name, team.sport, team.zip].filter(Boolean).join(' '), tokens)
+            }))
+            .sort((a, b) => b.score - a.score)
+            .map((entry) => entry.team);
+
+    return [...privateTeams, ...rankedPublicTeams]
+        .slice(0, playerSearchTeamLimit)
+        .map((team) => String(team?.id || '').trim())
+        .filter(Boolean);
+}
+
 async function loadPlayerSearchDocsByTeam(prefixes, rawQuery, isNumeric, teamsById) {
-    const teamIds = Array.from(teamsById.keys()).map((teamId) => String(teamId || '').trim()).filter(Boolean);
+    const teamIds = getPlayerSearchTeamIds(rawQuery, teamsById);
     if (teamIds.length === 0) {
         return { docs: [], exhaustiveForNarrowerQueries: false, rejected: [] };
     }
