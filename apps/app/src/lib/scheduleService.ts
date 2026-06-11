@@ -24,6 +24,7 @@ import {
   releaseAssignmentClaim,
   submitRsvpForPlayer,
   broadcastLiveEvent,
+  getLiveEvents,
   updateGame,
   updatePracticeAttendance,
   updateTeam,
@@ -1384,6 +1385,10 @@ function createScheduleEvent(input: {
   isTeamStaff?: boolean;
   isTeamRsvpReminderManager?: boolean;
   gamePlan?: Record<string, any> | null;
+  rotationPlan?: Record<string, any> | null;
+  rotationActual?: Record<string, any> | null;
+  coachingNotes?: any[];
+  liveEvents?: any[];
 }): ParentScheduleEvent {
   const arrivalTime = normalizeScheduleDate(input.arrivalTime);
   const endDate = normalizeScheduleDate(input.endDate);
@@ -1453,7 +1458,11 @@ function createScheduleEvent(input: {
     isTeamAdmin: input.isTeamAdmin === true,
     isTeamStaff: input.isTeamStaff === true,
     isTeamRsvpReminderManager: input.isTeamRsvpReminderManager === true,
-    gamePlan: input.gamePlan || null
+    gamePlan: input.gamePlan || null,
+    rotationPlan: input.rotationPlan || null,
+    rotationActual: input.rotationActual || null,
+    coachingNotes: Array.isArray(input.coachingNotes) ? input.coachingNotes : [],
+    liveEvents: Array.isArray(input.liveEvents) ? input.liveEvents : []
   };
 }
 
@@ -1536,7 +1545,10 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             isTeamAdmin: isRsvpReminderManager,
             isTeamStaff: isStaff,
             isTeamRsvpReminderManager: isRsvpReminderManager,
-            gamePlan: game.gamePlan || null
+            gamePlan: game.gamePlan || null,
+            rotationPlan: game.rotationPlan || null,
+            rotationActual: game.rotationActual || null,
+            coachingNotes: Array.isArray(game.coachingNotes) ? game.coachingNotes : []
           }));
         });
       }
@@ -1596,7 +1608,10 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           isTeamAdmin: isRsvpReminderManager,
           isTeamStaff: isStaff,
           isTeamRsvpReminderManager: isRsvpReminderManager,
-          gamePlan: game.gamePlan || null
+          gamePlan: game.gamePlan || null,
+          rotationPlan: game.rotationPlan || null,
+          rotationActual: game.rotationActual || null,
+          coachingNotes: Array.isArray(game.coachingNotes) ? game.coachingNotes : []
         }));
       });
     }
@@ -1761,7 +1776,10 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     isTeamAdmin: isRsvpReminderManager,
     isTeamStaff: isStaff,
     isTeamRsvpReminderManager: isRsvpReminderManager,
-    gamePlan: game.gamePlan || null
+    gamePlan: game.gamePlan || null,
+    rotationPlan: game.rotationPlan || null,
+    rotationActual: game.rotationActual || null,
+    coachingNotes: Array.isArray(game.coachingNotes) ? game.coachingNotes : []
   }));
 }
 
@@ -2407,6 +2425,52 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
   }
 
   return payload;
+}
+
+export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string) {
+  if (!teamId || !gameId) return [];
+  try {
+    return await withTimeout(Promise.resolve(getLiveEvents(teamId, gameId)), 'Game day live events');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST game day live events:', error);
+    const events = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`);
+    return Array.isArray(events) ? events : [];
+  }
+}
+
+export async function saveGameDaySubstitutionForApp(
+  teamId: string,
+  gameId: string,
+  user: AuthUser,
+  payload: {
+    rotationPlan: Record<string, any>;
+    rotationActual: Record<string, any>;
+    coachingNotes: any[];
+  }
+) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before saving substitutions.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before saving substitutions.');
+  }
+
+  const patch = {
+    rotationPlan: payload.rotationPlan || {},
+    rotationActual: payload.rotationActual || {},
+    coachingNotes: Array.isArray(payload.coachingNotes) ? payload.coachingNotes : []
+  };
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, patch)), 'Game day substitution save');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST game day substitution save:', error);
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, patch);
+  }
+
+  return patch;
 }
 
 export function buildPlayerScoringLiveEvent({

@@ -1,10 +1,21 @@
 import { getApp } from '../../../../js/vendor/firebase-app.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
-import { buildRotationPlanFromGamePlan } from '../../../../js/game-plan-interop.js';
+import { buildRotationPlanFromGamePlan, normalizeLineupsForGamePlanPlanner } from '../../../../js/game-plan-interop.js';
+import { buildGamePlanIntervals } from '../../../../js/game-plan-intervals.js';
 import { getLineupFormation, getLineupPeriodsForFormation, type AutoFilledLineupPlayer, type LineupFormationPosition } from './gameDayLineupPublish';
 
 export type LineupEditorPlayer = AutoFilledLineupPlayer & {
   availability: 'going' | 'available';
+};
+
+export type ProjectedPlayingTimeSummaryRow = {
+  playerId: string;
+  playerName: string;
+  playerNumber: string | null;
+  minutes: number;
+  targetMinutes: number;
+  percentageOfTarget: number;
+  status: 'balanced' | 'under-utilized' | 'over-utilized' | 'good';
 };
 
 export function getLineupSlotKey(period: string, positionId: string) {
@@ -49,6 +60,58 @@ export function buildLineupEditorAssignments(formationId: string, gamePlan?: Rec
   });
 
   return assignments;
+}
+
+export function buildProjectedPlayingTimeSummary(formationId: string, gamePlan: Record<string, any> | null | undefined, players: AutoFilledLineupPlayer[] = []) {
+  const formation = getLineupFormation(formationId);
+  const cleanPlayers = dedupePlayers(players);
+  if (!formation || !cleanPlayers.length || !gamePlan?.lineups || typeof gamePlan.lineups !== 'object') {
+    return [] as ProjectedPlayingTimeSummaryRow[];
+  }
+
+  const normalizedLineups = normalizeLineupsForGamePlanPlanner(gamePlan || {});
+  const intervals = buildGamePlanIntervals(gamePlan || {});
+  const playingTime: Record<string, number> = {};
+  cleanPlayers.forEach((player) => {
+    playingTime[player.id] = 0;
+  });
+
+  intervals.forEach((interval: any) => {
+    formation.positions.forEach((position) => {
+      const playerId = compactString(normalizedLineups?.[`${interval.key}-${position.id}`]);
+      if (playerId && Object.prototype.hasOwnProperty.call(playingTime, playerId)) {
+        playingTime[playerId] += Number(interval.duration) || 0;
+      }
+    });
+  });
+
+  const totalPlayerMinutes = (Number(gamePlan?.numPeriods) || 0) * (Number(gamePlan?.periodDuration) || 0) * formation.positions.length;
+  const targetMinutes = cleanPlayers.length ? totalPlayerMinutes / cleanPlayers.length : 0;
+
+  return cleanPlayers
+    .map((player) => {
+      const minutes = Number(playingTime[player.id] || 0);
+      let status: ProjectedPlayingTimeSummaryRow['status'] = 'good';
+      if (targetMinutes > 0) {
+        if (minutes < targetMinutes * 0.7) {
+          status = 'under-utilized';
+        } else if (minutes > targetMinutes * 1.3) {
+          status = 'over-utilized';
+        } else if (minutes >= targetMinutes * 0.85 && minutes <= targetMinutes * 1.15) {
+          status = 'balanced';
+        }
+      }
+      return {
+        playerId: player.id,
+        playerName: player.name,
+        playerNumber: player.number || null,
+        minutes,
+        targetMinutes,
+        percentageOfTarget: targetMinutes > 0 ? (minutes / targetMinutes) * 100 : 0,
+        status
+      };
+    })
+    .sort((left, right) => right.minutes - left.minutes || left.playerName.localeCompare(right.playerName));
 }
 
 export function assignLineupPlayer(lineups: Record<string, string>, targetKey: string, playerId: string) {

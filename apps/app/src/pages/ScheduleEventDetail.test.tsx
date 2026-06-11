@@ -17,7 +17,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadParentScheduleRideOffers: vi.fn(),
   loadStaffScheduleRsvpBreakdown: vi.fn(),
   loadStaffRsvpReminderPreview: vi.fn(),
-  loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
+  loadAutoFilledLineupDraftPreviewForApp: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({ availablePlayers: [] as any[], goingPlayers: [] as any[], gamePlan: null as any })),
   markParentPracticePacketComplete: vi.fn(),
   publishGamePlanForApp: vi.fn(),
   releaseParentScheduleAssignmentClaim: vi.fn(),
@@ -33,6 +33,8 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   saveScheduledGameLineupDraftForApp: vi.fn(),
   saveStaffPracticeAttendance: vi.fn(),
   completeGameWrapupForApp: vi.fn(),
+  loadGameDayLiveEventsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([] as any[])),
+  saveGameDaySubstitutionForApp: vi.fn((_teamId, _gameId, _user, payload) => Promise.resolve(payload)),
   updateGameScore: vi.fn(),
   updateParentScheduleRideRequestStatus: vi.fn()
 }));
@@ -262,6 +264,8 @@ describe('ScheduleEventDetail assignments', () => {
       events: [buildEvent({ liveStatus: 'live', status: 'live' })],
       children: []
     });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
 
     renderScheduleEventDetail();
 
@@ -295,6 +299,8 @@ describe('ScheduleEventDetail assignments', () => {
       events: [buildEvent({ liveStatus: 'completed', status: 'completed' })],
       children: []
     });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
 
     renderScheduleEventDetail();
 
@@ -361,12 +367,12 @@ describe('ScheduleEventDetail assignments', () => {
       expect(messageRows[1]?.textContent).toContain('Second');
     });
 
-    fireEvent.change(screen.getByLabelText('Live chat message'), { target: { value: 'Let\'s go Bears' } });
+    fireEvent.change(screen.getByLabelText('Live chat message'), { target: { value: 'Let's go Bears' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     await waitFor(() => {
       expect(liveGameChatServiceMocks.sendLiveGameChatMessage).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
-        text: 'Let\'s go Bears',
+        text: 'Let's go Bears',
         user: auth.user
       }));
     });
@@ -404,11 +410,97 @@ describe('ScheduleEventDetail assignments', () => {
     expect(liveGameChatServiceMocks.sendLiveGameChatMessage).not.toHaveBeenCalled();
   });
 
+  it('executes substitutions against shared game-day rotation fields and renders live logs', async () => {
+    const gamePlan = {
+      formationId: 'basketball-5v5',
+      numPeriods: 4,
+      periodDuration: 8,
+      lineups: {
+        'Q1-pg': 'p1',
+        'Q1-sg': 'p2',
+        'Q1-sf': 'p3',
+        'Q1-pf': 'p4',
+        'Q1-c': 'p5'
+      },
+      isPublished: true,
+      publishedLineups: {
+        'Q1-pg': 'p1',
+        'Q1-sg': 'p2',
+        'Q1-sf': 'p3',
+        'Q1-pf': 'p4',
+        'Q1-c': 'p5'
+      }
+    };
+    const players = [
+      { id: 'p1', name: 'Avery Smith', number: '1' },
+      { id: 'p2', name: 'Blake Jones', number: '2' },
+      { id: 'p3', name: 'Casey Brown', number: '3' },
+      { id: 'p4', name: 'Devon Lee', number: '4' },
+      { id: 'p5', name: 'Emerson Fox', number: '5' },
+      { id: 'p6', name: 'Finley Ray', number: '6' }
+    ];
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        gamePlan,
+        rotationPlan: { Q1: { pg: 'p1', sg: 'p2', sf: 'p3', pf: 'p4', c: 'p5' } },
+        coachingNotes: [{ type: 'substitution', period: 'Q1', text: '#6 Finley Ray for #2 Blake Jones at sg', createdAt: '2026-06-04T18:10:00.000Z' }]
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      availablePlayers: players,
+      goingPlayers: players,
+      gamePlan
+    });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([
+      { eventId: 'score-1', type: 'score_update', period: 'Q1', description: 'Bears 2 - Wolves 0', createdAt: '2026-06-04T18:11:00.000Z' }
+    ]);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('game-day-substitution-panel')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Bears 2 - Wolves 0')).toBeTruthy();
+    });
+    expect(screen.getByText('#6 Finley Ray for #2 Blake Jones at sg')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Out'), { target: { value: 'p2' } });
+    fireEvent.change(screen.getByLabelText('In'), { target: { value: 'p6' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Execute sub' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.saveGameDaySubstitutionForApp).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        auth.user,
+        expect.objectContaining({
+          rotationPlan: expect.objectContaining({ Q1: expect.objectContaining({ sg: 'p6' }) }),
+          rotationActual: expect.objectContaining({ Q1: expect.any(Object) }),
+          coachingNotes: expect.arrayContaining([
+            expect.objectContaining({ type: 'substitution', period: 'Q1', text: '#6 Finley Ray for #2 Blake Jones at sg' })
+          ])
+        })
+      );
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Substitution saved to the shared game-day log.')).toBeTruthy();
+    });
+  });
+
   it('uses native-aware calendar export messaging for shared, downloaded, and failed event exports', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent()],
       children: []
     });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
     publicActionMocks.exportCalendarIcsFile.mockResolvedValueOnce('shared');
 
     renderScheduleEventDetail();
@@ -456,6 +548,8 @@ describe('ScheduleEventDetail assignments', () => {
       events: [buildEvent({ assignments })],
       children: []
     });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
     scheduleServiceMocks.loadParentScheduleAssignments.mockImplementation(async () => assignments);
     scheduleServiceMocks.claimParentScheduleAssignmentSlot.mockImplementation(async (_event, user, role) => {
       const assignment = assignments.find((item) => item.role === role);
