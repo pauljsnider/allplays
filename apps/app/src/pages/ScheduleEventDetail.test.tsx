@@ -115,6 +115,15 @@ const practiceTimelineServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../lib/practiceTimelineService', () => practiceTimelineServiceMocks);
 
+const statsheetImportServiceMocks = vi.hoisted(() => ({
+  acquireTrackStatsheetPhoto: vi.fn(),
+  analyzeTrackStatsheetPhoto: vi.fn(),
+  applyTrackStatsheetImportForApp: vi.fn(),
+  loadTrackStatsheetContextForApp: vi.fn()
+}));
+
+vi.mock('../lib/statsheetImportService', () => statsheetImportServiceMocks);
+
 import { ScheduleEventDetail, shouldAutosaveGeneratedLineupDraft, shouldAutosaveLineupDraft, shouldPersistLineupDraft } from './ScheduleEventDetail';
 import type { PracticeTimelineBlock } from '../lib/practiceTimelineService';
 import type { AuthState } from '../lib/types';
@@ -1258,6 +1267,85 @@ describe('ScheduleEventDetail lineup builder', () => {
         'basketball-5v5',
         expect.objectContaining({ lineups: {} })
       );
+    });
+  });
+});
+
+describe('ScheduleEventDetail statsheet import', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:statsheet-preview'),
+      writable: true
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      writable: true
+    });
+    liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(true);
+    liveGameReactionsServiceMocks.getLiveGameReactionNotice.mockReturnValue(null);
+    liveGameReactionsServiceMocks.subscribeToLiveGameReactions.mockReturnValue(vi.fn());
+    liveGameChatServiceMocks.canUseLiveGameChat.mockReturnValue(true);
+    liveGameChatServiceMocks.getLiveGameChatNotice.mockReturnValue(null);
+    liveGameChatServiceMocks.subscribeToLiveGameChat.mockReturnValue(vi.fn());
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('lets coaches correct home row fouls before applying a statsheet photo', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true })],
+      children: []
+    });
+    statsheetImportServiceMocks.loadTrackStatsheetContextForApp.mockResolvedValue({
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      config: { columns: ['PTS'] }
+    });
+    statsheetImportServiceMocks.analyzeTrackStatsheetPhoto.mockResolvedValue({
+      homeRows: [{ number: '12', name: 'Avery Smith', fouls: 1, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+      visitorRows: [],
+      homeScore: 10,
+      awayScore: 8,
+      shouldSwap: false,
+      homeMatches: 1,
+      visitorMatches: 0
+    });
+    statsheetImportServiceMocks.applyTrackStatsheetImportForApp.mockResolvedValue({
+      requiresReplaceConfirmation: false,
+      uploadedPhotoUrl: 'https://img.test/statsheet.png'
+    });
+
+    const rendered = renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('statsheet-import-panel')).toBeTruthy();
+    });
+
+    const fileInput = rendered.container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['sheet'], 'statsheet.png', { type: 'image/png' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze photo' }));
+
+    const foulsInput = await screen.findByLabelText('Home player 1 fouls') as HTMLInputElement;
+    fireEvent.change(foulsInput, { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to game' }));
+
+    await waitFor(() => {
+      expect(statsheetImportServiceMocks.applyTrackStatsheetImportForApp).toHaveBeenCalledWith(expect.objectContaining({
+        homeRows: [expect.objectContaining({ mappedPlayerId: 'p1', fouls: 4, totalPoints: 10 })]
+      }));
     });
   });
 });
