@@ -28,7 +28,7 @@ import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-r
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { buildPlayerLeaderboardSnapshot, normalizeStatTrackerConfig, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
 import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-summary.js';
-import { hasFullTeamAccess } from '../../../../js/team-access.js';
+import { hasFullTeamAccess, normalizeAdminEmailList } from '../../../../js/team-access.js';
 import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-permissions.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
@@ -179,6 +179,7 @@ export type TeamScheduleNotificationSettings = {
 export type TeamDetailModel = {
   team: {
     id: string;
+    ownerId: string;
     name: string;
     sport: string;
     photoUrl: string | null;
@@ -220,6 +221,7 @@ export type TeamDetailModel = {
   sponsors: TeamDetailSponsor[];
   statTrackerConfigs: TeamDetailStatTrackerConfig[];
   canManageTeam: boolean;
+  canManageAdmins: boolean;
   staffPermissions: TeamStaffPermissionsSummary | null;
   counts: {
     games: number;
@@ -255,6 +257,14 @@ export function __resetTeamDetailBaseSnapshotCacheForTests() {
 
 function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
   teamDetailBaseSnapshotCache.delete(cleanString(teamId));
+}
+
+function canManageTeamAdmins(user: AuthUser | null, team: any) {
+  if (!user || !team) return false;
+  return cleanString(team?.ownerId) === cleanString(user?.uid)
+    || user?.isAdmin === true
+    || user?.isPlatformAdmin === true
+    || Array.isArray(user?.roles) && (user.roles.includes('admin') || user.roles.includes('platformAdmin'));
 }
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
@@ -500,11 +510,16 @@ async function loadPendingParentInvites(teamId: string) {
 }
 
 
-export async function inviteTeamAdminForApp(teamId: string, email: string): Promise<InviteTeamAdminForAppResult> {
+export async function inviteTeamAdminForApp(teamId: string, email: string, user: AuthUser | null = null): Promise<InviteTeamAdminForAppResult> {
   const normalizedTeamId = cleanString(teamId);
   const normalizedEmail = cleanString(email).toLowerCase();
   if (!normalizedTeamId) throw new Error('Team ID is required.');
   if (!normalizedEmail) throw new Error('Admin email is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !canManageTeamAdmins(user, team)) {
+    throw new Error('You do not have permission to manage admins for this team.');
+  }
 
   const result = await inviteExistingTeamAdmin({
     teamId: normalizedTeamId,
@@ -522,6 +537,30 @@ export async function inviteTeamAdminForApp(teamId: string, email: string): Prom
     acceptInviteUrl: code ? buildAdminAcceptInviteUrl(code) : null,
     ...(result?.reason ? { reason: result.reason } : {})
   };
+}
+
+export async function revokeTeamAdminAccessForApp(teamId: string, email: string, user: AuthUser | null) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedEmail = cleanString(email).toLowerCase();
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedEmail) throw new Error('Admin email is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !canManageTeamAdmins(user, team)) {
+    throw new Error('You do not have permission to manage admins for this team.');
+  }
+
+  const ownerEmail = cleanString(team?.ownerEmail).toLowerCase();
+  if (ownerEmail && ownerEmail === normalizedEmail) {
+    throw new Error('The team owner cannot be removed from staff access.');
+  }
+
+  const nextAdminEmails = normalizeAdminEmailList(team?.adminEmails).filter((value) => value !== normalizedEmail);
+  await updateTeam(normalizedTeamId, {
+    adminEmails: nextAdminEmails,
+    updatedAt: new Date()
+  });
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
 export async function createRosterParentInviteForApp(teamId: string, user: AuthUser | null, player: Pick<TeamDetailPlayer, 'id' | 'number'>): Promise<CreateRosterParentInviteForAppResult> {
@@ -829,6 +868,7 @@ export function buildTeamDetailModel({
   const leaderboards = buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport);
   const trackingSummaries = buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses);
   const canManageTeam = hasFullTeamAccess(user, team);
+  const canManageAdmins = canManageTeamAdmins(user, team);
   const staffPermissions = canManageTeam && includeStaffPermissions
     ? buildTeamStaffPermissionsSummary({ teamId, team, players, pendingAdminInvites, confirmedTeamMembers })
     : null;
@@ -836,6 +876,7 @@ export function buildTeamDetailModel({
   return {
     team: {
       id: teamId,
+      ownerId: cleanString(team?.ownerId),
       name: cleanString(team?.name) || 'Team',
       sport: cleanString(team?.sport) || 'Sport not set',
       photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl),
@@ -872,6 +913,7 @@ export function buildTeamDetailModel({
     sponsors: sponsors.slice(0, 4),
     statTrackerConfigs: normalizedStatTrackerConfigs.items,
     canManageTeam,
+    canManageAdmins,
     staffPermissions,
     counts: {
       games: games.filter((game: any) => game?.type !== 'practice').length,

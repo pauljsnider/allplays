@@ -54,7 +54,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
 import { getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, updateEvent, updateGame, updateTeam } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
@@ -71,7 +71,12 @@ describe('React app team detail model', () => {
         addTeamAdminEmail.mockResolvedValue(undefined);
         sendInviteEmail.mockResolvedValue({ success: true });
 
-        const result = await inviteTeamAdminForApp(' team-1 ', ' Coach@Example.com ');
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+
+        const result = await inviteTeamAdminForApp(' team-1 ', ' Coach@Example.com ', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] });
 
         expect(inviteAdmin).toHaveBeenCalledWith('team-1', 'coach@example.com');
         expect(addTeamAdminEmail).not.toHaveBeenCalled();
@@ -91,7 +96,12 @@ describe('React app team detail model', () => {
         addTeamAdminEmail.mockResolvedValue(undefined);
         sendInviteEmail.mockRejectedValue(new Error('SMTP offline'));
 
-        const result = await inviteTeamAdminForApp('team-1', 'coach@example.com');
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+
+        const result = await inviteTeamAdminForApp('team-1', 'coach@example.com', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] });
 
         expect(result.status).toBe('fallback_code');
         expect(result.code).toBe('FALLBACK1');
@@ -103,6 +113,33 @@ describe('React app team detail model', () => {
         await expect(inviteTeamAdminForApp('', 'coach@example.com')).rejects.toThrow('Team ID is required.');
         await expect(inviteTeamAdminForApp('team-1', '   ')).rejects.toThrow('Admin email is required.');
         expect(inviteAdmin).not.toHaveBeenCalled();
+    });
+
+    it('requires owner or platform admin access before creating or revoking team admin access', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', ownerEmail: 'owner@example.com', adminEmails: [' coach@example.com ', 'COACH@example.com '] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        updateTeam.mockResolvedValue(undefined);
+
+        await expect(inviteTeamAdminForApp('team-1', 'newcoach@example.com', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] })).rejects.toThrow('You do not have permission to manage admins for this team.');
+        await expect(revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] })).rejects.toThrow('You do not have permission to manage admins for this team.');
+
+        await revokeTeamAdminAccessForApp('team-1', ' Coach@Example.com ', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] });
+        expect(updateTeam).toHaveBeenCalledWith('team-1', {
+            adminEmails: [],
+            updatedAt: expect.any(Date)
+        });
+
+        updateTeam.mockClear();
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', ownerEmail: 'owner@example.com', adminEmails: ['coach@example.com'] });
+        await revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'admin-1', email: 'admin@example.com', isPlatformAdmin: true, roles: [] });
+        expect(updateTeam).toHaveBeenCalledWith('team-1', {
+            adminEmails: [],
+            updatedAt: expect.any(Date)
+        });
+
+        await expect(revokeTeamAdminAccessForApp('team-1', 'owner@example.com', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] })).rejects.toThrow('The team owner cannot be removed from staff access.');
     });
 
     it('requires full team access before creating parent invites in the app helper', async () => {

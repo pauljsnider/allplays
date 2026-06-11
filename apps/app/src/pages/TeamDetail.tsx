@@ -30,7 +30,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -609,7 +609,7 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
           <div className="mt-1 text-xs font-semibold text-rose-700">{staffPermissionsError}</div>
         </section>
       ) : null}
-      {model.staffPermissions ? <StaffPermissionsCard model={model} onInviteSuccess={onTeamDetailRefresh} /> : null}
+      {model.staffPermissions ? <StaffPermissionsCard model={model} auth={auth} onInviteSuccess={onTeamDetailRefresh} /> : null}
       {model.canManageTeam ? <ReminderTimingDefaultsCard model={model} onSaved={onTeamDetailRefresh} /> : null}
       {auth.user ? <PrivateCalendarSyncCard model={model} /> : null}
       {canExposePublicFanFeed(model.team, [...model.upcomingEvents, ...model.recentResults]) ? <FanFeedCard model={model} /> : null}
@@ -1026,20 +1026,17 @@ function escapeHtmlAttribute(value: string) {
   return String(value || '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char] || char));
 }
 
-function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailModel; onInviteSuccess: () => Promise<void> }) {
+function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDetailModel; auth: AuthState; onInviteSuccess: () => Promise<void> }) {
   const summary = model.staffPermissions;
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<InviteTeamAdminForAppResult | null>(null);
   const [grantingUserId, setGrantingUserId] = useState<string | null>(null);
+  const [removingAdminEmail, setRemovingAdminEmail] = useState<string | null>(null);
   const [grantStatus, setGrantStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [copyStatus, setCopyStatus] = useState<{ kind: 'code' | 'link'; success: boolean } | null>(null);
   if (!summary) return null;
-  const staffItems = [
-    ...summary.staff.map((member) => `${member.label} · ${member.role}`),
-    ...summary.pendingInvites.map((inviteEmail) => `${inviteEmail} · Pending admin invite`)
-  ];
   const scorekeeperGrantTargets = summary.scorekeeperGrantTargets || [];
   const videographerGrantTargets = summary.videographerGrantTargets || [];
   const isAllConfirmedScorekeeping = summary.scorekeepingMode === 'all_confirmed';
@@ -1066,7 +1063,7 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
     setSubmitting(true);
     setError('');
     try {
-      const inviteResult = await inviteTeamAdminForApp(model.team.id, normalizedEmail);
+      const inviteResult = await inviteTeamAdminForApp(model.team.id, normalizedEmail, auth.user || null);
       setResult(inviteResult);
       setEmail('');
       await onInviteSuccess();
@@ -1081,6 +1078,43 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
     if (!value) return;
     const copyResult = await copyPublicText(value);
     setCopyStatus({ kind, success: copyResult === 'copied' });
+  }
+
+  async function shareInviteLink() {
+    if (!result?.acceptInviteUrl) return;
+    const shareResult = await sharePublicUrl({
+      title: `${model.team.name} staff invite`,
+      text: `Join ${model.team.name} staff on ALL PLAYS`,
+      url: result.acceptInviteUrl,
+      clipboardText: result.acceptInviteUrl
+    });
+    setGrantStatus({
+      success: shareResult === 'shared' || shareResult === 'copied',
+      message: shareResult === 'shared'
+        ? 'Share sheet opened.'
+        : shareResult === 'copied'
+          ? 'Invite link copied.'
+          : 'Unable to share the invite from this device.'
+    });
+  }
+
+  async function removeAdmin(emailToRemove: string) {
+    if (!emailToRemove || removingAdminEmail) return;
+    const confirmed = window.confirm(`Remove ${emailToRemove} as a team admin?`);
+    if (!confirmed) return;
+    setRemovingAdminEmail(emailToRemove);
+    setGrantStatus(null);
+    setResult(null);
+    setCopyStatus(null);
+    try {
+      await revokeTeamAdminAccessForApp(model.team.id, emailToRemove, auth.user || null);
+      setGrantStatus({ success: true, message: `${emailToRemove} removed from team admins.` });
+      await onInviteSuccess();
+    } catch (removeError: any) {
+      setGrantStatus({ success: false, message: removeError?.message || 'Unable to remove this team admin.' });
+    } finally {
+      setRemovingAdminEmail(null);
+    }
   }
 
   async function toggleScorekeeperGrant(memberUserId: string, isGranted: boolean) {
@@ -1130,52 +1164,53 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-black text-gray-950">Team Staff &amp; Permissions</div>
-          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Full admins can manage the team. Scoped helpers only cover game-day jobs like scorekeeping, Stream &amp; Score, video, and volunteer tasks.</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Owners and platform admins can manage team admins here in the app. Scoped helpers only cover game-day jobs like scorekeeping, Stream &amp; Score, video, and volunteer tasks.</div>
         </div>
-        <button type="button" className="ghost-button !min-h-9 flex-none text-xs" onClick={() => openPublicUrl(model.team.editTeamUrl)}>
-          Manage staff
-          <ExternalLink className="h-4 w-4" aria-hidden="true" />
-        </button>
       </div>
 
-      <form className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3" onSubmit={submitInvite} noValidate>
-        <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Invite admin</div>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <label className="sr-only" htmlFor="team-admin-invite-email">Admin email</label>
-          <input
-            id="team-admin-invite-email"
-            type="email"
-            value={email}
-            onChange={(event) => {
-              setEmail(event.target.value);
-              setError('');
-            }}
-            className="min-h-10 flex-1 rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
-            placeholder="coach@example.com"
-            disabled={submitting}
-            aria-invalid={Boolean(error)}
-          />
-          <button type="submit" className="primary-button !min-h-10 text-xs" disabled={submitting}>
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-            Send invite
-          </button>
-        </div>
-        {error ? <div className="mt-2 text-xs font-black text-rose-700" role="alert">{error}</div> : null}
-        {result ? (
-          <div className="mt-3 rounded-lg border border-white/80 bg-white p-3 text-xs font-semibold leading-5 text-gray-700" role="status">
-            <div className="font-black text-gray-950">
-              {result.status === 'sent' ? `Invite sent to ${result.email}.` : result.status === 'existing_user' ? `${result.email} already has an account and was added as an admin.` : `Email delivery needs a fallback for ${result.email}.`}
-            </div>
-            {result.code || result.acceptInviteUrl ? (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {result.code ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInviteValue('code', result.code)}>Copy code</button> : null}
-                {result.acceptInviteUrl ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInviteValue('link', result.acceptInviteUrl)}>Copy link</button> : null}
-              </div>
-            ) : null}
-            {copyStatus ? <div className={`mt-2 font-black ${copyStatus.success ? 'text-emerald-700' : 'text-rose-700'}`}>{copyStatus.success ? `${copyStatus.kind === 'code' ? 'Invite code' : 'Invite link'} copied.` : `Unable to copy ${copyStatus.kind === 'code' ? 'invite code' : 'invite link'}.`}</div> : null}
+      {model.canManageAdmins ? (
+        <form className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3" onSubmit={submitInvite} noValidate>
+          <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Invite admin</div>
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+            <label className="sr-only" htmlFor="team-admin-invite-email">Admin email</label>
+            <input
+              id="team-admin-invite-email"
+              type="email"
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setError('');
+              }}
+              className="min-h-10 flex-1 rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+              placeholder="coach@example.com"
+              disabled={submitting}
+              aria-invalid={Boolean(error)}
+            />
+            <button type="submit" className="primary-button !min-h-10 text-xs" disabled={submitting}>
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+              Send invite
+            </button>
           </div>
-        ) : null}
-      </form>
+          {error ? <div className="mt-2 text-xs font-black text-rose-700" role="alert">{error}</div> : null}
+          {result ? (
+            <div className="mt-3 rounded-lg border border-white/80 bg-white p-3 text-xs font-semibold leading-5 text-gray-700" role="status">
+              <div className="font-black text-gray-950">
+                {result.status === 'sent' ? `Invite sent to ${result.email}.` : result.status === 'existing_user' ? `${result.email} already has an account and was added as an admin.` : `Email delivery needs a fallback for ${result.email}.`}
+              </div>
+              {result.code || result.acceptInviteUrl ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {result.code ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInviteValue('code', result.code)}>Copy code</button> : null}
+                  {result.acceptInviteUrl ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => copyInviteValue('link', result.acceptInviteUrl)}>Copy link</button> : null}
+                  {result.acceptInviteUrl ? <button type="button" className="secondary-button !min-h-8 text-xs" onClick={shareInviteLink}>Share invite</button> : null}
+                </div>
+              ) : null}
+              {copyStatus ? <div className={`mt-2 font-black ${copyStatus.success ? 'text-emerald-700' : 'text-rose-700'}`}>{copyStatus.success ? `${copyStatus.kind === 'code' ? 'Invite code' : 'Invite link'} copied.` : `Unable to copy ${copyStatus.kind === 'code' ? 'invite code' : 'invite link'}.`}</div> : null}
+            </div>
+          ) : null}
+        </form>
+      ) : (
+        <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs font-semibold text-gray-600">Only the team owner or a platform admin can add or remove team admins.</div>
+      )}
 
       {isAllConfirmedScorekeeping ? (
         <div className="mt-4 rounded-xl border border-primary-100 bg-white p-3">
@@ -1215,7 +1250,27 @@ function StaffPermissionsCard({ model, onInviteSuccess }: { model: TeamDetailMod
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3">
           <div className="text-[11px] font-black uppercase tracking-[0.04em] text-indigo-700">Owner, admins, and invites</div>
-          <PillList items={staffItems} emptyText="No owner, admin staff, or pending admin invites found." tone="border-indigo-200 bg-white text-indigo-800" />
+          <div className="mt-2 space-y-2">
+            {summary.staff.length ? summary.staff.map((member) => {
+              const canRemove = model.canManageAdmins && member.role === 'Admin';
+              const busy = removingAdminEmail === member.label;
+              return (
+                <div key={`${member.role}:${member.label}`} className="flex items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-white px-3 py-2">
+                  <span className="min-w-0 truncate text-xs font-black text-indigo-800">{member.label} · {member.role}</span>
+                  {canRemove ? (
+                    <button type="button" className="secondary-button !min-h-8 flex-none text-xs !border-rose-200 !bg-rose-50 !text-rose-700" disabled={Boolean(removingAdminEmail)} onClick={() => removeAdmin(member.label)}>
+                      {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              );
+            }) : null}
+            {summary.pendingInvites.length ? summary.pendingInvites.map((inviteEmail) => (
+              <div key={`pending:${inviteEmail}`} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-black text-indigo-800">{inviteEmail} · Pending admin invite</div>
+            )) : null}
+            {!summary.staff.length && !summary.pendingInvites.length ? <PillList items={[]} emptyText="No owner, admin staff, or pending admin invites found." tone="border-indigo-200 bg-white text-indigo-800" /> : null}
+          </div>
         </div>
         <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3">
           <div className="text-[11px] font-black uppercase tracking-[0.04em] text-emerald-700">Admin vs game-day helpers</div>
