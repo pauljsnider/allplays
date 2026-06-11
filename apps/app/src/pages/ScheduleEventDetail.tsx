@@ -67,6 +67,13 @@ import { loadGameReportSections, type GameReportData, type GameReportInsight, ty
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
 import {
+  canUseLiveGameChat,
+  getLiveGameChatNotice,
+  sendLiveGameChatMessage,
+  subscribeToLiveGameChat,
+  type LiveGameChatMessage
+} from '../lib/liveGameChatService';
+import {
   canUseLiveGameReactions,
   getLiveGameReactionNotice,
   liveGameReactionOptions,
@@ -1906,6 +1913,132 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
   );
 }
 
+function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [messages, setMessages] = useState<LiveGameChatMessage[]>([]);
+  const [messageText, setMessageText] = useState('');
+  const [anonymousDisplayName, setAnonymousDisplayName] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+
+  const canChat = canUseLiveGameChat(event, { now: new Date() });
+  const chatNotice = getLiveGameChatNotice(event, { now: new Date() });
+  const canSend = canChat && Boolean(messageText.trim()) && !sending;
+
+  useEffect(() => {
+    if (!event.isDbGame || !event.teamId || !event.id) return undefined;
+
+    setLoading(true);
+    setStatus(null);
+    const unsubscribe = subscribeToLiveGameChat(event.teamId, event.id, (nextMessages) => {
+      setMessages(sortLiveGameChatMessages(nextMessages));
+      setLoading(false);
+    }, (subscribeError: any) => {
+      setStatus({ tone: 'error', message: subscribeError?.message || 'Unable to load live chat.' });
+      setLoading(false);
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [event.id, event.isDbGame, event.teamId]);
+
+  const sendMessage = async (submitEvent: FormEvent) => {
+    submitEvent.preventDefault();
+    if (!canChat || !event.teamId || !event.id || !messageText.trim() || sending) return;
+
+    setSending(true);
+    setStatus(null);
+    try {
+      await sendLiveGameChatMessage(event.teamId, event.id, {
+        text: messageText,
+        user: auth.user || undefined,
+        anonymousDisplayName
+      });
+      setMessageText('');
+      setStatus({ tone: 'success', message: 'Message sent.' });
+    } catch (sendError: any) {
+      setStatus({ tone: 'error', message: sendError?.message || 'Unable to send message.' });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (!event.isDbGame) return null;
+
+  return (
+    <div className="mt-3 rounded-2xl border border-sky-200 bg-sky-50/60 p-3" data-testid="live-game-chat-panel">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-sky-700">Live chat</div>
+          <div className="mt-1 text-sm font-semibold text-gray-900">Read and send game-day chat without leaving this screen.</div>
+        </div>
+        <div className="rounded-full bg-white px-3 py-1 text-xs font-black text-sky-700 shadow-sm">
+          {messages.length ? `${messages.length} messages` : 'Ready'}
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-2xl border border-white/80 bg-white p-3 shadow-sm">
+        <div className="max-h-64 space-y-2 overflow-y-auto pr-1" aria-label="Live chat messages">
+          {loading ? (
+            <div className="text-sm font-semibold text-gray-500">Loading live chat…</div>
+          ) : messages.length ? messages.map((message) => (
+            <article key={message.id} className="rounded-xl border border-gray-100 bg-gray-50 p-2.5" data-testid={`live-chat-message-${message.id}`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="truncate text-sm font-black text-gray-950">{message.senderName || 'Fan'}</div>
+                <div className="text-[11px] font-semibold text-gray-500">{formatLiveGameChatTimestamp(message.createdAt)}</div>
+              </div>
+              <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{String(message.text || '').trim() || ' '}</div>
+            </article>
+          )) : (
+            <div className="text-sm font-semibold text-gray-500">No messages yet. Start the game-day chat.</div>
+          )}
+        </div>
+
+        <form className="mt-3 space-y-2" onSubmit={sendMessage}>
+          {!auth.user ? (
+            <label className="block">
+              <span className="app-label">Display name</span>
+              <input
+                className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm"
+                value={anonymousDisplayName}
+                onChange={(changeEvent) => setAnonymousDisplayName(changeEvent.target.value)}
+                maxLength={60}
+                placeholder="Your name"
+                disabled={!canChat || sending}
+              />
+            </label>
+          ) : null}
+          <label className="block">
+            <span className="sr-only">Live chat message</span>
+            <textarea
+              aria-label="Live chat message"
+              className="auth-input min-h-24 resize-none !px-3 !py-2 text-sm font-semibold"
+              value={messageText}
+              onChange={(changeEvent) => setMessageText(changeEvent.target.value)}
+              placeholder={canChat ? 'Send a message to fans and parents' : 'Live chat is locked'}
+              maxLength={280}
+              disabled={!canChat || sending}
+            />
+          </label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-semibold text-gray-500">{chatNotice || 'Shared with the same live-game chat stream as the web viewer.'}</div>
+            <button
+              type="submit"
+              className="primary-button min-h-10 px-4 text-sm disabled:opacity-60"
+              disabled={!canSend}
+            >
+              {sending ? 'Sending' : 'Send'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
+    </div>
+  );
+}
+
 function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupCompleted, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
@@ -2026,6 +2159,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupComp
 
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
           {!isPractice ? <LiveGameReactionsPanel auth={auth} event={event} /> : null}
+          {!isPractice ? <LiveGameChatPanel auth={auth} event={event} /> : null}
 
           {canWrapup ? <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} /> : null}
 
@@ -3870,6 +4004,28 @@ function GameHubDestinationCard({ destination, onShare }: {
       </div>
     </article>
   );
+}
+
+function sortLiveGameChatMessages(messages: LiveGameChatMessage[]) {
+  return [...messages].sort((left, right) => getLiveGameChatTimestampValue(left.createdAt) - getLiveGameChatTimestampValue(right.createdAt));
+}
+
+function getLiveGameChatTimestampValue(value: unknown) {
+  if (value && typeof value === 'object' && typeof (value as { toDate?: () => Date }).toDate === 'function') {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  const parsed = new Date(value as any);
+  const timestamp = parsed.getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function formatLiveGameChatTimestamp(value: unknown) {
+  const timestamp = getLiveGameChatTimestampValue(value);
+  if (!timestamp) return 'Now';
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit'
+  });
 }
 
 function formatAssignment(assignment?: { role?: string; value?: string; claim?: { claimedByName?: string } | null }) {

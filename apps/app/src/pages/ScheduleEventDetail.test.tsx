@@ -58,6 +58,18 @@ const gameWrapupServiceMocks = vi.hoisted(() => ({
 vi.mock('../lib/gameWrapupService', () => gameWrapupServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/liveGameAnnouncer', () => ({ useLiveGameAnnouncer: vi.fn() }));
+const liveGameChatServiceMocks = vi.hoisted(() => ({
+  canUseLiveGameChat: vi.fn<(game: unknown, options?: unknown) => boolean>(() => true),
+  getLiveGameChatNotice: vi.fn<(game: unknown, options?: unknown) => string | null>(() => null),
+  sendLiveGameChatMessage: vi.fn<(teamId: string, gameId: string, input: unknown) => Promise<unknown>>(),
+  subscribeToLiveGameChat: vi.fn<(
+    teamId: string,
+    gameId: string,
+    callback: (messages: Array<{ id: string; text?: string | null; senderName?: string | null; createdAt?: unknown }>) => void,
+    onError?: (error: unknown) => void
+  ) => () => void>(() => vi.fn())
+}));
+vi.mock('../lib/liveGameChatService', () => liveGameChatServiceMocks);
 const liveGameReactionsServiceMocks = vi.hoisted(() => ({
   canUseLiveGameReactions: vi.fn<(game: unknown, options?: unknown) => boolean>(() => true),
   getLiveGameReactionNotice: vi.fn<(game: unknown, options?: unknown) => string | null>(() => null),
@@ -78,11 +90,12 @@ const liveGameReactionsServiceMocks = vi.hoisted(() => ({
 }));
 vi.mock('../lib/liveGameReactionsService', () => liveGameReactionsServiceMocks);
 vi.mock('../lib/parentToolsService', () => ({ buildParentScheduleEventIcs: vi.fn(() => 'BEGIN:VCALENDAR') }));
-vi.mock('../lib/scheduleHub', () => ({
-  buildGameHubDestinations: vi.fn(() => []),
-  buildPracticeHubDestinations: vi.fn(() => []),
+const scheduleHubMocks = vi.hoisted(() => ({
+  buildGameHubDestinations: vi.fn<() => any[]>(() => []),
+  buildPracticeHubDestinations: vi.fn<() => any[]>(() => []),
   getPublicPlayerHref: vi.fn(() => '#')
 }));
+vi.mock('../lib/scheduleHub', () => scheduleHubMocks);
 const practiceTimelineServiceMocks = vi.hoisted(() => ({
   loadPracticeTimelineModel: vi.fn(),
   savePracticeTimelineForApp: vi.fn(),
@@ -195,6 +208,10 @@ describe('ScheduleEventDetail assignments', () => {
     liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(true);
     liveGameReactionsServiceMocks.getLiveGameReactionNotice.mockReturnValue(null);
     liveGameReactionsServiceMocks.subscribeToLiveGameReactions.mockReturnValue(vi.fn());
+    liveGameChatServiceMocks.canUseLiveGameChat.mockReturnValue(true);
+    liveGameChatServiceMocks.getLiveGameChatNotice.mockReturnValue(null);
+    liveGameChatServiceMocks.subscribeToLiveGameChat.mockReturnValue(vi.fn());
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
     Object.defineProperty(window, 'scrollTo', {
       value: vi.fn(),
       writable: true
@@ -263,6 +280,98 @@ describe('ScheduleEventDetail assignments', () => {
 
     expect((screen.getByRole('button', { name: 'Heart' }) as HTMLButtonElement).disabled).toBe(true);
     expect(liveGameReactionsServiceMocks.sendLiveGameReaction).not.toHaveBeenCalled();
+  });
+
+  it('renders in-route live chat, streams messages, and keeps watch live links external', async () => {
+    let chatCallback: (messages: Array<{ id: string; text?: string | null; senderName?: string | null; createdAt?: unknown }>) => void = () => {};
+    liveGameChatServiceMocks.subscribeToLiveGameChat.mockImplementation((_teamId, _gameId, callback) => {
+      chatCallback = callback;
+      return vi.fn();
+    });
+    liveGameChatServiceMocks.sendLiveGameChatMessage.mockResolvedValue({ id: 'sent-1' });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([
+      {
+        id: 'watch-live',
+        icon: 'video',
+        title: 'Watch live',
+        detail: 'Open the live stream.',
+        actionLabel: 'Watch live',
+        url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1',
+        shareTitle: 'Watch live',
+        shareText: 'Watch live',
+        shareLabel: 'Watch live',
+        actionKind: 'open'
+      }
+    ]);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ liveStatus: 'live', status: 'live' })],
+      children: []
+    });
+
+    const { unmount } = renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('live-game-chat-panel')).toBeTruthy();
+    });
+
+    chatCallback([
+      { id: 'm2', text: 'Second', senderName: 'Parent Two', createdAt: '2026-06-04T18:02:00.000Z' },
+      { id: 'm1', text: 'First', senderName: 'Parent One', createdAt: '2026-06-04T18:01:00.000Z' }
+    ]);
+
+    await waitFor(() => {
+      const messageRows = screen.getAllByTestId(/live-chat-message-/);
+      expect(messageRows).toHaveLength(2);
+      expect(messageRows[0]?.textContent).toContain('First');
+      expect(messageRows[1]?.textContent).toContain('Second');
+    });
+
+    fireEvent.change(screen.getByLabelText('Live chat message'), { target: { value: 'Let\'s go Bears' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.sendLiveGameChatMessage).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+        text: 'Let\'s go Bears',
+        user: auth.user
+      }));
+    });
+    expect((screen.getByLabelText('Live chat message') as HTMLTextAreaElement).value).toBe('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Watch live' }));
+    expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1');
+
+    const unsubscribe = liveGameChatServiceMocks.subscribeToLiveGameChat.mock.results[0]?.value as ReturnType<typeof vi.fn>;
+    unmount();
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('shows the locked live chat notice and disables the composer when chat is unavailable', async () => {
+    liveGameChatServiceMocks.canUseLiveGameChat.mockReturnValue(false);
+    liveGameChatServiceMocks.getLiveGameChatNotice.mockReturnValue('Live chat is closed during replay.');
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ liveStatus: 'completed', status: 'completed' })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Live chat is closed during replay.')).toBeTruthy();
+    });
+
+    expect((screen.getByLabelText('Live chat message') as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(liveGameChatServiceMocks.sendLiveGameChatMessage).not.toHaveBeenCalled();
   });
 
   it('uses native-aware calendar export messaging for shared, downloaded, and failed event exports', async () => {
