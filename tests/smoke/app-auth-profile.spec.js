@@ -41,6 +41,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
         window.__appProfileCalls = {
             uploads: [],
             saves: [],
+            profileLoads: 0,
             notificationSaves: [],
             notificationLoads: [],
             push: 0,
@@ -215,6 +216,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 }
 
                 export async function loadProfileDocument() {
+                    window.__appProfileCalls.profileLoads += 1;
                     return {
                         fullName: 'Pat Parent',
                         phone: '555-0100',
@@ -534,6 +536,8 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByLabel('Full name').fill('Pat Parent Updated');
     await page.getByRole('button', { name: 'Save profile' }).click();
     await expect(page.getByText('Profile saved.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Pat Parent Updated' })).toBeVisible();
+    await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', 'https://example.test/avatar.png');
 
     await page.getByRole('button', { name: 'Alerts' }).click();
     await expect(page.getByText('Notification preferences')).toBeVisible();
@@ -597,6 +601,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     expect(await page.evaluate(() => ({
         uploads: window.__appProfileCalls.uploads,
         saves: window.__appProfileCalls.saves,
+        profileLoads: window.__appProfileCalls.profileLoads,
         push: window.__appProfileCalls.push,
         notificationLoads: window.__appProfileCalls.notificationLoads,
         notificationSaves: window.__appProfileCalls.notificationSaves,
@@ -607,6 +612,7 @@ test('profile exposes account, notification, invite, verification, password, upl
         signOut: window.__appAuthCalls.signOut
     }))).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
+        profileLoads: 1,
         push: 1,
         notificationLoads: [
             { userId: 'user-1', teamId: 'team-1' }

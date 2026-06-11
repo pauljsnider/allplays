@@ -142,6 +142,8 @@ function createDeferred<T>() {
 describe('Profile invites', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    auth.refresh = vi.fn().mockResolvedValue(undefined);
+    auth.signOut = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('scrollTo', vi.fn());
     window.URL.createObjectURL = vi.fn((file: File) => `blob:${file.name}`);
     window.URL.revokeObjectURL = vi.fn();
@@ -277,14 +279,6 @@ describe('Profile invites', () => {
         signInMethod: 'emailLink',
         hasPassword: false,
         updatedAt: { seconds: 1717200000 }
-      })
-      .mockResolvedValueOnce({
-        fullName: 'Pat Parent',
-        phone: '555-0100',
-        photoUrl: 'https://example.test/persisted.png',
-        signInMethod: 'emailLink',
-        hasPassword: false,
-        updatedAt: { seconds: 1717203600 }
       });
 
     const { container, unmount } = renderProfile();
@@ -296,13 +290,59 @@ describe('Profile invites', () => {
     await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:saved.png');
     expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/original.png');
-    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/persisted.png');
-    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/persisted.png');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/avatar.png');
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/avatar.png');
 
     unmount();
-    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/persisted.png');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('https://example.test/avatar.png');
+  });
+
+  it('does not reload the profile document after a successful text-only save', async () => {
+    renderProfile();
+
+    await screen.findByText('Choose photo');
+    fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Pat Parent Updated' } });
+    fireEvent.change(screen.getByLabelText('Phone'), { target: { value: '555-0111' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledWith('user-1', {
+      fullName: 'Pat Parent Updated',
+      phone: '555-0111',
+      email: 'parent@example.com',
+      photoUrl: null
+    }));
+    await screen.findByText('Profile saved.');
+
+    expect(profileServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('heading', { name: 'Pat Parent Updated' })).toBeTruthy();
+  });
+
+  it('shows saved profile UI immediately from local state without waiting for auth refresh', async () => {
+    const refreshDeferred = createDeferred<void>();
+    auth.refresh = vi.fn().mockReturnValue(refreshDeferred.promise);
+
+    const { container } = renderProfile();
+
+    await screen.findByText('Choose photo');
+    fireEvent.change(screen.getByLabelText('Full name'), { target: { value: 'Pat Parent Updated' } });
+    await selectPhoto(container, 'saved.png');
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByText('Profile saved.')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Pat Parent Updated' })).toBeTruthy();
+    expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/avatar.png');
+    expect((screen.getByRole('button', { name: 'Save profile' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
+
+    refreshDeferred.resolve();
   });
 
   it('shows a loading state until alert teams resolve and only then renders team controls', async () => {
