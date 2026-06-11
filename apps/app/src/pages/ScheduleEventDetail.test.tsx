@@ -596,7 +596,7 @@ describe('ScheduleEventDetail practice timeline', () => {
     cleanup();
   });
 
-  it('renders practice timeline controls, saves added drills, and persists live notes', async () => {
+  it('lets team staff manage the practice timeline and save live notes', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         id: 'practice-1',
@@ -623,6 +623,11 @@ describe('ScheduleEventDetail practice timeline', () => {
     });
     expect(screen.getAllByText('Warm-up').length).toBeGreaterThan(0);
     expect(screen.getByText('1 drill · 10 min planned')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add drill' }).disabled).toBe(false);
+    expect(screen.getByRole('button', { name: 'Save live note' }).disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText('Live note'), { target: { value: 'Shorten the water break' } });
+    expect(screen.getByRole('button', { name: 'Save live note' }).disabled).toBe(false);
 
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'drill-2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add drill' }));
@@ -637,7 +642,6 @@ describe('ScheduleEventDetail practice timeline', () => {
       }));
     });
 
-    fireEvent.change(screen.getByLabelText('Live note'), { target: { value: 'Shorten the water break' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save live note' }));
 
     await waitFor(() => {
