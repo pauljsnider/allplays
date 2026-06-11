@@ -304,6 +304,11 @@ async function mockHomePlayerModules(page) {
                         child: { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' },
                         player: { id: 'player-1', name: 'Pat Star', teamId: 'team-1', teamName: 'Bears', number: '9', photoUrl: '' },
                         team: { id: 'team-1', name: 'Bears', sport: 'basketball' },
+                        access: {
+                            isLinkedParent: true,
+                            isTeamStaff: false,
+                            canEditCustomRosterFields: false
+                        },
                         events: [statEvent, nextEvent],
                         nextEvent,
                         actionCounts: {
@@ -347,6 +352,7 @@ async function mockHomePlayerModules(page) {
                 }
 
                 export async function updateParentPlayerEditableProfile() {}
+                export async function savePlayerCustomRosterFieldValues() {}
                 export async function sendParentCoParentInvite() { return { code: 'ABC12345' }; }
                 export async function saveParentAthleteProfileDraft() { return { shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1' }; }
                 export async function saveParentPlayerIncentiveRule() { return 'rule-2'; }
