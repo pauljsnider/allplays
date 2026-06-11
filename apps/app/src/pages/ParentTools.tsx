@@ -409,6 +409,11 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
                       <option key={team.id} value={team.id}>{team.name}{team.sport ? ` - ${team.sport}` : ''}</option>
                     ))}
                   </select>
+                  {!loadingTeams && !teams.length ? (
+                    <button type="button" className="ghost-button mt-2 !min-h-9 text-xs" onClick={loadTeams} disabled={redeeming || saving}>
+                      Retry loading public teams
+                    </button>
+                  ) : null}
                 </div>
                 <div className="min-w-0">
                   <label className="app-label" htmlFor="parent-access-player">Player</label>

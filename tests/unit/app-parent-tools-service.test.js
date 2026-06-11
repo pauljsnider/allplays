@@ -239,7 +239,7 @@ describe('React app parent tools service', () => {
             { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: 'https://img.example.test/sam.png' }
         ]);
         expect(dbMocks.listMyParentMembershipRequests).toHaveBeenCalledWith('user-1');
-        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ pageSize: 25 });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ pageSize: 100 });
         await submitParentAccessRequest('team-a', 'player-1', 'Guardian');
         expect(dbMocks.createParentMembershipRequest).toHaveBeenCalledWith('team-a', 'player-1', 'Guardian');
     });

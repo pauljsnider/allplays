@@ -173,6 +173,24 @@ describe('ParentTools access', () => {
         expect((screen.getByLabelText('Team') as HTMLSelectElement).disabled).toBe(false);
     });
 
+    it('allows retry when public team loading fails after opening manual requests', async () => {
+        parentToolsServiceMocks.loadParentAccessTeams
+            .mockRejectedValueOnce(new Error('Network hiccup.'))
+            .mockResolvedValueOnce([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+
+        expect(await screen.findByText('Network hiccup.')).toBeTruthy();
+        const retryButton = screen.getByRole('button', { name: 'Retry loading public teams' });
+        expect(retryButton).toBeTruthy();
+        fireEvent.click(retryButton);
+
+        expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(2);
+    });
+
     it('still submits request access after the redeem panel is added', async () => {
         renderParentTools();
 

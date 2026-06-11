@@ -351,7 +351,7 @@ export async function loadParentAccessModel(user: AuthUser | null) {
 }
 
 export async function loadParentAccessTeams(): Promise<ParentAccessTeam[]> {
-  const result = await Promise.resolve(discoverPublicTeams({ pageSize: 25 }));
+  const result = await Promise.resolve(discoverPublicTeams({ pageSize: 100 }));
   return normalizeAccessTeams(result?.teams);
 }
 
