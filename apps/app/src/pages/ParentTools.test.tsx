@@ -17,6 +17,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
     initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
     loadParentAccessModel: vi.fn(),
+    loadParentAccessTeams: vi.fn(),
     loadParentAccessPlayers: vi.fn(),
     loadParentCalendarTools: vi.fn(),
     loadParentCertificates: vi.fn(),
@@ -92,9 +93,11 @@ describe('ParentTools access', () => {
         vi.clearAllMocks();
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         parentToolsServiceMocks.loadParentAccessModel.mockResolvedValue({
-            teams: [{ id: 'team-1', name: 'Bears', sport: 'Soccer' }],
             requests: []
         });
+        parentToolsServiceMocks.loadParentAccessTeams.mockResolvedValue([
+            { id: 'team-1', name: 'Bears', sport: 'Soccer' }
+        ]);
         parentToolsServiceMocks.loadParentAccessPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Sam Player', number: '12' }
         ]);
@@ -138,13 +141,63 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
 
         expect(await screen.findByText('Invite code expired.')).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Send request' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
+    });
+
+    it('opens the manual request form immediately while public teams finish loading', async () => {
+        type PublicTeamRow = { id: string; name: string; sport: string };
+        const deferredTeams: { resolve: ((value: PublicTeamRow[]) => void) | null } = { resolve: null };
+        parentToolsServiceMocks.loadParentAccessTeams.mockImplementation(() => new Promise<PublicTeamRow[]>((resolve) => {
+            deferredTeams.resolve = resolve;
+        }));
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+
+        const teamSelect = screen.getByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
+        const playerSelect = screen.getByRole('combobox', { name: 'Player' }) as HTMLSelectElement;
+        expect(teamSelect).toBeTruthy();
+        expect(playerSelect).toBeTruthy();
+        expect(teamSelect.disabled).toBe(true);
+        expect(playerSelect.disabled).toBe(true);
+        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
+        expect(screen.getByRole('option', { name: 'Loading public teams...' })).toBeTruthy();
+
+        await waitFor(() => expect(deferredTeams.resolve).toBeTruthy());
+        if (!deferredTeams.resolve) throw new Error('Expected public teams loader to be pending.');
+        deferredTeams.resolve([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
+
+        expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
+        expect((screen.getByLabelText('Team') as HTMLSelectElement).disabled).toBe(false);
+    });
+
+    it('allows retry when public team loading fails after opening manual requests', async () => {
+        parentToolsServiceMocks.loadParentAccessTeams
+            .mockRejectedValueOnce(new Error('Network hiccup.'))
+            .mockResolvedValueOnce([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+
+        expect(await screen.findByText('Network hiccup.')).toBeTruthy();
+        const retryButton = screen.getByRole('button', { name: 'Retry loading public teams' });
+        expect(retryButton).toBeTruthy();
+        fireEvent.click(retryButton);
+
+        expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(2);
     });
 
     it('still submits request access after the redeem panel is added', async () => {
         renderParentTools();
 
         await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+        await screen.findByRole('option', { name: 'Bears - Soccer' });
+        fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'team-1' } });
         await screen.findByRole('option', { name: '#12 Sam Player' });
         const submitButton = screen.getByRole('button', { name: 'Send request' });
         expect(submitButton.hasAttribute('disabled')).toBe(false);
@@ -212,13 +265,15 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
         await screen.findByText('Team dues');
         expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
         fireEvent.click(screen.getByRole('button', { name: 'Access' }));
         await screen.findByText('Request player access');
         expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', { name: 'Register' }));
         await screen.findByText('Summer Camp');
@@ -432,5 +487,25 @@ describe('ParentTools access', () => {
 
         expect(await screen.findByText('Summer Camp')).toBeTruthy();
         await waitFor(() => expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2));
+    });
+
+    it('defers public team and player loading until manual access starts', async () => {
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+        expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+        await screen.findByRole('option', { name: 'Bears - Soccer' });
+        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+
+        fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'team-1' } });
+        await screen.findByRole('option', { name: '#12 Sam Player' });
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1');
     });
 });

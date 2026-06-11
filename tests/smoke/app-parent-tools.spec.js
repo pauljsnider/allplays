@@ -16,6 +16,8 @@ async function mockParentToolsModules(page) {
         window.__openedPublicUrls = [];
         window.__sharedUrls = [];
         window.__accessRequests = [];
+        window.__publicTeamLoads = 0;
+        window.__playerLoads = [];
         window.__downloads = [];
         window.__familyCreates = [];
         window.__mediaUploads = [];
@@ -93,11 +95,15 @@ async function mockParentToolsModules(page) {
             body: `
                 export async function loadParentAccessModel() {
                     return {
-                        teams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }],
                         requests: [{ id: 'request-1', teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', relation: 'Parent', status: 'pending' }]
                     };
                 }
-                export async function loadParentAccessPlayers() {
+                export async function loadParentAccessTeams() {
+                    window.__publicTeamLoads += 1;
+                    return [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+                }
+                export async function loadParentAccessPlayers(teamId) {
+                    window.__playerLoads.push(String(teamId));
                     return [{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }];
                 }
                 export async function submitParentAccessRequest(teamId, playerId, relation) {
@@ -277,6 +283,16 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
 
     await expect(page.getByRole('heading', { name: 'Family workflows' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Request player access')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Request access without a code' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.__playerLoads.length)).toBe(0);
+    await expect(page.getByText('Pat Star')).toBeVisible();
+    await page.getByRole('button', { name: 'Request access without a code' }).click();
+    await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(1);
+    await expect(page.getByLabel('Team')).toBeVisible();
+    await page.getByLabel('Team').selectOption('team-1');
+    await expect.poll(() => page.evaluate(() => window.__playerLoads)).toEqual(['team-1']);
+    await page.getByLabel('Player').selectOption('player-1');
     await page.getByRole('button', { name: /Send request/ }).click();
     await expect.poll(() => page.evaluate(() => window.__accessRequests.at(-1))).toEqual({ teamId: 'team-1', playerId: 'player-1', relation: 'Parent' });
 

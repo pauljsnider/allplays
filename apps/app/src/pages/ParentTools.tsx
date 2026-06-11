@@ -31,6 +31,7 @@ import {
   initiateParentTeamFeeCheckout,
   loadFamilyShareModel,
   loadParentAccessModel,
+  loadParentAccessTeams,
   loadParentAccessPlayers,
   loadParentCalendarTools,
   loadParentCertificates,
@@ -231,10 +232,12 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
   const [teams, setTeams] = useState<ParentAccessTeam[]>([]);
   const [requests, setRequests] = useState<ParentAccessRequest[]>([]);
   const [players, setPlayers] = useState<ParentAccessPlayer[]>([]);
+  const [manualRequestOpen, setManualRequestOpen] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [relation, setRelation] = useState('Parent');
   const [loading, setLoading] = useState(true);
+  const [loadingTeams, setLoadingTeams] = useState(false);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [saving, setSaving] = useState(false);
   const [redeemCode, setRedeemCode] = useState('');
@@ -244,10 +247,29 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
 
   const loadAccessModel = async () => {
     const model = await loadParentAccessModel(auth.user);
-    setTeams(model.teams);
     setRequests(model.requests);
-    setSelectedTeamId((current) => current || model.teams[0]?.id || '');
   };
+
+  const loadTeams = useCallback(async () => {
+    setLoadingTeams(true);
+    setError('');
+    try {
+      const rows = await loadParentAccessTeams();
+      setTeams(rows);
+      setSelectedTeamId((current) => rows.some((team) => team.id === current) ? current : '');
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load public teams.');
+    } finally {
+      setLoadingTeams(false);
+    }
+  }, []);
+
+  const openManualRequest = useCallback(() => {
+    setManualRequestOpen(true);
+    if (!teams.length && !loadingTeams) {
+      void loadTeams();
+    }
+  }, [loadTeams, loadingTeams, teams.length]);
 
   const refresh = async () => {
     setLoading(true);
@@ -265,6 +287,14 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.user?.uid]);
+
+  useEffect(() => {
+    setManualRequestOpen(false);
+    setTeams([]);
+    setPlayers([]);
+    setSelectedTeamId('');
+    setSelectedPlayerId('');
   }, [auth.user?.uid]);
 
   useEffect(() => {
@@ -347,7 +377,7 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
         <ToolHeader icon={Shield} title="Request player access" detail="Use this when you do not have an invite code." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading || redeeming}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
         {error ? <Status tone="error" message={error} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
-        {loading ? <LoadingBlock label="Loading teams" /> : (
+        {loading ? <LoadingBlock label="Loading access tools" /> : (
           <>
             <form className="mt-3 rounded-2xl border border-primary-100 bg-primary-50/60 p-3" onSubmit={redeem}>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -369,37 +399,55 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
               </div>
               <p className="mt-2 text-xs font-semibold text-gray-600">Already have an 8-character player invite? Redeem it here and stay in Parent Tools.</p>
             </form>
-            <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
-              <label className="min-w-0">
-                <span className="app-label">Team</span>
-                <select className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
-                  {teams.length ? teams.map((team) => (
-                    <option key={team.id} value={team.id}>{team.name}{team.sport ? ` - ${team.sport}` : ''}</option>
-                  )) : <option value="">No public teams</option>}
-                </select>
-              </label>
-              <label className="min-w-0">
-                <span className="app-label">Player</span>
-                <select className="auth-input mt-1" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)} disabled={!selectedTeamId || loadingPlayers}>
-                  {loadingPlayers ? <option value="">Loading players...</option> : players.length ? players.map((player) => (
-                    <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>
-                  )) : <option value="">No players found</option>}
-                </select>
-              </label>
-              <label className="min-w-0">
-                <span className="app-label">Relationship</span>
-                <select className="auth-input mt-1" value={relation} onChange={(event) => setRelation(event.target.value)}>
-                  <option value="Parent">Parent</option>
-                  <option value="Guardian">Guardian</option>
-                  <option value="Grandparent">Grandparent</option>
-                  <option value="Family">Family</option>
-                </select>
-              </label>
-              <button type="submit" className="primary-button lg:col-span-3" disabled={saving || redeeming || loadingPlayers || !selectedTeamId || !selectedPlayerId}>
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Shield className="h-4 w-4" aria-hidden="true" />}
-                Send request
-              </button>
-            </form>
+            {manualRequestOpen ? (
+              <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
+                <div className="min-w-0">
+                  <label className="app-label" htmlFor="parent-access-team">Team</label>
+                  <select id="parent-access-team" aria-label="Team" className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} disabled={loadingTeams || !teams.length}>
+                    <option value="">{loadingTeams ? 'Loading public teams...' : teams.length ? 'Choose a team' : 'No public teams'}</option>
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id}>{team.name}{team.sport ? ` - ${team.sport}` : ''}</option>
+                    ))}
+                  </select>
+                  {!loadingTeams && !teams.length ? (
+                    <button type="button" className="ghost-button mt-2 !min-h-9 text-xs" onClick={loadTeams} disabled={redeeming || saving}>
+                      Retry loading public teams
+                    </button>
+                  ) : null}
+                </div>
+                <div className="min-w-0">
+                  <label className="app-label" htmlFor="parent-access-player">Player</label>
+                  <select id="parent-access-player" aria-label="Player" className="auth-input mt-1" value={selectedPlayerId} onChange={(event) => setSelectedPlayerId(event.target.value)} disabled={!selectedTeamId || loadingPlayers}>
+                    <option value="">{selectedTeamId ? (loadingPlayers ? 'Loading players...' : players.length ? 'Choose a player' : 'No players found') : 'Choose a team first'}</option>
+                    {players.map((player) => (
+                      <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="min-w-0">
+                  <label className="app-label" htmlFor="parent-access-relation">Relationship</label>
+                  <select id="parent-access-relation" aria-label="Relationship" className="auth-input mt-1" value={relation} onChange={(event) => setRelation(event.target.value)}>
+                    <option value="Parent">Parent</option>
+                    <option value="Guardian">Guardian</option>
+                    <option value="Grandparent">Grandparent</option>
+                    <option value="Family">Family</option>
+                  </select>
+                </div>
+                <button type="submit" className="primary-button lg:col-span-3" disabled={saving || redeeming || loadingTeams || loadingPlayers || !selectedTeamId || !selectedPlayerId}>
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Shield className="h-4 w-4" aria-hidden="true" />}
+                  Send request
+                </button>
+              </form>
+            ) : (
+              <div className="mt-3 rounded-2xl border border-dashed border-gray-200 bg-white p-3">
+                <div className="text-sm font-black text-gray-950">Need manual access?</div>
+                <p className="mt-1 text-xs font-semibold text-gray-600">Open the manual request form only when you need to search public teams and request access to a player.</p>
+                <button type="button" className="secondary-button mt-3" onClick={openManualRequest} disabled={redeeming || saving || loadingTeams}>
+                  {loadingTeams ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Shield className="h-4 w-4" aria-hidden="true" />}
+                  {loadingTeams ? 'Loading public teams...' : 'Request access without a code'}
+                </button>
+              </div>
+            )}
           </>
         )}
       </section>
