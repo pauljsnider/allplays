@@ -126,7 +126,7 @@ export async function getPushNotificationPermissionStatus(): Promise<PushNotific
   if (permissions.receive === 'granted') {
     return buildPushPermissionStatus('enabled', platform);
   }
-  if (permissions.receive === 'prompt') {
+  if (permissions.receive === 'prompt' || permissions.receive === 'prompt-with-rationale') {
     return buildPushPermissionStatus('prompt', platform);
   }
   return buildPushPermissionStatus('blocked', platform);

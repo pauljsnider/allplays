@@ -82,6 +82,19 @@ describe('pushService permission states', () => {
         });
     });
 
+    it('maps prompt-with-rationale native permissions to prompt state', async () => {
+        firebaseMessagingMocks.checkPermissions.mockResolvedValue({ receive: 'prompt-with-rationale' });
+        const { getPushNotificationPermissionStatus } = await loadPushService();
+
+        await expect(getPushNotificationPermissionStatus()).resolves.toEqual({
+            state: 'prompt',
+            isNative: true,
+            platform: 'ios',
+            canPrompt: true,
+            canOpenSettings: false
+        });
+    });
+
     it('maps denied native permissions to blocked state', async () => {
         firebaseMessagingMocks.checkPermissions.mockResolvedValue({ receive: 'denied' });
         const { getPushNotificationPermissionStatus } = await loadPushService();
