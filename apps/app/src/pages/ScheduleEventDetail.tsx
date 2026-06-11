@@ -1774,7 +1774,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupComp
   const liveClockView = getLiveClockViewModel(event, liveClockNow);
   const isPractice = event.type === 'practice';
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
-  const canWrapup = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.isTeamStaff && auth.user);
+  const canWrapup = canUpdateScore;
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canCancelPracticeOccurrence = Boolean(isPractice && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user && event.id.includes('__'));
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);

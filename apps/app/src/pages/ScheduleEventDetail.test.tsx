@@ -715,7 +715,7 @@ describe('ScheduleEventDetail wrap-up', () => {
 
   it('completes wrap-up with AI artifacts and broadcasts score corrections', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ isTeamStaff: true, homeScore: 51, awayScore: 47 })],
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47 })],
       children: []
     });
     scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 52, awayScore: 47 });
@@ -771,7 +771,7 @@ describe('ScheduleEventDetail wrap-up', () => {
 
   it('completes wrap-up even when AI analysis fails', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ isTeamStaff: true, homeScore: 51, awayScore: 47 })],
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47 })],
       children: []
     });
     scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 51, awayScore: 47 });
@@ -814,6 +814,26 @@ describe('ScheduleEventDetail wrap-up', () => {
     await waitFor(() => {
       expect(screen.getByText('Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.')).toBeTruthy();
     });
+  });
+
+  it('hides wrap-up for coach-only staff without game update access', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: false, homeScore: 51, awayScore: 47 })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    });
+
+    expect(screen.queryByText('Post-game wrap-up')).toBeNull();
   });
 });
 
