@@ -15,6 +15,7 @@ const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({
 const HelpPortal = lazy(() => import('./pages/HelpPortal').then((module) => ({ default: module.HelpPortal })));
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })));
 const Messages = lazy(() => import('./pages/Messages').then((module) => ({ default: module.Messages })));
+const Officials = lazy(() => import('./pages/Officials').then((module) => ({ default: module.Officials })));
 const ParentTools = lazy(() => import('./pages/ParentTools').then((module) => ({ default: module.ParentTools })));
 const RegistrationDetail = lazy(() => import('./pages/RegistrationDetail').then((module) => ({ default: module.RegistrationDetail })));
 const PlayerDetail = lazy(() => import('./pages/PlayerDetail').then((module) => ({ default: module.PlayerDetail })));
@@ -94,6 +95,7 @@ export default function App() {
         <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
         <Route path="/" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
         <Route path="/home" element={<Protected auth={auth}><Home auth={auth} /></Protected>} />
+        <Route path="/officials" element={<Protected auth={auth}><Officials auth={auth} /></Protected>} />
         <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
         <Route path="/schedule/:teamId/:eventId" element={<Protected auth={auth}><ScheduleEventDetail auth={auth} /></Protected>} />
         <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />

@@ -55,6 +55,10 @@ vi.mock('./pages/PublicTeamsBrowse', () => ({
   PublicTeamsBrowse: () => <div>Browse public teams page</div>,
 }));
 
+vi.mock('./pages/Officials', () => ({
+  Officials: () => <div>Officials assignments page</div>,
+}));
+
 describe('App protected route loading', () => {
   it('keeps the app shell visible while a protected route is still loading', async () => {
     render(
@@ -76,6 +80,17 @@ describe('App protected route loading', () => {
     );
 
     expect(await screen.findByText('Browse public teams page')).toBeTruthy();
+    expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
+  });
+
+  it('routes the native officials assignments page', async () => {
+    render(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Officials assignments page')).toBeTruthy();
     expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
   });
 });

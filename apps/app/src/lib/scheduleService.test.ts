@@ -14,6 +14,9 @@ vi.mock('../../../../js/firebase.js', () => ({
   db: {},
   doc: vi.fn((first: any, ...rest: any[]) => ({ path: typeof first?.path === 'string' ? [first.path, ...rest].filter(Boolean).join('/') : rest.filter(Boolean).join('/') })),
   collection: vi.fn((_db: unknown, path: string) => ({ path })),
+  collectionGroup: vi.fn((_db: unknown, path: string) => ({ path, scope: 'collectionGroup' })),
+  query: vi.fn((base: any, ...filters: any[]) => ({ base, filters })),
+  where: vi.fn((field: string, op: string, value: any) => ({ field, op, value })),
   getDocs: vi.fn(),
   runTransaction: mocks.runTransactionMock,
   increment: vi.fn((value: number) => ({ __increment: value })),
@@ -22,6 +25,7 @@ vi.mock('../../../../js/firebase.js', () => ({
 
 vi.mock('../../../../js/db.js', () => ({
   getAssignmentClaims: vi.fn(),
+  claimOpenOfficiatingSlot: vi.fn(),
   getGame: vi.fn(),
   getGames: vi.fn(),
   getPracticePacketCompletions: vi.fn(),
@@ -39,6 +43,7 @@ vi.mock('../../../../js/db.js', () => ({
   getTrackedCalendarEventUids: vi.fn(),
   createRideOffer: vi.fn(),
   claimAssignmentSlot: vi.fn(),
+  respondToOfficiatingAssignment: vi.fn(),
   requestRideSpot: vi.fn(),
   listRideOffersForEvent: vi.fn(),
   updateRideRequestStatus: vi.fn(),
@@ -87,11 +92,12 @@ vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 vi.mock('./appDataCache', () => ({ getCachedAppData: vi.fn(), loadCachedAppData: vi.fn(), clearAppDataCache: vi.fn() }));
 
-import { broadcastLiveEvent, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeams, submitRsvpForPlayer, updatePracticeAttendance } from '../../../../js/db.js';
+import { broadcastLiveEvent, claimOpenOfficiatingSlot, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance } from '../../../../js/db.js';
+import { getDocs } from '../../../../js/firebase.js';
 import { fetchAndParseCalendar } from '../../../../js/utils.js';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerScoringStat, resolveParentGameRoute, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerScoringStat, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride } from './scheduleService';
 
 describe('parent game route resolution', () => {
   beforeEach(() => {
@@ -161,6 +167,147 @@ describe('parent game route resolution', () => {
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+});
+
+describe('official assignments app service', () => {
+  const user = { uid: 'official-user', email: 'REF@Example.com', displayName: 'Riley Ref', roles: [] } as any;
+  const futureDate = new Date(Date.now() + 86400000).toISOString();
+  const pastDate = new Date(Date.now() - 86400000).toISOString();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: ['team-alpha'], phone: '(555) 123-4567' } as any);
+    vi.mocked(getDocs).mockImplementation(async (request: any) => {
+      const filter = request?.filters?.[0];
+      if (filter?.field === 'email' && filter?.value === 'ref@example.com') {
+        return { docs: [{ ref: { path: 'teams/team-alpha/officials/ref-1' } }] } as any;
+      }
+      if (filter?.field === 'phone' && filter?.value === '5551234567') {
+        return { docs: [{ ref: { path: 'teams/team-alpha/officials/ref-1' } }] } as any;
+      }
+      return { docs: [] } as any;
+    });
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-alpha', name: 'Alpha FC', ownerId: 'coach-1', adminEmails: [] } as any);
+    vi.mocked(getGames).mockResolvedValue([
+      {
+        id: 'game-assigned',
+        date: futureDate,
+        opponent: 'Tigers',
+        location: 'Field 2',
+        officiatingSelfAssignmentEnabled: true,
+        officiatingSlots: [
+          { id: 'center', position: 'Center Referee', officialEmail: 'ref@example.com', status: 'pending' },
+          { id: 'line', position: 'Line Judge', status: 'open' }
+        ]
+      },
+      {
+        id: 'game-past',
+        date: pastDate,
+        opponent: 'Past',
+        location: 'Old Field',
+        officiatingSlots: [{ id: 'past', position: 'Center Referee', officialEmail: 'ref@example.com', status: 'pending' }]
+      },
+      {
+        id: 'game-cancelled',
+        date: futureDate,
+        status: 'cancelled',
+        opponent: 'Cancelled',
+        location: 'Field 9',
+        officiatingSlots: [{ id: 'cancelled', position: 'Center Referee', officialEmail: 'ref@example.com', status: 'pending' }]
+      }
+    ] as any);
+  });
+
+  it('loads upcoming assigned and eligible open slots from linked official teams', async () => {
+    const result = await loadOfficialAssignments(user);
+
+    expect(result.hasAccess).toBe(true);
+    expect(result.teamIds).toEqual(['team-alpha']);
+    expect(result.assignments).toEqual([
+      expect.objectContaining({
+        kind: 'assigned',
+        teamId: 'team-alpha',
+        teamName: 'Alpha FC',
+        gameId: 'game-assigned',
+        slotId: 'center',
+        position: 'Center Referee',
+        status: 'pending',
+        opponent: 'Tigers',
+        location: 'Field 2',
+        canClaim: false
+      }),
+      expect.objectContaining({
+        kind: 'open',
+        teamId: 'team-alpha',
+        gameId: 'game-assigned',
+        slotId: 'line',
+        position: 'Line Judge',
+        status: 'open',
+        canClaim: true
+      })
+    ]);
+    expect(result.assignments.map((item) => item.gameId)).not.toContain('game-past');
+    expect(result.assignments.map((item) => item.gameId)).not.toContain('game-cancelled');
+    expect(getGames).toHaveBeenCalledWith('team-alpha');
+  });
+
+  it('hides officials access when no official link matches the signed-in user', async () => {
+    vi.mocked(getDocs).mockResolvedValue({ docs: [] } as any);
+
+    const result = await loadOfficialAssignments(user);
+
+    expect(result).toEqual({ hasAccess: false, teamIds: [], teamCount: 0, assignments: [] });
+    expect(getTeam).not.toHaveBeenCalled();
+    expect(getGames).not.toHaveBeenCalled();
+  });
+
+  it('loads assigned slots for a requested team when official directory queries are denied', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentTeamIds: [], phone: '(555) 123-4567' } as any);
+    vi.mocked(getDocs).mockRejectedValue(new Error('Missing or insufficient permissions.'));
+
+    const result = await loadOfficialAssignments(user, { teamId: 'team-alpha' });
+
+    expect(result.hasAccess).toBe(true);
+    expect(result.teamIds).toEqual(['team-alpha']);
+    expect(result.assignments).toEqual([
+      expect.objectContaining({
+        kind: 'assigned',
+        teamId: 'team-alpha',
+        gameId: 'game-assigned',
+        slotId: 'center',
+        position: 'Center Referee',
+        canClaim: false
+      })
+    ]);
+    expect(result.assignments.map((item) => item.kind)).toEqual(['assigned']);
+    expect(getTeam).toHaveBeenCalledWith('team-alpha', { includeInactive: true });
+    expect(getGames).toHaveBeenCalledWith('team-alpha');
+  });
+
+  it('delegates accept, decline, and claim writes to legacy officiating actions', async () => {
+    const item = {
+      kind: 'assigned',
+      teamId: 'team-alpha',
+      teamName: 'Alpha FC',
+      gameId: 'game-assigned',
+      slotId: 'center',
+      position: 'Center Referee',
+      status: 'pending',
+      opponent: 'Tigers',
+      location: 'Field 2',
+      date: new Date(futureDate),
+      canClaim: false,
+      scheduleReviewRequired: false
+    } as any;
+
+    await respondToOfficialAssignmentItem(item, 'accepted');
+    await respondToOfficialAssignmentItem(item, 'declined');
+    await claimOfficialAssignmentItem({ ...item, kind: 'open', slotId: 'line', canClaim: true }, user);
+
+    expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(1, 'team-alpha', 'game-assigned', 'center', 'accepted');
+    expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(2, 'team-alpha', 'game-assigned', 'center', 'declined');
+    expect(claimOpenOfficiatingSlot).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'line', user);
   });
 });
 
