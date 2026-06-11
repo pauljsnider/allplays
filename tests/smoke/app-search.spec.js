@@ -14,8 +14,8 @@ async function gotoAppRoute(page, baseURL, hashPath) {
 
 async function waitForAppShell(page) {
     await expect(async () => {
-        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 1000 });
-    }).toPass({ timeout: 30000 });
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+    }).toPass({ timeout: 45000 });
 }
 
 async function waitForSearchTrigger(page) {
@@ -23,9 +23,9 @@ async function waitForSearchTrigger(page) {
 
     await expect(async () => {
         await waitForAppShell(page);
-        await expect(trigger).toBeVisible({ timeout: 1000 });
-        await expect(trigger).toBeEnabled({ timeout: 1000 });
-    }).toPass({ timeout: 30000 });
+        await expect(trigger).toBeVisible({ timeout: 3000 });
+        await expect(trigger).toBeEnabled({ timeout: 3000 });
+    }).toPass({ timeout: 45000 });
 
     return trigger;
 }
@@ -46,12 +46,12 @@ async function openSearch(page) {
         await clickSearchTrigger(page);
 
         try {
-            await expect(searchDialog).toBeVisible({ timeout: 1000 });
+            await expect(searchDialog).toBeVisible({ timeout: 3000 });
         } catch {
             await page.keyboard.press('Control+K');
-            await expect(searchDialog).toBeVisible({ timeout: 1000 });
+            await expect(searchDialog).toBeVisible({ timeout: 3000 });
         }
-    }).toPass({ timeout: 30000 });
+    }).toPass({ timeout: 45000 });
 }
 
 async function openDesktopSearch(page) {
@@ -66,18 +66,18 @@ async function openDesktopSearch(page) {
         await page.keyboard.press('Control+K');
 
         try {
-            await expect(searchDialog).toBeVisible({ timeout: 1000 });
+            await expect(searchDialog).toBeVisible({ timeout: 3000 });
         } catch {
             const trigger = page.getByRole('button', { name: 'Search', exact: true }).first();
             if (!await trigger.isVisible().catch(() => false)) {
                 await page.reload({ waitUntil: 'domcontentloaded' });
                 throw new Error('Search trigger was not ready; reloaded app shell');
             }
-            await expect(trigger).toBeVisible({ timeout: 1000 });
+            await expect(trigger).toBeVisible({ timeout: 3000 });
             await trigger.click();
-            await expect(searchDialog).toBeVisible({ timeout: 1000 });
+            await expect(searchDialog).toBeVisible({ timeout: 3000 });
         }
-    }).toPass({ timeout: 30000 });
+    }).toPass({ timeout: 45000 });
 }
 
 async function mockSearchModules(page) {

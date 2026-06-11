@@ -93,6 +93,15 @@ import {
   type StaffRsvpReminderPreview,
   type ScheduleRideOffer
 } from '../lib/scheduleLogic';
+import {
+  appendPracticeTimelineLiveNoteForApp,
+  createPracticeTimelineBlockFromOption,
+  getPracticeTimelineTotalMinutes,
+  loadPracticeTimelineModel,
+  savePracticeTimelineForApp,
+  type PracticeTimelineBlock,
+  type PracticeTimelineDrillOption
+} from '../lib/practiceTimelineService';
 import type { AuthState } from '../lib/types';
 
 type EventDetailSectionId = 'availability' | 'rideshare' | 'assignments' | 'game';
@@ -1815,6 +1824,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onGameCancel
 
   return (
     <section className="space-y-3">
+      {isPractice ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {isPractice ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       <div className="app-card overflow-hidden p-0">
         <div className="border-b border-gray-100 px-3 py-3 sm:px-4">
@@ -2430,6 +2440,296 @@ function ScoreStepper({ label, value, onDecrease, onIncrease, disabled }: { labe
         <button type="button" className="min-h-11 min-w-11 rounded-full border border-gray-200 text-xl font-black text-gray-700 disabled:opacity-40" onClick={onIncrease} disabled={disabled} aria-label={`${label} score up`}>+</button>
       </div>
     </div>
+  );
+}
+
+function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [sessionId, setSessionId] = useState<string | null>(event.practiceSessionId || null);
+  const [blocks, setBlocks] = useState<PracticeTimelineBlock[]>([]);
+  const [drillOptions, setDrillOptions] = useState<PracticeTimelineDrillOption[]>([]);
+  const [selectedDrillId, setSelectedDrillId] = useState('');
+  const [activeDrillIndex, setActiveDrillIndex] = useState(0);
+  const [liveNote, setLiveNote] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const canManageTimeline = Boolean(auth.user && event.isDbGame && event.isTeamAdmin && !event.isCancelled);
+  const totalMinutes = getPracticeTimelineTotalMinutes(blocks);
+  const activeBlock = blocks[activeDrillIndex] || null;
+
+  const refreshTimeline = useCallback(async () => {
+    if (!auth.user || !event.isTeamAdmin) {
+      setBlocks([]);
+      setDrillOptions([]);
+      setSessionId(event.practiceSessionId || null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setStatus(null);
+    try {
+      const model = await loadPracticeTimelineModel(event.teamId, event.id, auth.user);
+      setSessionId(model.sessionId);
+      setBlocks(model.blocks);
+      setDrillOptions(model.drillOptions);
+      setSelectedDrillId((current) => current || model.drillOptions[0]?.id || '');
+      setActiveDrillIndex((current) => Math.min(current, Math.max(0, model.blocks.length - 1)));
+    } catch (error: any) {
+      setBlocks([]);
+      setDrillOptions([]);
+      setStatus({ tone: 'error', message: error?.message || 'Unable to load the practice timeline.' });
+    } finally {
+      setLoading(false);
+    }
+  }, [auth.user, event.id, event.isTeamAdmin, event.practiceSessionId, event.teamId]);
+
+  useEffect(() => {
+    setActiveDrillIndex(0);
+    setLiveNote('');
+    void refreshTimeline();
+  }, [refreshTimeline]);
+
+  const persistTimeline = async (nextBlocks: PracticeTimelineBlock[], successMessage: string) => {
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const nextSessionId = await savePracticeTimelineForApp({
+        teamId: event.teamId,
+        eventId: event.id,
+        user: auth.user,
+        sessionId,
+        blocks: nextBlocks,
+        date: event.date,
+        location: event.location,
+        title: event.title || 'Practice'
+      });
+      setSessionId(nextSessionId);
+      setBlocks(nextBlocks.map((block, index) => ({ ...block, order: index })));
+      setStatus({ tone: 'success', message: successMessage });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save the practice timeline.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addDrill = async () => {
+    const option = drillOptions.find((candidate) => candidate.id === selectedDrillId) || drillOptions[0];
+    if (!option) return;
+    const nextBlocks = [...blocks, createPracticeTimelineBlockFromOption(option, blocks.length)];
+    setActiveDrillIndex(nextBlocks.length - 1);
+    await persistTimeline(nextBlocks, `${option.title} added to the practice timeline.`);
+  };
+
+  const updateBlock = (index: number, updater: (block: PracticeTimelineBlock) => PracticeTimelineBlock) => {
+    setBlocks((current) => current.map((block, currentIndex) => (
+      currentIndex === index ? { ...updater(block), order: currentIndex } : block
+    )));
+  };
+
+  const commitBlock = async (index: number, updater: (block: PracticeTimelineBlock) => PracticeTimelineBlock, successMessage: string) => {
+    const nextBlocks = blocks.map((block, currentIndex) => (
+      currentIndex === index ? { ...updater(block), order: currentIndex } : block
+    ));
+    setBlocks(nextBlocks);
+    await persistTimeline(nextBlocks, successMessage);
+  };
+
+  const moveBlock = async (index: number, direction: -1 | 1) => {
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= blocks.length) return;
+    const nextBlocks = blocks.slice();
+    const [moved] = nextBlocks.splice(index, 1);
+    nextBlocks.splice(targetIndex, 0, moved);
+    setActiveDrillIndex(targetIndex);
+    await persistTimeline(nextBlocks, 'Practice order updated.');
+  };
+
+  const removeBlock = async (index: number) => {
+    const nextBlocks = blocks.filter((_, currentIndex) => currentIndex !== index);
+    setActiveDrillIndex((current) => Math.min(current, Math.max(0, nextBlocks.length - 1)));
+    await persistTimeline(nextBlocks, 'Practice drill removed.');
+  };
+
+  const saveLiveNote = async () => {
+    if (!auth.user || !activeBlock || !liveNote.trim()) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const result = await appendPracticeTimelineLiveNoteForApp({
+        teamId: event.teamId,
+        eventId: event.id,
+        user: auth.user,
+        sessionId,
+        blocks,
+        blockIndex: activeDrillIndex,
+        text: liveNote,
+        type: 'text',
+        date: event.date,
+        location: event.location,
+        title: event.title || 'Practice'
+      });
+      setSessionId(result.sessionId);
+      setBlocks(result.blocks);
+      setLiveNote('');
+      setStatus({ tone: 'success', message: 'Live practice note saved.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save the live practice note.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="app-card overflow-hidden p-0 scroll-mt-28" data-testid="practice-timeline-panel">
+      <div className="border-b border-violet-100 bg-violet-50 px-3 py-3 sm:px-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-black text-violet-800">Practice timeline</div>
+            <h3 className="mt-1 text-base font-black text-gray-950">Plan it on your phone, run it at the field.</h3>
+            <div className="mt-0.5 text-xs font-semibold text-gray-600">
+              {blocks.length ? `${blocks.length} drill${blocks.length === 1 ? '' : 's'} · ${totalMinutes} min planned` : 'Add drills, set durations, and save live notes during practice.'}
+            </div>
+          </div>
+          {loading ? <RefreshCw className="mt-1 h-4 w-4 flex-none animate-spin text-violet-600" aria-hidden="true" /> : null}
+        </div>
+      </div>
+
+      <div className="space-y-3 p-3 sm:p-4">
+        {status ? <Status tone={status.tone} message={status.message} /> : null}
+        {canManageTimeline ? (
+          <div className="rounded-2xl border border-violet-100 bg-violet-50/70 p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <label className="min-w-0 flex-1 text-xs font-black uppercase tracking-[0.04em] text-violet-700">
+                Add drill
+                <select
+                  className="mt-1 min-h-11 w-full rounded-xl border border-violet-200 bg-white px-3 text-sm font-semibold text-gray-900"
+                  value={selectedDrillId}
+                  onChange={(changeEvent) => setSelectedDrillId(changeEvent.target.value)}
+                  disabled={saving || loading || !drillOptions.length}
+                >
+                  {drillOptions.length ? drillOptions.map((option) => (
+                    <option key={option.id} value={option.id}>{option.title} · {option.duration} min</option>
+                  )) : <option value="">No drills available</option>}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="primary-button min-h-11 px-4 text-sm disabled:opacity-60"
+                onClick={addDrill}
+                disabled={saving || loading || !drillOptions.length}
+              >
+                {saving ? 'Saving drill' : 'Add drill'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {blocks.length ? (
+          <div className="space-y-2">
+            {blocks.map((block, index) => {
+              const isActive = index === activeDrillIndex;
+              return (
+                <article key={`${block.drillId || block.drillTitle}-${index}`} className={`rounded-2xl border p-3 ${isActive ? 'border-violet-300 bg-violet-50' : 'border-gray-200 bg-white'}`}>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => setActiveDrillIndex(index)}
+                    >
+                      <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Drill {index + 1} · {block.type}</div>
+                      <div className="mt-1 text-sm font-black text-gray-950">{block.drillTitle}</div>
+                      {block.description ? <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">{block.description}</div> : null}
+                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">
+                        Minutes
+                        <input
+                          type="number"
+                          min={1}
+                          className="ml-2 min-h-9 w-20 rounded-full border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900"
+                          value={block.duration}
+                          onChange={(changeEvent) => updateBlock(index, (current) => ({ ...current, duration: Math.max(1, Number.parseInt(changeEvent.target.value, 10) || 1) }))}
+                          onBlur={(blurEvent) => { void commitBlock(index, (current) => ({ ...current, duration: Math.max(1, Number.parseInt(blurEvent.target.value, 10) || 1) }), 'Practice duration updated.'); }}
+                          disabled={!canManageTimeline || saving}
+                          aria-label={`Minutes for ${block.drillTitle}`}
+                        />
+                      </label>
+                      {canManageTimeline ? (
+                        <>
+                          <button type="button" className="ghost-button min-h-9 px-3 text-xs" onClick={() => { void moveBlock(index, -1); }} disabled={saving || index === 0}>Up</button>
+                          <button type="button" className="ghost-button min-h-9 px-3 text-xs" onClick={() => { void moveBlock(index, 1); }} disabled={saving || index === blocks.length - 1}>Down</button>
+                          <button type="button" className="ghost-button min-h-9 px-3 text-xs text-rose-700" onClick={() => { void removeBlock(index); }} disabled={saving}>Remove</button>
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                  <label className="mt-3 block text-xs font-black uppercase tracking-[0.04em] text-gray-500">
+                    Coach notes
+                    <textarea
+                      className="mt-1 min-h-[88px] w-full rounded-2xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-900"
+                      value={block.notes}
+                      onChange={(changeEvent) => updateBlock(index, (current) => ({ ...current, notes: changeEvent.target.value }))}
+                      onBlur={(blurEvent) => { if (canManageTimeline) void commitBlock(index, (current) => ({ ...current, notes: blurEvent.target.value }), 'Practice notes updated.'); }}
+                      disabled={!canManageTimeline || saving}
+                    />
+                  </label>
+                  {block.notesLog.length ? (
+                    <div className="mt-3 rounded-xl border border-violet-100 bg-white p-3">
+                      <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-violet-700">Live notes</div>
+                      <div className="mt-2 space-y-2">
+                        {block.notesLog.map((note, noteIndex) => (
+                          <div key={`${note.createdAt}-${noteIndex}`} className="text-xs font-semibold text-gray-700">
+                            <span className="font-black text-gray-900">{note.type === 'voice' ? 'Voice' : 'Note'}:</span> {note.text}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        ) : !loading ? (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">
+            No practice timeline yet. Add drills above to build this practice plan.
+          </div>
+        ) : null}
+
+        {activeBlock ? (
+          <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xs font-black uppercase tracking-[0.04em] text-emerald-700">Run mode</div>
+                <div className="mt-1 text-sm font-black text-gray-950">{activeBlock.drillTitle}</div>
+                <div className="mt-1 text-xs font-semibold text-gray-600">Drill {activeDrillIndex + 1} of {blocks.length} · {activeBlock.duration} min</div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" className="ghost-button min-h-11 px-4 text-sm" onClick={() => setActiveDrillIndex((current) => Math.max(0, current - 1))} disabled={activeDrillIndex === 0}>Previous</button>
+                <button type="button" className="primary-button min-h-11 px-4 text-sm" onClick={() => setActiveDrillIndex((current) => Math.min(blocks.length - 1, current + 1))} disabled={activeDrillIndex >= blocks.length - 1}>Next drill</button>
+              </div>
+            </div>
+            <label className="mt-3 block text-xs font-black uppercase tracking-[0.04em] text-gray-500">
+              Live note
+              <textarea
+                className="mt-1 min-h-[88px] w-full rounded-2xl border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-gray-900"
+                value={liveNote}
+                onChange={(changeEvent) => setLiveNote(changeEvent.target.value)}
+                placeholder="Capture what changed at the field."
+                disabled={!canManageTimeline || saving}
+              />
+            </label>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-semibold text-gray-500">Saved to the same practice session the web command center reads.</div>
+              <button type="button" className="primary-button min-h-11 px-4 text-sm" onClick={saveLiveNote} disabled={!canManageTimeline || saving || !liveNote.trim()}>
+                {saving ? 'Saving note' : 'Save live note'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
