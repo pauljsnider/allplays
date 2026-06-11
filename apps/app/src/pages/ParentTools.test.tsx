@@ -146,9 +146,9 @@ describe('ParentTools access', () => {
 
     it('waits for public teams to load before opening the manual request form', async () => {
         type PublicTeamRow = { id: string; name: string; sport: string };
-        let resolveTeams: ((value: PublicTeamRow[]) => void) | null = null;
+        const deferredTeams: { resolve: ((value: PublicTeamRow[]) => void) | null } = { resolve: null };
         parentToolsServiceMocks.loadParentAccessTeams.mockImplementation(() => new Promise<PublicTeamRow[]>((resolve) => {
-            resolveTeams = resolve;
+            deferredTeams.resolve = resolve;
         }));
         renderParentTools();
 
@@ -158,9 +158,9 @@ describe('ParentTools access', () => {
         expect(screen.queryByLabelText('Team')).toBeNull();
         expect(screen.getByRole('button', { name: 'Loading public teams...' })).toBeTruthy();
 
-        const pendingTeamsResolver = resolveTeams;
-        if (!pendingTeamsResolver) throw new Error('Expected public teams loader to be pending.');
-        pendingTeamsResolver([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
+        await waitFor(() => expect(deferredTeams.resolve).toBeTruthy());
+        if (!deferredTeams.resolve) throw new Error('Expected public teams loader to be pending.');
+        deferredTeams.resolve([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
 
         expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
         expect(screen.getByLabelText('Team')).toBeTruthy();
