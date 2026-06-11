@@ -66,6 +66,15 @@ import {
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
+import {
+  canUseLiveGameReactions,
+  getLiveGameReactionNotice,
+  liveGameReactionOptions,
+  sendLiveGameReaction,
+  subscribeToLiveGameReactions,
+  type LiveGameReaction,
+  type LiveGameReactionType
+} from '../lib/liveGameReactionsService';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import {
   buildGameHubDestinations,
@@ -212,6 +221,11 @@ type AttentionItem = {
   title: string;
   detail: string;
   section: EventDetailSectionId;
+};
+
+type ActiveLiveReaction = LiveGameReaction & {
+  localId: string;
+  emoji: string;
 };
 
 type StaffRsvpOverrideStatus = {
@@ -1764,6 +1778,120 @@ function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease
   );
 }
 
+function getLiveReactionEmoji(type: LiveGameReactionType) {
+  return liveGameReactionOptions.find((reaction) => reaction.key === type)?.emoji || '🔥';
+}
+
+function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [activeReactions, setActiveReactions] = useState<ActiveLiveReaction[]>([]);
+  const [sendStatus, setSendStatus] = useState<string | null>(null);
+  const [sendingReactionKey, setSendingReactionKey] = useState<LiveGameReactionType | null>(null);
+  const timeoutIdsRef = useRef<number[]>([]);
+  const canReact = canUseLiveGameReactions(event, { now: new Date() });
+  const reactionNotice = getLiveGameReactionNotice(event, { now: new Date() });
+
+  useEffect(() => {
+    if (!event.isDbGame || !event.teamId || !event.id) return undefined;
+
+    const unsubscribe = subscribeToLiveGameReactions(event.teamId, event.id, (reaction) => {
+      const normalizedType = liveGameReactionOptions.some((option) => option.key === reaction.type)
+        ? reaction.type
+        : 'fire';
+      const nextReaction: ActiveLiveReaction = {
+        ...reaction,
+        type: normalizedType,
+        localId: `${reaction.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        emoji: getLiveReactionEmoji(normalizedType)
+      };
+      setActiveReactions((current) => [...current, nextReaction].slice(-12));
+      const timeoutId = window.setTimeout(() => {
+        setActiveReactions((current) => current.filter((item) => item.localId !== nextReaction.localId));
+        timeoutIdsRef.current = timeoutIdsRef.current.filter((item) => item !== timeoutId);
+      }, 2400);
+      timeoutIdsRef.current.push(timeoutId);
+    }, (error: any) => {
+      setSendStatus(error?.message || 'Live reactions disconnected.');
+    });
+
+    return () => {
+      unsubscribe?.();
+      timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      timeoutIdsRef.current = [];
+    };
+  }, [event.id, event.isDbGame, event.teamId]);
+
+  const sendReaction = async (type: LiveGameReactionType) => {
+    if (!canReact || !event.teamId || !event.id || !auth.user?.uid || sendingReactionKey === type) return;
+    setSendingReactionKey(type);
+    setSendStatus(null);
+    try {
+      await sendLiveGameReaction(event.teamId, event.id, {
+        type,
+        user: auth.user
+      });
+    } catch (error: any) {
+      setSendStatus(error?.message || 'Unable to send reaction.');
+    } finally {
+      window.setTimeout(() => setSendingReactionKey((current) => (current === type ? null : current)), 1000);
+    }
+  };
+
+  if (!event.isDbGame) return null;
+
+  return (
+    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-3" data-testid="live-game-reactions-panel">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-amber-700">Live reactions</div>
+          <div className="mt-1 text-sm font-semibold text-gray-900">Send the same quick emoji bursts the web live viewer uses.</div>
+        </div>
+        <div className="rounded-full bg-white px-3 py-1 text-xs font-black text-amber-700 shadow-sm">
+          {activeReactions.length ? `${activeReactions.length} live` : 'Ready'}
+        </div>
+      </div>
+
+      <div className="relative mt-3 min-h-24 overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white via-white to-amber-50 px-3 py-3">
+        <div className="flex flex-wrap gap-2" aria-label="Live reaction stream">
+          {activeReactions.length ? activeReactions.map((reaction) => (
+            <span
+              key={reaction.localId}
+              className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-amber-100 bg-white text-2xl shadow-sm"
+              aria-label={`Live reaction ${reaction.type}`}
+            >
+              {reaction.emoji}
+            </span>
+          )) : (
+            <span className="text-sm font-semibold text-gray-500">Reactions from the app and web viewer will pop in here during the game.</span>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {liveGameReactionOptions.map((reaction) => {
+          const disabled = !canReact || sendingReactionKey === reaction.key;
+          return (
+            <button
+              key={reaction.key}
+              type="button"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-full border border-amber-200 bg-white px-3 text-2xl shadow-sm transition hover:border-amber-300 hover:bg-amber-100 disabled:opacity-50"
+              onClick={() => sendReaction(reaction.key)}
+              disabled={disabled}
+              aria-label={reaction.label}
+            >
+              {reaction.emoji}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-2 text-xs font-semibold text-gray-500">
+        {reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.'}
+      </div>
+      {sendStatus ? <div className="mt-2 text-xs font-bold text-rose-700">{sendStatus}</div> : null}
+    </div>
+  );
+}
+
 function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupCompleted, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
@@ -1883,6 +2011,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupComp
           </div>
 
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
+          {!isPractice ? <LiveGameReactionsPanel auth={auth} event={event} /> : null}
 
           {canWrapup ? <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} /> : null}
 
