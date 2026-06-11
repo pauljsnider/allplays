@@ -165,6 +165,7 @@ beforeEach(() => {
     dbMocks.getTeam.mockResolvedValue({
         id: 'team-1',
         name: 'Bears',
+        notificationEmail: 'team-notify@example.com',
         calendarUrls: ['mock://team-calendar'],
         availabilityPreferences: { noteVisibility: 'team' }
     });
@@ -495,6 +496,7 @@ describe('React app schedule service contract integration', () => {
         expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
             myRsvp: 'going',
             myRsvpNote: 'Needs a ride home',
+            teamNotificationEmail: 'team-notify@example.com',
             rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
         });
         expect(result.events.find((event) => event.childId === 'player-2')).toMatchObject({
@@ -526,7 +528,8 @@ describe('React app schedule service contract integration', () => {
         expect(result.events[0]).toMatchObject({
             id: 'game-1',
             childId: 'staff-team-team-1',
-            childName: 'Team schedule'
+            childName: 'Team schedule',
+            teamNotificationEmail: 'team-notify@example.com'
         });
     });
 

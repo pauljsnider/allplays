@@ -108,6 +108,7 @@ export type ParentScheduleEvent = {
   id: string;
   teamId: string;
   teamName: string;
+  teamNotificationEmail?: string | null;
   type: ScheduleEventType;
   date: Date;
   endDate?: Date | null;

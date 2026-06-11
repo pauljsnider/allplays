@@ -107,6 +107,18 @@ describe('CapabilityPage launch CTAs', () => {
         await act(async () => root.unmount());
     });
 
+    it('routes the standard tracker capability to the native schedule game hub', async () => {
+        const { container, root } = await renderCapabilityPage('/capabilities/track-standard');
+
+        expect(container.textContent).toContain('Current site page');
+        expect(container.textContent).toContain('track.html');
+        expect(linkByText(container, 'Open app route').getAttribute('href')).toBe('/schedule');
+        expect(container.textContent).not.toContain('Open current page');
+        expect(openPublicUrl).not.toHaveBeenCalled();
+
+        await act(async () => root.unmount());
+    });
+
     it('does not show a primary launch CTA for future capabilities', async () => {
         const { container, root } = await renderCapabilityPage('/capabilities/organization-schedule');
 

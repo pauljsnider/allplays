@@ -65,6 +65,7 @@ import {
 import { applyLiveSubstitution, getSubstitutionOptions } from '../../../../js/game-day-live-substitutions.js';
 import {
   buildAppWrapupCompletionPayload,
+  buildGameWrapupEmailDraft,
   generateGameWrapupArtifactsForApp,
   type PracticeFeedItem
 } from '../lib/gameWrapupService';
@@ -2558,6 +2559,8 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
   const [postGameNotes, setPostGameNotes] = useState(String(event.postGameNotes || ''));
   const [practiceFeedItems, setPracticeFeedItems] = useState<PracticeFeedItem[]>(Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems : []);
   const [summary, setSummary] = useState(String(event.summary || ''));
+  const [shouldGenerateSummary, setShouldGenerateSummary] = useState(true);
+  const [shouldSendEmail, setShouldSendEmail] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
@@ -2567,6 +2570,8 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
     setPostGameNotes(String(event.postGameNotes || ''));
     setPracticeFeedItems(Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems : []);
     setSummary(String(event.summary || ''));
+    setShouldGenerateSummary(true);
+    setShouldSendEmail(false);
   }, [event.eventKey, event.homeScore, event.awayScore, event.postGameNotes, event.summary, event.practiceFeedItems, savedHomeScore, savedAwayScore]);
 
   const completeWrapup = async () => {
@@ -2592,20 +2597,22 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
       }
 
       let aiFailure = false;
-      try {
-        const artifacts = await generateGameWrapupArtifactsForApp({
-          teamId: event.teamId,
-          gameId: event.id,
-          score: { home: nextHomeScore, away: nextAwayScore },
-          notes: trimmedNotes
-        });
-        finalSummary = artifacts.summary;
-        finalPracticeFeedItems = artifacts.practiceFeedItems;
-        setSummary(finalSummary);
-        setPracticeFeedItems(finalPracticeFeedItems);
-      } catch (aiError) {
-        aiFailure = true;
-        console.warn('[schedule-event-detail] Wrap-up AI failed:', aiError);
+      if (shouldGenerateSummary) {
+        try {
+          const artifacts = await generateGameWrapupArtifactsForApp({
+            teamId: event.teamId,
+            gameId: event.id,
+            score: { home: nextHomeScore, away: nextAwayScore },
+            notes: trimmedNotes
+          });
+          finalSummary = artifacts.summary;
+          finalPracticeFeedItems = artifacts.practiceFeedItems;
+          setSummary(finalSummary);
+          setPracticeFeedItems(finalPracticeFeedItems);
+        } catch (aiError) {
+          aiFailure = true;
+          console.warn('[schedule-event-detail] Wrap-up AI failed:', aiError);
+        }
       }
 
       const completionPayload = buildAppWrapupCompletionPayload({
@@ -2625,11 +2632,32 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
         summary: finalSummary,
         practiceFeedItems: finalPracticeFeedItems
       });
+
+      if (shouldSendEmail) {
+        const emailDraft = buildGameWrapupEmailDraft({
+          teamName: event.teamName,
+          opponentName: event.opponent || event.title || 'Opponent',
+          gameDate: event.date,
+          score: { home: nextHomeScore, away: nextAwayScore },
+          summary: finalSummary,
+          postGameNotes: trimmedNotes,
+          teamNotificationEmail: event.teamNotificationEmail,
+          userEmail: auth.user.email
+        });
+        if (emailDraft) {
+          window.location.href = emailDraft.mailto;
+        }
+      }
+
       setStatus({
         tone: 'success',
         message: aiFailure
           ? 'Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.'
-          : `Wrap-up saved with ${finalPracticeFeedItems.length} practice focus ${finalPracticeFeedItems.length === 1 ? 'item' : 'items'}.`
+          : shouldGenerateSummary
+            ? `Wrap-up saved with ${finalPracticeFeedItems.length} practice focus ${finalPracticeFeedItems.length === 1 ? 'item' : 'items'}.`
+            : shouldSendEmail
+              ? 'Wrap-up saved and email recap opened.'
+              : 'Wrap-up saved without AI summary.'
       });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to complete wrap-up.' });
@@ -2665,6 +2693,17 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
         disabled={saving}
       />
 
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <label className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900">
+          <input type="checkbox" checked={shouldGenerateSummary} onChange={(changeEvent) => setShouldGenerateSummary(changeEvent.target.checked)} disabled={saving} />
+          <span>Generate AI summary</span>
+        </label>
+        <label className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900">
+          <input type="checkbox" checked={shouldSendEmail} onChange={(changeEvent) => setShouldSendEmail(changeEvent.target.checked)} disabled={saving} />
+          <span>Email recap after save</span>
+        </label>
+      </div>
+
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -2674,7 +2713,7 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
         >
           {saving ? 'Saving wrap-up' : isCompleted ? 'Run wrap-up again' : 'Complete wrap-up'}
         </button>
-        <span className="text-xs font-semibold text-gray-500">AI failures do not block completion.</span>
+        <span className="text-xs font-semibold text-gray-500">AI failures do not block completion. Uncheck AI summary to skip it, or run wrap-up again to regenerate.</span>
       </div>
 
       {status ? <div className={`mt-3 text-sm font-semibold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</div> : null}
