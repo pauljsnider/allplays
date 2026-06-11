@@ -538,6 +538,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByText('Profile saved.')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Pat Parent Updated' })).toBeVisible();
     await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', 'https://example.test/avatar.png');
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.profileLoads)).toBe(1);
 
     await page.getByRole('button', { name: 'Alerts' }).click();
     await expect(page.getByText('Notification preferences')).toBeVisible();
@@ -612,7 +613,7 @@ test('profile exposes account, notification, invite, verification, password, upl
         signOut: window.__appAuthCalls.signOut
     }))).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
-        profileLoads: 1,
+        profileLoads: 2,
         push: 1,
         notificationLoads: [
             { userId: 'user-1', teamId: 'team-1' }
