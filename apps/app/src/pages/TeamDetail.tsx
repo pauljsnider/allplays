@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
+  Award,
   BarChart3,
   CalendarDays,
   CheckCircle2,
@@ -619,6 +620,7 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
         <div className="text-sm font-black text-gray-950">Team links</div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <ExternalAction icon={ExternalLink} label="Website team page" detail="Open the current full team.html page." href={model.team.websiteUrl} />
+          {model.canManageTeam ? <InternalAction icon={Award} label="Awards drafts" detail="Pick a template, select players, and preview certificates in the app." to={`/teams/${encodeURIComponent(model.team.id)}/certificates`} /> : null}
           {model.canManageTeam ? <InternalAction icon={Dumbbell} label="Drill library" detail="Browse community drills and manage favorites." to={`/teams/${encodeURIComponent(model.team.id)}/drills`} /> : null}
           <InternalAction icon={ImageIcon} label="Media albums" detail="Photos, video links, albums, and files." to={`/teams/${encodeURIComponent(model.team.id)}/media`} />
           <InternalAction icon={DollarSign} label="My fees" detail="Balances, checkout links, installments, and history." to="/parent-tools/fees" />

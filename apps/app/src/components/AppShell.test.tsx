@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './AppShell';
@@ -75,7 +75,9 @@ describe('AppShell', () => {
     );
 
     const event = new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', ctrlKey: true, bubbles: true, cancelable: true });
-    window.dispatchEvent(event);
+    act(() => {
+      window.dispatchEvent(event);
+    });
 
     expect(event.defaultPrevented).toBe(true);
     expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeInTheDocument();
