@@ -58,6 +58,25 @@ const gameWrapupServiceMocks = vi.hoisted(() => ({
 vi.mock('../lib/gameWrapupService', () => gameWrapupServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/liveGameAnnouncer', () => ({ useLiveGameAnnouncer: vi.fn() }));
+const liveGameReactionsServiceMocks = vi.hoisted(() => ({
+  canUseLiveGameReactions: vi.fn<(game: unknown, options?: unknown) => boolean>(() => true),
+  getLiveGameReactionNotice: vi.fn<(game: unknown, options?: unknown) => string | null>(() => null),
+  sendLiveGameReaction: vi.fn<(teamId: string, gameId: string, input: unknown) => Promise<unknown>>(),
+  subscribeToLiveGameReactions: vi.fn<(
+    teamId: string,
+    gameId: string,
+    callback: (reaction: { id: string; type: 'heart' | 'fire' | 'clap' | 'wow' | 'hundred' }) => void,
+    onError?: (error: unknown) => void
+  ) => () => void>(() => vi.fn()),
+  liveGameReactionOptions: [
+    { key: 'fire', emoji: '🔥', label: 'Fire' },
+    { key: 'clap', emoji: '👏', label: 'Clap' },
+    { key: 'wow', emoji: '😲', label: 'Wow' },
+    { key: 'heart', emoji: '❤️', label: 'Heart' },
+    { key: 'hundred', emoji: '💯', label: 'Hundred' }
+  ]
+}));
+vi.mock('../lib/liveGameReactionsService', () => liveGameReactionsServiceMocks);
 vi.mock('../lib/parentToolsService', () => ({ buildParentScheduleEventIcs: vi.fn(() => 'BEGIN:VCALENDAR') }));
 vi.mock('../lib/scheduleHub', () => ({
   buildGameHubDestinations: vi.fn(() => []),
@@ -173,6 +192,9 @@ describe('ScheduleEventDetail lineup draft guards', () => {
 describe('ScheduleEventDetail assignments', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(true);
+    liveGameReactionsServiceMocks.getLiveGameReactionNotice.mockReturnValue(null);
+    liveGameReactionsServiceMocks.subscribeToLiveGameReactions.mockReturnValue(vi.fn());
     Object.defineProperty(window, 'scrollTo', {
       value: vi.fn(),
       writable: true
@@ -181,6 +203,66 @@ describe('ScheduleEventDetail assignments', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('streams and sends live game reactions from the game hub', async () => {
+    let reactionCallback: (reaction: { id: string; type: 'heart' | 'fire' | 'clap' | 'wow' | 'hundred' }) => void = () => {};
+    liveGameReactionsServiceMocks.subscribeToLiveGameReactions.mockImplementation((_teamId, _gameId, callback) => {
+      reactionCallback = callback;
+      return vi.fn();
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ liveStatus: 'live', status: 'live' })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('live-game-reactions-panel')).toBeTruthy();
+    });
+
+    reactionCallback({ id: 'reaction-1', type: 'heart' });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Live reaction heart')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Heart' }));
+
+    await waitFor(() => {
+      expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ type: 'heart', user: auth.user }));
+    });
+  });
+
+  it('shows the legacy gate notice and disables reaction sends outside the live window', async () => {
+    liveGameReactionsServiceMocks.canUseLiveGameReactions.mockReturnValue(false);
+    liveGameReactionsServiceMocks.getLiveGameReactionNotice.mockReturnValue('Live reactions are closed during replay.');
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ liveStatus: 'completed', status: 'completed' })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Live reactions are closed during replay.')).toBeTruthy();
+    });
+
+    expect((screen.getByRole('button', { name: 'Heart' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(liveGameReactionsServiceMocks.sendLiveGameReaction).not.toHaveBeenCalled();
   });
 
   it('uses native-aware calendar export messaging for shared, downloaded, and failed event exports', async () => {
