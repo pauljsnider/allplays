@@ -419,6 +419,14 @@ describe('mobile lineup draft creation', () => {
       'Q1-sg': 'p2',
       'Q1-sf': 'p5'
     });
+    expect(result.availablePlayers).toEqual([
+      expect.objectContaining({ id: 'p1' }),
+      expect.objectContaining({ id: 'p2' }),
+      expect.objectContaining({ id: 'p3' }),
+      expect.objectContaining({ id: 'p4' }),
+      expect.objectContaining({ id: 'p5' }),
+      expect.objectContaining({ id: 'p6' })
+    ]);
   });
 
   it('falls back from parent-only Going RSVP docs to linked roster players', async () => {
@@ -441,6 +449,53 @@ describe('mobile lineup draft creation', () => {
       'Q1-pg': 'p1',
       'Q1-sg': 'p2'
     });
+  });
+
+  it('persists manual multi-period lineup edits through the shared draft path', async () => {
+    const result = await saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5', {
+      lineups: {
+        'Q1-pg': 'p2',
+        'Q1-sg': 'p1',
+        'Q2-pg': 'p5'
+      }
+    });
+
+    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', {
+      gamePlan: expect.objectContaining({
+        formationId: 'basketball-5v5',
+        lineups: {
+          'Q1-pg': 'p2',
+          'Q1-sg': 'p1',
+          'Q2-pg': 'p5'
+        }
+      })
+    });
+    expect(result.gamePlan?.lineups).toEqual({
+      'Q1-pg': 'p2',
+      'Q1-sg': 'p1',
+      'Q2-pg': 'p5'
+    });
+  });
+
+  it('allows manual lineup edits to save when no players are marked Going', async () => {
+    vi.mocked(getRsvps).mockResolvedValue([{ playerId: 'p1', response: 'maybe' }] as any);
+
+    const result = await saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5', {
+      lineups: {
+        'Q1-pg': 'p1'
+      }
+    });
+
+    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', {
+      gamePlan: expect.objectContaining({
+        formationId: 'basketball-5v5',
+        isPublished: false,
+        publishedVersion: 2,
+        publishedLineups: { 'Q1-pg': 'published-player' },
+        lineups: { 'Q1-pg': 'p1' }
+      })
+    });
+    expect(result.gamePlan?.lineups).toEqual({ 'Q1-pg': 'p1' });
   });
 
   it('rejects unsupported events and empty Going player pools', async () => {

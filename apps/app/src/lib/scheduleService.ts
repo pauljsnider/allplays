@@ -255,6 +255,7 @@ export type LineupDraftPreviewResult = {
   formationName: string;
   numPeriods: number;
   positions: Array<{ id: string; name: string; playerId: string | null; playerName: string | null; playerNumber: string | null }>;
+  availablePlayers: AutoFilledLineupPlayer[];
   goingPlayers: AutoFilledLineupPlayer[];
   gamePlan: Record<string, any> | null;
 };
@@ -294,16 +295,74 @@ function getGoingLineupPlayers(players: any[], rsvps: any[]): AutoFilledLineupPl
     .filter((player) => player.id && goingPlayerIds.has(player.id));
 }
 
-function buildLineupDraftPreview(formationId: string, goingPlayers: AutoFilledLineupPlayer[], gamePlan: Record<string, any> | null | undefined): LineupDraftPreviewResult {
+function getAvailableLineupPlayers(players: any[]): AutoFilledLineupPlayer[] {
+  return (Array.isArray(players) ? players : [])
+    .filter(isActiveRosterPlayer)
+    .map((player: any) => ({
+      id: compactString(player?.id),
+      name: normalizePlayerName(player),
+      number: normalizePlayerNumber(player) || null
+    }))
+    .filter((player) => player.id);
+}
+
+function hasLineupAssignments(gamePlan: Record<string, any> | null | undefined) {
+  return Boolean(gamePlan?.lineups && typeof gamePlan.lineups === 'object' && Object.keys(gamePlan.lineups).length);
+}
+
+function normalizeLineupAssignments(lineups: Record<string, unknown> | null | undefined) {
+  return Object.entries(lineups || {}).reduce<Record<string, string>>((acc, [key, value]) => {
+    const safeKey = compactString(key);
+    const safeValue = compactString(value);
+    if (!safeKey || !safeValue) return acc;
+    acc[safeKey] = safeValue;
+    return acc;
+  }, {});
+}
+
+function buildManualLineupDraft(formationId: string, lineups: Record<string, string>, previousGamePlan: Record<string, any> | null | undefined) {
+  const formation = getLineupFormation(formationId);
+  if (!formation) {
+    throw new Error('Select a supported formation before saving a lineup draft.');
+  }
+  const sourcePlan = previousGamePlan || {};
+  return {
+    ...sourcePlan,
+    formationId: formation.id,
+    numPeriods: formation.numPeriods,
+    lineups,
+    isPublished: false,
+    publishedAt: sourcePlan.publishedAt || null,
+    publishedBy: sourcePlan.publishedBy || null,
+    publishedByName: sourcePlan.publishedByName || null,
+    publishedVersion: Number.parseInt(sourcePlan.publishedVersion, 10) || 0,
+    publishedFormationId: sourcePlan.publishedFormationId || null,
+    publishedNumPeriods: Number.parseInt(sourcePlan.publishedNumPeriods, 10) || null,
+    publishedLineups: normalizeLineupAssignments(sourcePlan.publishedLineups),
+    publishedRecipientPlayerIds: Array.isArray(sourcePlan.publishedRecipientPlayerIds) ? [...new Set(sourcePlan.publishedRecipientPlayerIds.map(compactString).filter(Boolean))] : [],
+    publishedRecipientParentIds: Array.isArray(sourcePlan.publishedRecipientParentIds) ? [...new Set(sourcePlan.publishedRecipientParentIds.map(compactString).filter(Boolean))] : [],
+    publishedReadBy: Array.isArray(sourcePlan.publishedReadBy) ? [...sourcePlan.publishedReadBy] : []
+  };
+}
+
+function buildLineupDraftPreview(formationId: string, availablePlayers: AutoFilledLineupPlayer[], goingPlayers: AutoFilledLineupPlayer[], gamePlan: Record<string, any> | null | undefined): LineupDraftPreviewResult {
   const formation = getLineupFormation(formationId);
   if (!formation) {
     throw new Error('Select a supported formation before saving a lineup draft.');
   }
   let draft: Record<string, any> | null = null;
-  try {
-    draft = buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: gamePlan || {} });
-  } catch (error: any) {
-    if (!String(error?.message || '').includes('No Going players')) throw error;
+  if (hasLineupAssignments(gamePlan)) {
+    draft = {
+      ...(gamePlan || {}),
+      formationId: formation.id,
+      numPeriods: formation.numPeriods
+    };
+  } else {
+    try {
+      draft = buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: gamePlan || {} });
+    } catch (error: any) {
+      if (!String(error?.message || '').includes('No Going players')) throw error;
+    }
   }
   return {
     formationId: formation.id,
@@ -319,6 +378,7 @@ function buildLineupDraftPreview(formationId: string, goingPlayers: AutoFilledLi
         playerNumber: player?.number || null
       };
     }),
+    availablePlayers,
     goingPlayers,
     gamePlan: draft
   };
@@ -341,17 +401,28 @@ export async function loadAutoFilledLineupDraftPreviewForApp(event: ParentSchedu
     loadPlayers(event.teamId),
     loadRsvps(event.teamId, event.id)
   ]);
-  return buildLineupDraftPreview(formationId, getGoingLineupPlayers(players, rsvps), event.gamePlan || {});
+  return buildLineupDraftPreview(formationId, getAvailableLineupPlayers(players), getGoingLineupPlayers(players, rsvps), event.gamePlan || {});
 }
 
-export async function saveScheduledGameLineupDraftForApp(event: ParentScheduleEvent, user: AuthUser | null, formationId: string): Promise<LineupDraftPreviewResult> {
+export async function saveScheduledGameLineupDraftForApp(
+  event: ParentScheduleEvent,
+  user: AuthUser | null,
+  formationId: string,
+  options?: { lineups?: Record<string, string> | null }
+): Promise<LineupDraftPreviewResult> {
   assertLineupDraftEvent(event, user);
   const [players, rsvps] = await Promise.all([
     loadPlayers(event.teamId),
     loadRsvps(event.teamId, event.id)
   ]);
+  const availablePlayers = getAvailableLineupPlayers(players);
   const goingPlayers = getGoingLineupPlayers(players, rsvps);
-  const nextGamePlan = buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: event.gamePlan || {} });
+  const overrideLineups = options?.lineups && typeof options.lineups === 'object'
+    ? normalizeLineupAssignments(options.lineups)
+    : null;
+  const nextGamePlan = overrideLineups && Object.keys(overrideLineups).length
+    ? buildManualLineupDraft(formationId, overrideLineups, event.gamePlan || {})
+    : buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: event.gamePlan || {} });
   const payload: Record<string, unknown> = { gamePlan: nextGamePlan };
 
   try {
@@ -362,7 +433,7 @@ export async function saveScheduledGameLineupDraftForApp(event: ParentScheduleEv
     await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
   }
 
-  return buildLineupDraftPreview(formationId, goingPlayers, nextGamePlan);
+  return buildLineupDraftPreview(formationId, availablePlayers, goingPlayers, nextGamePlan);
 }
 
 export async function publishGamePlanForApp(event: ParentScheduleEvent, user: AuthUser): Promise<PublishGamePlanResult> {
