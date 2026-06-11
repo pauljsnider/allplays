@@ -55,8 +55,13 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('./scheduleService', () => scheduleServiceMocks);
+const appDataCacheMocks = vi.hoisted(() => ({
+  clearAppDataCache: vi.fn()
+}));
 
-import { loadParentPlayerDetail, saveParentAthleteProfileDraft, savePlayerCustomRosterFieldValues } from './playerService';
+vi.mock('./appDataCache', () => appDataCacheMocks);
+
+import { loadParentPlayerDetail, saveParentAthleteProfileDraft, savePlayerCustomRosterFieldValues, saveStaffPlayerRosterDetails } from './playerService';
 
 describe('saveParentAthleteProfileDraft', () => {
   beforeEach(() => {
@@ -94,6 +99,69 @@ describe('saveParentAthleteProfileDraft', () => {
   });
 });
 
+
+describe('saveStaffPlayerRosterDetails', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-1',
+      adminEmails: ['coach@example.com']
+    });
+    dbMocks.uploadPlayerPhoto.mockResolvedValue('https://cdn.example.com/photo.jpg');
+    dbMocks.updatePlayer.mockResolvedValue(undefined);
+  });
+
+  it('updates only dirty public roster fields and clears app cache', async () => {
+    const file = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+
+    const result = await saveStaffPlayerRosterDetails({
+      user: { uid: 'coach-1', email: 'coach@example.com' } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: {
+        name: 'Sam Player',
+        number: '12',
+        photoUrl: 'https://cdn.example.com/old.jpg'
+      },
+      name: 'Sam Player',
+      number: '44',
+      photoFile: file
+    });
+
+    expect(dbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
+      number: '44',
+      photoUrl: 'https://cdn.example.com/photo.jpg'
+    });
+    expect(dbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledWith();
+    expect(result).toEqual({
+      updatedFields: ['number', 'photoUrl'],
+      payload: {
+        number: '44',
+        photoUrl: 'https://cdn.example.com/photo.jpg'
+      }
+    });
+  });
+
+  it('rejects roster edits from non-staff users', async () => {
+    await expect(saveStaffPlayerRosterDetails({
+      user: {
+        uid: 'parent-1',
+        email: 'parent@example.com',
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+      } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player', number: '12' },
+      name: 'Sam Player',
+      number: '12'
+    })).rejects.toThrow('Only team staff can edit roster details.');
+
+    expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
+    expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
+  });
+});
 
 describe('savePlayerCustomRosterFieldValues', () => {
   beforeEach(() => {
@@ -256,6 +324,27 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       expect.objectContaining({ key: 'jerseySize', value: 'YM' })
     ]);
     expect(detail.access.canEditCustomRosterFields).toBe(true);
+  });
+
+  it('allows staff to load a player detail route without a linked parent relationship', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [],
+      events: []
+    });
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'coach-2',
+      email: 'assistant@example.com',
+      coachOf: ['team-1'],
+      parentOf: []
+    } as any, 'team-1', 'player-1');
+
+    expect(detail.child).toEqual(expect.objectContaining({
+      teamId: 'team-1',
+      playerId: 'player-1',
+      playerName: 'Sam Player'
+    }));
+    expect(detail.access.isTeamStaff).toBe(true);
   });
 
   it('keeps coachOf-only users read-only for custom roster fields', async () => {

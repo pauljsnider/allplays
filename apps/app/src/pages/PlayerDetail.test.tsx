@@ -19,6 +19,7 @@ const playerServiceMocks = vi.hoisted(() => ({
   retireParentPlayerIncentiveRule: vi.fn(),
   saveParentAthleteProfileDraft: vi.fn(),
   savePlayerCustomRosterFieldValues: vi.fn(),
+  saveStaffPlayerRosterDetails: vi.fn(),
   saveParentPlayerIncentiveCap: vi.fn(),
   saveParentPlayerIncentiveRule: vi.fn(),
   sendParentCoParentInvite: vi.fn(),
@@ -1107,6 +1108,57 @@ describe('PlayerDetail athlete profile season selection', () => {
   });
 });
 
+
+describe('PlayerDetail staff roster editing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: false,
+        isTeamStaff: true,
+        canEditCustomRosterFields: false
+      }
+    }));
+    playerServiceMocks.saveStaffPlayerRosterDetails.mockResolvedValue({ updatedFields: ['number'] });
+    window.scrollTo = vi.fn();
+    window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('renders native staff roster editing and saves name and number changes', async () => {
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect(await screen.findByText('Roster Details')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Player name'), { target: { value: 'Samuel Player' } });
+    fireEvent.change(screen.getByLabelText('Jersey number'), { target: { value: '44' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Roster Details' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.saveStaffPlayerRosterDetails).toHaveBeenCalledWith({
+        user: auth.user,
+        teamId: 'team-current',
+        playerId: 'player-current',
+        currentPlayer: expect.objectContaining({
+          name: 'Sam Player',
+          number: '12'
+        }),
+        name: 'Samuel Player',
+        number: '44',
+        photoFile: null,
+        removePhoto: false
+      });
+    });
+  });
+});
 
 describe('PlayerDetail custom roster fields', () => {
   beforeEach(() => {
