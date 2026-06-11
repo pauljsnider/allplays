@@ -144,6 +144,27 @@ describe('ParentTools access', () => {
         expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
     });
 
+    it('waits for public teams to load before opening the manual request form', async () => {
+        type PublicTeamRow = { id: string; name: string; sport: string };
+        let resolveTeams: ((value: PublicTeamRow[]) => void) | null = null;
+        parentToolsServiceMocks.loadParentAccessTeams.mockImplementation(() => new Promise<PublicTeamRow[]>((resolve) => {
+            resolveTeams = resolve;
+        }));
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+
+        expect(screen.queryByLabelText('Team')).toBeNull();
+        expect(screen.getByRole('button', { name: 'Loading public teams...' })).toBeTruthy();
+
+        if (!resolveTeams) throw new Error('Expected public teams loader to be pending.');
+        resolveTeams([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
+
+        expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
+        expect(screen.getByLabelText('Team')).toBeTruthy();
+    });
+
     it('still submits request access after the redeem panel is added', async () => {
         renderParentTools();
 
