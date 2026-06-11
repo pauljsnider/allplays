@@ -41,6 +41,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
         window.__appProfileCalls = {
             uploads: [],
             saves: [],
+            profileLoads: 0,
             notificationSaves: [],
             notificationLoads: [],
             push: 0,
@@ -215,6 +216,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 }
 
                 export async function loadProfileDocument() {
+                    window.__appProfileCalls.profileLoads += 1;
                     return {
                         fullName: 'Pat Parent',
                         phone: '555-0100',
@@ -534,9 +536,14 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByLabel('Full name').fill('Pat Parent Updated');
     await page.getByRole('button', { name: 'Save profile' }).click();
     await expect(page.getByText('Profile saved.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Pat Parent Updated' })).toBeVisible();
+    await expect(page.locator('.profile-summary-card img')).toHaveAttribute('src', 'https://example.test/avatar.png');
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.profileLoads)).toBeGreaterThan(0);
 
-    await page.getByRole('button', { name: 'Alerts' }).click();
-    await expect(page.getByText('Notification preferences')).toBeVisible();
+    const alertsTab = page.getByRole('button', { name: 'Alerts', exact: true });
+    await alertsTab.click();
+    await expect(alertsTab).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText('Per-team alerts for live chat, score updates, and schedule changes.')).toBeVisible();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
     const gameDayAlertsButton = page.getByRole('button', { name: 'Turn on game-day alerts' });
     await expect(gameDayAlertsButton).toBeEnabled();
@@ -551,7 +558,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.getByRole('button', { name: 'Save preferences' }).click();
     await expect(page.getByText('Notification preferences saved.')).toBeVisible();
 
-    await page.getByRole('button', { name: 'Invites' }).click();
+    await page.getByRole('button', { name: 'Invites', exact: true }).click();
     await expect(page.getByText('Invite codes')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Show 1 more' })).toBeVisible();
     await expect(page.getByText('Advanced: add recipient label')).toBeVisible();
@@ -583,7 +590,7 @@ test('profile exposes account, notification, invite, verification, password, upl
 
     await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
 
-    await page.getByRole('button', { name: 'Security' }).click();
+    await page.getByRole('button', { name: 'Security', exact: true }).click();
     await expect(page.getByText('Email not verified')).toBeVisible();
     await expect(page.getByText('Set a password')).toBeVisible();
     await page.locator('input[placeholder="New password"]').fill('new-password');
@@ -594,9 +601,10 @@ test('profile exposes account, notification, invite, verification, password, upl
     await expect(page.getByText('Password reset email sent.')).toBeVisible();
     await page.getByRole('button', { name: 'Sign out' }).last().click();
 
-    expect(await page.evaluate(() => ({
+    const profileCalls = await page.evaluate(() => ({
         uploads: window.__appProfileCalls.uploads,
         saves: window.__appProfileCalls.saves,
+        profileLoads: window.__appProfileCalls.profileLoads,
         push: window.__appProfileCalls.push,
         notificationLoads: window.__appProfileCalls.notificationLoads,
         notificationSaves: window.__appProfileCalls.notificationSaves,
@@ -605,7 +613,10 @@ test('profile exposes account, notification, invite, verification, password, upl
         password: window.__appAuthCalls.setCurrentUserPassword,
         reset: window.__appAuthCalls.sendResetEmail,
         signOut: window.__appAuthCalls.signOut
-    }))).toMatchObject({
+    }));
+
+    expect(profileCalls.profileLoads).toBeGreaterThan(0);
+    expect(profileCalls).toMatchObject({
         uploads: [{ name: 'avatar.png', type: 'image/png' }],
         push: 1,
         notificationLoads: [

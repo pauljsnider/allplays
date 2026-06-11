@@ -447,6 +447,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     setProfileStatus(null);
 
     try {
+      const trimmedFullName = fullName.trim();
+      const trimmedPhone = phone.trim();
       let nextPhotoUrl = photoUrl || '';
       if (photoChanged && photoFile) {
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
@@ -454,13 +456,21 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
 
       await saveProfileDocument(user.uid, {
-        fullName: fullName.trim(),
-        phone: phone.trim(),
+        fullName: trimmedFullName,
+        phone: trimmedPhone,
         email: user.email,
         photoUrl: nextPhotoUrl || null
       });
 
-      const nextProfile = await loadProfileDocument(user.uid);
+      const nextProfile: ProfileDocument = {
+        ...profile,
+        email: user.email || profile.email,
+        fullName: trimmedFullName,
+        displayName: trimmedFullName,
+        phone: trimmedPhone,
+        photoUrl: nextPhotoUrl || '',
+        updatedAt: new Date()
+      };
       revokeOwnedPhotoPreviewUrl();
       setProfile(nextProfile);
       setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');
@@ -468,7 +478,9 @@ export function Profile({ auth }: { auth: AuthState }) {
       setPhotoFile(null);
       setPhotoChanged(false);
       setProfileStatus({ message: 'Profile saved.', tone: 'success' });
-      await auth.refresh();
+      void auth.refresh().catch((error) => {
+        console.warn('[profile] Unable to refresh auth after profile save:', error);
+      });
     } catch (error: any) {
       setProfileStatus({ message: formatProfileSaveError(error), tone: 'error' });
     } finally {
