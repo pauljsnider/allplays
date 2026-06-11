@@ -1,4 +1,4 @@
-import { addDrillFavorite, getDrill, getDrillFavorites, getDrills, getTeam, removeDrillFavorite } from '../../../../js/db.js';
+import { addDrillFavorite, getDrill, getDrillFavorites, getDrills, getPublishedDrills, getTeam, removeDrillFavorite } from '../../../../js/db.js';
 import { DRILL_LEVELS, DRILL_TYPES } from '../../../../js/drill-constants.js';
 import { hasFullTeamAccess } from '../../../../js/team-access.js';
 import type { AuthUser } from './types';
@@ -150,7 +150,7 @@ export async function loadTeamDrillLibraryPage(
     level: normalizeFilterValue(filters.level, DRILL_LEVELS as string[])
   };
 
-  const [favoriteIds, page] = await Promise.all([
+  const [favoriteIds, page, publishedDrills] = await Promise.all([
     Promise.resolve(getDrillFavorites(teamId)),
     Promise.resolve(getDrills({
       sport: access.team.sport,
@@ -159,12 +159,25 @@ export async function loadTeamDrillLibraryPage(
       searchText: normalizedFilters.searchText || undefined,
       limitCount: drillLibraryPageSize,
       startAfterDoc: filters.cursor || null
+    })),
+    Promise.resolve(getPublishedDrills({
+      sport: access.team.sport,
+      type: normalizedFilters.type || undefined,
+      level: normalizedFilters.level || undefined,
+      searchText: normalizedFilters.searchText || undefined,
+      limitCount: drillLibraryPageSize
     }))
   ]);
 
+  const mergedDrills = [...(Array.isArray(page?.drills) ? page.drills : []), ...(Array.isArray(publishedDrills) ? publishedDrills : [])];
+  const uniqueDrills = Array.from(new Map(mergedDrills.map((drill) => [normalizeString(drill?.id), drill])).entries())
+    .filter(([id]) => Boolean(id))
+    .map(([, drill]) => drill)
+    .sort((left, right) => normalizeString(left?.title).localeCompare(normalizeString(right?.title)));
+
   return {
     ...access,
-    drills: (Array.isArray(page?.drills) ? page.drills : []).map(toTeamDrillSummary),
+    drills: uniqueDrills.slice(0, drillLibraryPageSize).map(toTeamDrillSummary),
     favoriteIds: Array.isArray(favoriteIds) ? favoriteIds.map((id) => normalizeString(id)).filter(Boolean) : [],
     nextCursor: page?.lastDoc || null,
     filters: normalizedFilters
@@ -186,8 +199,8 @@ export async function loadFavoriteDrills(teamId: string, user: AuthUser | null):
   const favoriteDrills = await Promise.all((Array.isArray(favoriteIds) ? favoriteIds : []).map((drillId) => Promise.resolve(getDrill(drillId))));
 
   const drills = favoriteDrills
+    .filter((drill) => drill && normalizeString(drill.sport) === access.team.sport)
     .map((drill) => toTeamDrillSummary(drill))
-    .filter((drill) => drill && drill.sport === access.team.sport)
     .sort((left, right) => left.title.localeCompare(right.title));
 
   return {

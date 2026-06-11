@@ -6,6 +6,7 @@ const dbMocks = vi.hoisted(() => ({
   getDrill: vi.fn(),
   getDrillFavorites: vi.fn(),
   getDrills: vi.fn(),
+  getPublishedDrills: vi.fn(),
   getTeam: vi.fn(),
   removeDrillFavorite: vi.fn()
 }));
@@ -36,6 +37,7 @@ describe('teamDrillsService', () => {
       }],
       lastDoc: { id: 'cursor-1' }
     });
+    dbMocks.getPublishedDrills.mockResolvedValue([]);
     dbMocks.getDrill.mockImplementation(async (drillId: string) => ({
       id: drillId,
       title: drillId === 'drill-2' ? 'Finishing ladder' : 'Other drill',
@@ -106,7 +108,21 @@ describe('teamDrillsService', () => {
     expect(filterDrillSummaries(drills, { type: 'Warm-up' }).map((drill) => drill.id)).toEqual(['drill-2']);
   });
 
-  it('loads a bounded community drill page and favorites for staff users', async () => {
+  it('loads a bounded community drill page and merges team-published drills for staff users', async () => {
+    dbMocks.getPublishedDrills.mockResolvedValue([
+      {
+        id: 'drill-3',
+        title: 'Community finishing',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'Intermediate',
+        skills: ['finishing'],
+        description: 'Published by a coach.',
+        instructions: 'Rotate every rep.',
+        setup: { duration: 10, players: '6-8', cones: 4 }
+      }
+    ]);
+
     const result = await loadTeamDrillLibraryPage('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, {
       searchText: ' rondo ',
       type: 'Technical',
@@ -122,21 +138,40 @@ describe('teamDrillsService', () => {
       limitCount: 12,
       startAfterDoc: { id: 'cursor-0' }
     });
+    expect(dbMocks.getPublishedDrills).toHaveBeenCalledWith({
+      sport: 'Soccer',
+      type: 'Technical',
+      level: 'Intermediate',
+      searchText: 'rondo',
+      limitCount: 12
+    });
     expect(result.favoriteIds).toEqual(['drill-2']);
     expect(result.nextCursor).toEqual({ id: 'cursor-1' });
-    expect(result.drills[0]).toEqual(expect.objectContaining({
-      id: 'drill-1',
-      title: 'Rondo 4v2',
-      type: 'Technical',
-      level: 'Intermediate'
-    }));
+    expect(result.drills.map((drill) => drill.id)).toEqual(['drill-3', 'drill-1']);
   });
 
-  it('loads favorite drill details from the shared team favorites store', async () => {
+  it('loads favorite drill details from the shared team favorites store and skips missing drills', async () => {
+    dbMocks.getDrillFavorites.mockResolvedValue(['drill-2', 'missing-drill']);
+    dbMocks.getDrill.mockImplementation(async (drillId: string) => {
+      if (drillId === 'missing-drill') return null;
+      return {
+        id: drillId,
+        title: 'Finishing ladder',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'All',
+        skills: ['finishing'],
+        description: 'Sharpen the final touch.',
+        instructions: 'Rotate lines every 2 reps.',
+        setup: { duration: 12, players: '6-8', cones: 4 }
+      };
+    });
+
     const result = await loadFavoriteDrills('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
 
     expect(dbMocks.getDrillFavorites).toHaveBeenCalledWith('team-1');
     expect(dbMocks.getDrill).toHaveBeenCalledWith('drill-2');
+    expect(dbMocks.getDrill).toHaveBeenCalledWith('missing-drill');
     expect(result.drills).toEqual([
       expect.objectContaining({
         id: 'drill-2',
