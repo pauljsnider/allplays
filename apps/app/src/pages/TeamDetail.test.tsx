@@ -6,6 +6,7 @@ import { TeamDetail } from './TeamDetail';
 import type { AuthState } from '../lib/types';
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
+  addRosterPlayerForApp: vi.fn(),
   buildPublicTeamGamesIcsUrl: vi.fn(() => 'https://calendar.example.test/team.ics'),
   canExposePublicFanFeed: vi.fn(() => true),
   createRosterParentInviteForApp: vi.fn(),
@@ -14,6 +15,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   grantVideographerAccessForApp: vi.fn(),
   inviteTeamAdminForApp: vi.fn(),
   loadParentTeamDetail: vi.fn(),
+  loadRosterFieldDefinitionsForApp: vi.fn(),
   loadTeamDetailInsights: vi.fn(),
   loadTeamDetailSponsors: vi.fn(),
   loadTeamRosterParentInvites: vi.fn(),
@@ -120,11 +122,13 @@ describe('TeamDetail', () => {
       writable: true
     });
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(model);
+    teamDetailServiceMocks.loadRosterFieldDefinitionsForApp.mockResolvedValue([]);
     teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [] });
     teamDetailServiceMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
     teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
     teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(null);
     teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
+    teamDetailServiceMocks.addRosterPlayerForApp.mockResolvedValue({ playerId: 'player-2' });
     teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
     teamDetailServiceMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
@@ -208,6 +212,97 @@ describe('TeamDetail', () => {
 
     await waitFor(() => expect(teamDetailServiceMocks.reactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-2'));
     expect(await screen.findByText('Sam Bench reactivated.')).toBeTruthy();
+  });
+
+  it('shows the native add-player form only for team managers', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    expect(screen.queryByRole('button', { name: 'Add player' })).toBeNull();
+
+    cleanup();
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      canManageTeam: true
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    expect(await screen.findByRole('button', { name: 'Add player' })).toBeTruthy();
+  });
+
+  it('lets team staff add a player from the native roster tab and refreshes the roster', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce(managedModel)
+      .mockResolvedValueOnce({
+        ...managedModel,
+        players: [
+          ...managedModel.players,
+          { id: 'player-2', name: 'Alex New', number: '14', photoUrl: null, position: '', isLinked: false, active: true }
+        ]
+      });
+    teamDetailServiceMocks.loadRosterFieldDefinitionsForApp.mockResolvedValue([
+      {
+        key: 'grad_year',
+        label: 'Grad Year',
+        type: 'menu',
+        section: '',
+        required: false,
+        options: [{ value: '2028', label: '2028' }],
+        description: '',
+        visibility: 'team',
+        active: true,
+        sortOrder: 1
+      }
+    ]);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add player' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.loadRosterFieldDefinitionsForApp).toHaveBeenCalledWith('team-1', auth.user));
+    fireEvent.change(screen.getByPlaceholderText('Player name'), { target: { value: 'Alex New' } });
+    fireEvent.change(screen.getByPlaceholderText('Optional'), { target: { value: '14' } });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '2028' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save player' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.addRosterPlayerForApp).toHaveBeenCalledWith('team-1', auth.user, {
+      name: 'Alex New',
+      number: '14',
+      photoFile: null,
+      rosterFieldValues: {
+        grad_year: '2028'
+      }
+    }));
+    await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Alex New added to roster.')).toBeTruthy();
   });
 
   it('links staff to the native certificates draft screen from the team more tab', async () => {

@@ -1,4 +1,5 @@
 import {
+  addPlayer,
   getAggregatedStatsForGames,
   getAdSpaceSponsors,
   getConfigs,
@@ -8,6 +9,7 @@ import {
   getPlayers,
   getPlayerTrackingStatuses,
   getPublicTrackingItems,
+  getRosterFieldDefinitions,
   getTeam,
   getAllUsers,
   updateTeam,
@@ -18,11 +20,14 @@ import {
   revokeScorekeeperAccess,
   revokeVideographerAccess,
   deactivatePlayer,
-  reactivatePlayer
+  reactivatePlayer,
+  setPlayerPrivateRosterProfileFields,
+  uploadPlayerPhoto
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
 import { collection, db, getDocs, query, where } from '../../../../js/firebase.js';
+import { normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility, validateRosterProfileValues } from '../../../../js/roster-profile-fields.js';
 import { describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
@@ -60,6 +65,26 @@ export type TeamRosterParentInviteSummary = {
   acceptedParentCount: number;
   pendingInviteCount: number;
   latestPendingCode: string;
+};
+
+export type TeamRosterFieldDefinition = {
+  key: string;
+  label: string;
+  type: 'text' | 'menu' | 'checkbox' | 'date';
+  section: string;
+  required: boolean;
+  options: Array<{ value: string; label: string }>;
+  description: string;
+  visibility: string;
+  active: boolean;
+  sortOrder: number;
+};
+
+export type CreateRosterPlayerForAppInput = {
+  name: string;
+  number?: string;
+  photoFile?: File | null;
+  rosterFieldValues?: Record<string, unknown>;
 };
 
 export type TeamDetailEvent = {
@@ -586,6 +611,63 @@ export async function createRosterParentInviteForApp(teamId: string, user: AuthU
     autoLinked: inviteResult?.autoLinked === true,
     teamName: inviteResult?.teamName || null,
     playerName: inviteResult?.playerName || null
+  };
+}
+
+export async function loadRosterFieldDefinitionsForApp(teamId: string, user: AuthUser | null): Promise<TeamRosterFieldDefinition[]> {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to manage roster players for this team.');
+  }
+
+  return normalizeRosterFieldDefinitions(await getRosterFieldDefinitions(normalizedTeamId, team)) as TeamRosterFieldDefinition[];
+}
+
+export async function addRosterPlayerForApp(teamId: string, user: AuthUser | null, input: CreateRosterPlayerForAppInput) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to manage roster players for this team.');
+  }
+
+  const name = cleanString(input?.name);
+  if (!name) throw new Error('Player name is required.');
+
+  const rosterFields = await loadRosterFieldDefinitionsForApp(normalizedTeamId, user);
+  const rosterFieldValues = normalizeRosterFieldValuesForSave(rosterFields, input?.rosterFieldValues || {});
+  const validationErrors = validateRosterProfileValues(rosterFields, rosterFieldValues);
+  if (validationErrors.length) {
+    throw new Error(validationErrors.join('\n'));
+  }
+  const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(rosterFields, rosterFieldValues);
+
+  let photoUrl: string | null = null;
+  if (input?.photoFile) {
+    validateLegacyRosterPhotoFile(input.photoFile);
+    photoUrl = await uploadPlayerPhoto(input.photoFile);
+  }
+
+  const player = {
+    name,
+    number: cleanString(input?.number),
+    photoUrl,
+    profile: {
+      customFields: publicValues
+    }
+  };
+
+  const playerId = await addPlayer(normalizedTeamId, player);
+  await setPlayerPrivateRosterProfileFields(normalizedTeamId, playerId, privateValues);
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+
+  return {
+    playerId,
+    player
   };
 }
 
@@ -1420,6 +1502,31 @@ function toNullableNumber(value: any) {
 
 function cleanString(value: unknown) {
   return String(value || '').trim();
+}
+
+function normalizeRosterFieldValuesForSave(fields: TeamRosterFieldDefinition[], values: Record<string, unknown>) {
+  const normalizedValues: Record<string, unknown> = {};
+  fields.forEach((field) => {
+    const rawValue = values?.[field.key];
+    if (field.type === 'checkbox') {
+      normalizedValues[field.key] = rawValue === true;
+      return;
+    }
+    normalizedValues[field.key] = cleanString(rawValue);
+  });
+  return normalizedValues;
+}
+
+function validateLegacyRosterPhotoFile(file: File) {
+  if (!String(file?.type || '').startsWith('image/')) {
+    throw new Error('Please select an image file.');
+  }
+  if (!Number.isFinite(file?.size) || file.size <= 0) {
+    throw new Error('Please select an image file.');
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    throw new Error('Image must be smaller than 5MB.');
+  }
 }
 
 function getFirstUrl(...values: unknown[]) {

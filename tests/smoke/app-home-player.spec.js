@@ -377,6 +377,10 @@ async function mockHomePlayerModules(page) {
                     return { code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' };
                 }
 
+                export async function addRosterPlayerForApp() {
+                    return { playerId: 'player-new' };
+                }
+
                 export async function deactivateRosterPlayerForApp() {}
 
                 export async function grantScorekeeperAccessForApp() {
@@ -442,6 +446,10 @@ async function mockHomePlayerModules(page) {
                             || event?.isPublic === true
                             || event?.shareable === true
                             || event?.publicCalendar === true));
+                }
+
+                export async function loadRosterFieldDefinitionsForApp() {
+                    return [];
                 }
 
                 export async function loadParentTeamDetail() {

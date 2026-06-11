@@ -5,7 +5,9 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const teamDetailMocks = vi.hoisted(() => ({
+    addRosterPlayerForApp: vi.fn(),
     loadParentTeamDetail: vi.fn(),
+    loadRosterFieldDefinitionsForApp: vi.fn(),
     loadTeamDetailInsights: vi.fn(),
     loadTeamDetailSponsors: vi.fn(),
     loadTeamStaffPermissions: vi.fn(),

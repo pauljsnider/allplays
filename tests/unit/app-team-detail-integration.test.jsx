@@ -5,7 +5,9 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const teamDetailMocks = vi.hoisted(() => ({
+    addRosterPlayerForApp: vi.fn(),
     loadParentTeamDetail: vi.fn(),
+    loadRosterFieldDefinitionsForApp: vi.fn(),
     loadTeamDetailInsights: vi.fn(),
     loadTeamDetailSponsors: vi.fn(),
     loadTeamRosterParentInvites: vi.fn(),
@@ -39,7 +41,9 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
+    addRosterPlayerForApp: teamDetailMocks.addRosterPlayerForApp,
     loadParentTeamDetail: teamDetailMocks.loadParentTeamDetail,
+    loadRosterFieldDefinitionsForApp: teamDetailMocks.loadRosterFieldDefinitionsForApp,
     loadTeamDetailInsights: teamDetailMocks.loadTeamDetailInsights,
     loadTeamDetailSponsors: teamDetailMocks.loadTeamDetailSponsors,
     loadTeamRosterParentInvites: teamDetailMocks.loadTeamRosterParentInvites,
