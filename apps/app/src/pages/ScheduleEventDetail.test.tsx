@@ -52,6 +52,24 @@ vi.mock('../lib/scheduleHub', () => ({
   buildPracticeHubDestinations: vi.fn(() => []),
   getPublicPlayerHref: vi.fn(() => '#')
 }));
+const practiceTimelineServiceMocks = vi.hoisted(() => ({
+  loadPracticeTimelineModel: vi.fn(),
+  savePracticeTimelineForApp: vi.fn(),
+  appendPracticeTimelineLiveNoteForApp: vi.fn(),
+  getPracticeTimelineTotalMinutes: vi.fn((blocks) => (Array.isArray(blocks) ? blocks.reduce((sum, block) => sum + (Number(block?.duration) || 0), 0) : 0)),
+  createPracticeTimelineBlockFromOption: vi.fn((option, index) => ({
+    order: index,
+    drillId: option.id,
+    drillTitle: option.title,
+    type: option.type,
+    duration: option.duration,
+    description: option.description,
+    notes: '',
+    notesLog: []
+  }))
+}));
+
+vi.mock('../lib/practiceTimelineService', () => practiceTimelineServiceMocks);
 
 import { ScheduleEventDetail, shouldAutosaveGeneratedLineupDraft, shouldAutosaveLineupDraft, shouldPersistLineupDraft } from './ScheduleEventDetail';
 import type { AuthState } from '../lib/types';
@@ -522,6 +540,113 @@ describe('ScheduleEventDetail practice attendance', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Avery Smith marked present.')).toBeTruthy();
+    });
+  });
+});
+
+describe('ScheduleEventDetail practice timeline', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+    practiceTimelineServiceMocks.loadPracticeTimelineModel.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      teamName: 'Bears',
+      teamSport: 'Soccer',
+      blocks: [
+        {
+          order: 0,
+          drillId: 'drill-1',
+          drillTitle: 'Warm-up',
+          type: 'Warm-up',
+          duration: 10,
+          description: 'Start with touches',
+          notes: 'Keep it moving',
+          notesLog: []
+        }
+      ],
+      drillOptions: [
+        {
+          id: 'drill-2',
+          title: 'Finishing',
+          type: 'Technical',
+          duration: 15,
+          description: 'Shots from the top',
+          source: 'team'
+        }
+      ]
+    });
+    practiceTimelineServiceMocks.savePracticeTimelineForApp.mockResolvedValue('session-1');
+    practiceTimelineServiceMocks.appendPracticeTimelineLiveNoteForApp.mockImplementation(async (input) => ({
+      sessionId: 'session-1',
+      blocks: input.blocks.map((block, index) => (
+        index === input.blockIndex
+          ? { ...block, notesLog: [...(block.notesLog || []), { type: 'text', text: input.text, createdAt: '2026-06-11T06:08:00.000Z' }] }
+          : block
+      ))
+    }));
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('renders practice timeline controls, saves added drills, and persists live notes', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        type: 'practice',
+        title: 'Thursday Practice',
+        isTeamStaff: true,
+        isTeamAdmin: true,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue(null);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Practice timeline')).toBeTruthy();
+    });
+    expect(screen.getAllByText('Warm-up').length).toBeGreaterThan(0);
+    expect(screen.getByText('1 drill · 10 min planned')).toBeTruthy();
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'drill-2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add drill' }));
+
+    await waitFor(() => {
+      expect(practiceTimelineServiceMocks.savePracticeTimelineForApp).toHaveBeenCalledWith(expect.objectContaining({
+        eventId: 'practice-1',
+        blocks: [
+          expect.objectContaining({ drillTitle: 'Warm-up' }),
+          expect.objectContaining({ drillTitle: 'Finishing', duration: 15 })
+        ]
+      }));
+    });
+
+    fireEvent.change(screen.getByLabelText('Live note'), { target: { value: 'Shorten the water break' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save live note' }));
+
+    await waitFor(() => {
+      expect(practiceTimelineServiceMocks.appendPracticeTimelineLiveNoteForApp).toHaveBeenCalledWith(expect.objectContaining({
+        eventId: 'practice-1',
+        text: 'Shorten the water break'
+      }));
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Shorten the water break', { exact: false })).toBeTruthy();
     });
   });
 });
