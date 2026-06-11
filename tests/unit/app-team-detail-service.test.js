@@ -37,6 +37,7 @@ vi.mock('../../js/db.js', () => ({
     revokeVideographerAccess: vi.fn(),
     deactivatePlayer: vi.fn(),
     reactivatePlayer: vi.fn(),
+    setPlayerPrivateRosterProfileFields: vi.fn(),
     uploadPlayerPhoto: vi.fn()
 }));
 
@@ -59,7 +60,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
 
 import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
-import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, updateEvent, updateGame, updateTeam, uploadPlayerPhoto } from '../../js/db.js';
+import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 beforeEach(() => {
@@ -204,7 +205,7 @@ describe('React app team detail model', () => {
         ]);
     });
 
-    it('creates roster players in the same public doc shape as the legacy roster form without touching private profile docs', async () => {
+    it('splits private roster fields out of the public player doc when creating roster players', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
@@ -227,10 +228,21 @@ describe('React app team detail model', () => {
                 required: false,
                 active: true,
                 sortOrder: 2
+            },
+            {
+                key: 'medical_notes',
+                label: 'Medical Notes',
+                type: 'text',
+                visibility: 'admins',
+                options: [],
+                required: false,
+                active: true,
+                sortOrder: 3
             }
         ]);
         uploadPlayerPhoto.mockResolvedValue('https://img.example.test/player-1.png');
         addPlayer.mockResolvedValue('player-1');
+        setPlayerPrivateRosterProfileFields.mockResolvedValue(undefined);
 
         const photoFile = new File(['abc'], 'player.png', { type: 'image/png' });
         const result = await addRosterPlayerForApp(' team-1 ', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
@@ -239,7 +251,8 @@ describe('React app team detail model', () => {
             photoFile,
             rosterFieldValues: {
                 grad_year: '2028',
-                captain: true
+                captain: true,
+                medical_notes: 'Peanut allergy'
             }
         });
 
@@ -254,6 +267,9 @@ describe('React app team detail model', () => {
                     captain: true
                 }
             }
+        });
+        expect(setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
+            medical_notes: 'Peanut allergy'
         });
         expect(result).toEqual({
             playerId: 'player-1',
