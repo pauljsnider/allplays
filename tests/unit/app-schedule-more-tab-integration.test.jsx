@@ -353,7 +353,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1&section=game');
         await waitForText(container, 'Game hub');
 
-        expect(scheduleMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(scheduleMocks.loadGameDayLiveEventsForApp).not.toHaveBeenCalled();
         expect(container.textContent).toContain('Watch replay');
         expect(container.textContent).toContain('Match report');
         expect(container.textContent).not.toContain('Is Pat going?');
