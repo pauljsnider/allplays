@@ -399,6 +399,11 @@ beforeEach(() => {
         child: { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' },
         player: { id: 'player-1', name: 'Pat Star', teamId: 'team-1', teamName: 'Bears', number: '9', photoUrl: 'https://example.test/linked-season.jpg' },
         team: { id: 'team-1', name: 'Bears', sport: 'basketball' },
+        access: {
+            isLinkedParent: true,
+            isTeamStaff: false,
+            canEditCustomRosterFields: false
+        },
         events: [statEvent, nextEvent, practice],
         nextEvent,
         actionCounts: {
