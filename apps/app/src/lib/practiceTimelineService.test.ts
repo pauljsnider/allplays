@@ -40,8 +40,17 @@ describe('practiceTimelineService', () => {
         { order: 0, drillId: 'drill-1', drillTitle: 'Warm-up', duration: 10, type: 'Warm-up' }
       ]
     });
-    dbMocks.getDrills.mockResolvedValue({ drills: [{ id: 'drill-1', title: 'Warm-up', type: 'Warm-up', setup: { duration: 10 } }], lastDoc: null });
-    dbMocks.getTeamDrills.mockResolvedValue([{ id: 'drill-9', title: 'Pattern play', type: 'Tactical', setup: { duration: 15 } }]);
+    dbMocks.getDrills.mockResolvedValue({
+      drills: [
+        { id: 'drill-1', title: 'Warm-up', type: 'Warm-up', setup: { duration: 10 } },
+        { title: 'Missing id', type: 'Technical', setup: { duration: 5 } }
+      ],
+      lastDoc: null
+    });
+    dbMocks.getTeamDrills.mockResolvedValue([
+      { id: 'drill-9', title: 'Pattern play', type: 'Tactical', setup: { duration: 15 } },
+      { id: '', title: 'Blank id should be ignored', type: 'Technical', setup: { duration: 12 } }
+    ]);
 
     const result = await loadPracticeTimelineModel('team-1', 'practice-1', user);
 

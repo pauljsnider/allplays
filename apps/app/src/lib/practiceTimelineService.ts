@@ -113,9 +113,9 @@ function toDrillOption(drill: any, source: 'community' | 'team'): PracticeTimeli
   };
 }
 
-function unwrapDrillList(value: unknown) {
-  if (Array.isArray(value)) return value;
-  if (Array.isArray((value as any)?.drills)) return (value as any).drills;
+function unwrapDrillList(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) return value as Record<string, unknown>[];
+  if (Array.isArray((value as any)?.drills)) return (value as any).drills as Record<string, unknown>[];
   return [];
 }
 
@@ -145,8 +145,8 @@ export async function loadPracticeTimelineModel(teamId: string, eventId: string,
     .map((block: PracticeTimelineBlock, index: number) => normalizePracticeTimelineBlock(block, index));
 
   const drillOptions = [
-    ...unwrapDrillList(communityDrills).map((drill) => toDrillOption(drill, 'community')),
-    ...unwrapDrillList(teamDrills).map((drill) => toDrillOption(drill, 'team'))
+    ...unwrapDrillList(communityDrills).map((drill: Record<string, unknown>) => toDrillOption(drill, 'community')),
+    ...unwrapDrillList(teamDrills).map((drill: Record<string, unknown>) => toDrillOption(drill, 'team'))
   ].filter(Boolean) as PracticeTimelineDrillOption[];
 
   return {
