@@ -289,6 +289,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect(page.getByText('Pat Star')).toBeVisible();
     await page.getByRole('button', { name: 'Request access without a code' }).click();
     await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(1);
+    await expect(page.getByLabel('Team')).toBeVisible();
     await page.getByLabel('Team').selectOption('team-1');
     await expect.poll(() => page.evaluate(() => window.__playerLoads)).toEqual(['team-1']);
     await page.getByLabel('Player').selectOption('player-1');
