@@ -25,8 +25,27 @@ const dbMocks = vi.hoisted(() => ({
   getTeam: vi.fn()
 }))
 
+const firebaseAppMocks = vi.hoisted(() => ({
+  getApp: vi.fn(() => ({ name: 'test-app' }))
+}))
+
+const firebaseAiMocks = vi.hoisted(() => ({
+  generateContent: vi.fn(),
+  getAI: vi.fn(() => ({ kind: 'ai' })),
+  getGenerativeModel: vi.fn(() => ({ generateContent: firebaseAiMocks.generateContent })),
+  GoogleAIBackend: class GoogleAIBackend {},
+  Schema: {
+    object: vi.fn((value) => value),
+    array: vi.fn((value) => value),
+    string: vi.fn(() => ({ type: 'string' })),
+    number: vi.fn(() => ({ type: 'number' }))
+  }
+}))
+
 vi.mock('../../../../js/firebase.js', () => firebaseMocks)
 vi.mock('../../../../js/db.js', () => dbMocks)
+vi.mock('../../../../js/vendor/firebase-app.js', () => firebaseAppMocks)
+vi.mock('../../../../js/vendor/firebase-ai.js', () => firebaseAiMocks)
 vi.mock('./profileService', () => ({ acquireProfilePhoto: vi.fn() }))
 vi.mock('../../../../js/live-tracker-save-complete.js', () => ({
   addAggregatedStatsWritesToBatch: vi.fn(({ aggregatedStatsWrites = [], batch, db, currentTeamId, currentGameId, createDocRef }: any) => {
@@ -36,7 +55,7 @@ vi.mock('../../../../js/live-tracker-save-complete.js', () => ({
   })
 }))
 
-import { applyTrackStatsheetImportForApp, buildTrackStatsheetReviewModel } from './statsheetImportService'
+import { analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, buildTrackStatsheetReviewModel } from './statsheetImportService'
 
 describe('buildTrackStatsheetReviewModel', () => {
   it('swaps sides when visitor rows match the roster better and auto-assigns players', () => {
@@ -57,6 +76,45 @@ describe('buildTrackStatsheetReviewModel', () => {
     ])
     expect(review.homeScore).toBe(41)
     expect(review.awayScore).toBe(53)
+  })
+})
+
+describe('analyzeTrackStatsheetPhoto', () => {
+  it('falls back to an empty review model when the AI response JSON is malformed', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const originalFileReader = globalThis.FileReader
+    globalThis.FileReader = class FileReader {
+      result: string | ArrayBuffer | null = null
+      onloadend: null | (() => void) = null
+
+      readAsDataURL() {
+        this.result = 'data:image/png;base64,c2hlZXQ='
+        this.onloadend?.()
+      }
+    } as unknown as typeof FileReader
+    firebaseAiMocks.generateContent.mockResolvedValue({
+      response: {
+        text: () => '{not-json'
+      }
+    })
+
+    const review = await analyzeTrackStatsheetPhoto(new File(['sheet'], 'statsheet.png', { type: 'image/png' }), [
+      { id: 'p1', number: '12', name: 'Avery Smith' }
+    ])
+
+    expect(review).toEqual({
+      homeRows: [],
+      visitorRows: [],
+      homeScore: 0,
+      awayScore: 0,
+      shouldSwap: false,
+      homeMatches: 0,
+      visitorMatches: 0
+    })
+    expect(warnSpy).toHaveBeenCalledWith('[statsheetImportService] Failed to parse AI response', expect.any(SyntaxError))
+
+    warnSpy.mockRestore()
+    globalThis.FileReader = originalFileReader
   })
 })
 

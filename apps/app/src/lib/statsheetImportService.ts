@@ -254,7 +254,12 @@ export async function analyzeTrackStatsheetPhoto(file: File, roster: TrackStatsh
 
   const imagePart = await fileToGenerativePart(file)
   const result = await model.generateContent([trackStatsheetPromptText, imagePart])
-  const response = JSON.parse(result.response.text() || '{}')
+  let response: TrackStatsheetAiResponse = {}
+  try {
+    response = JSON.parse(result.response.text() || '{}')
+  } catch (parseError) {
+    console.warn('[statsheetImportService] Failed to parse AI response', parseError)
+  }
   return buildTrackStatsheetReviewModel(response, roster)
 }
 

@@ -2271,12 +2271,6 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
   const [loadingContext, setLoadingContext] = useState(false)
   const [uploadedPhotoUrl, setUploadedPhotoUrl] = useState('')
 
-  useEffect(() => {
-    setHomeScore(Math.max(0, Number(event.homeScore ?? 0)))
-    setAwayScore(Math.max(0, Number(event.awayScore ?? 0)))
-    setUploadedPhotoUrl('')
-  }, [event.eventKey, event.homeScore, event.awayScore])
-
   useEffect(() => () => {
     if (previewUrlRef.current) {
       URL.revokeObjectURL(previewUrlRef.current)
@@ -2314,6 +2308,19 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
     previewUrlRef.current = nextPreviewUrl
     setPhotoPreviewUrl(nextPreviewUrl)
   }, [])
+
+  useEffect(() => {
+    setPreviewFile(null)
+    setRoster([])
+    setColumns([])
+    setHomeRows([])
+    setVisitorRows([])
+    setHomeScore(Math.max(0, Number(event.homeScore ?? 0)))
+    setAwayScore(Math.max(0, Number(event.awayScore ?? 0)))
+    setMatchHint('')
+    setStatus(null)
+    setUploadedPhotoUrl('')
+  }, [event.eventKey, event.homeScore, event.awayScore, setPreviewFile])
 
   const handlePhotoSelection = useCallback((nextFile: File | null) => {
     if (!nextFile) return
@@ -2401,6 +2408,10 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
       })
 
       if (result.requiresReplaceConfirmation) {
+        if (replaceExisting) {
+          setStatus({ tone: 'error', message: 'Replacement confirmation could not be completed. Please try again later.' })
+          return
+        }
         const confirmed = window.confirm('This game already has tracked data. Replace it with the stat sheet results?')
         if (confirmed) {
           await handleApply(true)

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
@@ -183,6 +183,27 @@ function renderScheduleEventDetail() {
     <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1']}>
       <Routes>
         <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        <Route path="/schedule" element={<div>Schedule</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+function renderScheduleEventDetailWithRouteControls(initialEntry = '/schedule/team-1/game-1?childId=player-1&section=game') {
+  function TestHarness() {
+    const navigate = useNavigate();
+    return (
+      <>
+        <button type="button" onClick={() => navigate('/schedule/team-1/game-2?childId=player-1&section=game')}>Switch game</button>
+        <ScheduleEventDetail auth={auth} />
+      </>
+    );
+  }
+
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <Routes>
+        <Route path="/schedule/:teamId/:eventId" element={<TestHarness />} />
         <Route path="/schedule" element={<div>Schedule</div>} />
       </Routes>
     </MemoryRouter>
@@ -1346,6 +1367,133 @@ describe('ScheduleEventDetail statsheet import', () => {
       expect(statsheetImportServiceMocks.applyTrackStatsheetImportForApp).toHaveBeenCalledWith(expect.objectContaining({
         homeRows: [expect.objectContaining({ mappedPlayerId: 'p1', fouls: 4, totalPoints: 10 })]
       }));
+    });
+  });
+
+  it('stops retrying when replacement confirmation keeps being required', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true })],
+      children: []
+    });
+    statsheetImportServiceMocks.loadTrackStatsheetContextForApp.mockResolvedValue({
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      config: { columns: ['PTS'] }
+    });
+    statsheetImportServiceMocks.analyzeTrackStatsheetPhoto.mockResolvedValue({
+      homeRows: [{ number: '12', name: 'Avery Smith', fouls: 1, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+      visitorRows: [],
+      homeScore: 10,
+      awayScore: 8,
+      shouldSwap: false,
+      homeMatches: 1,
+      visitorMatches: 0
+    });
+    statsheetImportServiceMocks.applyTrackStatsheetImportForApp
+      .mockResolvedValueOnce({ requiresReplaceConfirmation: true })
+      .mockResolvedValueOnce({ requiresReplaceConfirmation: true });
+
+    const rendered = renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+
+    const fileInput = rendered.container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(['sheet'], 'statsheet.png', { type: 'image/png' })] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze photo' }));
+    await screen.findByLabelText('Home player 1 fouls');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to game' }));
+
+    await waitFor(() => {
+      expect(statsheetImportServiceMocks.applyTrackStatsheetImportForApp).toHaveBeenCalledTimes(2);
+    });
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Replacement confirmation could not be completed. Please try again later.')).toBeTruthy();
+
+    confirmSpy.mockRestore();
+  });
+
+  it('clears stale statsheet state and reloads context when switching games', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
+      events: [eventId === 'game-2'
+        ? buildEvent({
+            eventKey: 'team-1::game-2::player-1::2026-06-05T18:00:00.000Z::game',
+            id: 'game-2',
+            opponent: 'Lions',
+            homeScore: 21,
+            awayScore: 19,
+            isTeamStaff: true,
+            canUpdateScore: true
+          })
+        : buildEvent({ isTeamStaff: true, canUpdateScore: true })],
+      children: []
+    }));
+    statsheetImportServiceMocks.loadTrackStatsheetContextForApp.mockImplementation(async (_teamId, gameId) => ({
+      roster: gameId === 'game-2'
+        ? [{ id: 'p2', name: 'Jordan Lee', number: '7' }]
+        : [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      config: { columns: ['PTS'] }
+    }));
+    statsheetImportServiceMocks.analyzeTrackStatsheetPhoto.mockImplementation(async (_file, roster) => {
+      if (roster[0]?.id === 'p2') {
+        return {
+          homeRows: [{ number: '7', name: 'Jordan Lee', fouls: 2, totalPoints: 14, include: true, mappedPlayerId: 'p2' }],
+          visitorRows: [],
+          homeScore: 21,
+          awayScore: 19,
+          shouldSwap: false,
+          homeMatches: 1,
+          visitorMatches: 0
+        };
+      }
+      return {
+        homeRows: [{ number: '12', name: 'Avery Smith', fouls: 1, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+        visitorRows: [],
+        homeScore: 10,
+        awayScore: 8,
+        shouldSwap: false,
+        homeMatches: 1,
+        visitorMatches: 0
+      };
+    });
+
+    const rendered = renderScheduleEventDetailWithRouteControls();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('statsheet-import-panel')).toBeTruthy();
+    });
+
+    let fileInput = rendered.container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(['sheet-1'], 'statsheet-1.png', { type: 'image/png' })] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze photo' }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Avery Smith')).toBeTruthy();
+    });
+    expect(screen.getByAltText('Statsheet preview')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch game' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Lions/ })).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.queryByDisplayValue('Avery Smith')).toBeNull();
+    });
+    expect(screen.queryByAltText('Statsheet preview')).toBeNull();
+
+    fileInput = rendered.container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [new File(['sheet-2'], 'statsheet-2.png', { type: 'image/png' })] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Analyze photo' }));
+
+    await waitFor(() => {
+      expect(statsheetImportServiceMocks.loadTrackStatsheetContextForApp).toHaveBeenCalledWith('team-1', 'game-2');
+    });
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Jordan Lee')).toBeTruthy();
     });
   });
 });
