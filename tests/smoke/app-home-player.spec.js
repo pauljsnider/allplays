@@ -381,6 +381,10 @@ async function mockHomePlayerModules(page) {
                     return { success: true };
                 }
 
+                export async function revokeTeamAdminAccessForApp() {
+                    return { success: true };
+                }
+
                 export async function grantVideographerAccessForApp() {
                     return { success: true };
                 }
