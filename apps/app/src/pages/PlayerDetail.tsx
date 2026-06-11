@@ -429,6 +429,7 @@ const profilePanels: Array<{ id: ProfilePanelId; label: string }> = [
 function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
   const [athleteProfileShareState, setAthleteProfileShareState] = useState({ hasUnsavedPublishChanges: false, saving: false });
+  const customRosterFields = Array.isArray(data.customRosterFields) ? data.customRosterFields : [];
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
 
@@ -472,7 +473,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
       {activePanel === 'edit' ? (
         <>
           <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} />
-          {data.customRosterFields.length ? <CustomRosterFieldsCard data={data} auth={auth} onChanged={onChanged} /> : null}
+          {customRosterFields.length ? <CustomRosterFieldsCard data={data} auth={auth} onChanged={onChanged} /> : null}
         </>
       ) : null}
       {activePanel === 'athlete' ? (

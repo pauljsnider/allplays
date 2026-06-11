@@ -433,6 +433,7 @@ beforeEach(() => {
             totalPaidCents: 0,
             unpaidCents: 1200
         },
+        customRosterFields: undefined,
         athleteProfile: {
             profile: {
                 id: 'profile-1',
