@@ -59,10 +59,15 @@ vi.mock('../lib/gameWrapupService', () => gameWrapupServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/liveGameAnnouncer', () => ({ useLiveGameAnnouncer: vi.fn() }));
 const liveGameReactionsServiceMocks = vi.hoisted(() => ({
-  canUseLiveGameReactions: vi.fn(() => true),
-  getLiveGameReactionNotice: vi.fn(() => null),
-  sendLiveGameReaction: vi.fn(),
-  subscribeToLiveGameReactions: vi.fn(() => vi.fn()),
+  canUseLiveGameReactions: vi.fn<(game: unknown, options?: unknown) => boolean>(() => true),
+  getLiveGameReactionNotice: vi.fn<(game: unknown, options?: unknown) => string | null>(() => null),
+  sendLiveGameReaction: vi.fn<(teamId: string, gameId: string, input: unknown) => Promise<unknown>>(),
+  subscribeToLiveGameReactions: vi.fn<(
+    teamId: string,
+    gameId: string,
+    callback: (reaction: { id: string; type: 'heart' | 'fire' | 'clap' | 'wow' | 'hundred' }) => void,
+    onError?: (error: unknown) => void
+  ) => () => void>(() => vi.fn()),
   liveGameReactionOptions: [
     { key: 'fire', emoji: '🔥', label: 'Fire' },
     { key: 'clap', emoji: '👏', label: 'Clap' },
@@ -201,7 +206,7 @@ describe('ScheduleEventDetail assignments', () => {
   });
 
   it('streams and sends live game reactions from the game hub', async () => {
-    let reactionCallback: ((reaction: { id: string; type: 'heart' | 'fire' | 'clap' | 'wow' | 'hundred' }) => void) | null = null;
+    let reactionCallback: (reaction: { id: string; type: 'heart' | 'fire' | 'clap' | 'wow' | 'hundred' }) => void = () => {};
     liveGameReactionsServiceMocks.subscribeToLiveGameReactions.mockImplementation((_teamId, _gameId, callback) => {
       reactionCallback = callback;
       return vi.fn();
@@ -223,7 +228,7 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByTestId('live-game-reactions-panel')).toBeTruthy();
     });
 
-    reactionCallback?.({ id: 'reaction-1', type: 'heart' });
+    reactionCallback({ id: 'reaction-1', type: 'heart' });
 
     await waitFor(() => {
       expect(screen.getByLabelText('Live reaction heart')).toBeTruthy();
