@@ -738,14 +738,15 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Lineup publish');
+        await waitForText(container, 'Lineup builder');
+        await waitForText(container, 'No lineup draft is available yet.');
 
-        expect(container.textContent).toContain('No lineup draft is available yet.');
-        expect(container.textContent).toContain('Save a lineup draft before publishing.');
+        expect(container.querySelector('#game-hub-lineup-formation')).not.toBeNull();
         expect(buttonByText(container, 'Publish lineup').disabled).toBe(true);
     });
 
     it('creates a lineup draft from Going players and enables publish without reloading', async () => {
+        vi.useFakeTimers();
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [event({ canUpdateScore: true, isTeamStaff: true, gamePlan: { lineups: {} } })]
         });
@@ -753,7 +754,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Lineup draft');
+        await waitForText(container, 'Lineup builder');
 
         const select = container.querySelector('#game-hub-lineup-formation');
         await act(async () => {
@@ -761,12 +762,14 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             select.dispatchEvent(new Event('change', { bubbles: true }));
         });
         await waitForText(container, '#1 Avery');
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(900);
+        });
 
-        expect(buttonByText(container, 'Save draft').disabled).toBe(false);
-        await clickButton(container, 'Save draft');
-
-        expect(scheduleMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, 'basketball-5v5');
-        await waitForText(container, 'Draft lineup has not been published.');
+        expect(scheduleMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, 'basketball-5v5', expect.objectContaining({
+            lineups: expect.objectContaining({ 'Q1-pg': 'p1', 'Q1-sg': 'p2' })
+        }));
+        expect(container.textContent).toContain('Lineup draft autosaved.');
         expect(buttonByText(container, 'Publish lineup').disabled).toBe(false);
     });
 
