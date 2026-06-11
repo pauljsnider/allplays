@@ -96,10 +96,12 @@ describe('game schedule update push notifications', () => {
         const liveScoreIndex = notifyBody.indexOf("category === 'liveScore'");
         const scoreBodyIndex = notifyBody.indexOf('Score is now ${toNumericScore(after.homeScore)}-${toNumericScore(after.awayScore)}');
         const schedulePayloadIndex = notifyBody.indexOf('buildScheduleUpdateNotificationPayload(before, after)');
+        const indexedLookupIndex = functionsSource.indexOf("firestore.collection(`teams/${teamId}/notificationTargets`)");
 
         expect(liveScoreIndex).toBeGreaterThan(-1);
         expect(scoreBodyIndex).toBeGreaterThan(liveScoreIndex);
         expect(schedulePayloadIndex).toBeGreaterThan(scoreBodyIndex);
+        expect(indexedLookupIndex).toBeGreaterThan(-1);
         expect(notifyBody).toContain('title: payload.title');
         expect(notifyBody).toContain('body: payload.body');
     });

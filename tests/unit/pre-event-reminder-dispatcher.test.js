@@ -64,6 +64,7 @@ describe('pre-event reminder dispatcher function', () => {
         expect(pushSendIndex).toBeGreaterThan(chatErrorIndex);
         expect(emailSendIndex).toBeGreaterThan(pushSendIndex);
         expect(functionsSource).toContain("'scheduleNotifications.chatMessageError'");
+        expect(functionsSource).toContain("firestore.collection(`teams/${teamId}/notificationTargets`)");
     });
 
     it('does not route reminder fallback chat docs through live-chat push preferences', () => {

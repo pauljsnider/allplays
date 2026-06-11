@@ -14,9 +14,13 @@ describe('profile notification wiring', () => {
 
   it('wires db and push modules for notification settings', () => {
     const source = readFileSync(new URL('../../profile.html', import.meta.url), 'utf8');
+    const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
     expect(source).toContain('getNotificationPreferencesForTeam');
     expect(source).toContain('saveNotificationPreferencesForTeam');
     expect(source).toContain('registerPushNotifications');
+    expect(functionsSource).toContain("exports.syncTeamNotificationTargetsOnPreferenceWrite");
+    expect(functionsSource).toContain("exports.syncTeamNotificationTargetsOnDeviceWrite");
+    expect(functionsSource).toContain("teams/${teamId}/notificationTargets");
   });
 
   it('renders and validates the account merge request entry point', () => {
