@@ -630,6 +630,43 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
   });
 
+  it('does not re-enable the share button for an unsaved public toggle on a profile with an existing private share url', async () => {
+    const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
+
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'private',
+          clips: [],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl,
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('What others see');
+
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'public' }));
+
+    expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Publish changes before sharing' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('Publish and save this profile before the public share link becomes available.')).toBeTruthy();
+    expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+  });
+
   it('does not show a waiting-for-publish state when saving changes to an already public profile', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
     const saveDeferred = createDeferred<{ shareUrl: string }>();
