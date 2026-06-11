@@ -18,6 +18,7 @@ const playerServiceMocks = vi.hoisted(() => ({
   markParentPlayerIncentivePaid: vi.fn(),
   retireParentPlayerIncentiveRule: vi.fn(),
   saveParentAthleteProfileDraft: vi.fn(),
+  savePlayerCustomRosterFieldValues: vi.fn(),
   saveParentPlayerIncentiveCap: vi.fn(),
   saveParentPlayerIncentiveRule: vi.fn(),
   sendParentCoParentInvite: vi.fn(),
@@ -74,6 +75,12 @@ function buildDetailData(overrides: Record<string, any> = {}) {
       photoUrl: ''
     },
     team: { id: 'team-current', name: 'Current Team' },
+    access: {
+      isLinkedParent: true,
+      isTeamStaff: false,
+      canEditCustomRosterFields: false
+    },
+    customRosterFields: [],
     events: [],
     nextEvent: null,
     actionCounts: {
@@ -1097,5 +1104,113 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('href')).toBe('#');
     expect(screen.getByRole('link', { name: /Public athlete profile/i }).getAttribute('aria-disabled')).toBe('true');
     expect(publicActionMocks.sharePublicUrl).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('PlayerDetail custom roster fields', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: false,
+        isTeamStaff: true,
+        canEditCustomRosterFields: true
+      },
+      customRosterFields: [
+        {
+          key: 'nickname',
+          label: 'Nickname',
+          type: 'text',
+          visibility: 'team',
+          required: false,
+          options: [],
+          value: 'Rocket'
+        },
+        {
+          key: 'jerseySize',
+          label: 'Jersey Size',
+          type: 'menu',
+          visibility: 'admins',
+          required: false,
+          options: [{ value: 'YS', label: 'Youth Small' }, { value: 'YM', label: 'Youth Medium' }],
+          value: 'YS'
+        },
+        {
+          key: 'waiver',
+          label: 'Waiver On File',
+          type: 'checkbox',
+          visibility: 'team',
+          required: false,
+          options: [],
+          value: true
+        }
+      ]
+    }));
+    playerServiceMocks.savePlayerCustomRosterFieldValues.mockResolvedValue({});
+    window.scrollTo = vi.fn();
+    window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      callback(0);
+      return 0;
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('renders editable custom roster fields and saves their values', async () => {
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect(await screen.findByText('Custom roster fields')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Nickname'), { target: { value: 'Speedy' } });
+    fireEvent.change(screen.getByLabelText('Jersey Size'), { target: { value: 'YM' } });
+    fireEvent.click(screen.getByLabelText('Waiver On File'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Custom Fields' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.savePlayerCustomRosterFieldValues).toHaveBeenCalledWith({
+        user: auth.user,
+        teamId: 'team-current',
+        playerId: 'player-current',
+        values: {
+          nickname: 'Speedy',
+          jerseySize: 'YM',
+          waiver: false
+        }
+      });
+    });
+  });
+
+  it('renders parent-visible custom roster values without edit controls', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: true,
+        isTeamStaff: false,
+        canEditCustomRosterFields: false
+      },
+      customRosterFields: [
+        {
+          key: 'nickname',
+          label: 'Nickname',
+          type: 'text',
+          visibility: 'team',
+          required: false,
+          options: [],
+          value: 'Rocket'
+        }
+      ]
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect((await screen.findByDisplayValue('Rocket') as HTMLInputElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Save Custom Fields' })).toBeNull();
   });
 });

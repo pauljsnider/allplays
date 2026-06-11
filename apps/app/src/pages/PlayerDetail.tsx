@@ -31,6 +31,7 @@ import {
   loadParentPlayerDetail,
   markParentPlayerIncentivePaid,
   retireParentPlayerIncentiveRule,
+  savePlayerCustomRosterFieldValues,
   saveParentAthleteProfileDraft,
   saveParentPlayerIncentiveCap,
   saveParentPlayerIncentiveRule,
@@ -428,6 +429,7 @@ const profilePanels: Array<{ id: ProfilePanelId; label: string }> = [
 function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
   const [athleteProfileShareState, setAthleteProfileShareState] = useState({ hasUnsavedPublishChanges: false, saving: false });
+  const customRosterFields = Array.isArray(data.customRosterFields) ? data.customRosterFields : [];
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
 
@@ -468,7 +470,12 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
         </div>
       </section>
 
-      {activePanel === 'edit' ? <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} /> : null}
+      {activePanel === 'edit' ? (
+        <>
+          <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} />
+          {customRosterFields.length ? <CustomRosterFieldsCard data={data} auth={auth} onChanged={onChanged} /> : null}
+        </>
+      ) : null}
       {activePanel === 'athlete' ? (
         <AthleteProfileBuilderCard
           key={`${data.athleteProfile.profile?.id || 'new'}:${data.athleteProfile.profile?.privacy || 'private'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
@@ -511,6 +518,10 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
 }
 
 function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+  if (!data.access.isLinkedParent && !auth.isAdmin && !auth.isPlatformAdmin) {
+    return null;
+  }
+
   const [emergencyName, setEmergencyName] = useState(data.privateProfile?.emergencyContact?.name || '');
   const [emergencyPhone, setEmergencyPhone] = useState(data.privateProfile?.emergencyContact?.phone || '');
   const [medicalInfo, setMedicalInfo] = useState(data.privateProfile?.medicalInfo || '');
@@ -597,6 +608,140 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
       </form>
     </section>
   );
+}
+
+function CustomRosterFieldsCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+  const [values, setValues] = useState<Record<string, string | boolean>>(() => buildCustomRosterFieldState(data.customRosterFields));
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
+  const canEdit = data.access.canEditCustomRosterFields;
+
+  useEffect(() => {
+    setValues(buildCustomRosterFieldState(data.customRosterFields));
+    setStatus(null);
+  }, [data.customRosterFields]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!canEdit) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await savePlayerCustomRosterFieldValues({
+        user: auth.user,
+        teamId: data.child.teamId,
+        playerId: data.child.playerId,
+        values
+      });
+      setStatus({ tone: 'success', message: 'Custom roster fields saved.' });
+      await onChanged();
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save custom roster fields.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start gap-3">
+        <IconBox icon={Users} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-sm font-black text-gray-950">Custom roster fields</div>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">
+            {canEdit ? 'Team staff can update player custom field values here.' : 'Visible roster fields from the team roster setup.'}
+          </p>
+        </div>
+      </div>
+
+      <form className="mt-4 space-y-3" onSubmit={submit}>
+        {data.customRosterFields.map((field) => (
+          <CustomRosterFieldInput
+            key={field.key}
+            field={field}
+            value={values[field.key]}
+            disabled={!canEdit || saving}
+            onChange={(nextValue) => setValues((current) => ({ ...current, [field.key]: nextValue }))}
+          />
+        ))}
+        {status ? <Status tone={status.tone} message={status.message} /> : null}
+        {canEdit ? (
+          <button type="submit" className="primary-button w-full justify-center" disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            {saving ? 'Saving' : 'Save Custom Fields'}
+          </button>
+        ) : null}
+      </form>
+    </section>
+  );
+}
+
+function CustomRosterFieldInput({
+  field,
+  value,
+  disabled,
+  onChange
+}: {
+  field: ParentPlayerDetailData['customRosterFields'][number];
+  value: string | boolean | undefined;
+  disabled: boolean;
+  onChange: (value: string | boolean) => void;
+}) {
+  if (field.type === 'checkbox') {
+    return (
+      <label className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-black text-gray-950">{field.label}</span>
+          {field.description ? <span className="mt-0.5 block text-xs font-semibold text-gray-500">{field.description}</span> : null}
+        </span>
+        <input
+          type="checkbox"
+          aria-label={field.label}
+          checked={value === true}
+          disabled={disabled}
+          onChange={(event) => onChange(event.currentTarget.checked)}
+          className="h-5 w-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+        />
+      </label>
+    );
+  }
+
+  return (
+    <label className="block">
+      <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">{field.label}</span>
+      {field.description ? <span className="mt-1 block text-xs font-semibold text-gray-500">{field.description}</span> : null}
+      {field.type === 'menu' ? (
+        <select
+          aria-label={field.label}
+          value={String(value ?? '')}
+          disabled={disabled}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+        >
+          <option value="">Select an option</option>
+          {field.options.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      ) : (
+        <input
+          type={field.type === 'date' ? 'date' : 'text'}
+          aria-label={field.label}
+          value={String(value ?? '')}
+          disabled={disabled}
+          onChange={(event) => onChange(event.currentTarget.value)}
+          className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+        />
+      )}
+    </label>
+  );
+}
+
+function buildCustomRosterFieldState(fields: ParentPlayerDetailData['customRosterFields']) {
+  return fields.reduce<Record<string, string | boolean>>((result, field) => {
+    result[field.key] = field.type === 'checkbox' ? field.value === true : String(field.value ?? '');
+    return result;
+  }, {});
 }
 
 function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void>; onShareStateChange: (state: { hasUnsavedPublishChanges: boolean; saving: boolean }) => void }) {

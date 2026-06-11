@@ -5,12 +5,15 @@ import {
   getPlayerTrackingStatuses,
   getPlayers,
   getPublicTrackingItems,
+  getRosterFieldDefinitions,
   getTeam,
   deleteAthleteProfileMediaByPath,
   inviteCoParentToAthlete,
   listAthleteProfilesForParent,
   listCertificatesForPlayer,
   saveAthleteProfile,
+  setPlayerPrivateRosterProfileFields,
+  updatePlayer,
   updatePlayerProfile,
   uploadAthleteProfileMedia,
   uploadPlayerPhoto
@@ -32,6 +35,13 @@ import {
 import { buildAthleteProfileShareUrl } from '../../../../js/athlete-profile-utils.js';
 import { collectPlayerVideoClips } from '../../../../js/player-profile-stats.js';
 import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-summary.js';
+import { canViewRosterField } from '../../../../js/roster-field-privacy.js';
+import {
+  getRosterProfileValues,
+  normalizeRosterFieldDefinitions,
+  splitRosterProfileValuesByVisibility,
+  validateRosterProfileValues
+} from '../../../../js/roster-profile-fields.js';
 import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleEvent } from './scheduleLogic';
 import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
 import type { AuthUser } from './types';
@@ -82,10 +92,37 @@ export type ParentAthleteProfileData = {
   }>;
 };
 
+type CustomRosterFieldDefinition = {
+  key: string;
+  label: string;
+  type: 'text' | 'menu' | 'checkbox' | 'date';
+  section?: string;
+  description?: string;
+  visibility: string;
+  required?: boolean;
+  options?: Array<{ value: string; label: string }>;
+};
+
 export type ParentPlayerDetailData = {
   child: ParentScheduleChild;
   player: Record<string, any>;
   team: Record<string, any> | null;
+  access: {
+    isLinkedParent: boolean;
+    isTeamStaff: boolean;
+    canEditCustomRosterFields: boolean;
+  };
+  customRosterFields: Array<{
+    key: string;
+    label: string;
+    type: 'text' | 'menu' | 'checkbox' | 'date';
+    section?: string;
+    description?: string;
+    visibility: string;
+    required: boolean;
+    options: Array<{ value: string; label: string }>;
+    value: string | boolean;
+  }>;
   events: ParentScheduleEvent[];
   nextEvent: ParentScheduleEvent | null;
   actionCounts: {
@@ -120,27 +157,29 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     .sort((a, b) => a.date.getTime() - b.date.getTime());
   const nextEvent = events.find((event) => !event.isCancelled && event.date.getTime() >= startOfDay(new Date()).getTime()) || null;
 
+  const team = await Promise.resolve(getTeam(resolvedTeamId, { includeInactive: true })).catch(() => null);
+
   const [
-    team,
     players,
     games,
     certificates,
     trackingItems,
     trackingStatuses,
     privateProfile,
+    rosterFieldDefinitions,
     incentiveRules,
     paidGames,
     maxPerGameCents,
     statOptions,
     athleteProfiles
   ] = await Promise.all([
-    Promise.resolve(getTeam(resolvedTeamId, { includeInactive: true })).catch(() => null),
     Promise.resolve(getPlayers(resolvedTeamId, { includeInactive: true })).catch(() => []),
     Promise.resolve(getGames(resolvedTeamId)).catch(() => []),
     Promise.resolve(listCertificatesForPlayer(resolvedTeamId, resolvedPlayerId, { status: 'published', limit: 5 })).catch(() => []),
     Promise.resolve(getPublicTrackingItems(resolvedTeamId)).catch(() => []),
     Promise.resolve(getPlayerTrackingStatuses(resolvedTeamId, [resolvedPlayerId])).catch(() => []),
     Promise.resolve(getPlayerPrivateProfile(resolvedTeamId, resolvedPlayerId)).catch(() => null),
+    Promise.resolve(getRosterFieldDefinitions(resolvedTeamId, team || null)).catch(() => []),
     Promise.resolve(getIncentiveRules(user.uid, resolvedPlayerId)).catch(() => []),
     Promise.resolve(getPaidGames(user.uid, resolvedPlayerId)).catch(() => new Map()),
     Promise.resolve(getCapSetting(user.uid, resolvedPlayerId)).catch(() => null),
@@ -149,6 +188,13 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
   ]);
 
   const playerDoc = (Array.isArray(players) ? players : []).find((candidate: any) => candidate?.id === resolvedPlayerId) || {};
+  const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
+  const customRosterFields = buildVisibleCustomRosterFields({
+    definitions: rosterFieldDefinitions,
+    player: playerDoc,
+    privateProfile,
+    access
+  });
   const completedGameEvents = events
     .filter((event) => event.type === 'game' && event.isDbGame && isPastOrCompleted(event))
     .sort((a, b) => b.date.getTime() - a.date.getTime())
@@ -184,6 +230,8 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       number: playerDoc.number || (child as any).playerNumber || null
     },
     team,
+    access,
+    customRosterFields,
     events,
     nextEvent,
     actionCounts: {
@@ -209,6 +257,61 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       teamId: resolvedTeamId,
       playerId: resolvedPlayerId
     })
+  };
+}
+
+export async function savePlayerCustomRosterFieldValues({
+  user,
+  teamId,
+  playerId,
+  values
+}: {
+  user: AuthUser | null;
+  teamId: string;
+  playerId: string;
+  values: Record<string, unknown>;
+}) {
+  if (!user?.uid) {
+    throw new Error('A signed-in team staff account is required.');
+  }
+
+  const team = await Promise.resolve(getTeam(teamId, { includeInactive: true })).catch(() => null);
+  const access = buildPlayerAccess(user, teamId, playerId, team);
+  if (!access.canEditCustomRosterFields) {
+    throw new Error('Only team owners and admins can edit custom roster fields.');
+  }
+
+  const [players, privateProfile, rosterFieldDefinitions] = await Promise.all([
+    Promise.resolve(getPlayers(teamId, { includeInactive: true })).catch(() => []),
+    Promise.resolve(getPlayerPrivateProfile(teamId, playerId)).catch(() => null),
+    Promise.resolve(getRosterFieldDefinitions(teamId, team || null)).catch(() => [])
+  ]);
+
+  const player = (Array.isArray(players) ? players : []).find((candidate: any) => candidate?.id === playerId) || {};
+  const normalizedFields = normalizeRosterFieldDefinitions(rosterFieldDefinitions) as CustomRosterFieldDefinition[];
+  const filteredValues = normalizeCustomRosterFieldInput(values, normalizedFields);
+  const validationErrors = validateRosterProfileValues(normalizedFields, filteredValues);
+  if (validationErrors.length > 0) {
+    throw new Error(validationErrors[0]);
+  }
+
+  const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, filteredValues);
+  const nextProfile = {
+    ...(player?.profile || {}),
+    customFields: publicValues
+  };
+
+  await Promise.all([
+    updatePlayer(teamId, playerId, {
+      profile: nextProfile
+    }),
+    setPlayerPrivateRosterProfileFields(teamId, playerId, privateValues)
+  ]);
+
+  return {
+    profile: nextProfile,
+    privateRosterFields: privateValues,
+    privateProfile
   };
 }
 
@@ -512,6 +615,103 @@ function assertLinkedParent(user: AuthUser | null, teamId: string, playerId: str
   if (!linked && !user.isAdmin && !user.roles?.includes('admin') && !user.roles?.includes('platformAdmin')) {
     throw new Error('This player is not linked to your account.');
   }
+}
+
+function isLinkedParent(user: AuthUser | null, teamId: string, playerId: string) {
+  return !!(user?.parentOf || []).some((entry: any) => entry?.teamId === teamId && entry?.playerId === playerId);
+}
+
+function isElevatedAppAdmin(user: AuthUser | null) {
+  return !!(user?.isAdmin || user?.isPlatformAdmin || user?.roles?.includes('admin') || user?.roles?.includes('platformAdmin'));
+}
+
+function normalizeEmail(value: unknown) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isTeamOwnerOrAdminUser(user: AuthUser | null, team: Record<string, any> | null) {
+  if (!user?.uid) return false;
+  if (isElevatedAppAdmin(user)) return true;
+  if (team?.ownerId === user.uid) return true;
+  const email = normalizeEmail(user.email);
+  const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map(normalizeEmail) : [];
+  return !!(email && adminEmails.includes(email));
+}
+
+function isTeamStaffUser(user: AuthUser | null, team: Record<string, any> | null) {
+  if (isTeamOwnerOrAdminUser(user, team)) return true;
+  return !!(Array.isArray(user?.coachOf) && user.coachOf.map((value) => String(value || '').trim()).includes(String(team?.id || '').trim()));
+}
+
+function buildPlayerAccess(user: AuthUser | null, teamId: string, playerId: string, team: Record<string, any> | null) {
+  const linkedParent = isLinkedParent(user, teamId, playerId);
+  const resolvedTeam = team ? { ...team, id: team.id || teamId } : { id: teamId };
+  const isTeamStaff = isTeamStaffUser(user, resolvedTeam);
+  const canEditCustomRosterFields = isTeamOwnerOrAdminUser(user, resolvedTeam);
+  return {
+    isLinkedParent: linkedParent,
+    isTeamStaff,
+    canEditCustomRosterFields
+  };
+}
+
+function buildVisibleCustomRosterFields({
+  definitions,
+  player,
+  privateProfile,
+  access
+}: {
+  definitions: any[];
+  player: Record<string, any>;
+  privateProfile: Record<string, any> | null;
+  access: { isLinkedParent: boolean; isTeamStaff: boolean; canEditCustomRosterFields: boolean };
+}) {
+  const normalizedFields = normalizeRosterFieldDefinitions(definitions) as CustomRosterFieldDefinition[];
+  if (!normalizedFields.length) return [];
+
+  const mergedValues = {
+    ...getRosterProfileValues(player),
+    ...(access.canEditCustomRosterFields ? (privateProfile?.rosterFields || {}) : {})
+  };
+
+  return normalizedFields
+    .filter((field) => canViewRosterField({ id: field.key, visibility: field.visibility }, {
+      isAdmin: access.canEditCustomRosterFields,
+      isTeamMember: access.isTeamStaff || access.isLinkedParent,
+      isLinkedParent: access.isLinkedParent
+    }))
+    .map((field) => ({
+      key: field.key,
+      label: field.label,
+      type: field.type,
+      section: field.section,
+      description: field.description,
+      visibility: field.visibility,
+      required: field.required === true,
+      options: Array.isArray(field.options) ? field.options : [],
+      value: normalizeCustomRosterFieldValue(field.type, mergedValues[field.key])
+    }));
+}
+
+function normalizeCustomRosterFieldValue(type: string, value: unknown) {
+  if (type === 'checkbox') return value === true;
+  return String(value ?? '').trim();
+}
+
+function normalizeCustomRosterFieldInput(values: Record<string, unknown>, fields: Array<{ key: string; type: string }>) {
+  const normalized: Record<string, unknown> = {};
+  fields.forEach((field) => {
+    if (!Object.prototype.hasOwnProperty.call(values || {}, field.key)) return;
+    if (field.type === 'checkbox') {
+      normalized[field.key] = values[field.key] === true;
+      return;
+    }
+    const nextValue = String(values[field.key] ?? '').trim();
+    if (nextValue) {
+      normalized[field.key] = nextValue;
+    }
+  });
+  return normalized;
 }
 
 function validateImageFile(file: File) {
