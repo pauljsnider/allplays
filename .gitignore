@@ -1,3 +1,6 @@
+# Claude Code internal directories
+.claude/
+
 # Dependencies
 node_modules/
 
