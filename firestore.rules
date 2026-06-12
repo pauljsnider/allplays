@@ -80,6 +80,12 @@ service cloud.firestore {
              canReadManagedTeamDocument(data);
     }
 
+    function keepsTeamPrivilegeFieldsImmutable() {
+      return request.resource.data.get('ownerId', '') == resource.data.get('ownerId', '') &&
+             request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
+             request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false);
+    }
+
     function isSafeDocumentId(documentId) {
       return documentId is string &&
              documentId.size() > 0 &&
@@ -1513,7 +1519,7 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow read: if canReadTeamDocument(resource.data);
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if isTeamOwnerOrAdmin(teamId);
+      allow update: if isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable();
       allow delete: if isGlobalAdmin();
 
 	      // Players subcollection
