@@ -91,13 +91,20 @@ beforeEach(() => {
 
 describe('React app search service', () => {
     it('builds current-site style actions for signed out, signed in, and admin users', () => {
-        expect(buildAppSearchActions({ user: null, isAdmin: false, isPlatformAdmin: false }).map((item) => item.id)).toEqual([
+        const signedOutActions = buildAppSearchActions({ user: null, isAdmin: false, isPlatformAdmin: false });
+        expect(signedOutActions.map((item) => item.id)).toEqual([
             'browse-teams',
             'sign-in',
             'get-started'
         ]);
+        expect(signedOutActions[0]).toMatchObject({
+            id: 'browse-teams',
+            href: 'https://allplays.ai/teams.html'
+        });
+        expect(signedOutActions[0].route).toBeUndefined();
 
-        expect(buildAppSearchActions(auth).map((item) => item.id)).toEqual([
+        const signedInActions = buildAppSearchActions(auth);
+        expect(signedInActions.map((item) => item.id)).toEqual([
             'browse-teams',
             'dashboard',
             'my-teams',
@@ -108,6 +115,11 @@ describe('React app search service', () => {
             'create-social-post',
             'profile'
         ]);
+        expect(signedInActions[0]).toMatchObject({
+            id: 'browse-teams',
+            route: '/teams/browse'
+        });
+        expect(signedInActions[0].href).toBeUndefined();
 
         expect(buildAppSearchActions({ ...auth, isAdmin: true }).map((item) => item.id)).toContain('admin-dashboard');
     });
