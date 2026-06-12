@@ -1448,7 +1448,7 @@ function RideshareSection({ auth, event, childEvents, onOffersChanged }: {
                 offer={offer}
                 event={event}
                 userId={auth.user?.uid || ''}
-                canManage={canManageRideOffer(offer, auth)}
+                canManage={canManageRideOffer(offer, event, auth)}
                 childChoices={childChoices}
                 selectedChildId={resolveRideChildIdForOffer(offer, event, childChoices, selectedChildByOffer[offer.id], auth.user?.uid || '')}
                 busyAction={busyAction}
@@ -1632,9 +1632,9 @@ function resolveRideChildIdForOffer(offer: ScheduleRideOffer, event: ParentSched
   return childChoices[0]?.childId || '';
 }
 
-function canManageRideOffer(offer: ScheduleRideOffer, auth: AuthState) {
+function canManageRideOffer(offer: ScheduleRideOffer, event: ParentScheduleEvent, auth: AuthState) {
   if (!auth.user?.uid) return false;
-  return offer.driverUserId === auth.user.uid || auth.isAdmin || auth.isPlatformAdmin;
+  return offer.driverUserId === auth.user.uid || event.isTeamAdmin === true || auth.isAdmin || auth.isPlatformAdmin;
 }
 
 function formatRideRequestStatus(status: unknown) {

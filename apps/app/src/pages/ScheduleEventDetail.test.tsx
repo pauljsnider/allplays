@@ -197,11 +197,11 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
-function renderScheduleEventDetail() {
+function renderScheduleEventDetail(authOverride: AuthState = auth) {
   return render(
     <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1']}>
       <Routes>
-        <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={authOverride} />} />
         <Route path="/schedule" element={<div>Schedule</div>} />
       </Routes>
     </MemoryRouter>
@@ -270,6 +270,65 @@ describe('ScheduleEventDetail lineup draft guards', () => {
       { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1' } },
       { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' } }
     )).toBe(false);
+  });
+});
+
+describe('ScheduleEventDetail rideshare permissions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamAdmin: true,
+        rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([
+      {
+        id: 'offer-away',
+        sourceGameId: 'game-1',
+        driverUserId: 'driver-2',
+        driverName: 'Dana Driver',
+        seatCapacity: 3,
+        seatCountConfirmed: 1,
+        direction: 'to',
+        note: 'Leaving from the school lot',
+        status: 'open',
+        requests: [
+          { id: 'request-1', parentUserId: 'user-2', childId: 'player-2', childName: 'Sam', status: 'pending' }
+        ]
+      }
+    ]);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('lets team admins manage non-owned rideshare requests from the rideshare tab', async () => {
+    renderScheduleEventDetail({
+      ...auth,
+      user: {
+        ...(auth.user as any),
+        uid: 'admin-1',
+        email: 'admin@example.com',
+        displayName: 'Alex Admin'
+      } as any,
+      roles: ['admin'],
+      isCoach: false,
+      isAdmin: false
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Rideshare' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Rideshare' })[0]);
+
+    expect(await screen.findByRole('button', { name: 'Close' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Waitlist' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeTruthy();
   });
 });
 
