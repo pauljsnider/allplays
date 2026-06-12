@@ -22,7 +22,8 @@ import {
   deactivatePlayer,
   reactivatePlayer,
   setPlayerPrivateRosterProfileFields,
-  uploadPlayerPhoto
+  uploadPlayerPhoto,
+  uploadTeamPhoto
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
@@ -199,6 +200,14 @@ export type TeamScheduleNotificationSettings = {
   delivery: 'team_chat';
   hasExplicitReminderHours: boolean;
   summary: string;
+};
+
+export type UpdateTeamSettingsForAppInput = {
+  name: string;
+  sport?: string;
+  zip?: string;
+  isPublic?: boolean;
+  photoFile?: File | null;
 };
 
 export type TeamDetailModel = {
@@ -741,6 +750,35 @@ export async function saveTeamScheduleNotificationsForApp(teamId: string, settin
   return normalizedSettings;
 }
 
+export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | null, input: UpdateTeamSettingsForAppInput) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to edit this team.');
+  }
+
+  const name = cleanString(input?.name);
+  if (!name) throw new Error('Team name is required.');
+
+  let photoUrl = getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl) || null;
+  if (input?.photoFile) {
+    photoUrl = await uploadTeamPhoto(input.photoFile);
+  }
+
+  await updateTeam(normalizedTeamId, {
+    name,
+    sport: cleanString(input?.sport),
+    zip: normalizeTeamZip(input?.zip),
+    isPublic: input?.isPublic === true,
+    photoUrl,
+    updatedAt: new Date()
+  });
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
 export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseUrl()) {
   return buildAppAcceptInviteUrl(code, 'admin', baseUrl) || null;
 }
@@ -964,7 +1002,7 @@ export function buildTeamDetailModel({
       photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl),
       description: cleanString(team?.description),
       zip: cleanString(team?.zip),
-      isPublic: team?.isPublic === true,
+      isPublic: team?.isPublic !== false,
       active: team?.active !== false,
       leagueUrl: getFirstUrl(team?.leagueUrl),
       bracketUrl: getFirstUrl(team?.bracketUrl),
@@ -1502,6 +1540,11 @@ function toNullableNumber(value: any) {
 
 function cleanString(value: unknown) {
   return String(value || '').trim();
+}
+
+function normalizeTeamZip(value: unknown) {
+  const digits = cleanString(value).replace(/[^0-9]/g, '');
+  return digits.length >= 5 ? digits.slice(0, 9) : '';
 }
 
 function normalizeRosterFieldValuesForSave(fields: TeamRosterFieldDefinition[], values: Record<string, unknown>) {
