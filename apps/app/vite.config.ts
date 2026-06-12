@@ -50,8 +50,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: './src/setupTests.ts',
-    // you might want to disable it to process CSS files like Tailwind
-    // relevant for Tailwind JIT, etc.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
     css: false,
   },
 });
