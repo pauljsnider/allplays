@@ -122,6 +122,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
   const shouldLoadInbox = isDesktopWeb || !teamId;
 
   const refreshInbox = async () => {
@@ -150,6 +151,22 @@ export function Messages({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, shouldLoadInbox]);
 
+  // Initialize selectedDesktopTeamId once teams first load (only if no selection exists yet).
+  useEffect(() => {
+    if (isDesktopWeb && !selectedDesktopTeamId && teams.length > 0) {
+      setSelectedDesktopTeamId(teams[0].id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teams]);
+
+  // Sync selectedDesktopTeamId when the URL route changes (explicit navigation).
+  useEffect(() => {
+    if (isDesktopWeb && teamId) {
+      setSelectedDesktopTeamId(teamId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId]);
+
   const filteredTeams = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return teams;
@@ -162,7 +179,7 @@ export function Messages({ auth }: { auth: AuthState }) {
 
   const preferredConversationId = useMemo(() => getPreferredConversationIdFromSearch(location.search), [location.search]);
 
-  const activeTeamId = teamId || (isDesktopWeb ? filteredTeams[0]?.id : undefined);
+  const activeTeamId = teamId || (isDesktopWeb ? selectedDesktopTeamId : undefined);
 
   if (isDesktopWeb) {
     return (
@@ -180,6 +197,7 @@ export function Messages({ auth }: { auth: AuthState }) {
                 searchQuery={query}
                 totalTeamsCount={teams.length}
                 onClearSearch={() => setQuery('')}
+                onSelect={setSelectedDesktopTeamId}
                 compact
               />
             </div>
@@ -275,6 +293,7 @@ function InboxList({
   searchQuery,
   totalTeamsCount,
   onClearSearch,
+  onSelect,
   compact = false
 }: {
   teams: ChatTeam[];
@@ -284,6 +303,7 @@ function InboxList({
   searchQuery: string;
   totalTeamsCount: number;
   onClearSearch: () => void;
+  onSelect?: (teamId: string) => void;
   compact?: boolean;
 }) {
   const trimmedQuery = searchQuery.trim();
@@ -326,13 +346,13 @@ function InboxList({
   return (
     <section className={compact ? 'space-y-2' : 'space-y-3'}>
       {teams.map((team) => (
-        <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} />
+        <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} onSelect={onSelect} />
       ))}
     </section>
   );
 }
 
-function InboxRow({ team, active, compact }: { team: ChatTeam; active: boolean; compact: boolean }) {
+function InboxRow({ team, active, compact, onSelect }: { team: ChatTeam; active: boolean; compact: boolean; onSelect?: (teamId: string) => void }) {
   const preview = getChatInboxPreview(team.lastMessage);
   const timeLabel = formatInboxTime(team.lastMessage?.createdAt);
   const route = buildMessagesRoute(team.id, team.preferredConversationId);
@@ -340,6 +360,7 @@ function InboxRow({ team, active, compact }: { team: ChatTeam; active: boolean; 
   return (
     <Link
       to={route}
+      onClick={onSelect ? () => onSelect(team.id) : undefined}
       className={`message-row app-card flex items-center gap-3 p-3 transition hover:border-primary-200 hover:shadow-app-lg ${
         active ? '!border-primary-200 bg-primary-50/50' : ''
       }`}
