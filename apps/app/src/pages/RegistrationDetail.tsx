@@ -67,6 +67,8 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [queue, setQueue] = useState<TeamRegistrationQueueModel | null>(null);
   const [selectedReviewId, setSelectedReviewId] = useState('');
   const [selectedMergePlayerId, setSelectedMergePlayerId] = useState('');
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const cancelledCheckoutReleaseKeyRef = useRef('');
@@ -91,13 +93,21 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         }
         setForm(nextForm);
         if (staffReview) {
-          const nextQueue = await (parentToolsService as any).loadTeamRegistrationQueue(auth.user, teamId, formId) as TeamRegistrationQueueModel;
+          const [nextPage, rosterPlayers] = await Promise.all([
+            (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
+            (parentToolsService as any).loadTeamRegistrationRosterPlayers(auth.user, teamId).catch(() => [])
+          ]);
           if (cancelled) return;
+          const nextQueue: TeamRegistrationQueueModel = { reviews: nextPage.reviews, rosterPlayers };
           setQueue(nextQueue);
+          setLastDoc(nextPage.lastDoc);
+          setHasMore(nextPage.hasMore);
           const firstReviewId = nextQueue.reviews[0]?.id || '';
           setSelectedReviewId((current) => current && nextQueue.reviews.some((review) => review.id === current) ? current : firstReviewId);
         } else {
           setQueue(null);
+          setLastDoc(null);
+          setHasMore(false);
         }
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         const initialOptionId = selectInitialRegistrationOption(nextForm, initialOptions);

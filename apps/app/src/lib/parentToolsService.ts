@@ -17,6 +17,7 @@ import {
   listParentTeamFeeRecipients,
   listTeamRegistrationForms,
   listTeamRegistrationReviews,
+  listTeamRegistrationReviewsPage,
   rejectTeamRegistration,
   revokeFamilyShareToken,
   updateFamilyShareTokenCalendars,
@@ -666,6 +667,35 @@ export async function loadTeamRegistrationQueue(
       number: compactString(player.number)
     }))
   };
+}
+
+export async function loadTeamRegistrationQueuePage(
+  teamId: string,
+  formId: string,
+  options: { status?: string; pageSize?: number; afterDoc?: any } = {}
+): Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }> {
+  const { status = 'all', pageSize = 25, afterDoc = null } = options;
+  const { registrations, lastDoc, hasMore } = await listTeamRegistrationReviewsPage(teamId, formId, { status, pageSize, afterDoc });
+  return {
+    reviews: (registrations || []).map((review: any) => toTeamRegistrationReviewCard(review)),
+    lastDoc,
+    hasMore
+  };
+}
+
+export async function loadTeamRegistrationRosterPlayers(
+  user: AuthUser | null,
+  teamId: string
+): Promise<TeamRegistrationRosterPlayer[]> {
+  if (!canManageTeamRegistrations(user, teamId)) {
+    throw new Error('Admin access is required to review registrations.');
+  }
+  const rosterPlayers = await Promise.resolve(getPlayers(teamId)).catch(() => []);
+  return (rosterPlayers || []).map((player: any) => ({
+    id: compactString(player.id),
+    name: compactString(player.name) || 'Player',
+    number: compactString(player.number)
+  }));
 }
 
 export async function approveTeamRegistrationForApp(
