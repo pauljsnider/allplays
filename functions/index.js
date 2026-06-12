@@ -4005,6 +4005,36 @@ exports.notifyGameUpdated = functions.firestore
     });
   });
 
+exports.notifyGameCreated = functions.firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onCreate(async (snapshot, context) => {
+    const game = snapshot.data() || {};
+    const teamId = context.params.teamId;
+    const gameId = context.params.gameId;
+
+    const status = String(game.status || '').trim().toLowerCase();
+    if (status === 'draft') return null;
+    if (game.source || game.sourceMetadata) return null;
+
+    const isPractice = String(game.type || '').toLowerCase() === 'practice';
+    const category = isPractice ? 'practice' : 'schedule';
+    const eventTitle = getEventTitle(game);
+    const dateValue = coerceDate(game.date);
+    const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
+    const dateLabel = dateValue ? formatScheduleUpdateDate(dateValue, timeZone) : '';
+    const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;
+    const body = dateLabel || (isPractice ? 'Practice scheduled' : 'Game scheduled');
+
+    return sendCategoryNotification({
+      teamId,
+      gameId,
+      category,
+      title,
+      body,
+      actorUid: game.createdBy || null
+    });
+  });
+
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
 const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
