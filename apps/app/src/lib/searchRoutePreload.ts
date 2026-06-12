@@ -4,6 +4,7 @@ const routePreloaders: Array<{ pattern: RegExp; load: () => Promise<unknown> }> 
   { pattern: /^\/schedule\/[^/]+\/[^/]+$/, load: () => import('../pages/ScheduleEventDetail') },
   { pattern: /^\/messages(?:\/[^/]+)?$/, load: () => import('../pages/Messages') },
   { pattern: /^\/teams$/, load: () => import('../pages/Teams') },
+  { pattern: /^\/teams\/browse$/, load: () => import('../pages/PublicTeamsBrowse') },
   { pattern: /^\/teams\/[^/]+$/, load: () => import('../pages/TeamDetail') },
   { pattern: /^\/teams\/[^/]+\/edit$/, load: () => import('../pages/TeamSettings') },
   { pattern: /^\/teams\/[^/]+\/fees(?:\/[^/]+)?$/, load: () => import('../pages/TeamFees') },
