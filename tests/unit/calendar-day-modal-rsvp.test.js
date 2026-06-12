@@ -88,7 +88,7 @@ const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
         .replace(
-            "import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } from './js/db.js?v=43';",
+            "import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } from './js/db.js?v=45';",
             'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } = deps.db;'
         )
         .replace(
@@ -100,7 +100,7 @@ const Blob = deps.Blob;
             'const { mergeGlobalCalendarIcsEvents } = deps.calendarIcsSync;'
         )
         .replace(
-            "import { requireAuth, checkAuth } from './js/auth.js?v=20';",
+            "import { requireAuth, checkAuth } from './js/auth.js?v=22';",
             'const { requireAuth, checkAuth } = deps.auth;'
         )
         .replace(

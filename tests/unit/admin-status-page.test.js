@@ -24,7 +24,7 @@ describe('admin status page', () => {
     it('renders the documented admin and login status messages', () => {
         const statusPageHtml = readRepoFile('check-admin-status.html');
 
-        expect(statusPageHtml).toContain("import { checkAuth } from './js/auth.js?v=18'");
+        expect(statusPageHtml).toContain("import { checkAuth } from './js/auth.js?v=22'");
         expect(statusPageHtml).toContain('isAdmin field is TRUE');
         expect(statusPageHtml).toContain('admin.html');
         expect(statusPageHtml).toContain('Not logged in');
