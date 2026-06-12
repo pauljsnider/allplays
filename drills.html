@@ -619,6 +619,7 @@
         import { requireAuth } from './js/auth.js?v=20';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js?v=4';
         import { DRILL_TYPES, DRILL_LEVELS, DRILL_TYPE_COLORS, getAllSkillTags } from './js/drill-constants.js?v=1';
+        import { getStarterDrillById, getStarterDrills } from './js/practice-starter-drills.js?v=1';
         import { mergeUniqueDrills, linkifySafeText, parseMarkdown } from './js/drills-issue28-helpers.js?v=3';
         import { appendLivePracticeNote } from './js/drills-live-practice-notes.js?v=1';
         import { getAI, getGenerativeModel, GoogleAIBackend } from './js/vendor/firebase-ai.js';
@@ -1510,11 +1511,12 @@ ${JSON.stringify({
 
                 if (state.libTab === 'community') {
                     const opts = getCommunityLibraryFilters();
+                    const starterDrills = getStarterDrills(state.team?.sport || 'Soccer', opts);
                     const [result, published] = await Promise.all([
                         getDrills(opts),
                         getPublishedDrills({ ...opts, limitCount: 60 })
                     ]);
-                    drills = mergeUniqueDrills(result.drills, published);
+                    drills = mergeUniqueDrills(starterDrills, mergeUniqueDrills(result.drills, published));
                     state.libLastDoc = result.lastDoc;
                     state.aiDrillContext = {
                         ...(state.aiDrillContext || {}),
@@ -1529,7 +1531,7 @@ ${JSON.stringify({
                 } else if (state.libTab === 'favorites') {
                     if (state.favoriteIds.size === 0) { drills = []; }
                     else {
-                        const fetches = [...state.favoriteIds].map(id => getDrill(id));
+                        const fetches = [...state.favoriteIds].map(id => resolveDrillById(id));
                         drills = (await Promise.all(fetches)).filter(Boolean);
                     }
                 }
@@ -1611,6 +1613,7 @@ ${JSON.stringify({
                 return state.aiDrillUniverse;
             }
             const sport = state.team?.sport || 'Soccer';
+            const starterDrills = getStarterDrills(sport);
             const community = [];
             let cursor = null;
             let guard = 0;
@@ -1628,7 +1631,7 @@ ${JSON.stringify({
                 console.warn('Failed loading team drills for AI index:', err);
             }
 
-            const merged = [...community, ...teamDrills];
+            const merged = [...starterDrills, ...community, ...teamDrills];
             const byId = new Map();
             merged.forEach(d => {
                 if (!d?.id) return;
@@ -1790,9 +1793,15 @@ ${JSON.stringify({
         }
 
         // ==================== DRILL DETAIL ====================
+        async function resolveDrillById(drillId) {
+            const starter = getStarterDrillById(drillId);
+            if (starter) return starter;
+            return getDrill(drillId);
+        }
+
         window._openDrill = async function(drillId) {
             try {
-                const drill = await getDrill(drillId);
+                const drill = await resolveDrillById(drillId);
                 if (!drill) return;
                 state.currentDetailDrill = drill;
                 const tc = getTypeClass(drill.type);
@@ -1800,7 +1809,7 @@ ${JSON.stringify({
                 document.getElementById('detail-type-badge').textContent = drill.type || 'Drill';
                 document.getElementById('detail-source-label').textContent = drill.source === 'community'
                     ? 'Community Drill'
-                    : (drill.publishedToCommunity ? 'Published Team Drill' : 'Custom Drill');
+                    : (drill.source === 'starter' ? 'Starter Drill' : (drill.publishedToCommunity ? 'Published Team Drill' : 'Custom Drill'));
 
             // Fav button
             const isFav = state.favoriteIds.has(drill.id);

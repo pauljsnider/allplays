@@ -2060,6 +2060,8 @@ async function startStop() {
         await updateGame(currentTeamId, currentGameId, { 
           homeScore: 0, 
           awayScore: 0, 
+          liveStatus: 'scheduled',
+          liveHasData: false,
           opponentStats: {},
           // Preserve opponent fields
           opponent: currentGame.opponent,
