@@ -62,7 +62,7 @@ export function buildLiveGameReactionPayload(input: {
     throw new Error('Choose a supported reaction.');
   }
 
-  const senderId = compactString(input.user?.uid) || compactString(input.senderId);
+  const senderId = compactString(input.user?.uid);
   if (!senderId) {
     throw new Error('Sign in before reacting.');
   }

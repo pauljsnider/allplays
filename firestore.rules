@@ -971,6 +971,31 @@ service cloud.firestore {
              ];
     }
 
+    function isLiveChatMessageCreate(data) {
+      return isSignedIn() &&
+             data.keys().hasAll(['text', 'senderId', 'senderName', 'createdAt']) &&
+             data.keys().hasOnly(['text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous', 'createdAt']) &&
+             data.text is string &&
+             data.text.size() > 0 &&
+             data.text.size() <= 500 &&
+             data.senderId == request.auth.uid &&
+             data.senderName is string &&
+             data.senderName.size() > 0 &&
+             data.senderName.size() <= 80 &&
+             data.get('isAnonymous', false) == false &&
+             (!('senderPhotoUrl' in data) || data.senderPhotoUrl == null || data.senderPhotoUrl is string) &&
+             data.createdAt == request.time;
+    }
+
+    function isLiveReactionCreate(data) {
+      return isSignedIn() &&
+             data.keys().hasAll(['type', 'senderId', 'createdAt']) &&
+             data.keys().hasOnly(['type', 'senderId', 'createdAt']) &&
+             data.type in ['fire', 'clap', 'wow', 'heart', 'hundred'] &&
+             data.senderId == request.auth.uid &&
+             data.createdAt == request.time;
+    }
+
     function isTeamMediaUploadCreate(teamId, data) {
       return hasTeamMediaUploadGrant(teamId) &&
              data.keys().hasAll([
@@ -1781,7 +1806,7 @@ service cloud.firestore {
         // Live Chat subcollection - game-specific chat for live viewers
         match /liveChat/{messageId} {
           allow read: if true;  // Public read for all viewers
-          allow create: if true;  // Anyone can post (anonymous or authenticated)
+          allow create: if isLiveChatMessageCreate(request.resource.data);
           allow update: if false;  // Messages are immutable
           allow delete: if isTeamOwnerOrAdmin(teamId);  // Moderation only
         }
@@ -1789,7 +1814,7 @@ service cloud.firestore {
         // Live Reactions subcollection - ephemeral reactions during live games
         match /liveReactions/{reactionId} {
           allow read: if true;  // Public read
-          allow create: if true;  // Anyone can react
+          allow create: if isLiveReactionCreate(request.resource.data);
           allow update, delete: if false;  // Reactions are immutable
         }
 
