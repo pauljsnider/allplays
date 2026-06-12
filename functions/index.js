@@ -3681,7 +3681,8 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       const allTargets = await getTargetsForCategory(teamId, 'mentions', null);
       const members = allTargets.map((t) => ({ uid: t.uid, displayName: '' }));
       // Also fetch candidate users to get display names for matching
-      const candidateUids = await getCandidateUserIdsForTeam(teamId);
+      const candidateUsers = await getCandidateUsersForTeam(teamId);
+      const candidateUids = candidateUsers.map((user) => user.uid);
       const memberMap = new Map(members.map((m) => [m.uid, m]));
       const userProfileTasks = candidateUids.map(async (uid) => {
         const userSnap = await firestore.doc(`users/${uid}`).get();

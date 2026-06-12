@@ -103,6 +103,12 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
         expect(functionsSource).toContain('snapshot.ref.update({ mentionedUids })');
     });
 
+    it('reuses the existing candidate-user lookup for mention matching', () => {
+        expect(functionsSource).toContain('const candidateUsers = await getCandidateUsersForTeam(teamId);');
+        expect(functionsSource).toContain('const candidateUids = candidateUsers.map((user) => user.uid);');
+        expect(functionsSource).not.toContain('getCandidateUserIdsForTeam');
+    });
+
     it('sends a mentions-category notification for mentioned users', () => {
         expect(functionsSource).toContain("category: 'mentions'");
         expect(functionsSource).toContain('mentioned you');
