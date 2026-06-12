@@ -6,19 +6,30 @@ import {
 } from '../../js/notification-preferences.js';
 
 describe('notification preference helpers', () => {
-  it('normalizes missing preferences to disabled defaults', () => {
+  it('normalizes missing preferences to category-specific defaults', () => {
     expect(normalizeTeamNotificationPreferences(null)).toEqual(DEFAULT_NOTIFICATION_PREFERENCES);
+    expect(normalizeTeamNotificationPreferences(null)).toMatchObject({
+      schedule: true,
+      rsvp: true,
+      mentions: true,
+      access: true,
+      fees: true,
+      liveChat: false,
+      liveScore: false,
+      media: false
+    });
   });
 
-  it('keeps explicit enabled categories', () => {
+  it('preserves existing explicit values and defaults only missing categories', () => {
     expect(normalizeTeamNotificationPreferences({
       liveChat: true,
       liveScore: false,
-      schedule: true
+      schedule: false
     })).toEqual({
+      ...DEFAULT_NOTIFICATION_PREFERENCES,
       liveChat: true,
       liveScore: false,
-      schedule: true
+      schedule: false
     });
   });
 });

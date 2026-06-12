@@ -44,11 +44,22 @@ export type ProfileDocument = {
   updatedAt?: unknown;
 };
 
-export type NotificationPreferences = {
-  liveChat: boolean;
-  liveScore: boolean;
-  schedule: boolean;
-};
+export type NotificationCategory =
+  | 'liveChat'
+  | 'mentions'
+  | 'liveScore'
+  | 'gameDay'
+  | 'schedule'
+  | 'rsvp'
+  | 'fees'
+  | 'practice'
+  | 'access'
+  | 'rideshare'
+  | 'media'
+  | 'awards'
+  | 'officiating';
+
+export type NotificationPreferences = Record<NotificationCategory, boolean>;
 
 export type NotificationTeam = {
   id: string;
