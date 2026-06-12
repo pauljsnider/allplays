@@ -389,6 +389,43 @@ async function mockScheduleModules(page, options = {}) {
                     return { type: 'score_update', ...payload };
                 }
 
+                export function buildLiveGameClockPeriods(game = {}) {
+                    const requested = String(game?.liveClockPeriod || game?.period || '').trim();
+                    return requested ? [requested, 'H2'].filter((period, index, list) => list.indexOf(period) === index) : ['H1', 'H2'];
+                }
+
+                export function resolveLiveGameClockSnapshot(game = {}, now = new Date()) {
+                    const persistedClockMs = Math.max(0, Number(game?.liveClockMs ?? game?.gameClockMs ?? 0) || 0);
+                    const running = game?.liveClockRunning === true;
+                    const updatedAt = game?.liveClockUpdatedAt ? new Date(game.liveClockUpdatedAt) : now;
+                    const elapsedMs = running ? Math.max(0, now.getTime() - updatedAt.getTime()) : 0;
+                    const periods = buildLiveGameClockPeriods(game);
+                    const requested = String(game?.liveClockPeriod || game?.period || '').trim();
+                    const period = periods.includes(requested) ? requested : periods[0] || 'H1';
+                    return {
+                        persistedClockMs,
+                        effectiveClockMs: persistedClockMs + elapsedMs,
+                        running,
+                        period,
+                        updatedAt
+                    };
+                }
+
+                export async function updateLiveGameClockState(teamId, gameId, clock, user) {
+                    const payload = {
+                        liveClockMs: Math.max(0, Number(clock?.liveClockMs ?? 0) || 0),
+                        liveClockRunning: clock?.liveClockRunning === true,
+                        liveClockPeriod: String(clock?.liveClockPeriod || clock?.currentGame?.liveClockPeriod || clock?.currentGame?.period || 'H1').trim() || 'H1',
+                        liveClockUpdatedAt: new Date(),
+                        liveClockUpdatedBy: user?.uid || null,
+                        period: String(clock?.liveClockPeriod || clock?.currentGame?.liveClockPeriod || clock?.currentGame?.period || 'H1').trim() || 'H1',
+                        liveStatus: 'live',
+                        liveHasData: true
+                    };
+                    window.__scheduleCalls.liveClock = (window.__scheduleCalls.liveClock || []).concat({ teamId, gameId, payload, userId: user?.uid || null });
+                    return payload;
+                }
+
                 export async function cancelScheduledGameForApp(teamId, gameId, user) {
                     window.__scheduleCalls.cancellations = (window.__scheduleCalls.cancellations || []).concat({ teamId, gameId, userId: user?.uid || null });
                     return { status: 'cancelled', isCancelled: true };
