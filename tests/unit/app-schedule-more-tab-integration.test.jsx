@@ -16,6 +16,17 @@ const scheduleMocks = vi.hoisted(() => ({
     loadHomeScoringPlayers: vi.fn().mockResolvedValue([]),
     loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
     loadGameDayLiveEventsForApp: vi.fn().mockResolvedValue([]),
+    buildLiveGameClockPeriods: vi.fn((game) => {
+        const activePeriod = String(game?.liveClockPeriod || game?.period || '').trim();
+        return activePeriod ? [activePeriod] : ['H1', 'H2'];
+    }),
+    resolveLiveGameClockSnapshot: vi.fn((game, now = new Date()) => ({
+        persistedClockMs: Number(game?.liveClockMs ?? game?.gameClockMs ?? 0) || 0,
+        effectiveClockMs: Number(game?.liveClockMs ?? game?.gameClockMs ?? 0) || 0,
+        running: game?.liveClockRunning === true,
+        period: String(game?.liveClockPeriod || game?.period || 'H1'),
+        updatedAt: game?.liveClockUpdatedAt || game?.clockUpdatedAt || now
+    })),
     markParentPracticePacketComplete: vi.fn(),
     publishGamePlanForApp: vi.fn(),
     releaseParentScheduleAssignmentClaim: vi.fn(),
