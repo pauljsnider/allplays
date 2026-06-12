@@ -642,6 +642,8 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
         ? preview.conversationId
         : null
     })).sort((a, b) => {
+      const activityDiff = getMessageTime(b.lastMessage) - getMessageTime(a.lastMessage);
+      if (activityDiff) return activityDiff;
       const unreadDiff = Number(b.unreadCount > 0) - Number(a.unreadCount > 0);
       if (unreadDiff) return unreadDiff;
       return a.name.localeCompare(b.name);

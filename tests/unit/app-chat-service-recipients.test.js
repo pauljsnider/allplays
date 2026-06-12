@@ -193,6 +193,79 @@ describe('React app chat recipient service', () => {
         }));
     });
 
+    it('sorts inbox teams by newest preview activity before unread state or name', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            parentOf: []
+        });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+            { id: 'team-alpha', name: 'Alpha', sport: 'Basketball', adminEmails: ['parent@example.com'] },
+            { id: 'team-beta', name: 'Beta', sport: 'Soccer', adminEmails: ['parent@example.com'] },
+            { id: 'team-gamma', name: 'Gamma', sport: 'Volleyball', adminEmails: ['parent@example.com'] }
+        ]);
+        dbMocks.getParentTeams.mockResolvedValue([]);
+        dbMocks.getUnreadChatCounts.mockResolvedValue({
+            'team-alpha': 3,
+            'team-beta': 0,
+            'team-gamma': 5
+        });
+        dbMocks.getChatConversations.mockImplementation(async (teamId) => {
+            if (teamId === 'team-beta') {
+                return [
+                    { id: 'team', type: 'team', name: 'Beta Team Chat', updatedAt: new Date('2026-05-21T12:00:00Z') },
+                    { id: 'direct_user-1__coach-1', type: 'direct', name: 'Coach Morgan', participantIds: ['user-1', 'coach-1'], lastMessageAt: new Date('2026-05-21T15:00:00Z') }
+                ];
+            }
+            return [
+                { id: 'team', type: 'team', name: `${teamId} Team Chat`, updatedAt: new Date('2026-05-21T12:00:00Z') }
+            ];
+        });
+        dbMocks.getChatMessages.mockImplementation(async (teamId, options = {}) => {
+            if (teamId === 'team-beta' && options.conversationId === 'direct_user-1__coach-1') {
+                return [{
+                    id: 'beta-direct-last',
+                    text: 'Newest direct update.',
+                    senderName: 'Coach Morgan',
+                    createdAt: new Date('2026-05-21T15:00:00Z')
+                }];
+            }
+            if (teamId === 'team-alpha') {
+                return [{
+                    id: 'alpha-team-last',
+                    text: 'Older unread team update.',
+                    senderName: 'Coach Jamie',
+                    createdAt: new Date('2026-05-21T13:00:00Z')
+                }];
+            }
+            return [];
+        });
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'parent@example.com',
+            displayName: 'Pat Parent',
+            roles: ['coach']
+        });
+
+        expect(inbox.teams.map((team) => team.id)).toEqual(['team-beta', 'team-alpha', 'team-gamma']);
+        expect(inbox.teams[0]).toEqual(expect.objectContaining({
+            id: 'team-beta',
+            unreadCount: 0,
+            preferredConversationId: 'direct_user-1__coach-1',
+            lastMessage: expect.objectContaining({ id: 'beta-direct-last' })
+        }));
+        expect(inbox.teams[1]).toEqual(expect.objectContaining({
+            id: 'team-alpha',
+            unreadCount: 3
+        }));
+        expect(inbox.teams[2]).toEqual(expect.objectContaining({
+            id: 'team-gamma',
+            unreadCount: 5,
+            lastMessage: null
+        }));
+    });
+
     it('uses only the newest conversation lookup per team when timestamps are usable', async () => {
         dbMocks.getUserProfile.mockResolvedValue({
             email: 'parent@example.com',
