@@ -17,7 +17,7 @@ import { advanceLiveChatUnreadState } from './live-tracker-chat-unread.js?v=2';
 import { buildVideoTimestampMetadata, hasConfiguredLiveStream } from './live-stream-utils.js?v=2';
 import { resolveLiveStatConfig, resolveLiveStatColumns } from './live-game-state.js?v=3';
 import { getDefaultLivePeriod, getSportPeriodLabels } from './live-sport-config.js?v=1';
-import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=3';
+import { buildOpponentStatsSnapshotFromEntries } from './live-tracker-finish.js?v=4';
 import {
   readPersistedLiveTrackerQueue,
   writePersistedLiveTrackerQueue,
