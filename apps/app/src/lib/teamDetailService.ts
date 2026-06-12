@@ -869,7 +869,8 @@ export async function loadParentTeamDetail(
     trackingItems,
     trackingStatuses,
     sponsors: [...normalizeSponsorList(adSponsors), ...normalizeSponsorList(localSponsors)],
-    includeStaffPermissions: false
+    includeStaffPermissions: false,
+    includeInsights: includeDeferredData
   });
 }
 
@@ -959,7 +960,8 @@ export function buildTeamDetailModel({
   sponsors = [],
   pendingAdminInvites = [],
   confirmedTeamMembers = [],
-  includeStaffPermissions = true
+  includeStaffPermissions = true,
+  includeInsights = true
 }: {
   teamId: string;
   team: Record<string, any>;
@@ -975,6 +977,7 @@ export function buildTeamDetailModel({
   pendingAdminInvites?: any[];
   confirmedTeamMembers?: any[];
   includeStaffPermissions?: boolean;
+  includeInsights?: boolean;
 }): TeamDetailModel {
   const normalizedPlayers = normalizePlayers(players, linkedPlayerIds);
   const normalizedInactivePlayers = normalizePlayers(players, linkedPlayerIds, { inactiveOnly: true });
@@ -986,8 +989,8 @@ export function buildTeamDetailModel({
   const record = calculateSeasonRecord(games, { seasonLabel });
   const completedGames = games.filter(isCompletedGame);
   const standings = buildStandings(team, games);
-  const leaderboards = buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport);
-  const trackingSummaries = buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses);
+  const leaderboards = includeInsights ? buildLeaderboards(configs, normalizedPlayers, seasonStatsByPlayerId, team?.sport) : [];
+  const trackingSummaries = includeInsights ? buildTrackingSummaries(normalizedPlayers, linkedPlayerIds, trackingItems, trackingStatuses) : [];
   const canManageTeam = hasFullTeamAccess(user, team);
   const canManageAdmins = canManageTeamAdmins(user, team);
   const staffPermissions = canManageTeam && includeStaffPermissions
