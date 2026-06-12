@@ -949,6 +949,43 @@ describe('React app team detail model', () => {
         expect(sponsors.sponsors.map((sponsor) => sponsor.id)).toEqual(['ad-1', 'local-1']);
     });
 
+    it('skips leaderboards and trackingSummaries when includeInsights is false', () => {
+        const teamBase = {
+            teamId: 'team-1',
+            team: { name: 'Bears', sport: 'Basketball' },
+            players: [
+                { id: 'player-1', name: 'Pat Star', number: '9' },
+                { id: 'player-2', name: 'Sam Wing', number: '12' }
+            ],
+            configs: [{
+                id: 'basketball',
+                name: 'Basketball',
+                columns: ['pts'],
+                statDefinitions: [{ id: 'pts', label: 'Points', acronym: 'PTS', topStat: true, visibility: 'public', scope: 'player' }]
+            }],
+            seasonStatsByPlayerId: {
+                'player-1': { pts: 88 },
+                'player-2': { pts: 31 }
+            },
+            trackingItems: [{ id: 'item-1', title: 'Bring ball', public: true }],
+            trackingStatuses: [{ itemId: 'item-1', playerId: 'player-1', status: 'complete', public: true }],
+            user: { uid: 'user-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'], parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }
+        };
+
+        const deferredModel = buildTeamDetailModel({ ...teamBase, includeInsights: false });
+        expect(deferredModel.leaderboards).toEqual([]);
+        expect(deferredModel.trackingSummaries).toEqual([]);
+
+        const fullModel = buildTeamDetailModel({ ...teamBase, includeInsights: true });
+        expect(fullModel.leaderboards.length).toBeGreaterThan(0);
+        expect(fullModel.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
+        expect(fullModel.trackingSummaries[0].items[0]).toMatchObject({ title: 'Bring ball', isComplete: true });
+
+        const defaultModel = buildTeamDetailModel({ ...teamBase });
+        expect(defaultModel.leaderboards.length).toBeGreaterThan(0);
+        expect(defaultModel.trackingSummaries.length).toBeGreaterThan(0);
+    });
+
     it('loads deferred staff permissions only when requested for a team manager', async () => {
         getTeam.mockResolvedValue({
             id: 'team-1',
