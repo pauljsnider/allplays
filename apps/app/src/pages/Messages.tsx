@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, 
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
+  BellOff,
   Bot,
   Camera,
   Check,
@@ -43,6 +44,8 @@ import {
   loadTeamEmailDrafts,
   loadTeamEmailTemplates,
   markTeamChatRead,
+  muteTeamChat,
+  unmuteTeamChat,
   saveTeamEmailDraft,
   saveTeamEmailTemplate,
   sendAllPlaysChatAnswer,
@@ -390,6 +393,8 @@ function InboxRow({ team, active, compact, onSelect }: { team: ChatTeam; active:
         <span className="flex h-6 min-w-6 flex-none items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white">
           {team.unreadCount > 99 ? '99+' : team.unreadCount}
         </span>
+      ) : team.isMuted ? (
+        <BellOff className="h-4 w-4 flex-none text-gray-400" aria-label="Notifications muted" />
       ) : compact ? null : (
         <ChevronDown className="-rotate-90 h-5 w-5 flex-none text-gray-300" aria-hidden="true" />
       )}
@@ -491,6 +496,7 @@ function ChatWindow({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState('');
+  const [isMuted, setIsMuted] = useState(() => resolveMutedState(teamId, inboxTeam, {}));
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -712,6 +718,10 @@ function ChatWindow({
   useEffect(() => {
     currentTeamIdRef.current = teamId;
   }, [teamId]);
+
+  useEffect(() => {
+    setIsMuted(resolveMutedState(teamId, inboxTeam, profile));
+  }, [inboxTeam, profile, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1496,6 +1506,21 @@ function ChatWindow({
     }
   }, [selectedConversationId, teamId]);
 
+  const handleToggleMute = useCallback(async () => {
+    if (!auth.user?.uid) return;
+    const next = !isMuted;
+    setIsMuted(next);
+    try {
+      if (next) {
+        await muteTeamChat(auth.user.uid, teamId);
+      } else {
+        await unmuteTeamChat(auth.user.uid, teamId);
+      }
+    } catch {
+      setIsMuted(!next);
+    }
+  }, [auth.user?.uid, isMuted, teamId]);
+
   if (loadingContext) {
     return <MessagesPageSkeleton embedded={embedded} />;
   }
@@ -1536,6 +1561,15 @@ function ChatWindow({
               Staff
             </span>
           ) : null}
+          <button
+            type="button"
+            className={`ghost-button !h-10 !min-h-10 !w-10 !p-0 ${isMuted ? 'text-gray-500' : ''}`}
+            onClick={handleToggleMute}
+            aria-label={isMuted ? 'Unmute notifications' : 'Mute notifications'}
+            aria-pressed={isMuted}
+          >
+            <BellOff className="h-5 w-5" aria-hidden="true" />
+          </button>
           <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={() => setShowMediaGallery(true)} aria-label="Open photos and videos">
             <ImageIcon className="h-5 w-5" aria-hidden="true" />
             {mediaEntries.length ? <span className="sr-only">{mediaEntries.length} shared media items</span> : null}
@@ -1763,6 +1797,14 @@ function buildMessagesRoute(teamId: string, preferredConversationId?: string | n
   const normalizedConversationId = String(preferredConversationId || '').trim();
   if (!normalizedConversationId) return route;
   return `${route}?conversationId=${encodeURIComponent(normalizedConversationId)}`;
+}
+
+function resolveMutedState(teamId: string, inboxTeam?: ChatTeam, profile: Record<string, any> = {}) {
+  if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
+    return inboxTeam.isMuted;
+  }
+  const chatMuted = profile?.chatMuted;
+  return Boolean(chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]);
 }
 
 function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {

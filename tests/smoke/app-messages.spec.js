@@ -260,6 +260,14 @@ async function mockMessagesModules(page, options = {}) {
                     window.__chatCalls.reads.push({ userId, teamId });
                 }
 
+                export async function muteTeamChat() {
+                    return true;
+                }
+
+                export async function unmuteTeamChat() {
+                    return true;
+                }
+
                 export async function sendTeamEmailMessage() {
                     return { recipientCount: 1, status: 'queued' };
                 }
