@@ -151,13 +151,19 @@ export function Messages({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, shouldLoadInbox]);
 
-  // Initialize selectedDesktopTeamId once teams first load (only if no selection exists yet).
+  // Keep the desktop selection in sync with the current inbox contents.
   useEffect(() => {
-    if (isDesktopWeb && !selectedDesktopTeamId && teams.length > 0) {
+    if (!isDesktopWeb || teamId) return;
+    if (!teams.length) {
+      if (selectedDesktopTeamId) {
+        setSelectedDesktopTeamId(undefined);
+      }
+      return;
+    }
+    if (!selectedDesktopTeamId || !teams.some((team) => team.id === selectedDesktopTeamId)) {
       setSelectedDesktopTeamId(teams[0].id);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teams]);
+  }, [isDesktopWeb, selectedDesktopTeamId, teamId, teams]);
 
   // Sync selectedDesktopTeamId when the URL route changes (explicit navigation).
   useEffect(() => {
