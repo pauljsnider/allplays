@@ -1321,6 +1321,7 @@ function dedupeStrings(values: string[]) {
 function isUpcomingAssignedGame(game: any) {
   if (!game || game?.type === 'practice') return false;
   if (isHistoricalGameStatus(game)) return false;
+  if (isActiveGameStatus(game)) return true;
   return isInUpcomingWindow(game?.date);
 }
 
@@ -1328,6 +1329,13 @@ function isHistoricalGameStatus(game: any) {
   const status = cleanString(game?.status).toLowerCase();
   const liveStatus = cleanString(game?.liveStatus).toLowerCase();
   return status === 'completed' || status === 'final' || status === 'cancelled' || liveStatus === 'completed';
+}
+
+function isActiveGameStatus(game: any) {
+  const status = cleanString(game?.status).toLowerCase();
+  const liveStatus = cleanString(game?.liveStatus).toLowerCase();
+  return ['active', 'in_progress', 'in-progress', 'live', 'started', 'running'].includes(status)
+    || ['active', 'in_progress', 'in-progress', 'live', 'started', 'running'].includes(liveStatus);
 }
 
 function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTrackerConfig> = new Map()) {

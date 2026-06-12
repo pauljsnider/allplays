@@ -667,6 +667,9 @@ describe('React app team detail model', () => {
     });
 
     it('builds read-only stat tracker config summaries for migrated and legacy shapes', () => {
+        const now = new Date('2026-06-12T18:00:00Z').getTime();
+        const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(now);
+
         const model = buildTeamDetailModel({
             teamId: 'team-1',
             team: {
@@ -679,6 +682,7 @@ describe('React app team detail model', () => {
                 { id: 'game-1', opponent: 'Falcons', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-basketball' },
                 { id: 'game-2', opponent: 'Tigers', date: new Date('2100-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' },
                 { id: 'game-3', opponent: 'Orphans', date: new Date('2100-06-03T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-missing' },
+                { id: 'live-game', opponent: 'Long Match', date: new Date(now - 4 * 60 * 60 * 1000), status: 'scheduled', liveStatus: 'live', statTrackerConfigId: 'cfg-legacy' },
                 { id: 'stale-game', opponent: 'Past Tigers', date: new Date('2020-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' }
             ],
             configs: [
@@ -705,6 +709,7 @@ describe('React app team detail model', () => {
             ],
             user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }
         });
+        dateNowSpy.mockRestore();
 
         expect(model.statTrackerConfigs).toEqual([
             expect.objectContaining({
@@ -715,6 +720,7 @@ describe('React app team detail model', () => {
                 columnCount: 2,
                 columnNames: ['GOALS', 'SHOTS'],
                 assignedUpcomingGames: [
+                    expect.objectContaining({ gameId: 'live-game', title: 'vs. Long Match' }),
                     expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })
                 ]
             }),
@@ -731,7 +737,10 @@ describe('React app team detail model', () => {
             })
         ]);
         expect(model.statTrackerConfigs.find((config) => config.id === 'cfg-legacy').assignedUpcomingGames)
-            .toEqual([expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })]);
+            .toEqual([
+                expect.objectContaining({ gameId: 'live-game', title: 'vs. Long Match' }),
+                expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })
+            ]);
         expect(model.upcomingEvents.find((event) => event.id === 'game-1')).toMatchObject({
             statTrackerConfigId: 'cfg-basketball',
             statTrackerConfigLabel: 'Varsity Basketball',
