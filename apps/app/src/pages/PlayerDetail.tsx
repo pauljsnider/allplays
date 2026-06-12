@@ -520,7 +520,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
 }
 
 function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
-  if (!data.access.isTeamStaff) {
+  if (!data.access.canEditRosterDetails) {
     return null;
   }
 

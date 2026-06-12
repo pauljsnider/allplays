@@ -111,6 +111,7 @@ export type ParentPlayerDetailData = {
   access: {
     isLinkedParent: boolean;
     isTeamStaff: boolean;
+    canEditRosterDetails: boolean;
     canEditCustomRosterFields: boolean;
   };
   customRosterFields: Array<{
@@ -392,8 +393,8 @@ export async function saveStaffPlayerRosterDetails({
 
   const team = await Promise.resolve(getTeam(teamId, { includeInactive: true })).catch(() => null);
   const access = buildPlayerAccess(user, teamId, playerId, team);
-  if (!access.isTeamStaff) {
-    throw new Error('Only team staff can edit roster details.');
+  if (!access.canEditRosterDetails) {
+    throw new Error('Only team owners and admins can edit roster details.');
   }
 
   const nextName = String(name || '').trim();
@@ -726,10 +727,12 @@ function buildPlayerAccess(user: AuthUser | null, teamId: string, playerId: stri
   const linkedParent = isLinkedParent(user, teamId, playerId);
   const resolvedTeam = team ? { ...team, id: team.id || teamId } : { id: teamId };
   const isTeamStaff = isTeamStaffUser(user, resolvedTeam);
-  const canEditCustomRosterFields = isTeamOwnerOrAdminUser(user, resolvedTeam);
+  const canEditRosterDetails = isTeamOwnerOrAdminUser(user, resolvedTeam);
+  const canEditCustomRosterFields = canEditRosterDetails;
   return {
     isLinkedParent: linkedParent,
     isTeamStaff,
+    canEditRosterDetails,
     canEditCustomRosterFields
   };
 }
@@ -743,7 +746,7 @@ function buildVisibleCustomRosterFields({
   definitions: any[];
   player: Record<string, any>;
   privateProfile: Record<string, any> | null;
-  access: { isLinkedParent: boolean; isTeamStaff: boolean; canEditCustomRosterFields: boolean };
+  access: { isLinkedParent: boolean; isTeamStaff: boolean; canEditRosterDetails: boolean; canEditCustomRosterFields: boolean };
 }) {
   const normalizedFields = normalizeRosterFieldDefinitions(definitions) as CustomRosterFieldDefinition[];
   if (!normalizedFields.length) return [];

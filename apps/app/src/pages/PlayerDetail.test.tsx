@@ -79,6 +79,7 @@ function buildDetailData(overrides: Record<string, any> = {}) {
     access: {
       isLinkedParent: true,
       isTeamStaff: false,
+      canEditRosterDetails: false,
       canEditCustomRosterFields: false
     },
     customRosterFields: [],
@@ -1116,6 +1117,7 @@ describe('PlayerDetail staff roster editing', () => {
       access: {
         isLinkedParent: false,
         isTeamStaff: true,
+        canEditRosterDetails: true,
         canEditCustomRosterFields: false
       }
     }));
@@ -1158,6 +1160,25 @@ describe('PlayerDetail staff roster editing', () => {
       });
     });
   });
+
+  it('keeps coachOf-only staff out of the roster editor', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: false,
+        isTeamStaff: true,
+        canEditRosterDetails: false,
+        canEditCustomRosterFields: false
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    await screen.findByText('Player profile');
+    expect(screen.queryByText('Roster Details')).toBeNull();
+  });
 });
 
 describe('PlayerDetail custom roster fields', () => {
@@ -1167,6 +1188,7 @@ describe('PlayerDetail custom roster fields', () => {
       access: {
         isLinkedParent: false,
         isTeamStaff: true,
+        canEditRosterDetails: true,
         canEditCustomRosterFields: true
       },
       customRosterFields: [
@@ -1242,6 +1264,7 @@ describe('PlayerDetail custom roster fields', () => {
       access: {
         isLinkedParent: true,
         isTeamStaff: false,
+        canEditRosterDetails: false,
         canEditCustomRosterFields: false
       },
       customRosterFields: [

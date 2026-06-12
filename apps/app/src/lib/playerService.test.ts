@@ -144,7 +144,7 @@ describe('saveStaffPlayerRosterDetails', () => {
     });
   });
 
-  it('rejects roster edits from non-staff users', async () => {
+  it('rejects roster edits from parent-only users', async () => {
     await expect(saveStaffPlayerRosterDetails({
       user: {
         uid: 'parent-1',
@@ -156,7 +156,25 @@ describe('saveStaffPlayerRosterDetails', () => {
       currentPlayer: { name: 'Sam Player', number: '12' },
       name: 'Sam Player',
       number: '12'
-    })).rejects.toThrow('Only team staff can edit roster details.');
+    })).rejects.toThrow('Only team owners and admins can edit roster details.');
+
+    expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
+    expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
+  });
+
+  it('rejects roster edits from coachOf-only users without team admin rights', async () => {
+    await expect(saveStaffPlayerRosterDetails({
+      user: {
+        uid: 'coach-2',
+        email: 'assistant@example.com',
+        coachOf: ['team-1']
+      } as any,
+      teamId: 'team-1',
+      playerId: 'player-1',
+      currentPlayer: { name: 'Sam Player', number: '12' },
+      name: 'Sam Player',
+      number: '12'
+    })).rejects.toThrow('Only team owners and admins can edit roster details.');
 
     expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
     expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
@@ -323,6 +341,7 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       expect.objectContaining({ key: 'nickname', value: 'Rocket' }),
       expect.objectContaining({ key: 'jerseySize', value: 'YM' })
     ]);
+    expect(detail.access.canEditRosterDetails).toBe(true);
     expect(detail.access.canEditCustomRosterFields).toBe(true);
   });
 
@@ -356,6 +375,7 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     } as any, 'team-1', 'player-1');
 
     expect(detail.access.isTeamStaff).toBe(true);
+    expect(detail.access.canEditRosterDetails).toBe(false);
     expect(detail.access.canEditCustomRosterFields).toBe(false);
     expect(detail.customRosterFields).toEqual([
       expect.objectContaining({ key: 'nickname', value: 'Rocket' })
