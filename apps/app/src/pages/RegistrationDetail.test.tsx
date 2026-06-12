@@ -1,21 +1,23 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RegistrationDetail } from './RegistrationDetail';
 import type { AuthState } from '../lib/types';
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
+  cancelRegistrationCheckout: vi.fn(),
   initiateRegistrationCheckout: vi.fn(),
   loadParentRegistrationDetail: vi.fn(),
   loadPublicRegistrationDetail: vi.fn(),
   loadParentRegistrations: vi.fn(),
   submitOfflineRegistration: vi.fn()
 }));
+const openPublicUrlMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
 vi.mock('../lib/publicActions', () => ({
-  openPublicUrl: vi.fn()
+  openPublicUrl: openPublicUrlMock
 }));
 
 const auth: AuthState = {
@@ -67,9 +69,9 @@ function buildDetail(overrides: Record<string, any> = {}) {
   };
 }
 
-function renderPublicRegistration() {
+function renderPublicRegistration(path = '/registration?teamId=team-1&formId=form-1') {
   return render(
-    <MemoryRouter initialEntries={['/registration?teamId=team-1&formId=form-1']}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/registration" element={<RegistrationDetail auth={auth} publicAccess />} />
       </Routes>
@@ -91,6 +93,7 @@ function renderParentRegistration() {
 describe('RegistrationDetail payment notice', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    openPublicUrlMock.mockReset();
   });
 
   afterEach(() => {
@@ -118,5 +121,63 @@ describe('RegistrationDetail payment notice', () => {
     expect(await screen.findByRole('button', { name: 'Submit registration' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Payment' })).toBeNull();
     expect(parentToolsServiceMocks.loadParentRegistrationDetail).toHaveBeenCalledWith(auth.user, 'team-1', 'form-1');
+  });
+
+  it('shows retry guidance and releases cancelled checkout attempts on Stripe cancel returns', async () => {
+    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+      paymentNotice: 'Payment will be collected in Stripe before your registration is complete.',
+      onlineCheckout: true
+    }));
+    parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true });
+
+    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&registrationId=reg-1&checkoutAttemptToken=tok-1&retryPayment=1&status=cancelled');
+
+    expect(await screen.findByText('Stripe payment was cancelled. You can retry payment for this registration.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry payment with Stripe' })).toBeTruthy();
+    await waitFor(() => expect(parentToolsServiceMocks.cancelRegistrationCheckout).toHaveBeenCalledWith('team-1', 'form-1', 'reg-1', 'tok-1'));
+  });
+
+  it('retries Stripe checkout without creating a duplicate registration', async () => {
+    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+      onlineCheckout: true,
+      paymentNotice: 'Pay online.'
+    }));
+    parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true });
+    parentToolsServiceMocks.initiateRegistrationCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://stripe.example/checkout' });
+
+    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&registrationId=reg-1&checkoutAttemptToken=tok-1&retryPayment=1&status=cancelled');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry payment with Stripe' }));
+
+    await waitFor(() => expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      'reg-1',
+      '',
+      'pay_full',
+      1,
+      12500,
+      'USD',
+      {
+        checkoutAttemptToken: 'tok-1',
+        retryPayment: true
+      }
+    ));
+    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(openPublicUrlMock).toHaveBeenCalledWith('https://stripe.example/checkout');
+  });
+
+  it('replaces the form with a success confirmation after Stripe success returns', async () => {
+    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+      onlineCheckout: true,
+      paymentNotice: 'Pay online.'
+    }));
+
+    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&registrationId=reg-1&checkoutAttemptToken=tok-1&retryPayment=1&status=success');
+
+    expect(await screen.findByRole('heading', { name: 'Payment successful' })).toBeTruthy();
+    expect(screen.getByText('Your registration payment was received. The program organizer will follow up with next steps.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry payment with Stripe' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Pay registration with Stripe' })).toBeNull();
   });
 });

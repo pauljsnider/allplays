@@ -680,7 +680,10 @@ describe('RegistrationDetail page', () => {
       'pay_full',
       1,
       10000,
-      'USD'
+      'USD',
+      expect.objectContaining({
+        checkoutAttemptToken: expect.any(String)
+      })
     );
     expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay-reg-1');
   });
@@ -855,7 +858,10 @@ describe('RegistrationDetail page', () => {
       'pay_full',
       1,
       10000,
-      'USD'
+      'USD',
+      expect.objectContaining({
+        checkoutAttemptToken: expect.any(String)
+      })
     );
     expect(publicActionsMocks.openPublicUrl).toHaveBeenCalledWith('https://checkout.stripe.com/c/pay-reg-1');
   });
@@ -972,7 +978,10 @@ describe('RegistrationDetail page', () => {
       'pay_full',
       1,
       12500,
-      'cad'
+      'cad',
+      expect.objectContaining({
+        checkoutAttemptToken: expect.any(String)
+      })
     );
   });
 
@@ -1030,7 +1039,10 @@ describe('RegistrationDetail page', () => {
       'pay_full',
       1, // Should be 1 because hasQuantityDiscountRule is false
       expect.any(Number),
-      expect.any(String)
+      expect.any(String),
+      expect.objectContaining({
+        checkoutAttemptToken: expect.any(String)
+      })
     );
   });
 
@@ -1094,7 +1106,10 @@ describe('RegistrationDetail page', () => {
       'pay_full',
       2, // Should be 2 because hasQuantityDiscountRule is true and input was changed
       expect.any(Number),
-      expect.any(String)
+      expect.any(String),
+      expect.objectContaining({
+        checkoutAttemptToken: expect.any(String)
+      })
     );
   });
 
