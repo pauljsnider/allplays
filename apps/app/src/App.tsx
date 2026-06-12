@@ -1,6 +1,7 @@
 import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRouteSkeleton } from './components/PageSkeletons';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { shouldReloadTeamsToHome } from './lib/reloadRouting';
@@ -139,6 +140,7 @@ function isBrowserReload() {
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {
   const [bootstrapGraceExpired, setBootstrapGraceExpired] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -162,9 +164,15 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
 
   return (
     <AppShell auth={auth}>
-      <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>
-        {children}
-      </Suspense>
+      <ErrorBoundary
+        name={`route:${location.pathname}`}
+        resetKey={`${location.pathname}${location.search}`}
+        onGoHome={() => navigate('/home', { replace: true })}
+      >
+        <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>
+          {children}
+        </Suspense>
+      </ErrorBoundary>
     </AppShell>
   );
 }

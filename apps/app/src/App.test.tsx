@@ -2,10 +2,11 @@
 import { render, screen } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
 const suspendedHomePromise = new Promise<never>(() => {});
+let homeRenderMode: 'suspend' | 'throw' = 'suspend';
 
 vi.mock('./lib/useAuth', () => ({
   useAuth: () => ({
@@ -47,6 +48,9 @@ vi.mock('./lib/pushService', () => ({
 
 vi.mock('./pages/Home', () => ({
   Home: () => {
+    if (homeRenderMode === 'throw') {
+      throw new Error('Home page render failed');
+    }
     throw suspendedHomePromise;
   },
 }));
@@ -60,6 +64,15 @@ vi.mock('./pages/Officials', () => ({
 }));
 
 describe('App protected route loading', () => {
+  beforeEach(() => {
+    homeRenderMode = 'suspend';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('keeps the app shell visible while a protected route is still loading', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
@@ -94,5 +107,21 @@ describe('App protected route loading', () => {
 
     expect(await screen.findByText('Officials assignments page')).toBeTruthy();
     expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
+  });
+
+  it('keeps the app shell visible when a protected route throws while rendering', async () => {
+    homeRenderMode = 'throw';
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('navigation', { name: 'Primary navigation' })).toBeTruthy();
+    expect(screen.getByRole('alert', { name: 'Screen error' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Go home' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeTruthy();
   });
 });
