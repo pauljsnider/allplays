@@ -18,6 +18,7 @@ const Messages = lazy(() => import('./pages/Messages').then((module) => ({ defau
 const Officials = lazy(() => import('./pages/Officials').then((module) => ({ default: module.Officials })));
 const ParentTools = lazy(() => import('./pages/ParentTools').then((module) => ({ default: module.ParentTools })));
 const RegistrationDetail = lazy(() => import('./pages/RegistrationDetail').then((module) => ({ default: module.RegistrationDetail })));
+const TeamRegistrationReview = lazy(() => import('./pages/RegistrationDetail').then((module) => ({ default: module.TeamRegistrationReview })));
 const PlayerDetail = lazy(() => import('./pages/PlayerDetail').then((module) => ({ default: module.PlayerDetail })));
 const PrivateAiChat = lazy(() => import('./pages/PrivateAiChat').then((module) => ({ default: module.PrivateAiChat })));
 const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
@@ -111,6 +112,7 @@ export default function App() {
         <Route path="/teams/:teamId/fees" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/fees/:batchId" element={<Protected auth={auth}><TeamFees auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/media" element={<Protected auth={auth}><TeamMedia auth={auth} /></Protected>} />
+        <Route path="/teams/:teamId/registrations/:formId" element={<Protected auth={auth}><TeamRegistrationReview auth={auth} /></Protected>} />
         <Route path="/parent-tools" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />
         <Route path="/parent-tools/registrations/:teamId/:formId" element={<Protected auth={auth}><RegistrationDetail auth={auth} /></Protected>} />
         <Route path="/parent-tools/:toolId" element={<Protected auth={auth}><ParentTools auth={auth} /></Protected>} />

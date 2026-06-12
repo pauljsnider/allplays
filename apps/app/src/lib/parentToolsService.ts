@@ -1,4 +1,5 @@
 import {
+  approveTeamRegistration,
   createFamilyShareToken,
   createParentMembershipRequest,
   createRegistrationCheckoutSession,
@@ -15,6 +16,8 @@ import {
   listMyParentMembershipRequests,
   listParentTeamFeeRecipients,
   listTeamRegistrationForms,
+  listTeamRegistrationReviews,
+  rejectTeamRegistration,
   revokeFamilyShareToken,
   updateFamilyShareTokenCalendars,
   uploadTeamMediaFile,
@@ -45,6 +48,12 @@ import {
   normalizeRegistrationForm,
   requiresRegistrationOption
 } from '../../../../js/registration-flow.js';
+import {
+  getRegistrationGuardianDrafts,
+  getRegistrationPlayerDraft,
+  getRegistrationSubmittedData,
+  normalizeRegistrationStatus
+} from '../../../../js/registration-review.js';
 import {
   canContributeTeamMedia,
   canManageTeamMedia,
@@ -139,6 +148,34 @@ export type ParentRegistrationDetailModel = {
   feeSnapshot: Record<string, any>;
   paymentNotice: string;
   paymentPlans: Array<Record<string, any>>;
+};
+
+export type TeamRegistrationRosterPlayer = {
+  id: string;
+  name: string;
+  number?: string;
+};
+
+export type TeamRegistrationReviewCard = Record<string, any> & {
+  id: string;
+  status: string;
+  participantName: string;
+  guardianLabel: string;
+  guardianEmails: string[];
+  participant: Record<string, any>;
+  guardian: Record<string, any>;
+  submittedData: Record<string, any>;
+  submittedAt: unknown;
+  selectedOptionLabel: string;
+  paymentLabel: string;
+  waiverAccepted: boolean;
+  linkedPlayerId: string;
+  decisionNote: string;
+};
+
+export type TeamRegistrationQueueModel = {
+  reviews: TeamRegistrationReviewCard[];
+  rosterPlayers: TeamRegistrationRosterPlayer[];
 };
 
 export type ParentCalendarTeam = {
@@ -606,6 +643,56 @@ export async function loadParentRegistrations(user: AuthUser | null): Promise<Pa
     .sort((a, b) => a.teamName.localeCompare(b.teamName) || a.programName.localeCompare(b.programName));
 }
 
+export async function loadTeamRegistrationQueue(
+  user: AuthUser | null,
+  teamId: string,
+  formId: string
+): Promise<TeamRegistrationQueueModel> {
+  if (!canManageTeamRegistrations(user, teamId)) {
+    throw new Error('Admin access is required to review registrations.');
+  }
+
+  const [reviews, rosterPlayers] = await Promise.all([
+    Promise.resolve(listTeamRegistrationReviews(teamId, formId, 'all')).catch(() => []),
+    Promise.resolve(getPlayers(teamId)).catch(() => [])
+  ]);
+
+  return {
+    reviews: (reviews || []).map((review: any) => toTeamRegistrationReviewCard(review)),
+    rosterPlayers: (rosterPlayers || []).map((player: any) => ({
+      id: compactString(player.id),
+      name: compactString(player.name) || 'Player',
+      number: compactString(player.number)
+    }))
+  };
+}
+
+export async function approveTeamRegistrationForApp(
+  user: AuthUser | null,
+  teamId: string,
+  formId: string,
+  registrationId: string,
+  options: { playerId?: string; decisionNote?: string } = {}
+) {
+  if (!canManageTeamRegistrations(user, teamId)) {
+    throw new Error('Admin access is required to approve registrations.');
+  }
+  return approveTeamRegistration(teamId, formId, registrationId, options);
+}
+
+export async function rejectTeamRegistrationForApp(
+  user: AuthUser | null,
+  teamId: string,
+  formId: string,
+  registrationId: string,
+  decisionNote = ''
+) {
+  if (!canManageTeamRegistrations(user, teamId)) {
+    throw new Error('Admin access is required to decline registrations.');
+  }
+  return rejectTeamRegistration(teamId, formId, registrationId, decisionNote);
+}
+
 export async function loadParentCertificates(user: AuthUser | null): Promise<ParentCertificateCard[]> {
   const children = normalizeFamilyChildren(user?.parentOf || []);
   const rows = await Promise.all(children.map(async (child: any) => {
@@ -640,33 +727,18 @@ export async function loadParentRegistrationDetail(
   if (!getLinkedTeamIds(user).includes(teamId)) {
     throw new Error('Registration is not linked to your family.');
   }
-  const [team, forms] = await Promise.all([
-    Promise.resolve(getTeam(teamId)).catch(() => null),
-    Promise.resolve(listTeamRegistrationForms(teamId)).catch(() => [])
-  ]);
+  return loadRegistrationDetailModel(teamId, formId);
+}
 
-  const form = forms.find((f: any) => f.id === formId);
-  if (!form) throw new Error('Registration form not found.');
-  if (!team) throw new Error('Team not found.');
-
-  const normalizedForm = normalizeRegistrationForm(form, { teamId, formId });
-  const feeSnapshot = calculateRegistrationFeeSnapshot(normalizedForm, { now: new Date() });
-  const paymentPlans = getPaymentPlanChoices(normalizedForm);
-  const paymentNotice = getRegistrationPaymentNotice(normalizedForm);
-  const onlineCheckout = hasOnlineRegistrationCheckout(normalizedForm);
-  const legacyUrl = getRegistrationUrl(teamId, formId);
-
-  return {
-    teamName: compactString(team.name) || 'Team',
-    isPublished: normalizedForm.published && normalizedForm.status !== 'closed' && normalizedForm.status !== 'archived',
-    onlineCheckout,
-    legacyUrl,
-    form: normalizedForm,
-    options: getActiveRegistrationOptions(normalizedForm, normalizedForm.registrationOptionCounts || {}),
-    feeSnapshot,
-    paymentNotice,
-    paymentPlans
-  };
+export async function loadStaffRegistrationDetail(
+  user: AuthUser | null,
+  teamId: string,
+  formId: string
+): Promise<ParentRegistrationDetailModel> {
+  if (!canManageTeamRegistrations(user, teamId)) {
+    throw new Error('Admin access is required to review registrations.');
+  }
+  return loadRegistrationDetailModel(teamId, formId);
 }
 
 export async function loadPublicRegistrationDetail(
@@ -882,6 +954,61 @@ function toRegistrationCard(team: any, form: any): ParentRegistrationCard | null
   };
 }
 
+function toTeamRegistrationReviewCard(review: any): TeamRegistrationReviewCard {
+  const normalizedStatus = normalizeRegistrationStatus(review?.status);
+  const submittedData = asObject(getRegistrationSubmittedData(review));
+  const participant = {
+    ...asObject(review?.participant),
+    ...asObject(submittedData.participant)
+  };
+  const guardian = {
+    ...asObject(review?.guardian),
+    ...asObject(submittedData.guardian)
+  };
+  const guardians = getRegistrationGuardianDrafts(review) as Array<Record<string, any>>;
+  const playerDraft = getRegistrationPlayerDraft(review);
+  const feeSnapshot = asObject(review?.feeSnapshot);
+  const selectedOption = asObject(review?.selectedOption);
+  const paymentState = compactString(
+    review?.paymentStatus
+    || feeSnapshot.paymentStatus
+    || review?.checkoutStatus
+    || review?.paymentState
+    || review?.payment?.status
+  );
+  const paymentAmount = Number(
+    feeSnapshot.finalAmountDueCents
+    ?? feeSnapshot.amountDueCents
+    ?? feeSnapshot.feeAmountCents
+    ?? review?.feeAmountCents
+  );
+
+  return {
+    ...review,
+    id: compactString(review?.id),
+    status: normalizedStatus,
+    participantName: compactString(review?.reviewSummary?.playerName || playerDraft.name || participant.name) || 'Unnamed player',
+    guardianLabel: compactString(review?.reviewSummary?.guardianLabel || guardians.map((entry) => entry.email || entry.name).filter(Boolean).join(', ')),
+    guardianEmails: guardians.map((entry) => compactString(entry.email)).filter(Boolean),
+    participant,
+    guardian,
+    submittedData,
+    submittedAt: review?.reviewSummary?.submittedAt || review?.submittedAt || review?.createdAt || null,
+    selectedOptionLabel: compactString(selectedOption.title || selectedOption.label || review?.selectedOptionLabel || review?.selectedOptionId),
+    paymentLabel: paymentState
+      ? `${paymentState}${Number.isFinite(paymentAmount) ? ` · ${formatCurrency(paymentAmount, feeSnapshot.currency || review?.currency || 'USD')}` : ''}`
+      : (Number.isFinite(paymentAmount) ? formatCurrency(paymentAmount, feeSnapshot.currency || review?.currency || 'USD') : 'Not recorded'),
+    waiverAccepted: Boolean(
+      review?.waiverAccepted
+      ?? submittedData.waiverAccepted
+      ?? submittedData.waiver
+      ?? review?.waiver?.accepted
+    ),
+    linkedPlayerId: compactString(review?.linkedPlayerId),
+    decisionNote: compactString(review?.decisionNote)
+  };
+}
+
 function toTeamMediaItem(item: any): TeamMediaItem {
   const url = getTeamMediaItemUrl(item);
   return {
@@ -923,6 +1050,12 @@ function getLinkedTeamIds(user: AuthUser | null) {
     ...(Array.isArray(user?.parentOf) ? user!.parentOf.map((entry: any) => compactString(entry.teamId)) : []),
     ...(Array.isArray(user?.coachOf) ? user!.coachOf.map(compactString) : [])
   ].filter(Boolean))];
+}
+
+function canManageTeamRegistrations(user: AuthUser | null, teamId: string) {
+  if (!teamId || !user) return false;
+  if (Array.isArray(user.roles) && user.roles.some((role) => role === 'admin' || role === 'platformAdmin')) return true;
+  return Array.isArray(user.coachOf) && user.coachOf.map(compactString).includes(teamId);
 }
 
 function getArrayField(source: any, keys: string[]) {
@@ -968,6 +1101,43 @@ function toMillis(value: unknown) {
 
 function compactString(value: unknown) {
   return String(value || '').trim();
+}
+
+function asObject(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
+}
+
+async function loadRegistrationDetailModel(teamId: string, formId: string): Promise<ParentRegistrationDetailModel> {
+  if (!teamId || !formId) {
+    throw new Error('Team and form are required.');
+  }
+  const [team, forms] = await Promise.all([
+    Promise.resolve(getTeam(teamId)).catch(() => null),
+    Promise.resolve(listTeamRegistrationForms(teamId)).catch(() => [])
+  ]);
+
+  const form = forms.find((candidate: any) => candidate.id === formId);
+  if (!form) throw new Error('Registration form not found.');
+  if (!team) throw new Error('Team not found.');
+
+  const normalizedForm = normalizeRegistrationForm(form, { teamId, formId });
+  const feeSnapshot = calculateRegistrationFeeSnapshot(normalizedForm, { now: new Date() });
+  const paymentPlans = getPaymentPlanChoices(normalizedForm);
+  const paymentNotice = getRegistrationPaymentNotice(normalizedForm);
+  const onlineCheckout = hasOnlineRegistrationCheckout(normalizedForm);
+  const legacyUrl = getRegistrationUrl(teamId, formId);
+
+  return {
+    teamName: compactString(team.name) || 'Team',
+    isPublished: normalizedForm.published && normalizedForm.status !== 'closed' && normalizedForm.status !== 'archived',
+    onlineCheckout,
+    legacyUrl,
+    form: normalizedForm,
+    options: getActiveRegistrationOptions(normalizedForm, normalizedForm.registrationOptionCounts || {}),
+    feeSnapshot,
+    paymentNotice,
+    paymentPlans
+  };
 }
 
 export async function initiateRegistrationCheckout(
