@@ -36,6 +36,20 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadGameDayLiveEventsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([] as any[])),
   saveGameDaySubstitutionForApp: vi.fn((_teamId, _gameId, _user, payload) => Promise.resolve(payload)),
   updateGameScore: vi.fn(),
+  updateLiveGameClockState: vi.fn(),
+  buildLiveGameClockPeriods: vi.fn((game: any) => game?.gamePlan?.numPeriods === 4 ? ['Q1', 'Q2', 'Q3', 'Q4'] : ['H1', 'H2']),
+  resolveLiveGameClockSnapshot: vi.fn((game: any, now = new Date()) => {
+    const persistedClockMs = Math.max(0, Number(game?.liveClockMs || 0));
+    const updatedAt = game?.liveClockUpdatedAt ? new Date(game.liveClockUpdatedAt) : now;
+    const running = game?.liveClockRunning === true;
+    return {
+      persistedClockMs,
+      effectiveClockMs: persistedClockMs + (running ? Math.max(0, now.getTime() - updatedAt.getTime()) : 0),
+      running,
+      period: game?.liveClockPeriod || game?.period || 'H1',
+      updatedAt
+    };
+  }),
   updateParentScheduleRideRequestStatus: vi.fn()
 }));
 
@@ -339,6 +353,70 @@ describe('ScheduleEventDetail assignments', () => {
 
     expect((screen.getByRole('button', { name: 'Heart' }) as HTMLButtonElement).disabled).toBe(true);
     expect(liveGameReactionsServiceMocks.sendLiveGameReaction).not.toHaveBeenCalled();
+  });
+
+  it('starts the live clock and advances the period from the app game hub', async () => {
+    scheduleServiceMocks.updateLiveGameClockState
+      .mockResolvedValueOnce({
+        liveClockMs: 0,
+        liveClockRunning: true,
+        liveClockPeriod: 'Q1',
+        period: 'Q1',
+        liveClockUpdatedAt: new Date('2026-06-12T04:00:00.000Z'),
+        liveStatus: 'live'
+      })
+      .mockResolvedValueOnce({
+        liveClockMs: 0,
+        liveClockRunning: true,
+        liveClockPeriod: 'Q2',
+        period: 'Q2',
+        liveClockUpdatedAt: new Date('2026-06-12T04:00:05.000Z'),
+        liveStatus: 'live'
+      });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'scheduled',
+        canUpdateScore: true,
+        liveClockMs: 0,
+        liveClockRunning: false,
+        liveClockPeriod: 'Q1',
+        gamePlan: { numPeriods: 4 }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('live-game-clock-panel')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start clock' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateLiveGameClockState).toHaveBeenNthCalledWith(1, 'team-1', 'game-1', expect.objectContaining({
+        liveClockRunning: true,
+        liveClockPeriod: 'Q1'
+      }), auth.user);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Pause clock' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Advance period' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateLiveGameClockState).toHaveBeenNthCalledWith(2, 'team-1', 'game-1', expect.objectContaining({
+        liveClockRunning: true,
+        liveClockPeriod: 'Q2'
+      }), auth.user);
+    });
+
+    expect(screen.getAllByText(/LIVE · Q2/i).length).toBeGreaterThan(0);
   });
 
   it('renders in-route live chat, streams messages, and keeps watch live links external', async () => {

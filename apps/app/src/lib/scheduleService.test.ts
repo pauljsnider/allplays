@@ -97,7 +97,7 @@ import { getDocs } from '../../../../js/firebase.js';
 import { fetchAndParseCalendar } from '../../../../js/utils.js';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerScoringStat, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerScoringStat, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, updateLiveGameClockState } from './scheduleService';
 
 describe('parent game route resolution', () => {
   beforeEach(() => {
@@ -308,6 +308,76 @@ describe('official assignments app service', () => {
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(1, 'team-alpha', 'game-assigned', 'center', 'accepted');
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(2, 'team-alpha', 'game-assigned', 'center', 'declined');
     expect(claimOpenOfficiatingSlot).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'line', user);
+  });
+});
+
+describe('live game clock state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  it('restores running clocks from persisted wall-clock anchors', () => {
+    const snapshot = resolveLiveGameClockSnapshot({
+      liveClockMs: 120000,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      liveClockUpdatedAt: new Date('2026-06-12T04:00:00.000Z')
+    }, new Date('2026-06-12T04:00:15.000Z'));
+
+    expect(snapshot).toMatchObject({
+      persistedClockMs: 120000,
+      effectiveClockMs: 135000,
+      running: true,
+      period: 'Q2'
+    });
+  });
+
+  it('persists live clock anchors with the active period', async () => {
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+
+    const payload = await updateLiveGameClockState('team-1', 'game-1', {
+      liveClockMs: 135432,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      currentGame: { liveStatus: 'scheduled' }
+    }, { uid: 'coach-1', email: 'coach@example.com' } as any);
+
+    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+      liveClockMs: 135432,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      period: 'Q2',
+      liveStatus: 'live',
+      liveHasData: true
+    }));
+    expect(payload).toEqual(expect.objectContaining({
+      liveClockMs: 135432,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      period: 'Q2'
+    }));
+  });
+
+  it('stamps live score events with the resumed running game clock', async () => {
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-12T04:00:15.000Z'));
+    vi.mocked(getGame).mockResolvedValue({
+      liveClockMs: 120000,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      liveClockUpdatedAt: new Date('2026-06-12T04:00:00.000Z')
+    } as any);
+    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+    vi.mocked(broadcastLiveEvent).mockResolvedValue(undefined as any);
+
+    await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, { uid: 'coach-1', displayName: 'Coach' } as any);
+
+    expect(broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+      period: 'Q2',
+      gameClockMs: 135000
+    }));
   });
 });
 

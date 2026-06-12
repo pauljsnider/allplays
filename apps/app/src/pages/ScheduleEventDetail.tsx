@@ -33,6 +33,9 @@ import {
   loadGameDayLiveEventsForApp,
   saveGameDaySubstitutionForApp,
   updateGameScore,
+  updateLiveGameClockState,
+  buildLiveGameClockPeriods,
+  resolveLiveGameClockSnapshot,
   updateParentScheduleRideRequestStatus,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
@@ -401,6 +404,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
+  const handleLiveClockUpdated = useCallback((payload: Partial<ParentScheduleEvent> & { period?: string | null }) => {
+    setEvents((current) => current.map((event) => (
+      event.teamId === decodedTeamId && event.id === decodedEventId
+        ? { ...event, ...payload }
+        : event
+    )));
+  }, [decodedEventId, decodedTeamId]);
+
   const handleGameCancelled = useCallback(() => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
@@ -681,7 +692,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
     </div>
   );
@@ -2062,7 +2073,7 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   );
 }
 
-function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
+function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -2180,6 +2191,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onWrapupComp
             </div>
           </div>
 
+          {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
           {!isPractice ? <LiveGameReactionsPanel auth={auth} event={event} /> : null}
           {!isPractice ? <LiveGameChatPanel auth={auth} event={event} /> : null}
@@ -3294,6 +3306,103 @@ type ScoreSnapshot = {
   homeScore: number;
   awayScore: number;
 };
+
+function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthState; event: ParentScheduleEvent; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void }) {
+  const [clockNow, setClockNow] = useState(() => new Date());
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const periods = useMemo(() => buildLiveGameClockPeriods(event as Record<string, any>), [event]);
+  const clockState = useMemo(() => resolveLiveGameClockSnapshot(event as Record<string, any>, clockNow), [event, clockNow]);
+  const activePeriodIndex = Math.max(0, periods.indexOf(clockState.period));
+  const activePeriod = periods[activePeriodIndex] || clockState.period;
+  const hasNextPeriod = activePeriodIndex < periods.length - 1;
+  const liveClockView = getLiveClockViewModel({
+    type: event.type,
+    liveStatus: event.liveStatus,
+    liveClockMs: clockState.persistedClockMs,
+    liveClockRunning: clockState.running,
+    liveClockPeriod: activePeriod,
+    liveClockUpdatedAt: clockState.updatedAt
+  } as ParentScheduleEvent, clockNow);
+
+  useEffect(() => {
+    setClockNow(new Date());
+    if (!clockState.running) return undefined;
+    const intervalId = window.setInterval(() => setClockNow(new Date()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [event.eventKey, event.liveClockMs, event.liveClockRunning, event.liveClockPeriod, event.liveClockUpdatedAt, clockState.running]);
+
+  const persistClock = async (next: { running: boolean; period: string }) => {
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const payload = await updateLiveGameClockState(event.teamId, event.id, {
+        liveClockMs: clockState.effectiveClockMs,
+        liveClockRunning: next.running,
+        liveClockPeriod: next.period,
+        currentGame: event
+      }, auth.user);
+      onLiveClockUpdated(payload as Partial<ParentScheduleEvent> & { period?: string | null });
+      setClockNow(new Date(payload.liveClockUpdatedAt as Date | string | number));
+      setStatus({ tone: 'success', message: next.running ? 'Clock running.' : `Clock saved${next.period !== activePeriod ? ` for ${next.period}.` : '.'}` });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to update the live clock.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleClock = async () => {
+    await persistClock({ running: !clockState.running, period: activePeriod });
+  };
+
+  const advancePeriod = async () => {
+    if (!hasNextPeriod) {
+      setStatus({ tone: 'error', message: 'Already at the final configured period.' });
+      return;
+    }
+    await persistClock({ running: clockState.running, period: periods[activePeriodIndex + 1] || activePeriod });
+  };
+
+  return (
+    <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50/70 p-3" data-testid="live-game-clock-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-rose-700">Live game clock</div>
+          <div className="mt-1 text-sm font-semibold text-gray-950">Start, pause, and advance periods with the same persisted live clock fields the legacy tracker restores.</div>
+        </div>
+        <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-rose-700 shadow-sm">{liveClockView?.label || activePeriod}</span>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
+        <label className="text-xs font-black uppercase tracking-[0.04em] text-rose-700">
+          Current period
+          <div className="mt-1 min-h-11 rounded-xl border border-rose-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900">{activePeriod}</div>
+        </label>
+        <button
+          type="button"
+          className="primary-button min-h-11 px-4 text-sm"
+          onClick={() => void toggleClock()}
+          disabled={saving}
+        >
+          {saving ? 'Saving clock' : clockState.running ? 'Pause clock' : 'Start clock'}
+        </button>
+        <button
+          type="button"
+          className="ghost-button min-h-11 px-4 text-sm"
+          onClick={() => void advancePeriod()}
+          disabled={saving || !hasNextPeriod}
+        >
+          Advance period
+        </button>
+      </div>
+
+      <div className="mt-2 text-xs font-semibold text-gray-500">Clock state is anchored with a persisted timestamp so app backgrounding restores correctly.</div>
+      {status ? <div className={`mt-2 text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</div> : null}
+    </div>
+  );
+}
 
 function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));

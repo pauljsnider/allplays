@@ -22,6 +22,7 @@ import {
 import { normalizeTeamNotificationPreferences } from '../../../../js/notification-preferences.js';
 import { resolveImageFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { sanitizeErrorForLogging } from './nativeRestLogging';
 import { isTeamActive } from '../../../../js/team-visibility.js';
 
 const profileTimeoutMs = 8000;
@@ -584,7 +585,7 @@ export async function loadProfileDocument(userId: string): Promise<ProfileDocume
   try {
     return await withTimeout(Promise.resolve(getUserProfile(userId)), 'Profile load', primaryDataTimeoutMs) || {};
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST profile load:', error);
+    console.warn('[profile-service] Falling back to REST profile load:', sanitizeErrorForLogging(error));
     return nativeLoadProfileDocument(userId);
   }
 }
@@ -593,7 +594,7 @@ export async function saveProfileDocument(userId: string, profile: ProfileDocume
   try {
     await withTimeout(Promise.resolve(updateUserProfile(userId, profile)), 'Profile save', primaryDataTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST profile save:', error);
+    console.warn('[profile-service] Falling back to REST profile save:', sanitizeErrorForLogging(error));
     await nativeSaveProfileDocument(userId, profile);
   }
 }
@@ -603,14 +604,14 @@ export async function uploadProfilePhoto(file: File) {
     try {
       return await nativeUploadProfilePhoto(file);
     } catch (error) {
-      console.warn('[profile-service] Native profile photo upload failed, falling back to SDK upload:', error);
+      console.warn('[profile-service] Native profile photo upload failed, falling back to SDK upload:', sanitizeErrorForLogging(error));
     }
   }
 
   try {
     return await withTimeout(uploadUserPhoto(file) as Promise<string>, 'Profile photo upload', nativeImageUploadTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST profile photo upload:', error);
+    console.warn('[profile-service] Falling back to REST profile photo upload:', sanitizeErrorForLogging(error));
     return nativeUploadProfilePhoto(file);
   }
 }
@@ -628,7 +629,7 @@ function writeImageUploadSession(session: ImageUploadSession) {
   try {
     window.localStorage?.setItem(imageUploadSessionKey, JSON.stringify(session));
   } catch (error) {
-    console.warn('[profile-service] Unable to persist image upload auth session:', error);
+    console.warn('[profile-service] Unable to persist image upload auth session:', sanitizeErrorForLogging(error));
   }
 }
 
@@ -642,7 +643,7 @@ async function getImageUploadSession(apiKey: string): Promise<ImageUploadSession
     try {
       return await refreshImageUploadSession(current);
     } catch (error) {
-      console.warn('[profile-service] Image upload auth refresh failed, creating a new anonymous session:', error);
+      console.warn('[profile-service] Image upload auth refresh failed, creating a new anonymous session:', sanitizeErrorForLogging(error));
     }
   }
 
@@ -742,7 +743,7 @@ export async function loadNotificationTeams(userId: string, email?: string | nul
       getParentTeams(userId)
     ]), 'Notification team load', primaryDataTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST notification team load:', error);
+    console.warn('[profile-service] Falling back to REST notification team load:', sanitizeErrorForLogging(error));
     return nativeLoadNotificationTeams(userId, email);
   }
 
@@ -761,7 +762,7 @@ export async function loadParentTeams(userId: string): Promise<NotificationTeam[
     const teams = await withTimeout(Promise.resolve(getParentTeams(userId)), 'Parent team load', primaryDataTimeoutMs);
     return (teams || []).filter((team: NotificationTeam | null | undefined) => Boolean(team?.id));
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST parent team load:', error);
+    console.warn('[profile-service] Falling back to REST parent team load:', sanitizeErrorForLogging(error));
     return nativeLoadParentTeams(userId);
   }
 }
@@ -774,7 +775,7 @@ export async function loadNotificationPreferences(userId: string, teamId: string
       primaryDataTimeoutMs
     ));
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST notification preference load:', error);
+    console.warn('[profile-service] Falling back to REST notification preference load:', sanitizeErrorForLogging(error));
     return nativeLoadNotificationPreferences(userId, teamId);
   }
 }
@@ -787,7 +788,7 @@ export async function saveNotificationPreferences(userId: string, teamId: string
       primaryDataTimeoutMs
     ));
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST notification preference save:', error);
+    console.warn('[profile-service] Falling back to REST notification preference save:', sanitizeErrorForLogging(error));
     return nativeSaveNotificationPreferences(userId, teamId, preferences);
   }
 }
@@ -800,7 +801,7 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
       primaryDataTimeoutMs
     );
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST notification device save:', error);
+    console.warn('[profile-service] Falling back to REST notification device save:', sanitizeErrorForLogging(error));
     return nativeSaveNotificationDeviceToken(userId, input);
   }
 }
@@ -810,7 +811,7 @@ export async function createProfileAccessCode(userId: string, email: string, pho
   try {
     await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code)), 'Invite code create', primaryDataTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST invite code create:', error);
+    console.warn('[profile-service] Falling back to REST invite code create:', sanitizeErrorForLogging(error));
     await nativeCreateAccessCode(userId, email, phone, code);
   }
   return code;
@@ -834,7 +835,7 @@ export async function requestAccountMerge(userId: string, primaryEmail: string, 
       primaryDataTimeoutMs
     );
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST account merge request:', error);
+    console.warn('[profile-service] Falling back to REST account merge request:', sanitizeErrorForLogging(error));
     return nativeCreateAccountMergeRequest(userId, normalizedPrimaryEmail, normalizedSecondaryEmail);
   }
 }
@@ -843,7 +844,7 @@ export async function loadProfileAccessCodes(userId: string): Promise<AccessCode
   try {
     return await withTimeout(getUserAccessCodes(userId) as Promise<AccessCodeRecord[]>, 'Invite history load', primaryDataTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST invite history load:', error);
+    console.warn('[profile-service] Falling back to REST invite history load:', sanitizeErrorForLogging(error));
     return nativeLoadAccessCodes(userId);
   }
 }

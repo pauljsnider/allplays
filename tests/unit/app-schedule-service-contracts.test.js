@@ -794,6 +794,52 @@ describe('React app schedule service contract integration', () => {
         }, { uid: 'parent-1', email: 'parent@example.com' })).rejects.toThrow('permission');
     });
 
+    it('redacts bearer tokens from native REST fallback warning logs', async () => {
+        installWindow('capacitor:');
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        authMocks.getNativeAuthIdToken.mockResolvedValue('native-secret-token-123');
+        dbMocks.addGame.mockRejectedValue(Object.assign(new Error('Primary write failed for Bearer native-secret-token-123'), {
+            request: {
+                headers: {
+                    Authorization: 'Bearer native-secret-token-123'
+                }
+            }
+        }));
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                name: 'projects/demo-allplays/databases/(default)/documents/teams/team-1/games/native-game-1'
+            })
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        await expect(createScheduleImportGame('team-1', {
+            eventType: 'game',
+            startsAt: '2026-04-02T18:30',
+            opponent: 'Tigers',
+            location: 'Field 1'
+        }, { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' })).resolves.toBe('native-game-1');
+
+        const serializedWarnings = JSON.stringify(warnSpy.mock.calls);
+        expect(serializedWarnings).not.toContain('native-secret-token-123');
+        expect(serializedWarnings).toContain('Bearer [REDACTED]');
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://firestore.googleapis.com/v1/projects/demo-allplays/databases/(default)/documents/teams/team-1/games',
+            expect.objectContaining({
+                method: 'POST',
+                headers: expect.objectContaining({
+                    Authorization: 'Bearer native-secret-token-123'
+                })
+            })
+        );
+    });
+
     it('fails closed when removing a calendar URL without team staff access', async () => {
         dbMocks.getTeam.mockResolvedValue({
             id: 'team-1',

@@ -12,7 +12,8 @@ describe('Schedule lazy-load guards', () => {
     it('loads staff AI and CSV helpers through on-demand dynamic imports', () => {
         expect(scheduleSource).toContain("scheduleCsvImportModulePromise = import('../lib/scheduleCsvImport')");
         expect(scheduleSource).toContain("scheduleAiImportModulePromise = import('../lib/scheduleAiImport')");
-        expect(scheduleSource).toContain("const { parseCsvText, inferScheduleCsvMapping } = await loadScheduleCsvImportModule();");
+        expect(scheduleSource).toContain('loadScheduleCsvImportModule()');
+        expect(scheduleSource).toContain('const [{ parseCsvText, inferScheduleCsvMapping }, csvText] = await Promise.all([');
         expect(scheduleSource).toContain("const { buildScheduleImportPreview } = await loadScheduleCsvImportModule();");
         expect(scheduleSource).toContain("const { generateScheduleAiImportRows } = await loadScheduleAiImportModule();");
     });

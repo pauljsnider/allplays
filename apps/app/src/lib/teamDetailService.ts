@@ -38,6 +38,7 @@ import { hasFullTeamAccess, normalizeAdminEmailList } from '../../../../js/team-
 import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-permissions.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
+import { sanitizeErrorForLogging } from './nativeRestLogging';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -456,7 +457,7 @@ async function readWithNativeFallback<T>(label: string, primary: () => Promise<T
     return await withTimeout(Promise.resolve(primary()), label);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn(`[team-detail-service] Falling back to REST for ${label}:`, error);
+    console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
     return fallback();
   }
 }

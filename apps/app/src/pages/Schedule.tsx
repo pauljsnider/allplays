@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
@@ -144,6 +144,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<Array<Record<string, string>>>([]);
   const [csvMapping, setCsvMapping] = useState<ScheduleCsvImportMapping>({});
+  const csvHeadersRef = useRef<string[]>([]);
+  const csvRowsRef = useRef<Array<Record<string, string>>>([]);
+  const csvMappingRef = useRef<ScheduleCsvImportMapping>({});
+  const csvLoadPromiseRef = useRef<Promise<void> | null>(null);
   const [csvPreviewRows, setCsvPreviewRows] = useState<ScheduleCsvImportPreviewRow[]>([]);
   const [scheduleImportPreviewSource, setScheduleImportPreviewSource] = useState<'csv' | 'ai' | null>(null);
   const [csvImportErrors, setCsvImportErrors] = useState<string[]>([]);
@@ -274,24 +278,51 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setCsvImportErrors([]);
     setCsvPreviewRows([]);
     setScheduleImportPreviewSource(null);
-    if (!file) return;
-    try {
-      const { parseCsvText, inferScheduleCsvMapping } = await loadScheduleCsvImportModule();
-      const parsed = parseCsvText(await file.text());
+    setCsvHeaders([]);
+    setCsvRows([]);
+    setCsvMapping({});
+    csvHeadersRef.current = [];
+    csvRowsRef.current = [];
+    csvMappingRef.current = {};
+    setCsvFileName(file?.name || '');
+    if (!file) {
+      csvLoadPromiseRef.current = null;
+      return;
+    }
+    const loadPromise = (async () => {
+      const [{ parseCsvText, inferScheduleCsvMapping }, csvText] = await Promise.all([
+        loadScheduleCsvImportModule(),
+        file.text()
+      ]);
+      const parsed = parseCsvText(csvText);
+      const inferredMapping = inferScheduleCsvMapping(parsed.headers);
+      csvHeadersRef.current = parsed.headers;
+      csvRowsRef.current = parsed.rows;
+      csvMappingRef.current = inferredMapping;
       setCsvHeaders(parsed.headers);
       setCsvRows(parsed.rows);
-      setCsvMapping(inferScheduleCsvMapping(parsed.headers));
-      setCsvFileName(file.name);
+      setCsvMapping(inferredMapping);
+    })();
+    csvLoadPromiseRef.current = loadPromise;
+    try {
+      await loadPromise;
     } catch (csvError: any) {
       setCsvImportErrors([csvError?.message || 'Could not read the CSV file.']);
+    } finally {
+      if (csvLoadPromiseRef.current === loadPromise) {
+        csvLoadPromiseRef.current = null;
+      }
     }
   };
 
   const handleCsvPreview = async () => {
+    if (csvLoadPromiseRef.current) {
+      await csvLoadPromiseRef.current;
+    }
     const { buildScheduleImportPreview } = await loadScheduleCsvImportModule();
     const preview = buildScheduleImportPreview({
-      rows: csvRows,
-      mapping: csvMapping,
+      rows: csvRowsRef.current,
+      mapping: csvMappingRef.current,
       teamName: selectedCalendarTeam?.teamName || ''
     });
     setCsvImportErrors(preview.errors);
@@ -303,10 +334,22 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setCsvHeaders([]);
     setCsvRows([]);
     setCsvMapping({});
+    csvHeadersRef.current = [];
+    csvRowsRef.current = [];
+    csvMappingRef.current = {};
+    csvLoadPromiseRef.current = null;
     setCsvPreviewRows([]);
     setCsvImportErrors([]);
     setCsvFileName('');
     setScheduleImportPreviewSource(null);
+  };
+
+  const handleCsvMappingChange = (field: keyof ScheduleCsvImportMapping, value: string) => {
+    setCsvMapping((current) => {
+      const next = { ...current, [field]: value || undefined };
+      csvMappingRef.current = next;
+      return next;
+    });
   };
 
   const handleAiImageChange = (file: File | null) => {
@@ -748,7 +791,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onImportCsv={handleCsvImport}
               onClearAi={handleAiClear}
               onCsvFileChange={handleCsvFileChange}
-              onCsvMappingChange={(field, value) => setCsvMapping((current) => ({ ...current, [field]: value || undefined }))}
+              onCsvMappingChange={handleCsvMappingChange}
               onCsvPreview={handleCsvPreview}
               onClearCsv={handleCsvClear}
             />
@@ -827,7 +870,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 onImportCsv={handleCsvImport}
                 onClearAi={handleAiClear}
                 onCsvFileChange={handleCsvFileChange}
-                onCsvMappingChange={(field, value) => setCsvMapping((current) => ({ ...current, [field]: value || undefined }))}
+                onCsvMappingChange={handleCsvMappingChange}
                 onCsvPreview={handleCsvPreview}
                 onClearCsv={handleCsvClear}
               />
@@ -1133,7 +1176,7 @@ function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, error
         ) : null}
 
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="secondary-button" onClick={onPreview} disabled={!headers.length || importing}>Preview rows</button>
+          <button type="button" className="secondary-button" onClick={onPreview} disabled={!fileName || importing}>Preview rows</button>
           <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || importing}>{importing ? 'Importing…' : 'Import rows'}</button>
           <button type="button" className="secondary-button" onClick={onClear} disabled={importing}>Clear</button>
         </div>
