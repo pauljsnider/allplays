@@ -29,7 +29,9 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   summarizeParentScheduleRideOffers: vi.fn(() => ({ offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false })),
   loadHomeScoringPlayers: vi.fn(),
   publishLiveScoreUpdateEvent: vi.fn(),
+  recordPlayerGameStat: vi.fn(),
   recordPlayerScoringStat: vi.fn(),
+  undoRecordedPlayerGameStat: vi.fn(),
   saveScheduledGameLineupDraftForApp: vi.fn(),
   saveStaffPracticeAttendance: vi.fn(),
   completeGameWrapupForApp: vi.fn(),
@@ -417,6 +419,92 @@ describe('ScheduleEventDetail assignments', () => {
     });
 
     expect(screen.getAllByText(/LIVE · Q2/i).length).toBeGreaterThan(0);
+  });
+
+  it('tracks player fouls, shows bonus state, and resets team fouls by period', async () => {
+    scheduleServiceMocks.updateLiveGameClockState.mockResolvedValueOnce({
+      liveClockMs: 0,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      period: 'Q2',
+      liveClockUpdatedAt: new Date('2026-06-12T04:00:05.000Z'),
+      liveStatus: 'live'
+    });
+    scheduleServiceMocks.recordPlayerGameStat.mockResolvedValue({
+      homeScore: 10,
+      awayScore: 8,
+      playerId: 'p1',
+      playerName: 'Avery Smith',
+      playerNumber: '12',
+      statKey: 'fouls',
+      value: 1,
+      playerStatTotal: 4,
+      trackerEventId: 'tracker-foul-1',
+      liveEventId: 'live-foul-1',
+      liveEvent: { eventId: 'live-foul-1', type: 'stat', statKey: 'fouls', value: 1, period: 'Q1', isOpponent: false }
+    });
+    scheduleServiceMocks.undoRecordedPlayerGameStat.mockResolvedValue({
+      homeScore: 10,
+      awayScore: 8,
+      playerId: 'p1',
+      statKey: 'fouls',
+      playerStatTotal: 3
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        canUpdateScore: true,
+        homeScore: 10,
+        awayScore: 8,
+        liveClockMs: 0,
+        liveClockRunning: true,
+        liveClockPeriod: 'Q1',
+        gamePlan: { numPeriods: 4 }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', number: '12', points: 10, fouls: 3 },
+      { id: 'p2', name: 'Blake Jones', number: '7', points: 6, fouls: 1 }
+    ]);
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([
+      { id: 'f1', eventId: 'f1', type: 'stat', statKey: 'fouls', value: 6, period: 'Q1', isOpponent: false },
+      { id: 'f2', eventId: 'f2', type: 'stat', statKey: 'fouls', value: 1, period: 'Q2', isOpponent: false }
+    ]);
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('game-day-foul-panel')).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · No bonus');
+      expect(screen.getByText('6 team fouls this period')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '#12 Avery Smith add foul' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.recordPlayerGameStat).toHaveBeenCalledWith('team-1', 'game-1', 'p1', expect.objectContaining({ statKey: 'fouls', value: 1 }), auth.user);
+    });
+    expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · Bonus');
+    expect(screen.getByText('7 team fouls this period')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo last foul' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.undoRecordedPlayerGameStat).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ trackerEventId: 'tracker-foul-1', liveEventId: 'live-foul-1', statKey: 'fouls' }), auth.user);
+    });
+    expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · No bonus');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Advance period' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q2 · No bonus');
+    });
+    expect(screen.getByText('1 team fouls this period')).toBeTruthy();
   });
 
   it('renders in-route live chat, streams messages, and keeps watch live links external', async () => {

@@ -26,7 +26,9 @@ import {
   summarizeParentScheduleRideOffers,
   loadHomeScoringPlayers,
   publishLiveScoreUpdateEvent,
+  recordPlayerGameStat,
   recordPlayerScoringStat,
+  undoRecordedPlayerGameStat,
   saveScheduledGameLineupDraftForApp,
   saveStaffPracticeAttendance,
   completeGameWrapupForApp,
@@ -47,6 +49,7 @@ import {
   type StaffRsvpReminderSendResult,
   type RideRequestChildInput,
   type ScheduleHomeScoringPlayer,
+  type PlayerGameStatResult,
   type LineupDraftPreviewResult
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
@@ -2193,6 +2196,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
 
           {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
+          {canUpdateScore ? <GameDayFoulTrackerPanel auth={auth} event={event} /> : null}
           {!isPractice ? <LiveGameReactionsPanel auth={auth} event={event} /> : null}
           {!isPractice ? <LiveGameChatPanel auth={auth} event={event} /> : null}
 
@@ -3404,6 +3408,47 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
   );
 }
 
+function getFoulWarningState(fouls: number) {
+  if (fouls >= 5) {
+    return {
+      pillClass: 'border-rose-200 bg-rose-100 text-rose-800',
+      label: 'FOULED OUT'
+    };
+  }
+  if (fouls >= 4) {
+    return {
+      pillClass: 'border-amber-200 bg-amber-100 text-amber-800',
+      label: 'Warning'
+    };
+  }
+  return {
+    pillClass: 'border-gray-200 bg-gray-100 text-gray-700',
+    label: 'Eligible'
+  };
+}
+
+function getBonusState(teamFouls: number) {
+  if (teamFouls >= 10) {
+    return {
+      label: 'Double bonus',
+      detail: `${teamFouls} team fouls this period`,
+      className: 'border-rose-200 bg-rose-50 text-rose-700'
+    };
+  }
+  if (teamFouls >= 7) {
+    return {
+      label: 'Bonus',
+      detail: `${teamFouls} team fouls this period`,
+      className: 'border-amber-200 bg-amber-50 text-amber-700'
+    };
+  }
+  return {
+    label: 'No bonus',
+    detail: `${teamFouls} team fouls this period`,
+    className: 'border-gray-200 bg-gray-50 text-gray-600'
+  };
+}
+
 function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
@@ -3604,6 +3649,170 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
         </div>
         {status ? <span className={`text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</span> : null}
       </div>
+    </div>
+  );
+}
+
+function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [homePlayers, setHomePlayers] = useState<ScheduleHomeScoringPlayer[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [savingPlayerId, setSavingPlayerId] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [liveEvents, setLiveEvents] = useState<any[]>(() => Array.isArray(event.liveEvents) ? event.liveEvents : []);
+  const [recordedFouls, setRecordedFouls] = useState<PlayerGameStatResult[]>([]);
+
+  useEffect(() => {
+    setLiveEvents(Array.isArray(event.liveEvents) ? event.liveEvents : []);
+    setRecordedFouls([]);
+    setStatus(null);
+  }, [event.eventKey, event.liveEvents]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPlayers() {
+      setLoading(true);
+      try {
+        const [players, loadedLiveEvents] = await Promise.all([
+          loadHomeScoringPlayers(event.teamId, event.id),
+          loadGameDayLiveEventsForApp(event.teamId, event.id)
+        ]);
+        if (cancelled) return;
+        setHomePlayers(Array.isArray(players) ? players : []);
+        setLiveEvents(Array.isArray(loadedLiveEvents) ? loadedLiveEvents : []);
+      } catch (error) {
+        if (!cancelled) {
+          console.warn('[schedule-event-detail] Unable to load foul tracker state:', error);
+          setHomePlayers([]);
+          setLiveEvents([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void loadPlayers();
+    return () => {
+      cancelled = true;
+    };
+  }, [event.teamId, event.id, event.eventKey]);
+
+  const activePeriod = useMemo(() => resolveLiveGameClockSnapshot(event as Record<string, any>).period || event.liveClockPeriod || (event as Record<string, any>).period || 'Q1', [event]);
+  const homeTeamFouls = useMemo(() => (
+    (Array.isArray(liveEvents) ? liveEvents : []).reduce((total, entry) => {
+      if (entry?.type !== 'stat' || entry?.isOpponent === true) return total;
+      if (String(entry?.statKey || '').toLowerCase() !== 'fouls') return total;
+      if (String(entry?.period || '') !== String(activePeriod || '')) return total;
+      return total + Math.max(0, Number(entry?.value || 0));
+    }, 0)
+  ), [activePeriod, liveEvents]);
+  const bonusState = getBonusState(homeTeamFouls);
+
+  const recordFoul = async (player: ScheduleHomeScoringPlayer) => {
+    if (!auth.user || savingPlayerId) return;
+    setSavingPlayerId(player.id);
+    setStatus(null);
+    try {
+      const result = await recordPlayerGameStat(event.teamId, event.id, player.id, {
+        statKey: 'fouls',
+        value: 1,
+        teamSide: event.isHome === false ? 'away' : 'home',
+        playerName: player.name,
+        playerNumber: player.number
+      }, auth.user);
+      setHomePlayers((players) => players.map((candidate) => (
+        candidate.id === player.id ? { ...candidate, fouls: result.playerStatTotal } : candidate
+      )));
+      setLiveEvents((entries) => [...entries, result.liveEvent]);
+      setRecordedFouls((entries) => [...entries, result]);
+      setStatus({ tone: 'success', message: result.playerStatTotal >= 5 ? `${player.name} reached 5 fouls. Use the substitution panel if they must come off.` : `${player.name} foul recorded.` });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to record the foul.' });
+    } finally {
+      setSavingPlayerId(null);
+    }
+  };
+
+  const undoLastFoul = async () => {
+    const latest = recordedFouls[recordedFouls.length - 1];
+    if (!auth.user || !latest || savingPlayerId) return;
+    setSavingPlayerId(latest.playerId);
+    setStatus(null);
+    try {
+      const result = await undoRecordedPlayerGameStat(event.teamId, event.id, {
+        trackerEventId: latest.trackerEventId,
+        liveEventId: latest.liveEventId,
+        playerId: latest.playerId,
+        playerName: latest.playerName,
+        playerNumber: latest.playerNumber,
+        statKey: 'fouls',
+        value: 1,
+        teamSide: event.isHome === false ? 'away' : 'home'
+      }, auth.user);
+      setHomePlayers((players) => players.map((candidate) => (
+        candidate.id === latest.playerId ? { ...candidate, fouls: result.playerStatTotal } : candidate
+      )));
+      setLiveEvents((entries) => entries.filter((entry) => String(entry?.eventId || '') !== latest.liveEventId));
+      setRecordedFouls((entries) => entries.slice(0, -1));
+      setStatus({ tone: 'success', message: 'Last foul undone.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to undo the foul.' });
+    } finally {
+      setSavingPlayerId(null);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-3" data-testid="game-day-foul-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-amber-700">Basketball fouls</div>
+          <div className="mt-1 text-sm font-semibold text-gray-950">Track personal fouls, team fouls, and the current-period bonus state from the app game hub.</div>
+        </div>
+        <div className={`rounded-full border px-3 py-1 text-xs font-black ${bonusState.className}`} aria-label="Team foul bonus state">
+          {activePeriod} · {bonusState.label}
+        </div>
+      </div>
+      <div className="mt-2 text-xs font-semibold text-gray-600">{bonusState.detail}</div>
+      {homePlayers.length ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {homePlayers.map((player) => {
+            const foulState = getFoulWarningState(player.fouls || 0);
+            const label = `${player.number ? `#${player.number} ` : ''}${player.name}`;
+            const busy = savingPlayerId === player.id;
+            return (
+              <div key={player.id} className="rounded-xl border border-amber-100 bg-white p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black text-gray-950">{label}</div>
+                    <div className="mt-1 text-xs font-semibold text-gray-500">{player.points} pts · {player.fouls} fouls</div>
+                  </div>
+                  <span className={`rounded-full border px-2 py-1 text-[11px] font-black ${foulState.pillClass}`}>{foulState.label}</span>
+                </div>
+                <button
+                  type="button"
+                  className="primary-button mt-3 min-h-11 w-full px-4 text-sm disabled:opacity-60"
+                  onClick={() => recordFoul(player)}
+                  disabled={busy || Boolean(savingPlayerId)}
+                  aria-label={`${label} add foul`}
+                >
+                  {busy ? 'Saving foul' : '+ Foul'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : !loading ? <div className="mt-3 text-xs font-semibold text-gray-500">No active team roster players found.</div> : null}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-gray-500">Team fouls reset when the live clock advances to a new period.</div>
+        <button
+          type="button"
+          className="ghost-button min-h-11 px-4 text-sm"
+          onClick={undoLastFoul}
+          disabled={Boolean(savingPlayerId) || !recordedFouls.length}
+        >
+          Undo last foul
+        </button>
+      </div>
+      {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
     </div>
   );
 }

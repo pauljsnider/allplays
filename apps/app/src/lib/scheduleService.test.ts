@@ -3,11 +3,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
   const transactionGet = vi.fn();
+  const transactionDelete = vi.fn();
   const runTransactionMock = vi.fn(async (_db: unknown, callback: any) => callback({
     get: transactionGet,
-    set: transactionSet
+    set: transactionSet,
+    delete: transactionDelete
   }));
-  return { transactionSet, transactionGet, runTransactionMock };
+  return { transactionSet, transactionGet, transactionDelete, runTransactionMock };
 });
 
 vi.mock('../../../../js/firebase.js', () => ({
@@ -97,7 +99,7 @@ import { getDocs } from '../../../../js/firebase.js';
 import { fetchAndParseCalendar } from '../../../../js/utils.js';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerScoringStat, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, updateLiveGameClockState } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
 
 describe('parent game route resolution', () => {
   beforeEach(() => {
@@ -544,6 +546,71 @@ describe('player-attributed live scoring', () => {
       value: 2,
       isOpponent: false
     }));
+  });
+
+  it('records a foul event without changing the score and writes the legacy event doc', async () => {
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'fouls',
+      value: 1,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] });
+
+    expect(result).toMatchObject({
+      homeScore: 10,
+      awayScore: 8,
+      playerId: 'player-1',
+      statKey: 'fouls',
+      value: 1,
+      playerStatTotal: 1,
+      trackerEventId: expect.stringMatching(/^app-live-/),
+      liveEventId: expect.stringMatching(/^app-live-/)
+    });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.not.objectContaining({ homeScore: 12 }), { merge: true });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }), expect.objectContaining({
+      stats: { fouls: { __increment: 1 } }
+    }), { merge: true });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/events/') }), expect.objectContaining({
+      text: '#12 Avery Smith FOULS +1',
+      gameTime: '04:05',
+      period: 'Q3',
+      type: 'stat',
+      playerId: 'player-1',
+      statKey: 'fouls',
+      value: 1,
+      isOpponent: false,
+      createdBy: 'coach-1'
+    }));
+  });
+
+  it('undoes a recorded foul by deleting the live event and tracker event docs', async () => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8 }) })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { fouls: 4 } }) });
+
+    const result = await undoRecordedPlayerGameStat('team-1', 'game-1', {
+      trackerEventId: 'tracker-foul-1',
+      liveEventId: 'live-foul-1',
+      playerId: 'player-1',
+      playerName: 'Avery Smith',
+      playerNumber: '12',
+      statKey: 'fouls',
+      value: 1
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] });
+
+    expect(result).toMatchObject({
+      homeScore: 10,
+      awayScore: 8,
+      playerId: 'player-1',
+      statKey: 'fouls',
+      playerStatTotal: 3
+    });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }), expect.objectContaining({
+      stats: { fouls: { __increment: -1 } }
+    }), { merge: true });
+    expect(mocks.transactionDelete).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/liveEvents/live-foul-1' }));
+    expect(mocks.transactionDelete).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/events/tracker-foul-1' }));
   });
 
   it('rejects player scoring after the game is final', async () => {

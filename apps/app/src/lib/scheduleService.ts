@@ -56,6 +56,7 @@ import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
 import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
 import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
 import { isTeamActive } from '../../../../js/team-visibility.js';
+import { buildTrackerEventDocument } from './statTrackingService';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
@@ -246,6 +247,44 @@ export type ScheduleHomeScoringPlayer = {
   name: string;
   number: string;
   points: number;
+  fouls: number;
+};
+
+export type PlayerGameStatInput = {
+  statKey: 'pts' | 'fouls';
+  value: 1 | 2;
+  teamSide?: 'home' | 'away';
+  playerName?: string | null;
+  playerNumber?: string | number | null;
+};
+
+export type PlayerGameStatResult = GameScoreSnapshot & {
+  playerId: string;
+  playerName: string;
+  playerNumber: string;
+  statKey: 'pts' | 'fouls';
+  value: 1 | 2;
+  playerStatTotal: number;
+  trackerEventId: string;
+  liveEventId: string;
+  liveEvent: Record<string, unknown>;
+};
+
+export type UndoPlayerGameStatInput = {
+  trackerEventId: string;
+  liveEventId: string;
+  playerId: string;
+  playerName?: string | null;
+  playerNumber?: string | number | null;
+  statKey: 'pts' | 'fouls';
+  value: 1 | 2;
+  teamSide?: 'home' | 'away';
+};
+
+export type UndoPlayerGameStatResult = GameScoreSnapshot & {
+  playerId: string;
+  statKey: 'pts' | 'fouls';
+  playerStatTotal: number;
 };
 
 export type PlayerScoringStatInput = {
@@ -1080,7 +1119,8 @@ export async function loadHomeScoringPlayers(teamId: string, gameId: string): Pr
         id,
         name: normalizePlayerName(player),
         number: normalizePlayerNumber(player),
-        points: normalizeGameScoreValue(stats.pts)
+        points: normalizeGameScoreValue(stats.pts),
+        fouls: normalizeGameScoreValue(stats.fouls)
       };
     })
     .filter(Boolean) as ScheduleHomeScoringPlayer[];
@@ -2599,6 +2639,64 @@ export async function saveGameDaySubstitutionForApp(
   return patch;
 }
 
+function formatTrackerClock(clockMs: unknown) {
+  const totalSeconds = Math.max(0, Math.floor(normalizeClockMs(clockMs) / 1000));
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
+
+function buildPlayerGameStatDescription(playerName: string, playerNumber: string, statKey: 'pts' | 'fouls', value: number) {
+  const identity = playerNumber ? `#${playerNumber} ${playerName}` : playerName;
+  if (statKey === 'fouls') {
+    return `${identity} FOULS +${value}`;
+  }
+  return `${identity} scored ${value} points.`;
+}
+
+function buildPlayerGameStatLiveEvent({
+  playerId,
+  playerName,
+  playerNumber,
+  statKey,
+  value,
+  homeScore,
+  awayScore,
+  user,
+  game = null,
+  eventId = createAppLiveEventId()
+}: {
+  playerId: string;
+  playerName: string;
+  playerNumber: string;
+  statKey: 'pts' | 'fouls';
+  value: 1 | 2;
+  homeScore: number;
+  awayScore: number;
+  user: AuthUser;
+  game?: Record<string, any> | null;
+  eventId?: string;
+}) {
+  return {
+    eventId,
+    type: 'stat',
+    period: getLiveEventPeriod(game),
+    gameClockMs: getLiveEventClockMs(game),
+    playerId,
+    playerName,
+    playerNumber,
+    statKey,
+    value,
+    isOpponent: false,
+    description: buildPlayerGameStatDescription(playerName, playerNumber, statKey, value),
+    homeScore: normalizeGameScoreValue(homeScore),
+    awayScore: normalizeGameScoreValue(awayScore),
+    createdBy: user.uid,
+    createdByName: user.displayName || user.email || 'Staff',
+    createdAt: serverTimestamp()
+  };
+}
+
 export function buildPlayerScoringLiveEvent({
   playerId,
   playerName,
@@ -2622,25 +2720,268 @@ export function buildPlayerScoringLiveEvent({
   game?: Record<string, any> | null;
   eventId?: string;
 }) {
-  const identity = playerNumber ? `#${playerNumber} ${playerName}` : playerName;
-  return {
-    eventId,
-    type: 'stat',
-    period: getLiveEventPeriod(game),
-    gameClockMs: getLiveEventClockMs(game),
-    playerId,
-    playerName,
-    playerNumber,
-    statKey,
-    value,
-    isOpponent: false,
-    description: `${identity} scored ${value} points.`,
-    homeScore: normalizeGameScoreValue(homeScore),
-    awayScore: normalizeGameScoreValue(awayScore),
-    createdBy: user.uid,
-    createdByName: user.displayName || user.email || 'Staff',
-    createdAt: serverTimestamp()
-  };
+  return buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game, eventId });
+}
+
+export async function recordPlayerGameStat(teamId: string, gameId: string, playerId: string, stat: PlayerGameStatInput, user: AuthUser): Promise<PlayerGameStatResult> {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before recording player stats.');
+  }
+  if (!playerId) {
+    throw new Error('Select a player before recording player stats.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before recording player stats.');
+  }
+  if ((stat?.statKey !== 'pts' && stat?.statKey !== 'fouls') || ![1, 2].includes(Number(stat?.value))) {
+    throw new Error('Unsupported player stat action.');
+  }
+
+  const playerName = compactString(stat.playerName) || 'Player';
+  const playerNumber = compactString(stat.playerNumber);
+  const teamSide = stat.teamSide === 'away' ? 'away' : 'home';
+  const gamePath = `teams/${teamId}/games/${gameId}`;
+  const statsPath = `${gamePath}/aggregatedStats/${playerId}`;
+  const liveEventsPath = `${gamePath}/liveEvents`;
+  const eventsPath = `${gamePath}/events`;
+
+  try {
+    return await withTimeout(runTransaction(db, async (transaction: any) => {
+      const gameRef = doc(db, gamePath);
+      const statsRef = doc(db, statsPath);
+      const [gameSnap, statsSnap] = await Promise.all([
+        transaction.get(gameRef),
+        transaction.get(statsRef)
+      ]);
+      const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+      assertGameAllowsLivePublishing(gameData);
+      const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
+      const scoreUpdatedAt = new Date();
+      const statKey = stat.statKey;
+      const value = Number(stat.value) as 1 | 2;
+      const awayScore = normalizeGameScoreValue(gameData.awayScore) + (statKey === 'pts' && teamSide === 'away' ? value : 0);
+      const homeScore = normalizeGameScoreValue(gameData.homeScore) + (statKey === 'pts' && teamSide === 'home' ? value : 0);
+      const playerStatTotal = normalizeGameScoreValue(statsData?.stats?.[statKey]) + value;
+      const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, scoreUpdatedAt);
+      const liveEventId = createAppLiveEventId();
+      const trackerEventId = createAppLiveEventId();
+      const liveEvent = buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game: gameData, eventId: liveEventId });
+      const trackerEvent = buildTrackerEventDocument({
+        text: statKey === 'fouls' ? `${playerNumber ? `#${playerNumber} ` : ''}${playerName} FOULS +${value}` : `${playerNumber ? `#${playerNumber} ` : ''}${playerName} PTS +${value}`,
+        clock: formatTrackerClock(getLiveEventClockMs(gameData)),
+        period: getLiveEventPeriod(gameData),
+        timestamp: scoreUpdatedAt,
+        playerName,
+        playerNumber,
+        teamSide,
+        undoData: {
+          type: 'stat',
+          playerId,
+          statKey,
+          value,
+          isOpponent: false
+        }
+      }, user);
+
+      const gamePatch: Record<string, unknown> = {
+        scoreUpdatedAt,
+        scoreUpdatedBy: user.uid,
+        ...liveGamePatch
+      };
+      if (statKey === 'pts') {
+        gamePatch.homeScore = homeScore;
+        gamePatch.awayScore = awayScore;
+      }
+
+      transaction.set(gameRef, gamePatch, { merge: true });
+      transaction.set(statsRef, {
+        playerName,
+        playerNumber,
+        stats: { [statKey]: increment(value) }
+      }, { merge: true });
+      transaction.set(doc(collection(db, liveEventsPath), liveEventId), liveEvent);
+      transaction.set(doc(collection(db, eventsPath), trackerEventId), trackerEvent);
+
+      return {
+        homeScore,
+        awayScore,
+        playerId,
+        playerName,
+        playerNumber,
+        statKey,
+        value,
+        playerStatTotal,
+        trackerEventId,
+        liveEventId,
+        liveEvent
+      };
+    }), 'Player game stat');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST player stat:', sanitizeErrorForLogging(error));
+    const [gameDoc, statsDoc] = await Promise.all([
+      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
+      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`)
+    ]);
+    assertGameAllowsLivePublishing(gameDoc);
+    const statKey = stat.statKey;
+    const value = Number(stat.value) as 1 | 2;
+    const awayScore = normalizeGameScoreValue(gameDoc?.awayScore) + (statKey === 'pts' && teamSide === 'away' ? value : 0);
+    const homeScore = normalizeGameScoreValue(gameDoc?.homeScore) + (statKey === 'pts' && teamSide === 'home' ? value : 0);
+    const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
+    const playerStatTotal = normalizeGameScoreValue(existingStats[statKey]) + value;
+    existingStats[statKey] = playerStatTotal;
+    const scoreUpdatedAt = new Date();
+    const liveGamePatch = buildLiveTrackingGamePatch(gameDoc, user, scoreUpdatedAt);
+    const liveEventId = createAppLiveEventId();
+    const trackerEventId = createAppLiveEventId();
+    const liveEvent = buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game: gameDoc, eventId: liveEventId });
+    const trackerEvent = buildTrackerEventDocument({
+      text: statKey === 'fouls' ? `${playerNumber ? `#${playerNumber} ` : ''}${playerName} FOULS +${value}` : `${playerNumber ? `#${playerNumber} ` : ''}${playerName} PTS +${value}`,
+      clock: formatTrackerClock(getLiveEventClockMs(gameDoc)),
+      period: getLiveEventPeriod(gameDoc),
+      timestamp: scoreUpdatedAt,
+      playerName,
+      playerNumber,
+      teamSide,
+      undoData: {
+        type: 'stat',
+        playerId,
+        statKey,
+        value,
+        isOpponent: false
+      }
+    }, user);
+
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
+      ...(statKey === 'pts' ? { homeScore, awayScore } : {}),
+      scoreUpdatedAt,
+      scoreUpdatedBy: user.uid,
+      ...liveGamePatch
+    });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`, {
+      playerName,
+      playerNumber,
+      stats: existingStats
+    });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents/${encodeURIComponent(liveEventId)}`, {
+      ...liveEvent,
+      eventId: liveEventId,
+      createdAt: scoreUpdatedAt
+    });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(trackerEventId)}`, {
+      ...trackerEvent,
+      eventId: trackerEventId,
+      timestamp: scoreUpdatedAt.getTime()
+    });
+
+    return {
+      homeScore,
+      awayScore,
+      playerId,
+      playerName,
+      playerNumber,
+      statKey,
+      value,
+      playerStatTotal,
+      trackerEventId,
+      liveEventId,
+      liveEvent: {
+        ...liveEvent,
+        eventId: liveEventId,
+        createdAt: scoreUpdatedAt
+      }
+    };
+  }
+}
+
+export async function undoRecordedPlayerGameStat(teamId: string, gameId: string, stat: UndoPlayerGameStatInput, user: AuthUser): Promise<UndoPlayerGameStatResult> {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before undoing player stats.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before undoing player stats.');
+  }
+
+  const playerName = compactString(stat.playerName) || 'Player';
+  const playerNumber = compactString(stat.playerNumber);
+  const teamSide = stat.teamSide === 'away' ? 'away' : 'home';
+  const gamePath = `teams/${teamId}/games/${gameId}`;
+  const statsPath = `${gamePath}/aggregatedStats/${stat.playerId}`;
+
+  try {
+    return await withTimeout(runTransaction(db, async (transaction: any) => {
+      const gameRef = doc(db, gamePath);
+      const statsRef = doc(db, statsPath);
+      const [gameSnap, statsSnap] = await Promise.all([
+        transaction.get(gameRef),
+        transaction.get(statsRef)
+      ]);
+      const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+      const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
+      const scoreUpdatedAt = new Date();
+      const value = Number(stat.value) || 0;
+      const nextHomeScore = normalizeGameScoreValue(gameData.homeScore) - (stat.statKey === 'pts' && teamSide === 'home' ? value : 0);
+      const nextAwayScore = normalizeGameScoreValue(gameData.awayScore) - (stat.statKey === 'pts' && teamSide === 'away' ? value : 0);
+      const playerStatTotal = Math.max(0, normalizeGameScoreValue(statsData?.stats?.[stat.statKey]) - value);
+
+      transaction.set(gameRef, {
+        ...(stat.statKey === 'pts' ? { homeScore: nextHomeScore, awayScore: nextAwayScore } : {}),
+        scoreUpdatedAt,
+        scoreUpdatedBy: user.uid
+      }, { merge: true });
+      transaction.set(statsRef, {
+        playerName,
+        playerNumber,
+        stats: { [stat.statKey]: increment(-value) }
+      }, { merge: true });
+      transaction.delete(doc(db, `${gamePath}/liveEvents/${stat.liveEventId}`));
+      transaction.delete(doc(db, `${gamePath}/events/${stat.trackerEventId}`));
+
+      return {
+        homeScore: nextHomeScore,
+        awayScore: nextAwayScore,
+        playerId: stat.playerId,
+        statKey: stat.statKey,
+        playerStatTotal
+      };
+    }), 'Undo player game stat');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST player stat undo:', sanitizeErrorForLogging(error));
+    const [gameDoc, statsDoc] = await Promise.all([
+      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
+      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(stat.playerId)}`)
+    ]);
+    const value = Number(stat.value) || 0;
+    const nextHomeScore = normalizeGameScoreValue(gameDoc?.homeScore) - (stat.statKey === 'pts' && teamSide === 'home' ? value : 0);
+    const nextAwayScore = normalizeGameScoreValue(gameDoc?.awayScore) - (stat.statKey === 'pts' && teamSide === 'away' ? value : 0);
+    const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
+    const playerStatTotal = Math.max(0, normalizeGameScoreValue(existingStats[stat.statKey]) - value);
+    existingStats[stat.statKey] = playerStatTotal;
+    const scoreUpdatedAt = new Date();
+
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
+      ...(stat.statKey === 'pts' ? { homeScore: nextHomeScore, awayScore: nextAwayScore } : {}),
+      scoreUpdatedAt,
+      scoreUpdatedBy: user.uid
+    });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(stat.playerId)}`, {
+      playerName,
+      playerNumber,
+      stats: existingStats
+    });
+    await nativeDeleteDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents/${encodeURIComponent(stat.liveEventId)}`);
+    await nativeDeleteDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(stat.trackerEventId)}`);
+
+    return {
+      homeScore: nextHomeScore,
+      awayScore: nextAwayScore,
+      playerId: stat.playerId,
+      statKey: stat.statKey,
+      playerStatTotal
+    };
+  }
 }
 
 export async function recordPlayerScoringStat(teamId: string, gameId: string, playerId: string, stat: PlayerScoringStatInput, user: AuthUser): Promise<PlayerScoringStatResult> {
