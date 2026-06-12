@@ -50,6 +50,27 @@ function normalizeAppRoute(route: unknown) {
     return value;
 }
 
+function normalizeHashRoute(hash: string) {
+    const normalizedHash = normalizeValue(hash).replace(/^#/, '');
+    if (!normalizedHash) {
+        return '';
+    }
+    return normalizeAppRoute(normalizedHash.startsWith('/') ? normalizedHash : `/${normalizedHash}`);
+}
+
+function normalizeUrlPathRoute(pathname: string, search: string) {
+    const normalizedPathname = normalizeAppRoute(pathname);
+    if (!normalizedPathname || normalizedPathname === '/app' || normalizedPathname === '/app/') {
+        return '';
+    }
+    const route = normalizedPathname.startsWith('/app/') ? normalizedPathname.slice('/app'.length) : normalizedPathname;
+    const normalizedRoute = normalizeAppRoute(route);
+    if (!normalizedRoute || normalizedRoute === '/') {
+        return '';
+    }
+    return `${normalizedRoute}${search || ''}`;
+}
+
 function readPayload(input: unknown): PushPayload {
     if (!input || typeof input !== 'object') {
         return {};
@@ -64,39 +85,71 @@ function buildLegacyLinkFallback(link: string) {
 
     try {
         const url = new URL(link);
-        const teamId = normalizeValue(url.searchParams.get('teamId'));
-        const conversationId = normalizeValue(url.searchParams.get('conversationId'));
-        const gameId = normalizeValue(url.searchParams.get('gameId'));
-        const path = url.pathname.toLowerCase();
-
-        if (path.endsWith('/team-chat.html') && teamId) {
-            return buildMessagesRoute(teamId, conversationId);
-        }
-        if (path.endsWith('/officials.html')) {
-            return teamId ? `/officials?teamId=${encodeRouteParam(teamId)}` : '/officials';
-        }
-        if (path.endsWith('/live-game.html') && gameId) {
-            if (teamId) {
-                return buildScheduleEventRoute(teamId, gameId, 'game');
-            }
-            return '/schedule';
-        }
-        if (path.endsWith('/game-day.html')) {
-            if (teamId && gameId) {
-                return buildScheduleEventRoute(teamId, gameId, 'game');
-            }
-            if (gameId) {
-                return `/games/${encodeRouteParam(gameId)}`;
-            }
-        }
-        if (path.endsWith('/team.html') && teamId) {
-            return `/teams/${encodeRouteParam(teamId)}`;
-        }
+        return resolveLegacyUrl(url);
     } catch {
         return '';
     }
+}
+
+function resolveLegacyUrl(url: URL) {
+    const teamId = normalizeValue(url.searchParams.get('teamId'));
+    const conversationId = normalizeValue(url.searchParams.get('conversationId'));
+    const gameId = normalizeValue(url.searchParams.get('gameId'));
+    const formId = normalizeValue(url.searchParams.get('formId'));
+    const path = url.pathname.toLowerCase();
+
+    if (path.endsWith('/team-chat.html') && teamId) {
+        return buildMessagesRoute(teamId, conversationId);
+    }
+    if (path.endsWith('/officials.html')) {
+        return teamId ? `/officials?teamId=${encodeRouteParam(teamId)}` : '/officials';
+    }
+    if (path.endsWith('/live-game.html') && gameId) {
+        if (teamId) {
+            return buildScheduleEventRoute(teamId, gameId, 'game');
+        }
+        return '/schedule';
+    }
+    if (path.endsWith('/game-day.html')) {
+        if (teamId && gameId) {
+            return buildScheduleEventRoute(teamId, gameId, 'game');
+        }
+        if (gameId) {
+            return `/games/${encodeRouteParam(gameId)}`;
+        }
+    }
+    if (path.endsWith('/team.html') && teamId) {
+        return `/teams/${encodeRouteParam(teamId)}`;
+    }
+    if (path.endsWith('/registration.html') && teamId && formId) {
+        return `/parent-tools/registrations/${encodeRouteParam(teamId)}/${encodeRouteParam(formId)}`;
+    }
 
     return '';
+}
+
+export function resolveDeepLinkUrl(input: unknown) {
+    const value = normalizeValue(input);
+    if (!value) {
+        return '';
+    }
+
+    try {
+        const url = new URL(value);
+        const hashRoute = normalizeHashRoute(url.hash);
+        if (hashRoute) {
+            return hashRoute;
+        }
+
+        const pathnameRoute = normalizeUrlPathRoute(url.pathname, url.search);
+        if (pathnameRoute && url.protocol !== 'http:' && url.protocol !== 'https:') {
+            return pathnameRoute;
+        }
+
+        return resolveLegacyUrl(url) || pathnameRoute;
+    } catch {
+        return normalizeAppRoute(value);
+    }
 }
 
 export function resolvePushNotificationRoute(input: unknown) {
