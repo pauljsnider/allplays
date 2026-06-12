@@ -46,6 +46,12 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [searchParams] = useSearchParams();
   const teamId = publicAccess ? (searchParams.get('teamId') || '') : (params.teamId || '');
   const formId = publicAccess ? (searchParams.get('formId') || '') : (params.formId || '');
+  const returnRegistrationId = searchParams.get('registrationId') || '';
+  const returnCheckoutAttemptToken = searchParams.get('checkoutAttemptToken') || '';
+  const retryPaymentRequested = searchParams.get('retryPayment') === '1' && Boolean(returnRegistrationId);
+  const returnStatus = normalizeRegistrationReturnStatus(searchParams.get('status'));
+  const isPaymentSuccessReturn = returnStatus === 'success' && Boolean(returnRegistrationId);
+  const isRetryPaymentMode = retryPaymentRequested && !isPaymentSuccessReturn;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<ParentRegistrationCard | null>(null);
@@ -63,6 +69,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [selectedMergePlayerId, setSelectedMergePlayerId] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const cancelledCheckoutReleaseKeyRef = useRef('');
 
   useEffect(() => {
     let cancelled = false;
@@ -128,6 +135,23 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     setSelectedMergePlayerId(selectedReview.linkedPlayerId || '');
   }, [selectedReview?.id]);
 
+  useEffect(() => {
+    if (staffReview || returnStatus !== 'cancelled' || !returnRegistrationId) return;
+
+    const releaseKey = `${teamId}:${formId}:${returnRegistrationId}:${returnCheckoutAttemptToken}`;
+    if (cancelledCheckoutReleaseKeyRef.current === releaseKey) return;
+    cancelledCheckoutReleaseKeyRef.current = releaseKey;
+
+    setMessage('');
+    setError(retryPaymentRequested
+      ? 'Stripe payment was cancelled. You can retry payment for this registration.'
+      : 'Stripe payment was cancelled.');
+
+    void parentToolsService.cancelRegistrationCheckout(teamId, formId, returnRegistrationId, returnCheckoutAttemptToken).catch(() => {
+      // Keep the retry path available even if release cleanup fails.
+    });
+  }, [formId, returnCheckoutAttemptToken, returnRegistrationId, returnStatus, retryPaymentRequested, staffReview, teamId]);
+
   const updateParticipant = (fieldId: string, value: string) => setParticipant((current) => ({ ...current, [fieldId]: value }));
   const updateGuardian = (fieldId: string, value: string) => setGuardian((current) => ({ ...current, [fieldId]: value }));
 
@@ -163,6 +187,33 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     setSaving(true);
     try {
       const currentFeeSnapshot = calculateRegistrationFeeSnapshot(form, { quantity: currentQuantity, now: new Date() }); // currentQuantity is already effective
+      const checkoutAttemptToken = isRetryPaymentMode ? returnCheckoutAttemptToken : createCheckoutAttemptToken();
+      if (form.onlineCheckout && Number(currentFeeSnapshot.finalAmountDueCents || 0) > 0) {
+        if (isRetryPaymentMode) {
+          if (!checkoutAttemptToken) {
+            setError('We could not restore your previous checkout attempt. Please restart registration or contact the organizer.');
+            return;
+          }
+          const checkout = await parentToolsService.initiateRegistrationCheckout(
+            form.teamId,
+            form.id,
+            returnRegistrationId,
+            requiresRegistrationOption(form) ? currentSelectedOptionId : currentSelectedOptionId || '',
+            currentSelectedPaymentPlanId,
+            currentQuantity,
+            currentFeeSnapshot.finalAmountDueCents,
+            currentFeeSnapshot.currency || form.currency || 'USD',
+            {
+              checkoutAttemptToken,
+              retryPayment: true
+            }
+          );
+          await openPublicUrl(checkout.checkoutUrl);
+          setMessage('Opening Stripe checkout.');
+          return;
+        }
+      }
+
       const result = await parentToolsService.submitOfflineRegistration(form.teamId, form.id, {
         participant: currentParticipant,
         guardian: currentGuardian,
@@ -171,7 +222,8 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         selectedOptionId: currentSelectedOptionId,
         selectedPaymentPlanId: currentSelectedPaymentPlanId,
         quantity: currentQuantity,
-        feeSnapshot: currentFeeSnapshot
+        feeSnapshot: currentFeeSnapshot,
+        checkoutAttemptToken
       });
       if (result.status === 'waitlisted') {
         setMessage('Registration submitted. You have been added to the waitlist.');
@@ -189,7 +241,10 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
             currentSelectedPaymentPlanId,
             currentQuantity, // currentQuantity is already effective
             checkoutFeeSnapshot.finalAmountDueCents,
-            checkoutFeeSnapshot.currency || form.currency || 'USD'
+            checkoutFeeSnapshot.currency || form.currency || 'USD',
+            {
+              checkoutAttemptToken
+            }
           );
           await openPublicUrl(checkout.checkoutUrl);
           setMessage('Registration submitted. Opening Stripe checkout.');
@@ -374,7 +429,19 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
       {error ? <Status tone="error" message={error} /> : null}
       {placement ? <Status tone={placement.status === 'blocked' ? 'error' : 'success'} message={placement.status === 'waitlisted' ? 'This option is full. Submitting will add you to the waitlist.' : placement.status === 'pending' ? 'This option has capacity. Submitting creates a pending registration.' : placement.message || 'This option is not available.'} /> : null}
 
-      <section className="app-card p-4">
+      {isPaymentSuccessReturn ? (
+        <section className="app-card p-5">
+          <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
+            <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none" aria-hidden="true" />
+            <div>
+              <h2 className="text-base font-black">Payment successful</h2>
+              <p className="mt-1 text-sm font-semibold text-emerald-800">Your registration payment was received. The program organizer will follow up with next steps.</p>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {!isPaymentSuccessReturn ? <section className="app-card p-4">
         <form ref={formRef} className="grid gap-4" onSubmit={submit}>
           <FieldGroup title="Participant information" fields={form.participantFields || []} values={participant} errors={fieldErrors} prefix="participant" onChange={updateParticipant} disabled={saving} />
           <FieldGroup title="Guardian information" fields={form.guardianFields || []} values={guardian} errors={fieldErrors} prefix="guardian" onChange={updateGuardian} disabled={saving} />
@@ -447,12 +514,27 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
 
           <button type="button" className="primary-button" onClick={submit} disabled={saving || Boolean(message)}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
-            {saving ? (form.onlineCheckout ? 'Opening checkout...' : 'Submitting registration...') : (form.onlineCheckout ? 'Pay registration with Stripe' : 'Submit registration')}
+            {saving ? (form.onlineCheckout ? 'Opening checkout...' : 'Submitting registration...') : (form.onlineCheckout ? (isRetryPaymentMode ? 'Retry payment with Stripe' : 'Pay registration with Stripe') : 'Submit registration')}
           </button>
         </form>
-      </section>
+      </section> : null}
     </div>
   );
+}
+
+function createCheckoutAttemptToken() {
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`;
+}
+
+function normalizeRegistrationReturnStatus(value: string | null) {
+  const status = String(value || '').trim().toLowerCase();
+  if (status === 'success' || status === 'cancelled') return status;
+  return '';
 }
 
 function collectFieldValues(formElement: HTMLFormElement | null, group: string, fallback: Record<string, string>) {

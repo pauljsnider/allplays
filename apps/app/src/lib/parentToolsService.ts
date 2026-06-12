@@ -36,7 +36,7 @@ import {
   normalizeParentFeeRecord,
   sortParentFeeRecords
 } from '../../../../js/parent-dashboard-fees.js';
-import { initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
+import { cancelStripeRegistrationCheckout, initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
 import {
   buildPendingRegistrationRecord,
   calculateRegistrationFeeSnapshot,
@@ -352,6 +352,7 @@ export async function submitOfflineRegistration(teamId: string, formId: string, 
       selectedPaymentPlanId: submission.selectedPaymentPlanId,
       status,
       feeSnapshot,
+      checkoutAttemptToken: submission.checkoutAttemptToken,
       now: serverTimestamp()
     });
 
@@ -1148,7 +1149,8 @@ export async function initiateRegistrationCheckout(
   paymentPlanId: string,
   quantity: number,
   amountCents: number,
-  currency: string
+  currency: string,
+  options: { checkoutAttemptToken?: string; retryPayment?: boolean } = {}
 ): Promise<{ success: true, checkoutUrl: string }> {
   if (!teamId || !formId || !registrationId || !paymentPlanId || !quantity || !amountCents || !currency) {
     throw new Error('Missing required fields for checkout.');
@@ -1162,7 +1164,9 @@ export async function initiateRegistrationCheckout(
     paymentPlanId,
     quantity,
     amountCents,
-    currency
+    currency,
+    options.checkoutAttemptToken,
+    options.retryPayment
   );
 
   if (!result?.checkoutUrl) {
@@ -1170,6 +1174,24 @@ export async function initiateRegistrationCheckout(
   }
 
   return { success: true, checkoutUrl: result.checkoutUrl };
+}
+
+export async function cancelRegistrationCheckout(
+  teamId: string,
+  formId: string,
+  registrationId: string,
+  checkoutAttemptToken = ''
+) {
+  if (!teamId || !formId || !registrationId) {
+    throw new Error('Missing required fields for checkout cancellation.');
+  }
+
+  return cancelStripeRegistrationCheckout({
+    teamId,
+    formId,
+    registrationId,
+    checkoutAttemptToken
+  });
 }
 
 export function getCalendarEventShareText(event: ParentScheduleEvent) {
