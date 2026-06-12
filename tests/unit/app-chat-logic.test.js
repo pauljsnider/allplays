@@ -27,6 +27,26 @@ describe('React app chat logic', () => {
         expect(html).not.toContain('<script>');
     });
 
+    it('sanitizes formatted chat html as a backstop against hostile input', () => {
+        const html = formatChatMessageHtml([
+            '<img src=x onerror=alert(1)>',
+            '<a href="javascript:alert(1)">bad</a>',
+            'https://safe.example.test/path?x=&quot; onclick=&quot;alert(1)',
+            '`<svg onload=alert(1)>`',
+            '@ALL PLAYS'
+        ].join(' '));
+
+        expect(html).not.toContain('<img');
+        expect(html).not.toContain('<svg');
+        expect(html).not.toMatch(/<[^>]+\sonerror=/i);
+        expect(html).not.toMatch(/<[^>]+\sonclick=/i);
+        expect(html).not.toContain('href="javascript:');
+        expect(html).toContain('<code>&lt;svg onload=alert(1)&gt;</code>');
+        expect(html).toContain('<span class="chat-mention">@ALL PLAYS</span>');
+        expect(html).toContain('target="_blank"');
+        expect(html).toContain('rel="noopener noreferrer"');
+    });
+
     it('accepts only explicit http links from the composer link action', () => {
         expect(isChatComposerLinkSafe('https://allplays.ai/game.html')).toBe(true);
         expect(isChatComposerLinkSafe('http://localhost:5174/#/messages')).toBe(true);
