@@ -613,6 +613,9 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await clickButton(container, 'Game');
         await waitForText(container, 'Live score');
 
+        expect(scheduleMocks.buildLiveGameClockPeriods).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
+        expect(scheduleMocks.resolveLiveGameClockSnapshot).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), expect.any(Date));
+
         await clickButton(container, 'Home score up');
         expect(container.textContent).toContain('Unsaved score changes');
         await clickButton(container, 'Save score');
