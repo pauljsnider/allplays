@@ -18,6 +18,7 @@ describe('profile notification wiring', () => {
     expect(source).toContain('getNotificationPreferencesForTeam');
     expect(source).toContain('saveNotificationPreferencesForTeam');
     expect(source).toContain('registerPushNotifications');
+    expect(source).toContain("./js/notification-preferences.js?v=2");
     expect(functionsSource).toContain("exports.syncTeamNotificationTargetsOnPreferenceWrite");
     expect(functionsSource).toContain("exports.syncTeamNotificationTargetsOnDeviceWrite");
     expect(functionsSource).toContain("teams/${teamId}/notificationTargets");
