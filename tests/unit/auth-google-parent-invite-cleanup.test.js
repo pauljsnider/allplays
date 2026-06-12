@@ -34,7 +34,7 @@ vi.mock('../../js/firebase.js?v=17', async (importOriginal) => {
     };
 });
 
-vi.mock('../../js/db.js?v=43', () => ({
+vi.mock('../../js/db.js?v=45', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,

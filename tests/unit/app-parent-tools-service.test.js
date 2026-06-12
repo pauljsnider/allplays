@@ -29,6 +29,7 @@ const dbMocks = vi.hoisted(() => ({
     listParentTeamFeeRecipients: vi.fn(),
     listTeamRegistrationForms: vi.fn(),
     listTeamRegistrationReviews: vi.fn(),
+    listTeamRegistrationReviewsPage: vi.fn(),
     rejectTeamRegistration: vi.fn(),
     revokeFamilyShareToken: vi.fn(),
     updateFamilyShareTokenCalendars: vi.fn(),
@@ -182,6 +183,7 @@ import {
     getRegistrationUrl,
     loadStaffRegistrationDetail,
     loadTeamRegistrationQueue,
+    loadTeamRegistrationQueuePage,
     loadFamilyShareModel,
     loadParentAccessModel,
     loadParentAccessTeams,
@@ -761,6 +763,90 @@ describe('React app parent tools service', () => {
 
         await rejectTeamRegistrationForApp(user, 'team-coach', 'form-review', 'reg-1', 'Not eligible');
         expect(dbMocks.rejectTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', 'Not eligible');
+    });
+
+    it('loads first page of registration reviews using a bounded query', async () => {
+        const mockReviews = [
+            {
+                id: 'reg-1',
+                status: 'pending',
+                participant: { name: 'Alex Athlete' },
+                guardian: { email: 'guardian@example.com', name: 'Alex Guardian' },
+                selectedOption: { title: 'Travel' },
+                feeSnapshot: { finalAmountDueCents: 10000, currency: 'USD' },
+                paymentStatus: 'unpaid',
+                waiverAccepted: true
+            }
+        ];
+        dbMocks.listTeamRegistrationReviewsPage.mockResolvedValue({
+            registrations: mockReviews,
+            lastDoc: { id: 'reg-1' },
+            hasMore: true
+        });
+
+        const result = await loadTeamRegistrationQueuePage('team-coach', 'form-review');
+
+        expect(dbMocks.listTeamRegistrationReviewsPage).toHaveBeenCalledWith('team-coach', 'form-review', { status: 'all', pageSize: 25, afterDoc: null });
+        expect(result.reviews).toHaveLength(1);
+        expect(result.reviews[0].participantName).toBe('Alex Athlete');
+        expect(result.hasMore).toBe(true);
+        expect(result.lastDoc).toEqual({ id: 'reg-1' });
+    });
+
+    it('returns hasMore true when a full page was returned', async () => {
+        const fullPage = Array.from({ length: 25 }, (_, i) => ({
+            id: `reg-${i}`,
+            status: 'pending',
+            participant: { name: `Player ${i}` },
+            guardian: { email: `guardian${i}@example.com` },
+            feeSnapshot: { finalAmountDueCents: 0, currency: 'USD' },
+            waiverAccepted: false
+        }));
+        dbMocks.listTeamRegistrationReviewsPage.mockResolvedValue({
+            registrations: fullPage,
+            lastDoc: { id: 'reg-24' },
+            hasMore: true
+        });
+
+        const result = await loadTeamRegistrationQueuePage('team-coach', 'form-review');
+
+        expect(result.reviews).toHaveLength(25);
+        expect(result.hasMore).toBe(true);
+    });
+
+    it('returns hasMore false when a partial page was returned', async () => {
+        dbMocks.listTeamRegistrationReviewsPage.mockResolvedValue({
+            registrations: [
+                {
+                    id: 'reg-1',
+                    status: 'pending',
+                    participant: { name: 'Only One' },
+                    guardian: { email: 'solo@example.com' },
+                    feeSnapshot: { finalAmountDueCents: 0, currency: 'USD' },
+                    waiverAccepted: false
+                }
+            ],
+            lastDoc: { id: 'reg-1' },
+            hasMore: false
+        });
+
+        const result = await loadTeamRegistrationQueuePage('team-coach', 'form-review');
+
+        expect(result.reviews).toHaveLength(1);
+        expect(result.hasMore).toBe(false);
+    });
+
+    it('passes afterDoc cursor for subsequent pages', async () => {
+        const cursorDoc = { id: 'reg-24' };
+        dbMocks.listTeamRegistrationReviewsPage.mockResolvedValue({
+            registrations: [],
+            lastDoc: null,
+            hasMore: false
+        });
+
+        await loadTeamRegistrationQueuePage('team-coach', 'form-review', { afterDoc: cursorDoc, pageSize: 10 });
+
+        expect(dbMocks.listTeamRegistrationReviewsPage).toHaveBeenCalledWith('team-coach', 'form-review', { status: 'all', pageSize: 10, afterDoc: cursorDoc });
     });
 
     it('loads a public registration detail without requiring public team document access', async () => {

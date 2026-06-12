@@ -67,6 +67,8 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [queue, setQueue] = useState<TeamRegistrationQueueModel | null>(null);
   const [selectedReviewId, setSelectedReviewId] = useState('');
   const [selectedMergePlayerId, setSelectedMergePlayerId] = useState('');
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const cancelledCheckoutReleaseKeyRef = useRef('');
@@ -91,13 +93,21 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         }
         setForm(nextForm);
         if (staffReview) {
-          const nextQueue = await (parentToolsService as any).loadTeamRegistrationQueue(auth.user, teamId, formId) as TeamRegistrationQueueModel;
+          const [nextPage, rosterPlayers] = await Promise.all([
+            (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
+            (parentToolsService as any).loadTeamRegistrationRosterPlayers(auth.user, teamId).catch(() => [])
+          ]);
           if (cancelled) return;
+          const nextQueue: TeamRegistrationQueueModel = { reviews: nextPage.reviews, rosterPlayers };
           setQueue(nextQueue);
+          setLastDoc(nextPage.lastDoc);
+          setHasMore(nextPage.hasMore);
           const firstReviewId = nextQueue.reviews[0]?.id || '';
           setSelectedReviewId((current) => current && nextQueue.reviews.some((review) => review.id === current) ? current : firstReviewId);
         } else {
           setQueue(null);
+          setLastDoc(null);
+          setHasMore(false);
         }
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         const initialOptionId = selectInitialRegistrationOption(nextForm, initialOptions);
@@ -299,6 +309,22 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     }
   };
 
+  const handleLoadMore = async () => {
+    if (!lastDoc || !hasMore || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const nextPage = await (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId, { afterDoc: lastDoc }) as { reviews: any[]; lastDoc: any; hasMore: boolean };
+      setQueue((current: TeamRegistrationQueueModel | null) => current ? { ...current, reviews: [...current.reviews, ...nextPage.reviews] } : { reviews: nextPage.reviews, rosterPlayers: [] });
+      setLastDoc(nextPage.lastDoc);
+      setHasMore(nextPage.hasMore);
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load more registrations.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <LoadingBlock label="Loading registration" />;
   if (!form) return <EmptyState icon={Ticket} title="Registration unavailable" detail={error || 'This registration form could not be loaded.'} actionLabel={error ? 'Retry' : ''} onAction={error ? () => setReloadKey((current) => current + 1) : undefined} />;
 
@@ -354,6 +380,12 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
                   <div className="mt-2 text-xs font-semibold text-gray-500">{review.selectedOptionLabel || 'No option selected'} · {review.paymentLabel}</div>
                 </button>
               )) : <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No applications are available for this form yet.</div>}
+              {hasMore ? (
+                <button type="button" className="secondary-button w-full text-xs" onClick={handleLoadMore} disabled={saving}>
+                  {saving ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : null}
+                  Load more
+                </button>
+              ) : null}
             </div>
           </div>
 
