@@ -1,6 +1,7 @@
 import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
+import { ProtectedRouteSkeleton } from './components/PageSkeletons';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { shouldReloadTeamsToHome } from './lib/reloadRouting';
 import { addPushNotificationOpenListener } from './lib/pushService';
@@ -137,6 +138,7 @@ function isBrowserReload() {
 
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {
   const [bootstrapGraceExpired, setBootstrapGraceExpired] = useState(false);
+  const location = useLocation();
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -160,7 +162,7 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
 
   return (
     <AppShell auth={auth}>
-      <Suspense fallback={<ProtectedRouteLoadingState />}>
+      <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>
         {children}
       </Suspense>
     </AppShell>
@@ -179,13 +181,6 @@ function LoadingScreen() {
   );
 }
 
-function ProtectedRouteLoadingState() {
-  return (
-    <div className="app-card flex min-h-[240px] items-center justify-center p-5 text-center">
-      <div>
-        <div className="text-base font-black text-gray-950">Loading page</div>
-        <div className="mt-1 text-sm font-semibold text-gray-500">Preparing your ALL PLAYS workspace...</div>
-      </div>
-    </div>
-  );
+function ProtectedRouteLoadingState({ pathname }: { pathname: string }) {
+  return <ProtectedRouteSkeleton pathname={pathname} />;
 }

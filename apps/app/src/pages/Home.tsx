@@ -26,6 +26,7 @@ import {
   Users,
   type LucideIcon
 } from 'lucide-react';
+import { HomePageSkeleton } from '../components/PageSkeletons';
 import { loadParentHomeSummaryBootstrap, loadParentHomeWithSecondaryData } from '../lib/homeService';
 import {
   blockFriend,
@@ -332,13 +333,7 @@ export function Home({ auth }: { auth: AuthState }) {
       {error ? <Status tone="error" message={error} /> : null}
       {socialStatus ? <Status tone={socialStatus.tone} message={socialStatus.message} /> : null}
 
-      {loading ? (
-        <section className="app-card p-6 text-center">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
-          <div className="mt-3 text-sm font-black text-gray-900">Loading Home</div>
-          <div className="mt-1 text-xs font-semibold text-gray-500">Pulling players, teams, schedule, chat, and fees.</div>
-        </section>
-      ) : null}
+      {loading ? <HomePageSkeleton /> : null}
 
       {!loading && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} officialsAccess={officialsAccess} /> : null}
       {!loading && activeSection === 'feed' ? (
