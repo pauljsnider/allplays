@@ -122,6 +122,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState('');
   const shouldLoadInbox = isDesktopWeb || !teamId;
 
   const refreshInbox = async () => {
@@ -162,7 +163,23 @@ export function Messages({ auth }: { auth: AuthState }) {
 
   const preferredConversationId = useMemo(() => getPreferredConversationIdFromSearch(location.search), [location.search]);
 
-  const activeTeamId = teamId || (isDesktopWeb ? filteredTeams[0]?.id : undefined);
+  useEffect(() => {
+    if (!isDesktopWeb) {
+      setSelectedDesktopTeamId('');
+      return;
+    }
+    if (teamId) {
+      setSelectedDesktopTeamId(teamId);
+      return;
+    }
+    setSelectedDesktopTeamId((currentTeamId) => (
+      currentTeamId && teams.some((team) => team.id === currentTeamId)
+        ? currentTeamId
+        : teams[0]?.id || ''
+    ));
+  }, [isDesktopWeb, teamId, teams]);
+
+  const activeTeamId = teamId || (isDesktopWeb ? selectedDesktopTeamId || teams[0]?.id : undefined);
 
   if (isDesktopWeb) {
     return (
