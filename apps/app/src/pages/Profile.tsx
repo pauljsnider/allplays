@@ -48,7 +48,8 @@ import {
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
-import type { AccessCodeRecord, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
+import { NOTIFICATION_PREFERENCE_GROUPS } from '../../../../js/notification-preferences.js';
+import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
 import type { ProfilePhotoSource } from '../lib/profileService';
 import type { AuthState } from '../lib/types';
 
@@ -62,10 +63,16 @@ type Status = {
 type ProfileSectionId = 'account' | 'alerts' | 'invites' | 'security';
 
 const emptyPreferences = normalizeNotificationPreferences(null);
-const gameDayDefaultPreferences: Pick<NotificationPreferences, 'liveScore' | 'schedule'> = {
+const gameDayDefaultPreferences: Partial<NotificationPreferences> = {
   liveScore: true,
-  schedule: true
+  schedule: true,
+  rsvp: true
 };
+const notificationPreferenceGroups = NOTIFICATION_PREFERENCE_GROUPS as readonly {
+  id: string;
+  label: string;
+  categories: readonly { id: NotificationCategory; label: string }[];
+}[];
 const collapsedInviteCount = 3;
 const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
   { id: 'account', label: 'Account' },
@@ -1083,10 +1090,25 @@ export function Profile({ auth }: { auth: AuthState }) {
                   <p className="mt-2 text-sm font-semibold leading-6 text-gray-600">Team-specific alert toggles will unlock as soon as the selected team’s saved preferences finish loading.</p>
                 </div>
               ) : (
-                <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                  <PreferenceToggle label="Live Chat" checked={notificationPreferences.liveChat} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveChat: checked }))} />
-                  <PreferenceToggle label="Live Score" checked={notificationPreferences.liveScore} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, liveScore: checked }))} />
-                  <PreferenceToggle label="Schedule Changes" checked={notificationPreferences.schedule} onChange={(checked) => setNotificationPreferences((current) => ({ ...current, schedule: checked }))} />
+                <div className="mt-3 space-y-4">
+                  {notificationPreferenceGroups.map((group) => (
+                    <div key={group.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                      <div className="text-xs font-black uppercase tracking-wide text-gray-500">{group.label}</div>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {group.categories.map((category) => (
+                          <PreferenceToggle
+                            key={category.id}
+                            label={category.label}
+                            checked={notificationPreferences[category.id]}
+                            onChange={(checked) => setNotificationPreferences((current) => ({
+                              ...current,
+                              [category.id]: checked
+                            }))}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
               <div className="mt-3 flex flex-wrap items-center gap-2">

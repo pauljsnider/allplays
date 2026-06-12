@@ -7,16 +7,27 @@ const {
     buildNotificationTargetDocId,
     buildNotificationTargetPayload,
     hasEnabledNotificationCategory,
-    normalizeNotificationTargetCategories
+    normalizeNotificationTargetCategories,
+    notificationAudienceAllowsRoles
 } = require('../../functions/notification-target-index-core.cjs');
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
 describe('notification target index core helpers', () => {
     it('normalizes category booleans for every supported notification type', () => {
-        expect(normalizeNotificationTargetCategories({ liveScore: true, schedule: 'yes' })).toEqual({
+        expect(normalizeNotificationTargetCategories({ liveScore: true, schedule: 'yes' })).toMatchObject({
             liveChat: false,
+            mentions: true,
             liveScore: true,
-            schedule: false
+            gameDay: false,
+            schedule: false,
+            rsvp: true,
+            fees: true,
+            practice: false,
+            access: true,
+            rideshare: false,
+            media: false,
+            awards: false,
+            officiating: false
         });
     });
 
@@ -46,10 +57,27 @@ describe('notification target index core helpers', () => {
             userAgent: 'AllPlays/1.0',
             categories: {
                 liveChat: true,
+                mentions: true,
                 liveScore: false,
-                schedule: true
+                gameDay: false,
+                schedule: true,
+                rsvp: true,
+                fees: true,
+                practice: false,
+                access: true,
+                rideshare: false,
+                media: false,
+                awards: false,
+                officiating: false
             }
         });
+    });
+
+    it('filters staff-only notification categories out of parent-only targets', () => {
+        expect(notificationAudienceAllowsRoles('access', ['parent'])).toBe(false);
+        expect(notificationAudienceAllowsRoles('access', ['staff'])).toBe(true);
+        expect(notificationAudienceAllowsRoles('officiating', ['parent'])).toBe(false);
+        expect(notificationAudienceAllowsRoles('fees', ['parent'])).toBe(true);
     });
 
     it('guards indexed writes by current team access before syncing targets', () => {
@@ -74,7 +102,9 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('if (uid === actorUid) return null;');
         expect(targetResolverSource).toContain('users/${uid}/notificationPreferences/${teamId}');
         expect(targetResolverSource).toContain('users/${uid}/notificationDevices');
-        expect(targetResolverSource).toContain('const missingUserIds = userIds.filter');
-        expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUserIds, actorUid)');
+        expect(targetResolverSource).toContain('if (!NOTIFICATION_CATEGORIES.includes(category)) return []');
+        expect(targetResolverSource).toContain('notificationAudienceAllowsRoles(category, user.roles)');
+        expect(targetResolverSource).toContain('const missingUsers = users.filter');
+        expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid)');
     });
 });

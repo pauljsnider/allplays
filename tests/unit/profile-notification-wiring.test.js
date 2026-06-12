@@ -5,9 +5,9 @@ describe('profile notification wiring', () => {
   it('renders notification settings controls in profile page', () => {
     const source = readFileSync(new URL('../../profile.html', import.meta.url), 'utf8');
     expect(source).toContain('id="notification-team-select"');
-    expect(source).toContain('id="notification-live-chat"');
-    expect(source).toContain('id="notification-live-score"');
-    expect(source).toContain('id="notification-schedule"');
+    expect(source).toContain('id="notification-preference-groups"');
+    expect(source).toContain('NOTIFICATION_PREFERENCE_GROUPS');
+    expect(source).toContain('data-notification-category');
     expect(source).toContain('id="enable-push-btn"');
     expect(source).toContain('id="save-notification-prefs-btn"');
   });

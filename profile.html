@@ -170,20 +170,7 @@
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <label class="flex items-center gap-2 border border-gray-200 rounded-md p-3">
-                            <input id="notification-live-chat" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
-                            <span class="text-sm text-gray-700">Live Chat</span>
-                        </label>
-                        <label class="flex items-center gap-2 border border-gray-200 rounded-md p-3">
-                            <input id="notification-live-score" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
-                            <span class="text-sm text-gray-700">Live Score</span>
-                        </label>
-                        <label class="flex items-center gap-2 border border-gray-200 rounded-md p-3">
-                            <input id="notification-schedule" type="checkbox" class="h-4 w-4 text-indigo-600 border-gray-300 rounded">
-                            <span class="text-sm text-gray-700">Schedule Changes</span>
-                        </label>
-                    </div>
+                    <div id="notification-preference-groups" class="space-y-4"></div>
 
                     <div class="flex items-center gap-3">
                         <button id="save-notification-prefs-btn" type="button" class="px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700">
@@ -458,7 +445,7 @@
             saveNotificationPreferencesForTeam,
             upsertNotificationDeviceToken
         } from './js/db.js?v=43';
-        import { normalizeTeamNotificationPreferences } from './js/notification-preferences.js?v=1';
+        import { normalizeTeamNotificationPreferences, NOTIFICATION_PREFERENCE_GROUPS } from './js/notification-preferences.js?v=1';
         import { registerPushNotifications } from './js/push-notifications.js?v=1';
 
         renderFooter(document.getElementById('footer-container'));
@@ -586,19 +573,62 @@
             return document.getElementById('notification-team-select').value || '';
         }
 
+        function getNotificationInputId(categoryId) {
+            return `notification-${String(categoryId).replace(/([A-Z])/g, '-$1').toLowerCase()}`;
+        }
+
+        function renderNotificationPreferenceGroups() {
+            const container = document.getElementById('notification-preference-groups');
+            container.innerHTML = '';
+            NOTIFICATION_PREFERENCE_GROUPS.forEach((group) => {
+                const section = document.createElement('section');
+                section.className = 'rounded-lg border border-gray-200 bg-gray-50 p-3';
+
+                const heading = document.createElement('h4');
+                heading.className = 'text-xs font-semibold uppercase tracking-wide text-gray-500';
+                heading.textContent = group.label;
+                section.appendChild(heading);
+
+                const grid = document.createElement('div');
+                grid.className = 'mt-3 grid grid-cols-1 md:grid-cols-3 gap-3';
+
+                group.categories.forEach((category) => {
+                    const label = document.createElement('label');
+                    label.className = 'flex items-center gap-2 border border-gray-200 rounded-md bg-white p-3';
+
+                    const input = document.createElement('input');
+                    input.id = getNotificationInputId(category.id);
+                    input.dataset.notificationCategory = category.id;
+                    input.type = 'checkbox';
+                    input.className = 'h-4 w-4 text-indigo-600 border-gray-300 rounded';
+
+                    const text = document.createElement('span');
+                    text.className = 'text-sm text-gray-700';
+                    text.textContent = category.label;
+
+                    label.appendChild(input);
+                    label.appendChild(text);
+                    grid.appendChild(label);
+                });
+
+                section.appendChild(grid);
+                container.appendChild(section);
+            });
+        }
+
         function readNotificationPreferencesFromForm() {
-            return {
-                liveChat: document.getElementById('notification-live-chat').checked,
-                liveScore: document.getElementById('notification-live-score').checked,
-                schedule: document.getElementById('notification-schedule').checked
-            };
+            return Array.from(document.querySelectorAll('[data-notification-category]')).reduce((preferences, input) => {
+                preferences[input.dataset.notificationCategory] = input.checked;
+                return preferences;
+            }, {});
         }
 
         function writeNotificationPreferencesToForm(preferences) {
             const normalized = normalizeTeamNotificationPreferences(preferences);
-            document.getElementById('notification-live-chat').checked = normalized.liveChat;
-            document.getElementById('notification-live-score').checked = normalized.liveScore;
-            document.getElementById('notification-schedule').checked = normalized.schedule;
+            Object.entries(normalized).forEach(([category, enabled]) => {
+                const input = document.querySelector(`[data-notification-category="${category}"]`);
+                if (input) input.checked = enabled;
+            });
         }
 
         async function loadNotificationTeams() {
@@ -826,6 +856,8 @@
                 btn.textContent = 'Save Profile';
             }
         });
+
+        renderNotificationPreferenceGroups();
 
         document.getElementById('notification-team-select').addEventListener('change', async () => {
             try {
