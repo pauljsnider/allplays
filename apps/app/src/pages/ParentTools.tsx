@@ -506,9 +506,12 @@ function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: n
     setPayingFeeId(feeKey);
     setFeeErrors((current) => ({ ...current, [feeKey]: '' }));
     try {
-      if (fee.checkoutUrl) {
+      if (fee.paymentAction === 'checkoutUrl' && fee.checkoutUrl) {
         await openPublicUrl(String(fee.checkoutUrl));
         return;
+      }
+      if (fee.paymentAction !== 'createCheckout') {
+        throw new Error('Checkout is not available for this fee.');
       }
       const checkout = await initiateParentTeamFeeCheckout(String(fee.teamId || ''), String(fee.batchId || ''), String(fee.recipientId || ''));
       await openPublicUrl(checkout.checkoutUrl);

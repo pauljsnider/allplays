@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ParentTools } from './ParentTools';
 import type { AuthState } from '../lib/types';
+import { openPublicUrl } from '../lib/publicActions';
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
     buildParentScheduleIcs: vi.fn(),
@@ -329,6 +330,48 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Register' }));
         expect(await screen.findByText('Summer Camp')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+    });
+
+    it('regenerates stale team fee checkout links instead of opening the stored URL', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-1',
+                title: 'Team dues',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                statusLabel: 'Open',
+                balanceDueCents: 10000,
+                checkoutUrl: 'https://pay.example.test/stale',
+                checkoutStatus: 'stale',
+                canPay: true,
+                checkoutInitiatable: true,
+                paymentAction: 'createCheckout',
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+        parentToolsServiceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({
+            success: true,
+            checkoutUrl: 'https://pay.example.test/fresh'
+        });
+
+        renderParentTools(['/parent-tools/fees']);
+
+        await screen.findByText('Team dues');
+        fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
+
+        await waitFor(() => {
+            expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
+        });
+        expect(openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/fresh');
+        expect(openPublicUrl).not.toHaveBeenCalledWith('https://pay.example.test/stale');
     });
 
     it('redirects invalid tabs without triggering a hook order violation', async () => {
