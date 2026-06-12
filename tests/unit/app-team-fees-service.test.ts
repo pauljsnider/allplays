@@ -255,7 +255,7 @@ describe('React app team fee offline payment service', () => {
 
         expect(model.canManageFees).toBe(true);
         expect(model.selectedBatch?.id).toBe('batch-1');
-        expect(model.rosterPlayers).toEqual([{ id: 'player-1', name: 'Pat Star', number: '12' }]);
+        expect(model.rosterPlayers).toEqual([{ id: 'player-1', name: 'Pat Star', number: '12', parentName: '', parentEmail: '' }]);
         expect(model.recipients[0]).toMatchObject({
             id: 'recipient-1',
             playerName: 'Pat Star',
@@ -295,7 +295,7 @@ describe('React app team fee offline payment service', () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.getPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Pat Star', number: '12', active: true },
-            { id: 'player-2', name: 'Chris Doe', number: '7', active: true },
+            { id: 'player-2', name: 'Chris Doe', number: '7', active: true, parents: [{ name: 'Dana Doe', email: 'Dana@Example.com' }] },
             { id: 'player-3', name: 'Inactive Player', active: false }
         ]);
         dbMocks.createTeamFeeBatch.mockResolvedValue({ id: 'batch-9' });
@@ -330,6 +330,8 @@ describe('React app team fee offline payment service', () => {
                 playerId: 'player-2',
                 playerKey: 'team-1::player-2',
                 playerName: 'Chris Doe',
+                parentName: 'Dana Doe',
+                parentEmail: 'dana@example.com',
                 amountCents: 2500,
                 dueDate: '2026-06-15',
                 status: 'unpaid'
@@ -356,8 +358,8 @@ describe('React app team fee offline payment service', () => {
         });
 
         expect(dbMocks.createTeamFeeBatch).toHaveBeenCalledWith('team-1', expect.any(Object), [
-            expect.objectContaining({ playerId: 'player-1' }),
-            expect.objectContaining({ playerId: 'player-2' })
+            expect.objectContaining({ playerId: 'player-1', parentName: '', parentEmail: '' }),
+            expect.objectContaining({ playerId: 'player-2', parentName: '', parentEmail: '' })
         ], expect.any(Object));
     });
 
