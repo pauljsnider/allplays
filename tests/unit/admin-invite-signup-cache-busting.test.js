@@ -30,8 +30,7 @@ describe('admin invite signup cache busting', () => {
             'js/admin.js': 'auth.js?v=22',
             'js/live-game.js': 'auth.js?v=22',
             'js/live-tracker.js': 'auth.js?v=22',
-            'js/track-basketball.js': 'auth.js?v=22',
-            'js/utils.js': 'auth.js?v=22'
+            'js/track-basketball.js': 'auth.js?v=22'
         };
 
         for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
@@ -40,10 +39,12 @@ describe('admin invite signup cache busting', () => {
         }
     });
 
-    it('keeps the shared header logout import on the current auth module version', () => {
+    it('keeps the shared header logout import pinned to auth.js v21', () => {
         const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
+        const allAuthImports = utilsSource.match(/await import\('\.\/auth\.js\?v=\d+'\);/g) || [];
         const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=21'\);/g) || [];
 
+        expect(allAuthImports).toEqual(["await import('./auth.js?v=21');"]);
         expect(logoutImportMatches).toHaveLength(1);
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=22');");
     });
