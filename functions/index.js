@@ -3206,14 +3206,59 @@ async function sendCategoryNotification({
   title,
   body,
   actorUid = null,
-  linkOverride = null
+  linkOverride = null,
+  excludeUids = []
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
 
-  const targets = await getTargetsForCategory(teamId, category, actorUid);
+  const allTargets = await getTargetsForCategory(teamId, category, actorUid);
+  const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
+  const targets = excludeSet.size
+    ? allTargets.filter((t) => !excludeSet.has(t.uid))
+    : allTargets;
   if (!targets.length) return null;
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId });
+  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
+  const maxMulticastTokens = 500;
+  const allResponses = [];
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let i = 0; i < targets.length; i += maxMulticastTokens) {
+    const targetChunk = targets.slice(i, i + maxMulticastTokens);
+    const sendResult = await admin.messaging().sendEachForMulticast({
+      tokens: targetChunk.map((target) => target.token),
+      notification: { title, body },
+      data: {
+        teamId: String(teamId),
+        gameId: String(gameId || ''),
+        eventId: String(eventId || gameId || ''),
+        category: String(category),
+        appRoute,
+        link
+      },
+      webpush: {
+        fcmOptions: { link }
+      }
+    });
+    allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
+    successCount += Number(sendResult.successCount || 0);
+    failureCount += Number(sendResult.failureCount || 0);
+    await pruneInvalidTokens(sendResult, targetChunk);
+  }
+
+  return {
+    responses: allResponses,
+    successCount,
+    failureCount
+  };
+}
+
+async function sendDirectTargetsNotification({ targets, category, title, body, teamId, gameId = null, eventId = null }) {
+  if (!targets.length) return null;
+
+  const link = buildNotificationLink({ category, teamId, gameId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
   const maxMulticastTokens = 500;
   const allResponses = [];
@@ -3592,6 +3637,28 @@ exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
+function detectMentionedUids(text, members) {
+  if (!text) return [];
+  const mentioned = new Set();
+  const tokens = text.match(/@[\w.'"-]+/gi) || [];
+  for (const token of tokens) {
+    const name = token.slice(1).toLowerCase();
+    if (name === 'all' || name === 'team') {
+      members.forEach((m) => mentioned.add(m.uid));
+      break;
+    }
+    for (const member of members) {
+      const memberName = String(member.displayName || member.name || '').toLowerCase();
+      const memberNameCompact = memberName.replace(/\s+/g, '');
+      const firstName = memberName.split(' ')[0];
+      if (memberNameCompact === name || firstName === name) {
+        mentioned.add(member.uid);
+      }
+    }
+  }
+  return [...mentioned];
+}
+
 exports.notifyTeamChatMessageCreated = functions.firestore
   .document('teams/{teamId}/chatMessages/{messageId}')
   .onCreate(async (snapshot, context) => {
@@ -3608,13 +3675,57 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
       : 'sent a photo';
 
-    return sendCategoryNotification({
+    // Detect @mentions and send targeted mentions-category pushes
+    let mentionedUids = [];
+    if (text) {
+      const allTargets = await getTargetsForCategory(teamId, 'mentions', null);
+      const members = allTargets.map((t) => ({ uid: t.uid, displayName: '' }));
+      // Also fetch candidate users to get display names for matching
+      const candidateUids = await getCandidateUserIdsForTeam(teamId);
+      const memberMap = new Map(members.map((m) => [m.uid, m]));
+      const userProfileTasks = candidateUids.map(async (uid) => {
+        const userSnap = await firestore.doc(`users/${uid}`).get();
+        const userDoc = userSnap.exists ? (userSnap.data() || {}) : {};
+        const displayName = String(userDoc.displayName || userDoc.fullName || userDoc.name || '').trim();
+        if (memberMap.has(uid)) {
+          memberMap.get(uid).displayName = displayName;
+        }
+      });
+      await Promise.all(userProfileTasks);
+      mentionedUids = detectMentionedUids(text, [...memberMap.values()])
+        .filter((uid) => uid !== actorUid);
+    }
+
+    const results = [];
+
+    if (mentionedUids.length) {
+      await snapshot.ref.update({ mentionedUids });
+      // Send mentions push only to the mentioned users (those who have mentions enabled)
+      const mentionTargets = await getTargetsForCategory(teamId, 'mentions', actorUid);
+      const mentionedSet = new Set(mentionedUids);
+      const filteredMentionTargets = mentionTargets.filter((t) => mentionedSet.has(t.uid));
+      if (filteredMentionTargets.length) {
+        results.push(await sendDirectTargetsNotification({
+          targets: filteredMentionTargets,
+          category: 'mentions',
+          title: `${senderName} mentioned you`,
+          body,
+          teamId
+        }));
+      }
+    }
+
+    // liveChat push — skip users who already got a mentions push
+    results.push(await sendCategoryNotification({
       teamId,
       category: 'liveChat',
       title: `${senderName}: Team Chat`,
       body,
-      actorUid
-    });
+      actorUid,
+      excludeUids: mentionedUids
+    }));
+
+    return results;
   });
 
 exports.postSharedGameCancellationNotification = functions.https.onCall(async (data, context) => {
