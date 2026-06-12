@@ -1985,7 +1985,7 @@ describe('React app messages integration', () => {
 
         const { container } = await renderMessages('/messages');
 
-        const bellOffIcon = container.querySelector('svg[data-icon="BellOff"]');
+        const bellOffIcon = container.querySelector('svg[aria-label="Notifications muted"]');
         expect(bellOffIcon).toBeTruthy();
     });
 });
