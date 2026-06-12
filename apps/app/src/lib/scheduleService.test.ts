@@ -583,7 +583,7 @@ describe('player-attributed live scoring', () => {
     }));
   });
 
-  it('undoes a recorded foul by deleting the live event and tracker event docs', async () => {
+  it('undoes a recorded foul by appending compensating live and tracker events', async () => {
     mocks.transactionGet.mockReset();
     mocks.transactionGet
       .mockResolvedValueOnce({ exists: () => true, data: () => ({ homeScore: 10, awayScore: 8 }) })
@@ -604,13 +604,31 @@ describe('player-attributed live scoring', () => {
       awayScore: 8,
       playerId: 'player-1',
       statKey: 'fouls',
-      playerStatTotal: 3
+      playerStatTotal: 3,
+      trackerEventId: expect.stringMatching(/^app-live-/),
+      liveEventId: expect.stringMatching(/^app-live-/),
+      liveEvent: expect.objectContaining({
+        type: 'stat',
+        statKey: 'fouls',
+        value: -1,
+        description: 'Undo #12 Avery Smith FOULS +1'
+      })
     });
     expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }), expect.objectContaining({
       stats: { fouls: { __increment: -1 } }
     }), { merge: true });
-    expect(mocks.transactionDelete).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/liveEvents/live-foul-1' }));
-    expect(mocks.transactionDelete).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1/events/tracker-foul-1' }));
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents/') }), expect.objectContaining({
+      type: 'stat',
+      statKey: 'fouls',
+      value: -1,
+      description: 'Undo #12 Avery Smith FOULS +1'
+    }));
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/events/') }), expect.objectContaining({
+      text: '#12 Avery Smith FOULS -1',
+      statKey: 'fouls',
+      value: -1,
+      createdBy: 'coach-1'
+    }));
   });
 
   it('rejects player scoring after the game is final', async () => {

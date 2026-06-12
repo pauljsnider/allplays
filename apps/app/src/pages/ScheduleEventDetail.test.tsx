@@ -507,7 +507,18 @@ describe('ScheduleEventDetail assignments', () => {
       awayScore: 8,
       playerId: 'p1',
       statKey: 'fouls',
-      playerStatTotal: 3
+      playerStatTotal: 3,
+      trackerEventId: 'tracker-foul-undo-1',
+      liveEventId: 'live-foul-undo-1',
+      liveEvent: {
+        eventId: 'live-foul-undo-1',
+        type: 'stat',
+        statKey: 'fouls',
+        value: -1,
+        period: 'Q1',
+        isOpponent: false,
+        description: 'Undo #12 Avery Smith FOULS +1'
+      }
     });
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
@@ -557,6 +568,7 @@ describe('ScheduleEventDetail assignments', () => {
       expect(scheduleServiceMocks.undoRecordedPlayerGameStat).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ trackerEventId: 'tracker-foul-1', liveEventId: 'live-foul-1', statKey: 'fouls' }), auth.user);
     });
     expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · No bonus');
+    expect(screen.getByText('Undo #12 Avery Smith FOULS +1')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Advance period' }));
 

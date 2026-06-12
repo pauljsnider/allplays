@@ -3696,12 +3696,12 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
   }, [event.teamId, event.id, event.eventKey]);
 
   const activePeriod = useMemo(() => resolveLiveGameClockSnapshot(event as Record<string, any>).period || event.liveClockPeriod || (event as Record<string, any>).period || 'Q1', [event]);
-  const homeTeamFouls = useMemo(() => (
+  const homeTeamFouls = useMemo(() => Math.max(0,
     (Array.isArray(liveEvents) ? liveEvents : []).reduce((total, entry) => {
       if (entry?.type !== 'stat' || entry?.isOpponent === true) return total;
       if (String(entry?.statKey || '').toLowerCase() !== 'fouls') return total;
       if (String(entry?.period || '') !== String(activePeriod || '')) return total;
-      return total + Math.max(0, Number(entry?.value || 0));
+      return total + (Number(entry?.value || 0) || 0);
     }, 0)
   ), [activePeriod, liveEvents]);
   const bonusState = getBonusState(homeTeamFouls);
@@ -3750,7 +3750,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
       setHomePlayers((players) => players.map((candidate) => (
         candidate.id === latest.playerId ? { ...candidate, fouls: result.playerStatTotal } : candidate
       )));
-      setLiveEvents((entries) => entries.filter((entry) => String(entry?.eventId || '') !== latest.liveEventId));
+      setLiveEvents((entries) => result.liveEvent ? [...entries, result.liveEvent] : entries);
       setRecordedFouls((entries) => entries.slice(0, -1));
       setStatus({ tone: 'success', message: 'Last foul undone.' });
     } catch (error: any) {

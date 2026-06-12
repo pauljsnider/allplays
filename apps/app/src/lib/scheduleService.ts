@@ -285,6 +285,9 @@ export type UndoPlayerGameStatResult = GameScoreSnapshot & {
   playerId: string;
   statKey: 'pts' | 'fouls';
   playerStatTotal: number;
+  trackerEventId: string;
+  liveEventId: string;
+  liveEvent: Record<string, unknown>;
 };
 
 export type PlayerScoringStatInput = {
@@ -2654,6 +2657,22 @@ function buildPlayerGameStatDescription(playerName: string, playerNumber: string
   return `${identity} scored ${value} points.`;
 }
 
+function buildUndoPlayerGameStatDescription(playerName: string, playerNumber: string, statKey: 'pts' | 'fouls', value: number) {
+  const identity = playerNumber ? `#${playerNumber} ${playerName}` : playerName;
+  if (statKey === 'fouls') {
+    return `Undo ${identity} FOULS +${value}`;
+  }
+  return `Undo ${identity} ${value} point${value === 1 ? '' : 's'}.`;
+}
+
+function buildPlayerGameStatTrackerText(playerName: string, playerNumber: string, statKey: 'pts' | 'fouls', value: number) {
+  const identity = playerNumber ? `#${playerNumber} ${playerName}` : playerName;
+  if (statKey === 'fouls') {
+    return `${identity} FOULS ${value >= 0 ? '+' : ''}${value}`;
+  }
+  return `${identity} PTS ${value >= 0 ? '+' : ''}${value}`;
+}
+
 function buildPlayerGameStatLiveEvent({
   playerId,
   playerName,
@@ -2664,18 +2683,20 @@ function buildPlayerGameStatLiveEvent({
   awayScore,
   user,
   game = null,
-  eventId = createAppLiveEventId()
+  eventId = createAppLiveEventId(),
+  description = buildPlayerGameStatDescription(playerName, playerNumber, statKey, value)
 }: {
   playerId: string;
   playerName: string;
   playerNumber: string;
   statKey: 'pts' | 'fouls';
-  value: 1 | 2;
+  value: number;
   homeScore: number;
   awayScore: number;
   user: AuthUser;
   game?: Record<string, any> | null;
   eventId?: string;
+  description?: string;
 }) {
   return {
     eventId,
@@ -2688,7 +2709,7 @@ function buildPlayerGameStatLiveEvent({
     statKey,
     value,
     isOpponent: false,
-    description: buildPlayerGameStatDescription(playerName, playerNumber, statKey, value),
+    description,
     homeScore: normalizeGameScoreValue(homeScore),
     awayScore: normalizeGameScoreValue(awayScore),
     createdBy: user.uid,
@@ -2767,7 +2788,7 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
       const trackerEventId = createAppLiveEventId();
       const liveEvent = buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game: gameData, eventId: liveEventId });
       const trackerEvent = buildTrackerEventDocument({
-        text: statKey === 'fouls' ? `${playerNumber ? `#${playerNumber} ` : ''}${playerName} FOULS +${value}` : `${playerNumber ? `#${playerNumber} ` : ''}${playerName} PTS +${value}`,
+        text: buildPlayerGameStatTrackerText(playerName, playerNumber, statKey, value),
         clock: formatTrackerClock(getLiveEventClockMs(gameData)),
         period: getLiveEventPeriod(gameData),
         timestamp: scoreUpdatedAt,
@@ -2837,7 +2858,7 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
     const trackerEventId = createAppLiveEventId();
     const liveEvent = buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game: gameDoc, eventId: liveEventId });
     const trackerEvent = buildTrackerEventDocument({
-      text: statKey === 'fouls' ? `${playerNumber ? `#${playerNumber} ` : ''}${playerName} FOULS +${value}` : `${playerNumber ? `#${playerNumber} ` : ''}${playerName} PTS +${value}`,
+      text: buildPlayerGameStatTrackerText(playerName, playerNumber, statKey, value),
       clock: formatTrackerClock(getLiveEventClockMs(gameDoc)),
       period: getLiveEventPeriod(gameDoc),
       timestamp: scoreUpdatedAt,
@@ -2924,6 +2945,37 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
       const nextHomeScore = normalizeGameScoreValue(gameData.homeScore) - (stat.statKey === 'pts' && teamSide === 'home' ? value : 0);
       const nextAwayScore = normalizeGameScoreValue(gameData.awayScore) - (stat.statKey === 'pts' && teamSide === 'away' ? value : 0);
       const playerStatTotal = Math.max(0, normalizeGameScoreValue(statsData?.stats?.[stat.statKey]) - value);
+      const liveEventId = createAppLiveEventId();
+      const trackerEventId = createAppLiveEventId();
+      const liveEvent = buildPlayerGameStatLiveEvent({
+        playerId: stat.playerId,
+        playerName,
+        playerNumber,
+        statKey: stat.statKey,
+        value: -value,
+        homeScore: nextHomeScore,
+        awayScore: nextAwayScore,
+        user,
+        game: gameData,
+        eventId: liveEventId,
+        description: buildUndoPlayerGameStatDescription(playerName, playerNumber, stat.statKey, value)
+      });
+      const trackerEvent = buildTrackerEventDocument({
+        text: buildPlayerGameStatTrackerText(playerName, playerNumber, stat.statKey, -value),
+        clock: formatTrackerClock(getLiveEventClockMs(gameData)),
+        period: getLiveEventPeriod(gameData),
+        timestamp: scoreUpdatedAt,
+        playerName,
+        playerNumber,
+        teamSide,
+        undoData: {
+          type: 'stat',
+          playerId: stat.playerId,
+          statKey: stat.statKey,
+          value: -value,
+          isOpponent: false
+        }
+      }, user);
 
       transaction.set(gameRef, {
         ...(stat.statKey === 'pts' ? { homeScore: nextHomeScore, awayScore: nextAwayScore } : {}),
@@ -2935,15 +2987,18 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
         playerNumber,
         stats: { [stat.statKey]: increment(-value) }
       }, { merge: true });
-      transaction.delete(doc(db, `${gamePath}/liveEvents/${stat.liveEventId}`));
-      transaction.delete(doc(db, `${gamePath}/events/${stat.trackerEventId}`));
+      transaction.set(doc(db, `${gamePath}/liveEvents/${liveEventId}`), liveEvent);
+      transaction.set(doc(db, `${gamePath}/events/${trackerEventId}`), trackerEvent);
 
       return {
         homeScore: nextHomeScore,
         awayScore: nextAwayScore,
         playerId: stat.playerId,
         statKey: stat.statKey,
-        playerStatTotal
+        playerStatTotal,
+        trackerEventId,
+        liveEventId,
+        liveEvent
       };
     }), 'Undo player game stat');
   } catch (error) {
@@ -2960,6 +3015,37 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
     const playerStatTotal = Math.max(0, normalizeGameScoreValue(existingStats[stat.statKey]) - value);
     existingStats[stat.statKey] = playerStatTotal;
     const scoreUpdatedAt = new Date();
+    const liveEventId = createAppLiveEventId();
+    const trackerEventId = createAppLiveEventId();
+    const liveEvent = buildPlayerGameStatLiveEvent({
+      playerId: stat.playerId,
+      playerName,
+      playerNumber,
+      statKey: stat.statKey,
+      value: -value,
+      homeScore: nextHomeScore,
+      awayScore: nextAwayScore,
+      user,
+      game: gameDoc,
+      eventId: liveEventId,
+      description: buildUndoPlayerGameStatDescription(playerName, playerNumber, stat.statKey, value)
+    });
+    const trackerEvent = buildTrackerEventDocument({
+      text: buildPlayerGameStatTrackerText(playerName, playerNumber, stat.statKey, -value),
+      clock: formatTrackerClock(getLiveEventClockMs(gameDoc)),
+      period: getLiveEventPeriod(gameDoc),
+      timestamp: scoreUpdatedAt,
+      playerName,
+      playerNumber,
+      teamSide,
+      undoData: {
+        type: 'stat',
+        playerId: stat.playerId,
+        statKey: stat.statKey,
+        value: -value,
+        isOpponent: false
+      }
+    }, user);
 
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
       ...(stat.statKey === 'pts' ? { homeScore: nextHomeScore, awayScore: nextAwayScore } : {}),
@@ -2971,15 +3057,30 @@ export async function undoRecordedPlayerGameStat(teamId: string, gameId: string,
       playerNumber,
       stats: existingStats
     });
-    await nativeDeleteDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents/${encodeURIComponent(stat.liveEventId)}`);
-    await nativeDeleteDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(stat.trackerEventId)}`);
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents/${encodeURIComponent(liveEventId)}`, {
+      ...liveEvent,
+      eventId: liveEventId,
+      createdAt: scoreUpdatedAt
+    });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(trackerEventId)}`, {
+      ...trackerEvent,
+      eventId: trackerEventId,
+      timestamp: scoreUpdatedAt.getTime()
+    });
 
     return {
       homeScore: nextHomeScore,
       awayScore: nextAwayScore,
       playerId: stat.playerId,
       statKey: stat.statKey,
-      playerStatTotal
+      playerStatTotal,
+      trackerEventId,
+      liveEventId,
+      liveEvent: {
+        ...liveEvent,
+        eventId: liveEventId,
+        createdAt: scoreUpdatedAt
+      }
     };
   }
 }
