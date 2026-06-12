@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
+import { openPublicUrl } from '../lib/publicActions';
 import type { AuthState, NavItem } from '../lib/types';
 import { AppSearchDialog } from './AppSearchDialog';
 import { RoleBadge } from './Badges';
@@ -94,7 +95,6 @@ export function AppShell({ auth, children }: AppShellProps) {
   const handleAddWorkflow = async (workflow: AddWorkflow) => {
     setAddTeamOpen(false);
     if (workflow.kind === 'website') {
-      const { openPublicUrl } = await import('../lib/publicActions');
       await openPublicUrl(workflow.href);
       return;
     }

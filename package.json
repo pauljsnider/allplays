@@ -11,6 +11,7 @@
     "ci:firebase-rules": "node scripts/validate-firebase-rules-ci.mjs",
     "stage:pages": "node scripts/stage-pages-bundle.mjs",
     "app:build-help-index": "node scripts/build-app-help-knowledge-index.mjs",
+    "app:check-bundle-size": "node scripts/check-app-bundle-size.mjs",
     "serve:firebase": "firebase emulators:start --only hosting --project demo-allplays",
     "app:dev": "npm --prefix apps/app run dev",
     "app:build": "npm --prefix apps/app run build",

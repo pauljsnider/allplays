@@ -96,6 +96,8 @@ Playwright tests against a live static server. Cover page boot, interactive flow
 
 Keep app feature logic shared across web/iOS/Android. Use thin Capacitor adapters for native auth, push, share, media, and dictation behavior.
 
+Build hygiene: `npm run app:build` writes `apps/app/bundle-visualizer.html`; open it after build to inspect large modules and shared chunks. `npm run app:check-bundle-size` enforces the app entry chunk budget used by CI.
+
 ### Two Firebase Projects
 1. **Main project** (`game-flow-c6311`): Auth, Firestore, business logic
 2. **Image project** (`game-flow-img`): Anonymous auth + Storage for uploads
