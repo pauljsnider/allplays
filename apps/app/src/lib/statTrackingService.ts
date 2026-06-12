@@ -197,10 +197,14 @@ async function applyAggregateWrite({
   const basePayload = buildParticipationPayload(playerName, playerNumber);
   const publicRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
 
-  await dependencies.setDoc(publicRef, {
-    ...basePayload,
-    stats: publicStats
-  }, { merge: true });
+  if (Object.keys(publicStats).length > 0) {
+    await dependencies.setDoc(publicRef, {
+      ...basePayload,
+      stats: publicStats
+    }, { merge: true });
+  } else {
+    await dependencies.setDoc(publicRef, basePayload, { merge: true });
+  }
 
   if (Object.keys(privateStats).length > 0) {
     const privateRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/privatePlayerStats`, playerId);
@@ -243,35 +247,65 @@ export function createStatTrackingService({
 
     const scoreBefore = { ...currentScore };
     const scoreAfter = { ...scoreBefore };
-    if (event.type === 'stat' && !event.isOpponent && statKey && isScoringStatKey(statKey) && delta !== 0) {
-      const teamSide = input.teamSide === 'away' ? 'away' : 'home';
-      if (teamSide === 'away') {
+    if (event.type === 'stat' && statKey && isScoringStatKey(statKey) && delta !== 0) {
+      if (event.isOpponent) {
         scoreAfter.awayScore = normalizeScoreValue(scoreAfter.awayScore + delta);
       } else {
-        scoreAfter.homeScore = normalizeScoreValue(scoreAfter.homeScore + delta);
+        const teamSide = input.teamSide === 'away' ? 'away' : 'home';
+        if (teamSide === 'away') {
+          scoreAfter.awayScore = normalizeScoreValue(scoreAfter.awayScore + delta);
+        } else {
+          scoreAfter.homeScore = normalizeScoreValue(scoreAfter.homeScore + delta);
+        }
       }
     }
 
     const eventId = nextEventId();
     const eventRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/events`, eventId);
+    let aggregateApplied = false;
+    let scoreApplied = false;
+
     await dependencies.setDoc(eventRef, event);
 
-    if (event.type === 'stat' && !event.isOpponent && event.playerId && statKey && delta !== 0) {
-      await applyAggregateWrite({
-        dependencies,
-        teamId,
-        gameId,
-        playerId: event.playerId,
-        playerName: normalizeText(input.playerName) || 'Player',
-        playerNumber: normalizeText(input.playerNumber),
-        statKey,
-        delta,
-        statConfig
-      });
-    }
+    try {
+      if (event.type === 'stat' && !event.isOpponent && event.playerId && statKey && delta !== 0) {
+        await applyAggregateWrite({
+          dependencies,
+          teamId,
+          gameId,
+          playerId: event.playerId,
+          playerName: normalizeText(input.playerName) || 'Player',
+          playerNumber: normalizeText(input.playerNumber),
+          statKey,
+          delta,
+          statConfig
+        });
+        aggregateApplied = true;
+      }
 
-    if (scoreAfter.homeScore !== scoreBefore.homeScore || scoreAfter.awayScore !== scoreBefore.awayScore) {
-      await dependencies.updateGameScore(teamId, gameId, scoreAfter, user);
+      if (scoreAfter.homeScore !== scoreBefore.homeScore || scoreAfter.awayScore !== scoreBefore.awayScore) {
+        await dependencies.updateGameScore(teamId, gameId, scoreAfter, user);
+        scoreApplied = true;
+      }
+    } catch (error) {
+      if (scoreApplied) {
+        await dependencies.updateGameScore(teamId, gameId, scoreBefore, user);
+      }
+      if (aggregateApplied && event.playerId && statKey && delta !== 0 && event.type === 'stat' && !event.isOpponent) {
+        await applyAggregateWrite({
+          dependencies,
+          teamId,
+          gameId,
+          playerId: event.playerId,
+          playerName: normalizeText(input.playerName) || 'Player',
+          playerNumber: normalizeText(input.playerNumber),
+          statKey,
+          delta: -delta,
+          statConfig
+        });
+      }
+      await dependencies.deleteDoc(eventRef);
+      throw error;
     }
 
     currentScore = scoreAfter;
@@ -292,42 +326,68 @@ export function createStatTrackingService({
   }
 
   async function undoLastEvent(teamId: string, gameId: string, user: TrackerUser) {
-    const entry = eventLog.pop();
+    const entry = eventLog[eventLog.length - 1];
     if (!entry) {
       return null;
     }
 
     const eventRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/events`, entry.eventId);
-    await dependencies.deleteDoc(eventRef);
+    let aggregateReverted = false;
+    let scoreReverted = false;
 
-    if (
-      entry.event.type === 'stat'
-      && !entry.isOpponent
-      && entry.aggregatePlayerId
-      && entry.aggregateStatKey
-      && entry.aggregateDelta !== 0
-    ) {
-      await applyAggregateWrite({
-        dependencies,
-        teamId,
-        gameId,
-        playerId: entry.aggregatePlayerId,
-        playerName: entry.playerName,
-        playerNumber: entry.playerNumber,
-        statKey: entry.aggregateStatKey,
-        delta: -entry.aggregateDelta,
-        statConfig
-      });
-    }
+    try {
+      if (
+        entry.event.type === 'stat'
+        && !entry.isOpponent
+        && entry.aggregatePlayerId
+        && entry.aggregateStatKey
+        && entry.aggregateDelta !== 0
+      ) {
+        await applyAggregateWrite({
+          dependencies,
+          teamId,
+          gameId,
+          playerId: entry.aggregatePlayerId,
+          playerName: entry.playerName,
+          playerNumber: entry.playerNumber,
+          statKey: entry.aggregateStatKey,
+          delta: -entry.aggregateDelta,
+          statConfig
+        });
+        aggregateReverted = true;
+      }
 
-    if (
-      entry.scoreAfter.homeScore !== entry.scoreBefore.homeScore
-      || entry.scoreAfter.awayScore !== entry.scoreBefore.awayScore
-    ) {
-      await dependencies.updateGameScore(teamId, gameId, entry.scoreBefore, user);
+      if (
+        entry.scoreAfter.homeScore !== entry.scoreBefore.homeScore
+        || entry.scoreAfter.awayScore !== entry.scoreBefore.awayScore
+      ) {
+        await dependencies.updateGameScore(teamId, gameId, entry.scoreBefore, user);
+        scoreReverted = true;
+      }
+
+      await dependencies.deleteDoc(eventRef);
+    } catch (error) {
+      if (aggregateReverted && entry.aggregatePlayerId && entry.aggregateStatKey && entry.aggregateDelta !== 0) {
+        await applyAggregateWrite({
+          dependencies,
+          teamId,
+          gameId,
+          playerId: entry.aggregatePlayerId,
+          playerName: entry.playerName,
+          playerNumber: entry.playerNumber,
+          statKey: entry.aggregateStatKey,
+          delta: entry.aggregateDelta,
+          statConfig
+        });
+      }
+      if (scoreReverted) {
+        await dependencies.updateGameScore(teamId, gameId, entry.scoreAfter, user);
+      }
+      throw error;
     }
 
     currentScore = entry.scoreBefore;
+    eventLog.pop();
     return entry;
   }
 

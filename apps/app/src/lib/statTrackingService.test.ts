@@ -107,7 +107,7 @@ describe('statTrackingService', () => {
     expect(service.getEventLog()).toHaveLength(1);
   });
 
-  it('undoes the last event by deleting the event doc, reversing aggregates, and restoring score', async () => {
+  it('undoes the last event by reversing aggregates before deleting the event doc and restoring score', async () => {
     const dependencies = createDependencies();
     const service = createStatTrackingService({
       statConfig: { columns: ['PTS', 'AST'] },
@@ -138,7 +138,6 @@ describe('statTrackingService', () => {
     const undone = await service.undoLastEvent('team-1', 'game-1', user);
 
     expect(undone?.event.playerId).toBe('player-1');
-    expect(dependencies.deleteDoc).toHaveBeenCalledWith({ path: expect.stringContaining('teams/team-1/games/game-1/events/app-track-') });
     expect(dependencies.setDoc).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, expect.objectContaining({
       stats: {
         pts: { __increment: -2 }
@@ -148,6 +147,9 @@ describe('statTrackingService', () => {
       homeScore: 10,
       awayScore: 8
     }, user);
+    expect(dependencies.deleteDoc).toHaveBeenCalledWith({ path: expect.stringContaining('teams/team-1/games/game-1/events/app-track-') });
+    expect(dependencies.setDoc.mock.invocationCallOrder[0]).toBeLessThan(dependencies.deleteDoc.mock.invocationCallOrder[0]);
+    expect(dependencies.updateGameScore.mock.invocationCallOrder[0]).toBeLessThan(dependencies.deleteDoc.mock.invocationCallOrder[0]);
     expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 8 });
     expect(service.getEventLog()).toHaveLength(0);
     expect(await service.undoLastEvent('team-1', 'game-1', user)).toBeNull();
@@ -211,13 +213,135 @@ describe('statTrackingService', () => {
     });
 
     expect(dependencies.setDoc).toHaveBeenNthCalledWith(1, { path: expect.stringContaining('/events/app-track-') }, expect.any(Object));
-    expect(dependencies.setDoc).toHaveBeenNthCalledWith(2, { path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, expect.objectContaining({
-      stats: {}
-    }), { merge: true });
+    expect(dependencies.setDoc).toHaveBeenNthCalledWith(2, { path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, {
+      playerName: 'Alex',
+      playerNumber: '4',
+      participated: true,
+      participationStatus: 'appeared',
+      participationSource: 'app-stat-tracker',
+      didNotPlay: false
+    }, { merge: true });
     expect(dependencies.setDoc).toHaveBeenNthCalledWith(3, { path: 'teams/team-1/games/game-1/privatePlayerStats/player-1' }, expect.objectContaining({
       stats: {
         notes: { __increment: 1 }
       }
     }), { merge: true });
+  });
+
+  it('cleans up the event document when aggregate writes fail during record', async () => {
+    const dependencies = createDependencies();
+    dependencies.setDoc
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('aggregate failed'));
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS'] },
+      dependencies
+    });
+
+    await expect(service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex PTS +2',
+      clock: '01:20',
+      period: 'Q1',
+      playerName: 'Alex',
+      playerNumber: '4',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: false
+      }
+    }, {
+      uid: 'coach-1'
+    })).rejects.toThrow('aggregate failed');
+
+    expect(dependencies.deleteDoc).toHaveBeenCalledWith({ path: expect.stringContaining('teams/team-1/games/game-1/events/app-track-') });
+    expect(dependencies.updateGameScore).not.toHaveBeenCalled();
+    expect(service.getEventLog()).toHaveLength(0);
+  });
+
+  it('restores aggregate and score state if undo fails to delete the event document', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS'] },
+      initialScore: { homeScore: 10, awayScore: 8 },
+      dependencies
+    });
+    const user = { uid: 'coach-1' };
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex PTS +2',
+      clock: '01:20',
+      period: 'Q1',
+      playerName: 'Alex',
+      playerNumber: '4',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: false
+      }
+    }, user);
+
+    dependencies.setDoc.mockClear();
+    dependencies.updateGameScore.mockClear();
+    dependencies.deleteDoc.mockRejectedValueOnce(new Error('delete failed'));
+
+    await expect(service.undoLastEvent('team-1', 'game-1', user)).rejects.toThrow('delete failed');
+
+    expect(dependencies.setDoc).toHaveBeenNthCalledWith(1, { path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, expect.objectContaining({
+      stats: {
+        pts: { __increment: -2 }
+      }
+    }), { merge: true });
+    expect(dependencies.setDoc).toHaveBeenNthCalledWith(2, { path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, expect.objectContaining({
+      stats: {
+        pts: { __increment: 2 }
+      }
+    }), { merge: true });
+    expect(dependencies.updateGameScore).toHaveBeenNthCalledWith(1, 'team-1', 'game-1', {
+      homeScore: 10,
+      awayScore: 8
+    }, user);
+    expect(dependencies.updateGameScore).toHaveBeenNthCalledWith(2, 'team-1', 'game-1', {
+      homeScore: 12,
+      awayScore: 8
+    }, user);
+    expect(service.getCurrentScore()).toEqual({ homeScore: 12, awayScore: 8 });
+    expect(service.getEventLog()).toHaveLength(1);
+  });
+
+  it('updates the away score for opponent scoring events', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS'] },
+      initialScore: { homeScore: 10, awayScore: 8 },
+      dependencies
+    });
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: 'Opp Team PTS +3',
+      clock: '01:20',
+      period: 'Q1',
+      teamSide: 'home',
+      undoData: {
+        type: 'stat',
+        playerId: 'opp-1',
+        statKey: 'PTS',
+        value: 3,
+        isOpponent: true
+      }
+    }, {
+      uid: 'coach-1'
+    });
+
+    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: 10,
+      awayScore: 11
+    }, {
+      uid: 'coach-1'
+    });
+    expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 11 });
   });
 });
