@@ -274,6 +274,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setCsvImportErrors([]);
     setCsvPreviewRows([]);
     setScheduleImportPreviewSource(null);
+    setCsvHeaders([]);
+    setCsvRows([]);
+    setCsvMapping({});
+    setCsvFileName(file?.name || '');
     if (!file) return;
     try {
       const { parseCsvText, inferScheduleCsvMapping } = await loadScheduleCsvImportModule();
@@ -281,7 +285,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setCsvHeaders(parsed.headers);
       setCsvRows(parsed.rows);
       setCsvMapping(inferScheduleCsvMapping(parsed.headers));
-      setCsvFileName(file.name);
     } catch (csvError: any) {
       setCsvImportErrors([csvError?.message || 'Could not read the CSV file.']);
     }

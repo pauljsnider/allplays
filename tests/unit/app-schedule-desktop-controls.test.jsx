@@ -410,7 +410,7 @@ describe('React app desktop Schedule controls', () => {
         expect(scheduleMocks.addTeamCalendarUrl).not.toHaveBeenCalled();
     });
 
-    it('previews and imports staff CSV schedule rows while hiding import from parents', async () => {
+    it('shows the selected CSV filename immediately and imports staff schedule rows while hiding import from parents', async () => {
         const parentOnly = await renderSchedule();
         await waitForText(parentOnly.container, 'Main Gym');
         expect(parentOnly.container.textContent).not.toContain('Import schedule CSV');
@@ -432,6 +432,16 @@ describe('React app desktop Schedule controls', () => {
             'Game,4/2/2026,6:30 PM,8:00 PM,Tigers,,Field 1\n',
             'Practice,4/4/2026,7:00 AM,8:30 AM,,Speed Session,Field 2'
         ], 'schedule.csv', { type: 'text/csv' });
+        Object.defineProperty(file, 'text', {
+            configurable: true,
+            value: () => new Promise((resolve) => {
+                setTimeout(() => resolve([
+                    'Type,Date,Start,End,Opponent,Title,Location\n',
+                    'Game,4/2/2026,6:30 PM,8:00 PM,Tigers,,Field 1\n',
+                    'Practice,4/4/2026,7:00 AM,8:30 AM,,Speed Session,Field 2'
+                ].join('')), 50);
+            })
+        });
 
         await act(async () => {
             Object.defineProperty(input, 'files', { value: [file], configurable: true });
@@ -439,6 +449,9 @@ describe('React app desktop Schedule controls', () => {
             await Promise.resolve();
         });
         await waitForText(container, 'Loaded schedule.csv');
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 60));
+        });
 
         await clickButton(container, 'Preview rows');
         await waitForText(container, 'Game vs Tigers');
