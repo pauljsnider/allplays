@@ -50,6 +50,7 @@ import {
   type ChatRecipientOption,
   type ChatTargetType
 } from './chatLogic';
+import { sanitizeErrorForLogging } from './nativeRestLogging';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -527,7 +528,7 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
     if (!isNativeRuntime()) {
       conversations = [buildDefaultTeamConversation(team)];
     } else {
-      console.warn('[chat-service] Latest inbox preview limited to team chat:', error);
+      console.warn('[chat-service] Latest inbox preview limited to team chat:', sanitizeErrorForLogging(error));
     }
   }
 
@@ -603,7 +604,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     teams = [...map.values()];
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Falling back to REST team load:', error);
+    console.warn('[chat-service] Falling back to REST team load:', sanitizeErrorForLogging(error));
     teams = await nativeLoadUserTeams(user, profile);
   }
 
@@ -683,7 +684,7 @@ export async function loadChatConversations(teamId: string, user: AuthUser, team
   try {
     return await withTimeout(Promise.resolve(getChatConversations(teamId, user, { team, canModerate })), 'Chat conversations load') as ChatConversation[];
   } catch (error) {
-    console.warn('[chat-service] Falling back to default chat conversation:', error);
+    console.warn('[chat-service] Falling back to default chat conversation:', sanitizeErrorForLogging(error));
     return [buildDefaultTeamConversation(team) as ChatConversation];
   }
 }
@@ -761,7 +762,7 @@ export async function loadOlderTeamChatMessages(teamId: string, conversationId: 
     })), 'Older chat messages load') as ChatMessage[];
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Older chat history is limited in native REST fallback:', error);
+    console.warn('[chat-service] Older chat history is limited in native REST fallback:', sanitizeErrorForLogging(error));
     return [];
   }
 }
@@ -779,7 +780,7 @@ function writeImageUploadSession(session: ImageUploadSession) {
   try {
     window.localStorage?.setItem(imageUploadSessionKey, JSON.stringify(session));
   } catch (error) {
-    console.warn('[chat-service] Unable to persist chat image upload session:', error);
+    console.warn('[chat-service] Unable to persist chat image upload session:', sanitizeErrorForLogging(error));
   }
 }
 
@@ -842,7 +843,7 @@ async function getImageUploadSession(apiKey: string) {
     try {
       return await refreshImageUploadSession(existing);
     } catch (error) {
-      console.warn('[chat-service] Refreshing chat media upload auth failed:', error);
+      console.warn('[chat-service] Refreshing chat media upload auth failed:', sanitizeErrorForLogging(error));
     }
   }
   return createImageUploadSession(apiKey);
@@ -1193,7 +1194,7 @@ export async function editTeamChatMessage(teamId: string, messageId: string, tex
     return await withTimeout(Promise.resolve(editChatMessage(teamId, messageId, text, { conversationId })), 'Chat message edit');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Falling back to REST chat message edit:', error);
+    console.warn('[chat-service] Falling back to REST chat message edit:', sanitizeErrorForLogging(error));
     return nativePatchDocument(getMessageDocumentPath(teamId, messageId, conversationId), {
       text,
       editedAt: new Date()
@@ -1206,7 +1207,7 @@ export async function deleteTeamChatMessage(teamId: string, messageId: string, c
     return await withTimeout(Promise.resolve(deleteChatMessage(teamId, messageId, { conversationId })), 'Chat message delete');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Falling back to REST chat message delete:', error);
+    console.warn('[chat-service] Falling back to REST chat message delete:', sanitizeErrorForLogging(error));
     return nativePatchDocument(getMessageDocumentPath(teamId, messageId, conversationId), {
       deleted: true
     });
@@ -1218,7 +1219,7 @@ export async function toggleTeamChatReaction(teamId: string, messageId: string, 
     return await withTimeout(Promise.resolve(toggleChatReaction(teamId, messageId, reactionKey, userId, { conversationId })), 'Chat reaction update');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Falling back to REST chat reaction update:', error);
+    console.warn('[chat-service] Falling back to REST chat reaction update:', sanitizeErrorForLogging(error));
     const path = getMessageDocumentPath(teamId, messageId, conversationId);
     const message = await nativeGetDocument(path);
     if (!message) throw new Error('Message not found.');
@@ -1242,10 +1243,10 @@ export async function markTeamChatRead(userId: string, teamId: string) {
     return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId)), 'Chat last read update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
-      console.warn('[chat-service] Failed to update chat last-read:', error);
+      console.warn('[chat-service] Failed to update chat last-read:', sanitizeErrorForLogging(error));
       return null;
     }
-    console.warn('[chat-service] Falling back to REST chat last-read update:', error);
+    console.warn('[chat-service] Falling back to REST chat last-read update:', sanitizeErrorForLogging(error));
     const userPath = `users/${encodeURIComponent(userId)}`;
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
     await nativePatchDocument(userPath, {
@@ -1335,7 +1336,7 @@ async function loadChatRecipientProfiles(players: any): Promise<Map<string, Reco
         return [recipientId, profile || {}] as const;
       }
     } catch (error) {
-      console.warn('[chat-service] Failed to hydrate chat recipient profile:', error);
+      console.warn('[chat-service] Failed to hydrate chat recipient profile:', sanitizeErrorForLogging(error));
     }
     return [recipientId, {}] as const;
   }));

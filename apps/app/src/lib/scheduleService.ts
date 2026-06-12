@@ -102,6 +102,7 @@ import {
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import { getCachedAppData } from './appDataCache';
+import { sanitizeErrorForLogging } from './nativeRestLogging';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -460,7 +461,7 @@ export async function saveScheduledGameLineupDraftForApp(
     await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Lineup draft save');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST lineup draft updateGame:', error);
+    console.warn('[schedule-service] Falling back to REST lineup draft updateGame:', sanitizeErrorForLogging(error));
     await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
   }
 
@@ -501,7 +502,7 @@ export async function publishGamePlanForApp(event: ParentScheduleEvent, user: Au
     await withTimeout(Promise.resolve(updateGame(teamId, gameId, payload)), 'Lineup publish');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST lineup publish updateGame:', error);
+    console.warn('[schedule-service] Falling back to REST lineup publish updateGame:', sanitizeErrorForLogging(error));
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
   }
 
@@ -537,7 +538,7 @@ export async function publishGamePlanForApp(event: ParentScheduleEvent, user: Au
       }
     });
   } catch (error: any) {
-    console.error('[schedule-service] Failed to send lineup published chat message:', error);
+    console.error('[schedule-service] Failed to send lineup published chat message:', sanitizeErrorForLogging(error));
     notificationError = error?.message || 'Unknown chat notification error';
   }
 
@@ -732,7 +733,7 @@ async function readWithNativeFallback<T>(label: string, primary: () => Promise<T
     return await withTimeout(Promise.resolve(primary()), label);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn(`[schedule-service] Falling back to REST for ${label}:`, error);
+    console.warn(`[schedule-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
     return fallback();
   }
 }
@@ -938,7 +939,7 @@ export async function createScheduleImportGame(teamId: string, row: ScheduleImpo
     return await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Schedule import game create');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST schedule import game create:', error);
+    console.warn('[schedule-service] Falling back to REST schedule import game create:', sanitizeErrorForLogging(error));
     const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
       ...payload,
       createdAt: new Date()
@@ -957,7 +958,7 @@ export async function createScheduleImportPractice(teamId: string, row: Schedule
     return await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Schedule import practice create');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST schedule import practice create:', error);
+    console.warn('[schedule-service] Falling back to REST schedule import practice create:', sanitizeErrorForLogging(error));
     const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
       ...payload,
       createdAt: new Date()
@@ -1305,7 +1306,7 @@ async function loadRsvpSummaryMap(teamId: string, gameIds: string[]) {
     return await withTimeout(Promise.resolve(getRsvpSummaries(teamId, gameIds)), `RSVP summaries ${teamId}`);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn(`[schedule-service] Falling back to local RSVP summaries for ${teamId}:`, error);
+    console.warn(`[schedule-service] Falling back to local RSVP summaries for ${teamId}:`, sanitizeErrorForLogging(error));
     const map = new Map<string, ScheduleRsvpSummary>();
     await Promise.all(gameIds.map(async (gameId) => {
       const rsvps = await loadRsvps(teamId, gameId).catch(() => []);
@@ -1655,7 +1656,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
       try {
         return await fetchAndParseCalendar(calendarUrl);
       } catch (error) {
-        console.warn('[schedule-service] Unable to load team calendar:', calendarUrl, error);
+        console.warn('[schedule-service] Unable to load team calendar:', calendarUrl, sanitizeErrorForLogging(error));
         return [];
       }
     }));
@@ -2126,7 +2127,7 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
           childId
         };
       } catch (error) {
-        console.warn('[schedule-service] Failed to resolve game route for team:', teamId, error);
+        console.warn('[schedule-service] Failed to resolve game route for team:', teamId, sanitizeErrorForLogging(error));
         return null;
       }
     });
@@ -2157,7 +2158,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
       try {
         return await buildTeamSchedule(teamId, teamChildren, user);
       } catch (error) {
-        console.warn('[schedule-service] Failed to load team schedule:', teamId, error);
+        console.warn('[schedule-service] Failed to load team schedule:', teamId, sanitizeErrorForLogging(error));
         return [];
       }
     });
@@ -2249,7 +2250,7 @@ export async function loadStaffScheduleRsvpBreakdown(event: ParentScheduleEvent,
     return normalizeStaffScheduleRsvpBreakdown(breakdown);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST RSVP breakdown load:', error);
+    console.warn('[schedule-service] Falling back to REST RSVP breakdown load:', sanitizeErrorForLogging(error));
     const [players, rsvps] = await Promise.all([
       loadPlayers(event.teamId),
       loadRsvps(event.teamId, event.id)
@@ -2280,7 +2281,7 @@ export async function submitStaffScheduleRsvpOverride(event: ParentScheduleEvent
     })), 'Staff RSVP override');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST staff RSVP override:', error);
+    console.warn('[schedule-service] Falling back to REST staff RSVP override:', sanitizeErrorForLogging(error));
     await nativeSubmitRsvpForPlayer(event.teamId, event.id, user!, normalizedPlayerId, response);
   }
 
@@ -2310,7 +2311,7 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     })), 'RSVP submit');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST RSVP submit:', error);
+    console.warn('[schedule-service] Falling back to REST RSVP submit:', sanitizeErrorForLogging(error));
     return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note);
   }
 }
@@ -2338,7 +2339,7 @@ export async function updateGameScore(teamId: string, gameId: string, score: Gam
     await withTimeout(Promise.resolve(updateGame(teamId, gameId, payload)), 'Score update');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST score update:', error);
+    console.warn('[schedule-service] Falling back to REST score update:', sanitizeErrorForLogging(error));
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
   }
 
@@ -2363,7 +2364,7 @@ export async function completeGameWrapupForApp(teamId: string, gameId: string, p
     await withTimeout(Promise.resolve(updateGame(teamId, gameId, wrappedPayload)), 'Wrap-up save');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST wrap-up save:', error);
+    console.warn('[schedule-service] Falling back to REST wrap-up save:', sanitizeErrorForLogging(error));
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, wrappedPayload);
   }
 
@@ -2453,7 +2454,7 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
     await withTimeout(Promise.resolve(broadcastLiveEvent(teamId, gameId, payload)), 'Live score event');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST live score event publish:', error);
+    console.warn('[schedule-service] Falling back to REST live score event publish:', sanitizeErrorForLogging(error));
     if (Object.keys(liveGamePatch).length) {
       await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, liveGamePatch);
     }
@@ -2469,7 +2470,7 @@ export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string
     return await withTimeout(Promise.resolve(getLiveEvents(teamId, gameId)), 'Game day live events');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST game day live events:', error);
+    console.warn('[schedule-service] Falling back to REST game day live events:', sanitizeErrorForLogging(error));
     const events = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`);
     return Array.isArray(events) ? events : [];
   }
@@ -2502,7 +2503,7 @@ export async function saveGameDaySubstitutionForApp(
     await withTimeout(Promise.resolve(updateGame(teamId, gameId, patch)), 'Game day substitution save');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST game day substitution save:', error);
+    console.warn('[schedule-service] Falling back to REST game day substitution save:', sanitizeErrorForLogging(error));
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, patch);
   }
 
@@ -2620,7 +2621,7 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
     }), 'Player scoring stat');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST player scoring stat:', error);
+    console.warn('[schedule-service] Falling back to REST player scoring stat:', sanitizeErrorForLogging(error));
     const [gameDoc, statsDoc] = await Promise.all([
       nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
       nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`)
@@ -2851,7 +2852,7 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
     await withTimeout(Promise.resolve(updateGame(event.teamId, event.id, payload)), 'Game cancellation');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST game cancellation:', error);
+    console.warn('[schedule-service] Falling back to REST game cancellation:', sanitizeErrorForLogging(error));
     await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
   }
 
@@ -2918,7 +2919,7 @@ export async function cancelPracticeOccurrenceForApp(event: ParentScheduleEvent,
     await withTimeout(Promise.resolve(cancelOccurrence(event.teamId, occurrence.masterId, occurrence.instanceDate)), 'Practice occurrence cancellation');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST practice occurrence cancellation:', error);
+    console.warn('[schedule-service] Falling back to REST practice occurrence cancellation:', sanitizeErrorForLogging(error));
     const path = `teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(occurrence.masterId)}`;
     const existing = await nativeGetDocument(path);
     const nextExDates = uniqueNonEmptyStrings([...(Array.isArray(existing?.exDates) ? existing.exDates : []), occurrence.instanceDate]);
@@ -3149,7 +3150,7 @@ export async function claimParentScheduleAssignmentSlot(event: ParentScheduleEve
     await withTimeout(Promise.resolve(claimAssignmentSlot(event.teamId, event.id, trimmedRole, { name })), 'Assignment claim');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST assignment claim:', error);
+    console.warn('[schedule-service] Falling back to REST assignment claim:', sanitizeErrorForLogging(error));
     await nativeClaimAssignment(event, user, trimmedRole, name);
   }
 }
@@ -3165,7 +3166,7 @@ export async function releaseParentScheduleAssignmentClaim(event: ParentSchedule
     await withTimeout(Promise.resolve(releaseAssignmentClaim(event.teamId, event.id, trimmedRole)), 'Assignment release');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST assignment release:', error);
+    console.warn('[schedule-service] Falling back to REST assignment release:', sanitizeErrorForLogging(error));
     await nativeReleaseAssignment(event, trimmedRole);
   }
 }
@@ -3304,7 +3305,7 @@ export async function saveStaffPracticeAttendance(event: ParentScheduleEvent, us
     await withTimeout(Promise.resolve(updatePracticeAttendance(event.teamId, sessionId, payload)), 'Practice attendance save');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST practice attendance save:', error);
+    console.warn('[schedule-service] Falling back to REST practice attendance save:', sanitizeErrorForLogging(error));
     await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/practiceSessions/${encodeURIComponent(sessionId)}`, {
       attendance: {
         rosterSize: payload.rosterSize,
@@ -3427,7 +3428,7 @@ export async function markParentPracticePacketComplete(packet: ParentPracticePac
     await withTimeout(Promise.resolve(upsertPracticePacketCompletion(packet.teamId, packet.sessionId, payload)), 'Packet completion');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST packet completion:', error);
+    console.warn('[schedule-service] Falling back to REST packet completion:', sanitizeErrorForLogging(error));
     await nativeUpsertPracticePacketCompletion(packet.teamId, packet.sessionId, payload);
   }
 
@@ -3611,7 +3612,7 @@ export async function createParentScheduleRideOffer(event: ParentScheduleEvent, 
     return await withTimeout(Promise.resolve(createRideOffer(event.teamId, event.id, payload)), 'Ride offer create');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST ride offer create:', error);
+    console.warn('[schedule-service] Falling back to REST ride offer create:', sanitizeErrorForLogging(error));
     return nativeCreateRideOfferForEvent(event, user, payload);
   }
 }
@@ -3631,7 +3632,7 @@ export async function requestParentScheduleRideSpot(event: ParentScheduleEvent, 
     return await withTimeout(Promise.resolve(requestRideSpot(event.teamId, gameId, offer.id, payload)), 'Ride request create');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST ride request create:', error);
+    console.warn('[schedule-service] Falling back to REST ride request create:', sanitizeErrorForLogging(error));
     return nativeRequestRideSpotForChild(event, offer, user, payload);
   }
 }
@@ -3648,7 +3649,7 @@ export async function updateParentScheduleRideRequestStatus(event: ParentSchedul
     return await withTimeout(Promise.resolve(updateRideRequestStatus(event.teamId, gameId, offer.id, requestId, normalizedStatus)), 'Ride request update');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST ride request update:', error);
+    console.warn('[schedule-service] Falling back to REST ride request update:', sanitizeErrorForLogging(error));
     return nativeUpdateRideRequestDecision(event, offer, requestId, normalizedStatus);
   }
 }
@@ -3662,7 +3663,7 @@ export async function setParentScheduleRideOfferStatus(event: ParentScheduleEven
     await withTimeout(Promise.resolve(closeRideOffer(event.teamId, gameId, offer.id, normalizedStatus)), 'Ride offer status update');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST ride offer status update:', error);
+    console.warn('[schedule-service] Falling back to REST ride offer status update:', sanitizeErrorForLogging(error));
     await nativeSetRideOfferStatus(event, offer, normalizedStatus);
   }
 }
@@ -3675,7 +3676,7 @@ export async function cancelParentScheduleRideRequest(event: ParentScheduleEvent
     await withTimeout(Promise.resolve(cancelRideRequest(event.teamId, gameId, offer.id, requestId)), 'Ride request cancel');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST ride request cancel:', error);
+    console.warn('[schedule-service] Falling back to REST ride request cancel:', sanitizeErrorForLogging(error));
     await nativeCancelRideRequestForChild(event, offer, requestId);
   }
 }
