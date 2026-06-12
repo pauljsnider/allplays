@@ -77,7 +77,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
           setForm(null);
           return;
         }
-        if (nextForm.isPublished === false) {
+        if (!staffReview && nextForm.isPublished === false) {
           setError('This linked registration form is not published right now.');
           setForm(null);
           return;

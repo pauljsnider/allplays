@@ -386,6 +386,43 @@ describe('RegistrationDetail page', () => {
     await waitForText(container, 'Registration approved. Roster and parent links were updated using the legacy approval flow.');
   });
 
+  it('allows staff review for closed registration forms', async () => {
+    parentToolsServiceMocks.loadStaffRegistrationDetail.mockResolvedValueOnce({
+      teamName: 'Coach Bears',
+      isPublished: false,
+      onlineCheckout: false,
+      legacyUrl: '/registration-review.html?teamId=team-coach&formId=form-review',
+      form: {
+        id: 'form-review',
+        teamId: 'team-coach',
+        programName: 'Travel Tryouts',
+        description: 'Review queue',
+        season: 'Spring',
+        currency: 'USD',
+        participantFields: [],
+        guardianFields: [],
+        registrationOptionCounts: {},
+        status: 'closed',
+        published: true,
+      },
+      options: [{ id: 'opt-1', title: 'Travel' }],
+      feeSnapshot: { finalAmountDueCents: 15000, currency: 'USD' },
+      paymentNotice: '',
+      paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
+    });
+
+    const { container } = await renderStaffRegistrationReview();
+    await waitForText(container, 'Travel Tryouts');
+    await waitForText(container, 'Riley Runner');
+
+    expect(container.textContent).not.toContain('This linked registration form is not published right now.');
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'user-1' }),
+      'team-coach',
+      'form-review'
+    );
+  });
+
   it('defaults the selected option to the first option with available capacity', async () => {
     parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {

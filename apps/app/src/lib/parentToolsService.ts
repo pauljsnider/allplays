@@ -957,8 +957,14 @@ function toRegistrationCard(team: any, form: any): ParentRegistrationCard | null
 function toTeamRegistrationReviewCard(review: any): TeamRegistrationReviewCard {
   const normalizedStatus = normalizeRegistrationStatus(review?.status);
   const submittedData = asObject(getRegistrationSubmittedData(review));
-  const participant = asObject(submittedData.participant);
-  const guardian = asObject(submittedData.guardian);
+  const participant = {
+    ...asObject(review?.participant),
+    ...asObject(submittedData.participant)
+  };
+  const guardian = {
+    ...asObject(review?.guardian),
+    ...asObject(submittedData.guardian)
+  };
   const guardians = getRegistrationGuardianDrafts(review) as Array<Record<string, any>>;
   const playerDraft = getRegistrationPlayerDraft(review);
   const feeSnapshot = asObject(review?.feeSnapshot);
@@ -981,7 +987,7 @@ function toTeamRegistrationReviewCard(review: any): TeamRegistrationReviewCard {
     ...review,
     id: compactString(review?.id),
     status: normalizedStatus,
-    participantName: compactString(review?.reviewSummary?.playerName || playerDraft.name) || 'Unnamed player',
+    participantName: compactString(review?.reviewSummary?.playerName || playerDraft.name || participant.name) || 'Unnamed player',
     guardianLabel: compactString(review?.reviewSummary?.guardianLabel || guardians.map((entry) => entry.email || entry.name).filter(Boolean).join(', ')),
     guardianEmails: guardians.map((entry) => compactString(entry.email)).filter(Boolean),
     participant,

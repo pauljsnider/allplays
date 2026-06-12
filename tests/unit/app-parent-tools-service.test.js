@@ -724,12 +724,8 @@ describe('React app parent tools service', () => {
             {
                 id: 'reg-1',
                 status: 'approved',
-                player: { name: 'Riley Runner', number: '12' },
+                participant: { name: 'Riley Runner', grade: '5' },
                 guardian: { email: 'parent@example.com', name: 'Pat Parent' },
-                submittedData: {
-                    participant: { name: 'Riley Runner', grade: '5' },
-                    guardian: { email: 'parent@example.com' }
-                },
                 selectedOption: { title: 'Travel' },
                 feeSnapshot: { finalAmountDueCents: 15000, currency: 'USD' },
                 paymentStatus: 'paid',
@@ -750,6 +746,8 @@ describe('React app parent tools service', () => {
                 status: 'enrolled',
                 participantName: 'Riley Runner',
                 guardianLabel: 'parent@example.com',
+                participant: { name: 'Riley Runner', grade: '5' },
+                guardian: { email: 'parent@example.com', name: 'Pat Parent' },
                 selectedOptionLabel: 'Travel',
                 paymentLabel: 'paid · $150.00',
                 waiverAccepted: true,
