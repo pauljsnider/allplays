@@ -94,7 +94,7 @@ export function toFeeCents(value: string | number | null | undefined) {
   const normalized = String(value ?? '').replace(/[$,]/g, '').trim();
   if (!normalized) return null;
   const parsed = Number(normalized);
-  if (!Number.isFinite(parsed)) return null;
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
   return Math.round(parsed * 100);
 }
 
@@ -314,14 +314,18 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
     .filter((player) => player?.active !== false)
     .map(toRosterPlayer)
     .filter((player) => player.id);
+  const activePlayersById = new Map(activePlayers.map((player) => [player.id, player]));
+  const requestedRecipientIds = Array.from(new Set((recipientIds || []).map(normalizeString).filter(Boolean)));
+  const invalidRecipientIds = requestedRecipientIds.filter((recipientId) => !activePlayersById.has(recipientId));
+  if (!applyToWholeRoster && invalidRecipientIds.length) {
+    throw new Error(`One or more selected recipients are no longer on the active roster: ${invalidRecipientIds.join(', ')}.`);
+  }
+
   const selectedPlayers = applyToWholeRoster
     ? activePlayers
-    : activePlayers.filter((player) => new Set((recipientIds || []).map(normalizeString).filter(Boolean)).has(player.id));
+    : requestedRecipientIds.map((recipientId) => activePlayersById.get(recipientId)).filter(Boolean) as TeamFeeRosterPlayer[];
 
   if (!selectedPlayers.length) throw new Error('Select at least one roster recipient.');
-  if (!applyToWholeRoster && selectedPlayers.length !== new Set((recipientIds || []).map(normalizeString).filter(Boolean)).size) {
-    throw new Error('One or more selected recipients are no longer on the active roster.');
-  }
 
   const draft = {
     title: cleanTitle,
