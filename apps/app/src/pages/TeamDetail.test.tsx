@@ -322,6 +322,7 @@ describe('TeamDetail', () => {
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /more/i }));
 
+    expect((await screen.findByRole('link', { name: /edit team/i })).getAttribute('href')).toBe('/teams/team-1/edit');
     expect((await screen.findByRole('link', { name: /awards drafts/i })).getAttribute('href')).toBe('/teams/team-1/certificates');
   });
 

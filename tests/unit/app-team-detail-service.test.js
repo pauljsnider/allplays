@@ -38,7 +38,8 @@ vi.mock('../../js/db.js', () => ({
     deactivatePlayer: vi.fn(),
     reactivatePlayer: vi.fn(),
     setPlayerPrivateRosterProfileFields: vi.fn(),
-    uploadPlayerPhoto: vi.fn()
+    uploadPlayerPhoto: vi.fn(),
+    uploadTeamPhoto: vi.fn()
 }));
 
 vi.mock('../../js/firebase.js', () => ({
@@ -58,9 +59,9 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
 import { collection, getDocs, query, where } from '../../js/firebase.js';
-import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto } from '../../js/db.js';
+import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
 beforeEach(() => {
@@ -983,5 +984,66 @@ describe('React app team detail model', () => {
         expect(parentStaffPermissions).toBeNull();
         expect(getDocs).not.toHaveBeenCalled();
         expect(getAllUsers).not.toHaveBeenCalled();
+    });
+
+    it('updates only the managed basic team settings fields for app editing', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            ownerId: 'owner-1',
+            name: 'Bears',
+            sport: 'Basketball',
+            zip: '66210',
+            photoUrl: 'https://img.example.test/existing.png',
+            isPublic: true,
+            adminEmails: ['coach@example.com'],
+            leagueUrl: 'https://league.example.test',
+            colors: { primary: '#111111' }
+        });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        updateTeam.mockResolvedValue(undefined);
+        uploadTeamPhoto.mockResolvedValue('https://img.example.test/updated.png');
+
+        const photoFile = new File(['abc'], 'team.png', { type: 'image/png' });
+        await updateTeamSettingsForApp(' team-1 ', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
+            name: '  Lady Bears  ',
+            sport: ' Soccer ',
+            zip: '66210-1234',
+            isPublic: false,
+            photoFile
+        });
+
+        expect(uploadTeamPhoto).toHaveBeenCalledWith(photoFile);
+        expect(updateTeam).toHaveBeenCalledWith('team-1', {
+            name: 'Lady Bears',
+            sport: 'Soccer',
+            zip: '662101234',
+            isPublic: false,
+            photoUrl: 'https://img.example.test/updated.png',
+            updatedAt: expect.any(Date)
+        });
+    });
+
+    it('rejects empty team names and non-staff team setting edits', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'], photoUrl: 'https://img.example.test/existing.png' });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+
+        await expect(updateTeamSettingsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] }, {
+            name: '   ',
+            sport: 'Soccer',
+            zip: '12345',
+            isPublic: true
+        })).rejects.toThrow('Team name is required.');
+        expect(updateTeam).not.toHaveBeenCalled();
+
+        await expect(updateTeamSettingsForApp('team-1', { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'] }, {
+            name: 'Bears',
+            sport: 'Soccer',
+            zip: '12345',
+            isPublic: true
+        })).rejects.toThrow('You do not have permission to edit this team.');
     });
 });
