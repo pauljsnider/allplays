@@ -5907,6 +5907,22 @@ export async function updateChatLastRead(userId, teamId) {
     });
 }
 
+export async function updateChatMuted(userId, teamId) {
+    const userRef = doc(db, 'users', userId);
+    const fieldPath = `chatMuted.${teamId}`;
+    return await updateDoc(userRef, {
+        [fieldPath]: Timestamp.now()
+    });
+}
+
+export async function clearChatMuted(userId, teamId) {
+    const userRef = doc(db, 'users', userId);
+    const fieldPath = `chatMuted.${teamId}`;
+    return await updateDoc(userRef, {
+        [fieldPath]: deleteField()
+    });
+}
+
 /**
  * Get unread message count for a team chat
  * @param {string} userId - The user's ID

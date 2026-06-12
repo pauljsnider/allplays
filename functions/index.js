@@ -3633,6 +3633,22 @@ function detectMentionedUids(text, members) {
   return [...mentioned];
 }
 
+async function getMutedUserIdsForTeam(teamId, userIds) {
+  if (!userIds.length) return new Set();
+  const snaps = await Promise.all(
+    userIds.map((uid) => firestore.doc(`users/${uid}`).get().catch(() => null))
+  );
+  const muted = new Set();
+  snaps.forEach((snap, index) => {
+    if (!snap || !snap.exists) return;
+    const chatMuted = snap.data()?.chatMuted;
+    if (chatMuted && chatMuted[teamId]) {
+      muted.add(userIds[index]);
+    }
+  });
+  return muted;
+}
+
 exports.notifyTeamChatMessageCreated = functions.firestore
   .document('teams/{teamId}/chatMessages/{messageId}')
   .onCreate(async (snapshot, context) => {
@@ -3690,14 +3706,24 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       }
     }
 
-    // liveChat push — skip users who already got a mentions push
+    const liveChatTargets = await getTargetsForCategory(teamId, 'liveChat', actorUid);
+    if (!liveChatTargets.length) {
+      return results.length ? results : null;
+    }
+
+    const mutedUids = await getMutedUserIdsForTeam(
+      teamId,
+      [...new Set(liveChatTargets.map((target) => target.uid))]
+    );
+
+    // liveChat push — skip users who already got a mentions push or muted this conversation
     results.push(await sendCategoryNotification({
       teamId,
       category: 'liveChat',
       title: `${senderName}: Team Chat`,
       body,
       actorUid,
-      excludeUids: mentionedUids
+      excludeUids: [...new Set([...mentionedUids, ...mutedUids])]
     }));
 
     return results;

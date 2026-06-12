@@ -18,6 +18,8 @@ const chatMocks = vi.hoisted(() => ({
     loadSentTeamEmails: vi.fn(),
     loadTeamEmailTemplates: vi.fn(),
     markTeamChatRead: vi.fn(),
+    muteTeamChat: vi.fn(),
+    unmuteTeamChat: vi.fn(),
     saveTeamEmailDraft: vi.fn(),
     saveTeamEmailTemplate: vi.fn(),
     sendAllPlaysChatAnswer: vi.fn(),
@@ -400,6 +402,8 @@ beforeEach(() => {
     chatMocks.toggleTeamChatReaction.mockResolvedValue(true);
     chatMocks.editTeamChatMessage.mockResolvedValue(undefined);
     chatMocks.deleteTeamChatMessage.mockResolvedValue(undefined);
+    chatMocks.muteTeamChat.mockResolvedValue(undefined);
+    chatMocks.unmuteTeamChat.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -1950,5 +1954,38 @@ describe('React app messages integration', () => {
         expect(voiceMocks.start).toHaveBeenCalledWith(expect.objectContaining({
             language: 'en-US'
         }));
+    });
+
+    it('mute toggle button calls muteTeamChat then unmuteTeamChat when pressed twice', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Mute notifications');
+        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(chatMocks.unmuteTeamChat).not.toHaveBeenCalled();
+
+        await click(container, 'Unmute notifications');
+        expect(chatMocks.unmuteTeamChat).toHaveBeenCalledWith('user-1', 'team-1');
+    });
+
+    it('muted inbox row shows a bell-off indicator instead of the chevron', async () => {
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 0,
+                    isMuted: true,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                }
+            ]
+        });
+
+        const { container } = await renderMessages('/messages');
+
+        const bellOffIcon = container.querySelector('svg[data-icon="BellOff"]');
+        expect(bellOffIcon).toBeTruthy();
     });
 });
