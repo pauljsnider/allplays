@@ -41,7 +41,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
           name: model.team.name || '',
           sport: model.team.sport === 'Sport not set' ? '' : model.team.sport,
           zip: model.team.zip || '',
-          isPublic: model.team.isPublic === true,
+          isPublic: model.team.isPublic !== false,
           photoUrl: model.team.photoUrl || ''
         });
         setPhotoPreviewUrl(model.team.photoUrl || '');

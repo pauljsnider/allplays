@@ -548,7 +548,7 @@ describe('React app team detail model', () => {
 
         expect(model.team.photoUrl).toBe('https://img.example.test/team.png');
         expect(model.team.bracketUrl).toBe('https://bracket.example.test/path');
-        expect(model.team.isPublic).toBe(false);
+        expect(model.team.isPublic).toBe(true);
         expect(model.team.active).toBe(true);
         expect(model.team.scheduleNotifications).toMatchObject({
             enabled: true,

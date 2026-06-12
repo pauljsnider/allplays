@@ -1002,7 +1002,7 @@ export function buildTeamDetailModel({
       photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl),
       description: cleanString(team?.description),
       zip: cleanString(team?.zip),
-      isPublic: team?.isPublic === true,
+      isPublic: team?.isPublic !== false,
       active: team?.active !== false,
       leagueUrl: getFirstUrl(team?.leagueUrl),
       bracketUrl: getFirstUrl(team?.bracketUrl),

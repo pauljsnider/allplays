@@ -129,4 +129,35 @@ describe('TeamSettings', () => {
     }));
     expect(await screen.findByText('Team detail page')).toBeTruthy();
   });
+
+  it('defaults legacy teams without visibility set to public on save', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...managedModel,
+      team: {
+        ...managedModel.team,
+        isPublic: undefined
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+          <Route path="/teams/:teamId" element={<div>Team detail page</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('Team name'), { target: { value: 'Legacy Bears' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save team' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.updateTeamSettingsForApp).toHaveBeenCalledWith('team-1', auth.user, {
+      name: 'Legacy Bears',
+      sport: 'Basketball',
+      zip: '66210',
+      isPublic: true,
+      photoFile: null
+    }));
+  });
 });
