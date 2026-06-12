@@ -642,8 +642,9 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
         ? preview.conversationId
         : null
     })).sort((a, b) => {
-      const unreadDiff = Number(b.unreadCount > 0) - Number(a.unreadCount > 0);
-      if (unreadDiff) return unreadDiff;
+      const aTime = toDate(a.lastMessage?.createdAt)?.getTime() || 0;
+      const bTime = toDate(b.lastMessage?.createdAt)?.getTime() || 0;
+      if (aTime !== bTime) return bTime - aTime;
       return a.name.localeCompare(b.name);
     })
   };
