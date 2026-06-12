@@ -4297,6 +4297,11 @@
                     end: Timestamp.fromDate(endDate),
                     location: row.normalized.location,
                     notes: row.normalized.notes,
+                    source: 'csv_import',
+                    sourceMetadata: {
+                        importedBy: currentUser?.uid || null,
+                        importedFrom: 'edit-schedule-csv'
+                    },
                     arrivalTime: row.normalized.arrivalTime ? Timestamp.fromDate(new Date(row.normalized.arrivalTime)) : null,
                     scheduleNotifications: buildScheduleNotificationMetadata({
                         settings: notificationSettings,
@@ -4359,6 +4364,11 @@
                 arrivalTime: normalizedGame.arrivalTime ? Timestamp.fromDate(new Date(normalizedGame.arrivalTime)) : null,
                 notes: normalizedGame.notes,
                 assignments: [],
+                source: 'csv_import',
+                sourceMetadata: {
+                    importedBy: currentUser?.uid || null,
+                    importedFrom: 'edit-schedule-csv'
+                },
                 scheduleNotifications: buildScheduleNotificationMetadata({
                     settings: notificationSettings,
                     action: 'created',

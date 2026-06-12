@@ -1,20 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 }
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
-
-function getCreatedNotificationHelpers() {
-    const start = functionsSource.indexOf('function coerceDate');
-    const end = functionsSource.indexOf('function getReminderDueAt');
-    const slice = functionsSource.slice(start, end);
-    return new Function(`${slice}; return { getEventTitle, coerceDate, formatScheduleUpdateDate };`)();
-}
-
-const { getEventTitle, coerceDate, formatScheduleUpdateDate } = getCreatedNotificationHelpers();
+const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+const { getEventTitle, coerceDate, formatScheduleUpdateDate } = require('../../functions/schedule-notification-utils.cjs');
 
 describe('edit schedule notification wiring', () => {
     it('includes team-level reminder settings controls', () => {
@@ -65,6 +61,13 @@ describe('edit schedule notification wiring', () => {
         expect(source.match(/bg-emerald-50 border border-emerald-200 rounded-lg p-3/g)).toHaveLength(3);
         expect(source).toContain('id="csv-import-notify-team"');
         expect(source).toContain('Notify the team in chat after import');
+    });
+
+    it('marks CSV-imported events with import source metadata', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain("source: 'csv_import'");
+        expect(source).toContain("importedFrom: 'edit-schedule-csv'");
     });
 
     it('wires the schedule notification helper and RSVP reminder action', () => {
@@ -168,6 +171,11 @@ describe('notifyGameCreated Cloud Function trigger', () => {
         );
 
         expect(triggerBody).toContain('if (game.source || game.sourceMetadata) return null;');
+    });
+
+    it('stamps createdBy in db helpers so creators are excluded from create pushes', () => {
+        expect(dbSource).toContain('gameData.createdBy = gameData.createdBy || auth.currentUser?.uid || null;');
+        expect(dbSource).toContain('eventData.createdBy = eventData.createdBy || auth.currentUser?.uid || null;');
     });
 
     it('getEventTitle returns practice title for practice type', () => {
