@@ -159,15 +159,20 @@ describe('track live state helpers', () => {
     });
   });
 
-  it('wires Cancel Game to clear public live state without deleting immutable live events', () => {
+  it('wires Cancel Game through reset persistence without deleting immutable live events', () => {
     const trackLiveHtml = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
     const cancelGameBody = trackLiveHtml.match(/async function cancelGame\(\) \{([\s\S]*?)\n        function updateTimer\(\)/)?.[1] || '';
 
-    expect(cancelGameBody).not.toContain('games/${currentGameId}/liveEvents');
-    expect(cancelGameBody).not.toContain('deleteLiveEventPromises');
+    expect(cancelGameBody).toContain('runTrackLiveResetPersistence');
     expect(cancelGameBody).toContain('buildTrackLiveResetUpdate');
     expect(cancelGameBody).toContain("status: 'scheduled'");
-    expect(cancelGameBody).toContain('liveBaseballState');
+    expect(cancelGameBody).toContain('currentGame.liveHasData = false');
+    expect(cancelGameBody).toContain('currentGame.homeScore = 0');
+    expect(cancelGameBody).toContain('currentGame.awayScore = 0');
+    expect(cancelGameBody).toContain('getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`))');
+    expect(cancelGameBody).toContain('getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`))');
+    expect(cancelGameBody).not.toContain('games/${currentGameId}/liveEvents');
+    expect(cancelGameBody).not.toContain('deleteLiveEventPromises');
     expect(cancelGameBody).not.toContain("currentGame.status !== 'scheduled'");
   });
 });

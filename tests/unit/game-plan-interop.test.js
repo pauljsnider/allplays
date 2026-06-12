@@ -123,12 +123,14 @@ describe('game plan interop helpers', () => {
       lineups: {
         'I1-pitcher': 'p1',
         'I7-catcher': 'p2',
-        '2-full-first-base': 'p3'
+        '2-full-first-base': 'p3',
+        '3-1-shortstop': 'p4'
       }
     })).toEqual({
       I1: { pitcher: 'p1' },
       I7: { catcher: 'p2' },
-      I2: { 'first-base': 'p3' }
+      I2: { 'first-base': 'p3' },
+      I3: { shortstop: 'p4' }
     });
   });
 
