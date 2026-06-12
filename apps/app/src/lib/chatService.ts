@@ -1272,7 +1272,7 @@ export async function muteTeamChat(uid: string, teamId: string): Promise<void> {
   } catch (error) {
     if (!isNativeRuntime()) {
       console.warn('[chat-service] Failed to mute team chat:', sanitizeErrorForLogging(error));
-      return;
+      throw error;
     }
     console.warn('[chat-service] Falling back to REST chat mute update:', sanitizeErrorForLogging(error));
     const userPath = `users/${encodeURIComponent(uid)}`;
@@ -1292,7 +1292,7 @@ export async function unmuteTeamChat(uid: string, teamId: string): Promise<void>
   } catch (error) {
     if (!isNativeRuntime()) {
       console.warn('[chat-service] Failed to unmute team chat:', sanitizeErrorForLogging(error));
-      return;
+      throw error;
     }
     console.warn('[chat-service] Falling back to REST chat unmute update:', sanitizeErrorForLogging(error));
     const userPath = `users/${encodeURIComponent(uid)}`;

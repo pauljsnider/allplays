@@ -496,7 +496,7 @@ function ChatWindow({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState('');
-  const [isMuted, setIsMuted] = useState(inboxTeam?.isMuted || false);
+  const [isMuted, setIsMuted] = useState(() => resolveMutedState(teamId, inboxTeam, {}));
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -718,6 +718,10 @@ function ChatWindow({
   useEffect(() => {
     currentTeamIdRef.current = teamId;
   }, [teamId]);
+
+  useEffect(() => {
+    setIsMuted(resolveMutedState(teamId, inboxTeam, profile));
+  }, [inboxTeam, profile, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1793,6 +1797,14 @@ function buildMessagesRoute(teamId: string, preferredConversationId?: string | n
   const normalizedConversationId = String(preferredConversationId || '').trim();
   if (!normalizedConversationId) return route;
   return `${route}?conversationId=${encodeURIComponent(normalizedConversationId)}`;
+}
+
+function resolveMutedState(teamId: string, inboxTeam?: ChatTeam, profile: Record<string, any> = {}) {
+  if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
+    return inboxTeam.isMuted;
+  }
+  const chatMuted = profile?.chatMuted;
+  return Boolean(chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]);
 }
 
 function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {

@@ -688,6 +688,16 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.updateChatMuted).not.toHaveBeenCalled();
     });
 
+    it('rethrows failed web mute writes so callers can roll back optimistic state', async () => {
+        dbMocks.updateChatMuted.mockRejectedValueOnce(new Error('offline'));
+        dbMocks.clearChatMuted.mockRejectedValueOnce(new Error('permission-denied'));
+
+        const { muteTeamChat, unmuteTeamChat } = await import('../../apps/app/src/lib/chatService.ts');
+
+        await expect(muteTeamChat('user-1', 'team-1')).rejects.toThrow('offline');
+        await expect(unmuteTeamChat('user-1', 'team-1')).rejects.toThrow('permission-denied');
+    });
+
     it('loadChatInbox sets isMuted from chatMuted profile field', async () => {
         dbMocks.getUserProfile.mockResolvedValue({
             email: 'parent@example.com',
