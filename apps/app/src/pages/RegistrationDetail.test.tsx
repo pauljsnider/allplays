@@ -1,6 +1,7 @@
-import { render, screen } from '@testing-library/react';
+// @vitest-environment jsdom
+import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RegistrationDetail } from './RegistrationDetail';
 import type { AuthState } from '../lib/types';
 
@@ -92,6 +93,10 @@ describe('RegistrationDetail payment notice', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   it('renders the payment section for public online checkout forms', async () => {
     parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       paymentNotice: 'Payment will be collected in Stripe before your registration is complete.',
@@ -100,9 +105,9 @@ describe('RegistrationDetail payment notice', () => {
 
     renderPublicRegistration();
 
-    expect(await screen.findByRole('heading', { name: 'Payment' })).toBeInTheDocument();
-    expect(screen.getByText('Payment will be collected in Stripe before your registration is complete.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Pay registration with Stripe' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Payment' })).toBeTruthy();
+    expect(screen.getByText('Payment will be collected in Stripe before your registration is complete.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pay registration with Stripe' })).toBeTruthy();
   });
 
   it('hides the payment section when no notice exists for authenticated parent forms', async () => {
@@ -110,8 +115,8 @@ describe('RegistrationDetail payment notice', () => {
 
     renderParentRegistration();
 
-    expect(await screen.findByRole('button', { name: 'Submit registration' })).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Payment' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Submit registration' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Payment' })).toBeNull();
     expect(parentToolsServiceMocks.loadParentRegistrationDetail).toHaveBeenCalledWith(auth.user, 'team-1', 'form-1');
   });
 });

@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as parentToolsService from '../lib/parentToolsService';
-import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Send, Ticket, type LucideIcon } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Send, Ticket, UserPlus, XCircle, type LucideIcon } from 'lucide-react';
 import { openPublicUrl } from '../lib/publicActions';
-import type { ParentRegistrationCard, ParentRegistrationDetailModel, RegistrationDiscountRule } from '../lib/parentToolsService';
+import type {
+  ParentRegistrationCard,
+  ParentRegistrationDetailModel,
+  TeamRegistrationQueueModel
+} from '../lib/parentToolsService';
 import {
   calculateRegistrationFeeSnapshot,
   decideRegistrationPlacement,
@@ -30,6 +34,14 @@ export function selectInitialRegistrationOption(form: ParentRegistrationCard | n
 }
 
 export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthState; publicAccess?: boolean }) {
+  return <RegistrationDetailPage auth={auth} publicAccess={publicAccess} staffReview={false} />;
+}
+
+export function TeamRegistrationReview({ auth }: { auth: AuthState }) {
+  return <RegistrationDetailPage auth={auth} publicAccess={false} staffReview />;
+}
+
+function RegistrationDetailPage({ auth, publicAccess = false, staffReview = false }: { auth: AuthState; publicAccess?: boolean; staffReview?: boolean }) {
   const params = useParams();
   const [searchParams] = useSearchParams();
   const teamId = publicAccess ? (searchParams.get('teamId') || '') : (params.teamId || '');
@@ -46,6 +58,9 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
   const [selectedOptionId, setSelectedOptionId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [selectedPaymentPlanId, setSelectedPaymentPlanId] = useState('pay_full');
+  const [queue, setQueue] = useState<TeamRegistrationQueueModel | null>(null);
+  const [selectedReviewId, setSelectedReviewId] = useState('');
+  const [selectedMergePlayerId, setSelectedMergePlayerId] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
 
@@ -54,9 +69,8 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
     async function refresh() {
       setLoading(true);
       setError('');
-      setMessage('');
       try {
-        const nextForm = await loadRegistrationForm(auth.user, teamId, formId, publicAccess);
+        const nextForm = await loadRegistrationForm(auth.user, teamId, formId, publicAccess, staffReview);
         if (cancelled) return;
         if (!nextForm) {
           setError('Registration form not found or not active.');
@@ -69,6 +83,15 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
           return;
         }
         setForm(nextForm);
+        if (staffReview) {
+          const nextQueue = await (parentToolsService as any).loadTeamRegistrationQueue(auth.user, teamId, formId) as TeamRegistrationQueueModel;
+          if (cancelled) return;
+          setQueue(nextQueue);
+          const firstReviewId = nextQueue.reviews[0]?.id || '';
+          setSelectedReviewId((current) => current && nextQueue.reviews.some((review) => review.id === current) ? current : firstReviewId);
+        } else {
+          setQueue(null);
+        }
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         const initialOptionId = selectInitialRegistrationOption(nextForm, initialOptions);
         setSelectedOptionId((current) => current || initialOptionId);
@@ -82,7 +105,7 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
     return () => {
       cancelled = true;
     };
-  }, [auth.user?.uid, teamId, formId, publicAccess, reloadKey]);
+  }, [auth.user?.uid, teamId, formId, publicAccess, reloadKey, staffReview]);
 
   const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
   const paymentPlanChoices: any[] = useMemo(() => form ? ((Array.isArray(form.paymentPlans) && form.paymentPlans.length) ? form.paymentPlans : getPaymentPlanChoices(form)) : [], [form]);
@@ -96,6 +119,14 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
   const effectiveQuantity = useMemo(() => hasQuantityDiscount ? quantity : 1, [hasQuantityDiscount, quantity]);
   const displayFeeSnapshot = useMemo(() => form ? calculateRegistrationFeeSnapshot(form, { quantity: effectiveQuantity, now: new Date() }) : null, [form, effectiveQuantity]);
   const displayFeeLines = useMemo<FeeSummaryLine[]>(() => displayFeeSnapshot ? formatFeeSnapshotLines(displayFeeSnapshot) : [], [displayFeeSnapshot]);
+  const selectedReview = useMemo(() => queue?.reviews.find((review) => review.id === selectedReviewId) || queue?.reviews[0] || null, [queue, selectedReviewId]);
+  const canApproveSelectedReview = selectedReview ? ['pending', 'offer-accepted'].includes(selectedReview.status) : false;
+  const canDeclineSelectedReview = selectedReview ? ['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(selectedReview.status) : false;
+
+  useEffect(() => {
+    if (!selectedReview) return;
+    setSelectedMergePlayerId(selectedReview.linkedPlayerId || '');
+  }, [selectedReview?.id]);
 
   const updateParticipant = (fieldId: string, value: string) => setParticipant((current) => ({ ...current, [fieldId]: value }));
   const updateGuardian = (fieldId: string, value: string) => setGuardian((current) => ({ ...current, [fieldId]: value }));
@@ -179,8 +210,142 @@ export function RegistrationDetail({ auth, publicAccess = false }: { auth: AuthS
     }
   };
 
+  const handleApprove = async () => {
+    if (!selectedReview || saving) return;
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await (parentToolsService as any).approveTeamRegistrationForApp(auth.user, teamId, formId, selectedReview.id, {
+        playerId: selectedMergePlayerId || undefined
+      });
+      setMessage('Registration approved. Roster and parent links were updated using the legacy approval flow.');
+      setReloadKey((current) => current + 1);
+    } catch (actionError: any) {
+      setError(actionError?.message || 'Registration could not be approved.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDecline = async () => {
+    if (!selectedReview || saving) return;
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await (parentToolsService as any).rejectTeamRegistrationForApp(auth.user, teamId, formId, selectedReview.id);
+      setMessage('Registration declined.');
+      setReloadKey((current) => current + 1);
+    } catch (actionError: any) {
+      setError(actionError?.message || 'Registration could not be declined.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <LoadingBlock label="Loading registration" />;
   if (!form) return <EmptyState icon={Ticket} title="Registration unavailable" detail={error || 'This registration form could not be loaded.'} actionLabel={error ? 'Retry' : ''} onAction={error ? () => setReloadKey((current) => current + 1) : undefined} />;
+
+  if (staffReview) {
+    return (
+      <div className="space-y-3">
+        <section className="app-card overflow-hidden">
+          <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
+            <Link to={`/teams/${encodeURIComponent(teamId)}`} className="ghost-button !h-9 !min-h-9 !w-9 !flex-none !p-0" aria-label="Back to team" title="Back to team">
+              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            </Link>
+            <div className="min-w-0 flex-1">
+              <div className="app-label">Registration review</div>
+              <h1 className="truncate text-xl font-black leading-tight text-gray-950">{form.programName}</h1>
+              <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{form.teamName}{form.season ? ` - ${form.season}` : ''}</p>
+            </div>
+            {form.url ? (
+              <button type="button" className="secondary-button !min-h-9 text-xs" onClick={() => openPublicUrl(form.url)}>
+                <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                Legacy review
+              </button>
+            ) : null}
+          </div>
+        </section>
+
+        {message ? <Status tone="success" message={message} /> : null}
+        {error ? <Status tone="error" message={error} /> : null}
+
+        <section className="grid gap-3 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+          <div className="app-card p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-black text-gray-950">Applications</div>
+                <div className="text-xs font-semibold text-gray-500">Submitted registrations and their current review state.</div>
+              </div>
+              <button type="button" className="ghost-button !min-h-9 text-xs" onClick={() => setReloadKey((current) => current + 1)} disabled={loading || saving}>Refresh</button>
+            </div>
+            <div className="mt-3 grid gap-2">
+              {queue?.reviews.length ? queue.reviews.map((review) => (
+                <button
+                  key={review.id}
+                  type="button"
+                  onClick={() => setSelectedReviewId(review.id)}
+                  className={`rounded-2xl border p-3 text-left ${selectedReview?.id === review.id ? 'border-primary-300 bg-primary-50' : 'border-gray-200 bg-white'}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-black text-gray-950">{review.participantName}</div>
+                      <div className="truncate text-xs font-semibold text-gray-500">{review.guardianLabel || 'Guardian details unavailable'}</div>
+                    </div>
+                    <StatusPill value={review.status} />
+                  </div>
+                  <div className="mt-2 text-xs font-semibold text-gray-500">{review.selectedOptionLabel || 'No option selected'} · {review.paymentLabel}</div>
+                </button>
+              )) : <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No applications are available for this form yet.</div>}
+            </div>
+          </div>
+
+          <div className="app-card p-4">
+            {selectedReview ? (
+              <div className="grid gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-black text-gray-950">{selectedReview.participantName}</h2>
+                    <StatusPill value={selectedReview.status} />
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-gray-500">{selectedReview.selectedOptionLabel || 'No option selected'} · {selectedReview.paymentLabel}</div>
+                </div>
+
+                <DetailBlock title="Participant details" values={selectedReview.participant} />
+                <DetailBlock title="Guardian details" values={selectedReview.guardian} />
+
+                <div className="grid gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-700">
+                  <div className="flex items-center justify-between gap-3"><span>Waiver accepted</span><span className="font-black text-gray-950">{selectedReview.waiverAccepted ? 'Yes' : 'No'}</span></div>
+                  {selectedReview.decisionNote ? <div className="flex items-start justify-between gap-3"><span>Decision note</span><span className="text-right font-black text-gray-950">{selectedReview.decisionNote}</span></div> : null}
+                </div>
+
+                <label className="min-w-0">
+                  <span className="app-label">Merge into existing roster player</span>
+                  <select className="auth-input mt-1" aria-label="Merge into existing roster player" value={selectedMergePlayerId} onChange={(event) => setSelectedMergePlayerId(event.target.value)} disabled={saving}>
+                    <option value="">Create a new roster player</option>
+                    {(queue?.rosterPlayers || []).map((player) => <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>)}
+                  </select>
+                </label>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button type="button" className="primary-button" onClick={handleApprove} disabled={saving || !canApproveSelectedReview}>
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <UserPlus className="h-4 w-4" aria-hidden="true" />}
+                    Approve application
+                  </button>
+                  <button type="button" className="secondary-button !border-rose-200 !text-rose-700 hover:!bg-rose-50" onClick={handleDecline} disabled={saving || !canDeclineSelectedReview}>
+                    <XCircle className="h-4 w-4" aria-hidden="true" />
+                    Decline application
+                  </button>
+                </div>
+              </div>
+            ) : <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">Choose an application to review.</div>}
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -316,7 +481,11 @@ function validate(form: ParentRegistrationCard, participant: Record<string, stri
   return errors;
 }
 
-async function loadRegistrationForm(user: any, teamId: string, formId: string, publicAccess = false): Promise<ParentRegistrationCard | null> {
+async function loadRegistrationForm(user: any, teamId: string, formId: string, publicAccess = false, staffReview = false): Promise<ParentRegistrationCard | null> {
+  if (staffReview) {
+    const detail: ParentRegistrationDetailModel = await (parentToolsService as any).loadStaffRegistrationDetail(user, teamId, formId);
+    return toRegistrationCardFromDetail(detail, teamId, formId);
+  }
   if (publicAccess) {
     const detail: ParentRegistrationDetailModel = await (parentToolsService as any).loadPublicRegistrationDetail(teamId, formId);
     return toRegistrationCardFromDetail(detail, teamId, formId);
@@ -433,4 +602,43 @@ function formatOptionAvailability(option: any, counts: Record<string, any>) {
 
 function formatMoney(cents: number, currency = 'USD') {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format((Number(cents) || 0) / 100);
+}
+
+function StatusPill({ value }: { value: string }) {
+  const status = String(value || 'pending').trim().toLowerCase();
+  const label = status.replace(/-/g, ' ');
+  const className = status === 'approved'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : status === 'declined' || status === 'rejected'
+      ? 'border-rose-200 bg-rose-50 text-rose-700'
+      : status === 'waitlisted' || status === 'offer-extended' || status === 'offer-accepted'
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-sky-200 bg-sky-50 text-sky-700';
+  return <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-black uppercase tracking-wide ${className}`}>{label}</span>;
+}
+
+function DetailBlock({ title, values }: { title: string; values: Record<string, any> }) {
+  const entries = Object.entries(values || {}).filter(([, value]) => String(value ?? '').trim());
+  return (
+    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+      <div className="text-sm font-black text-gray-950">{title}</div>
+      <div className="mt-3 grid gap-2">
+        {entries.length ? entries.map(([key, value]) => (
+          <div key={key} className="flex items-start justify-between gap-3 text-sm font-semibold text-gray-700">
+            <span className="text-gray-500">{formatReviewFieldLabel(key)}</span>
+            <span className="text-right font-black text-gray-950">{String(value)}</span>
+          </div>
+        )) : <div className="text-sm font-semibold text-gray-500">No submitted values.</div>}
+      </div>
+    </div>
+  );
+}
+
+function formatReviewFieldLabel(value: string) {
+  return String(value || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_.-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase());
 }

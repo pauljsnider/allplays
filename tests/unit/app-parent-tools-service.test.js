@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
+    approveTeamRegistration: vi.fn(),
     createFamilyShareToken: vi.fn(),
     createParentMembershipRequest: vi.fn(),
     createTeamMediaFolder: vi.fn(),
@@ -27,6 +28,8 @@ const dbMocks = vi.hoisted(() => ({
     listMyParentMembershipRequests: vi.fn(),
     listParentTeamFeeRecipients: vi.fn(),
     listTeamRegistrationForms: vi.fn(),
+    listTeamRegistrationReviews: vi.fn(),
+    rejectTeamRegistration: vi.fn(),
     revokeFamilyShareToken: vi.fn(),
     updateFamilyShareTokenCalendars: vi.fn(),
     uploadTeamMediaFile: vi.fn(),
@@ -101,6 +104,30 @@ const registrationMocks = vi.hoisted(() => ({
     })),
 }));
 
+const registrationReviewMocks = vi.hoisted(() => ({
+    getRegistrationGuardianDrafts: vi.fn((registration = {}) => {
+        const submitted = registration.submittedData || {};
+        const seen = new Set();
+        return [registration.guardian, submitted.guardian].filter(Boolean).filter((guardian) => {
+            const key = guardian.email || guardian.name;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+    }),
+    getRegistrationPlayerDraft: vi.fn((registration = {}) => ({
+        name: registration.player?.name || registration.submittedData?.participant?.name || '',
+        number: registration.player?.number || registration.submittedData?.participant?.number || ''
+    })),
+    getRegistrationSubmittedData: vi.fn((registration = {}) => registration.submittedData || {}),
+    normalizeRegistrationStatus: vi.fn((status = '') => {
+        const value = String(status || '').toLowerCase();
+        if (value === 'approved') return 'enrolled';
+        if (value === 'declined') return 'rejected';
+        return value || 'pending';
+    })
+}));
+
 const mediaMocks = vi.hoisted(() => ({
     canContributeTeamMedia: vi.fn(() => true),
     canManageTeamMedia: vi.fn(() => false),
@@ -132,6 +159,7 @@ vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
+vi.mock('../../js/registration-review.js', () => registrationReviewMocks);
 vi.mock('../../js/team-media-utils.js', () => mediaMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
@@ -152,6 +180,8 @@ import {
     buildPrivateTeamCalendarFeedUrl,
     getPrivateTeamCalendarFeedUrl,
     getRegistrationUrl,
+    loadStaffRegistrationDetail,
+    loadTeamRegistrationQueue,
     loadFamilyShareModel,
     loadParentAccessModel,
     loadParentAccessTeams,
@@ -171,6 +201,8 @@ import {
     uploadParentTeamMediaPhoto,
     deleteTeamMediaItemForApp,
     updateTeamMediaItemForApp,
+    approveTeamRegistrationForApp,
+    rejectTeamRegistrationForApp,
     initiateRegistrationCheckout,
     initiateParentTeamFeeCheckout,
     canInitiateParentTeamFeeCheckout,
@@ -664,6 +696,73 @@ describe('React app parent tools service', () => {
             options: [{ id: 'opt-1', title: 'Full Day' }],
             paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }]
         });
+    });
+
+    it('loads the staff registration detail model only for team staff', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-coach', name: 'Coach Wolves' });
+        dbMocks.listTeamRegistrationForms.mockResolvedValue([
+            {
+                id: 'form-review',
+                programName: 'Travel Tryouts',
+                status: 'published',
+                finalAmountDueCents: 15000,
+                options: [{ id: 'opt-1', title: 'Travel' }]
+            }
+        ]);
+
+        await expect(loadStaffRegistrationDetail(user, 'team-coach', 'form-review')).resolves.toMatchObject({
+            teamName: 'Coach Wolves',
+            isPublished: true,
+            legacyUrl: 'https://allplays.ai/registration.html?teamId=team-coach&formId=form-review',
+            options: [{ id: 'opt-1', title: 'Travel' }]
+        });
+        await expect(loadStaffRegistrationDetail({ ...user, coachOf: [] }, 'team-coach', 'form-review')).rejects.toThrow('Admin access is required to review registrations.');
+    });
+
+    it('loads review queue cards and delegates approvals to legacy registration side effects', async () => {
+        dbMocks.listTeamRegistrationReviews.mockResolvedValue([
+            {
+                id: 'reg-1',
+                status: 'approved',
+                player: { name: 'Riley Runner', number: '12' },
+                guardian: { email: 'parent@example.com', name: 'Pat Parent' },
+                submittedData: {
+                    participant: { name: 'Riley Runner', grade: '5' },
+                    guardian: { email: 'parent@example.com' }
+                },
+                selectedOption: { title: 'Travel' },
+                feeSnapshot: { finalAmountDueCents: 15000, currency: 'USD' },
+                paymentStatus: 'paid',
+                waiverAccepted: true,
+                linkedPlayerId: 'player-9'
+            }
+        ]);
+        dbMocks.getPlayers.mockResolvedValue([{ id: 'player-9', name: 'Riley Runner', number: '12' }]);
+        dbMocks.approveTeamRegistration.mockResolvedValue({ success: true });
+        dbMocks.rejectTeamRegistration.mockResolvedValue({ success: true });
+
+        const queue = await loadTeamRegistrationQueue(user, 'team-coach', 'form-review');
+
+        expect(dbMocks.listTeamRegistrationReviews).toHaveBeenCalledWith('team-coach', 'form-review', 'all');
+        expect(queue).toMatchObject({
+            reviews: [{
+                id: 'reg-1',
+                status: 'enrolled',
+                participantName: 'Riley Runner',
+                guardianLabel: 'parent@example.com',
+                selectedOptionLabel: 'Travel',
+                paymentLabel: 'paid · $150.00',
+                waiverAccepted: true,
+                linkedPlayerId: 'player-9'
+            }],
+            rosterPlayers: [{ id: 'player-9', name: 'Riley Runner', number: '12' }]
+        });
+
+        await approveTeamRegistrationForApp(user, 'team-coach', 'form-review', 'reg-1', { playerId: 'player-9' });
+        expect(dbMocks.approveTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', { playerId: 'player-9' });
+
+        await rejectTeamRegistrationForApp(user, 'team-coach', 'form-review', 'reg-1', 'Not eligible');
+        expect(dbMocks.rejectTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', 'Not eligible');
     });
 
     it('loads a public registration detail without requiring public team document access', async () => {

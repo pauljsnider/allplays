@@ -7,9 +7,13 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 // Mock parentToolsService
 const parentToolsServiceMocks = vi.hoisted(() => ({
   loadParentRegistrations: vi.fn(),
+  loadStaffRegistrationDetail: vi.fn(),
+  loadTeamRegistrationQueue: vi.fn(),
   loadPublicRegistrationDetail: vi.fn(),
   submitOfflineRegistration: vi.fn(),
   initiateRegistrationCheckout: vi.fn(),
+  approveTeamRegistrationForApp: vi.fn(),
+  rejectTeamRegistrationForApp: vi.fn(),
 }));
 
 const publicActionsMocks = vi.hoisted(() => ({
@@ -54,7 +58,7 @@ vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsService
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
 vi.mock('../../js/registration-flow.js', () => registrationFlowMocks);
 
-import { RegistrationDetail, selectInitialRegistrationOption } from '../../apps/app/src/pages/RegistrationDetail.tsx';
+import { RegistrationDetail, TeamRegistrationReview, selectInitialRegistrationOption } from '../../apps/app/src/pages/RegistrationDetail.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -119,6 +123,34 @@ async function renderPublicRegistrationDetail(teamId = 'team-public', formId = '
         React.createElement(Route, {
           path: '/registration',
           element: React.createElement(RegistrationDetail, { auth: { ...auth, user: null }, publicAccess: true }),
+        })
+      )
+    ));
+  });
+
+  await flush();
+  return { container, root };
+}
+
+async function renderStaffRegistrationReview(teamId = 'team-coach', formId = 'form-review') {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  await act(async () => {
+    root.render(React.createElement(
+      MemoryRouter,
+      { initialEntries: [`/teams/${teamId}/registrations/${formId}`] },
+      React.createElement(
+        Routes,
+        null,
+        React.createElement(Route, {
+          path: '/teams/:teamId/registrations/:formId',
+          element: React.createElement(TeamRegistrationReview, { auth: { ...auth, roles: ['coach'], user: { ...auth.user, roles: ['coach'], coachOf: [teamId] } } }),
+        }),
+        React.createElement(Route, {
+          path: '/teams/:teamId',
+          element: React.createElement('div', null, 'Team Detail'),
         })
       )
     ));
@@ -230,6 +262,46 @@ beforeEach(() => {
     paymentNotice: '',
     paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
   });
+  parentToolsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue({
+    teamName: 'Coach Bears',
+    isPublished: true,
+    onlineCheckout: false,
+    legacyUrl: '/registration-review.html?teamId=team-coach&formId=form-review',
+    form: {
+      id: 'form-review',
+      teamId: 'team-coach',
+      programName: 'Travel Tryouts',
+      description: 'Review queue',
+      season: 'Spring',
+      currency: 'USD',
+      participantFields: [],
+      guardianFields: [],
+      registrationOptionCounts: {},
+    },
+    options: [{ id: 'opt-1', title: 'Travel' }],
+    feeSnapshot: { finalAmountDueCents: 15000, currency: 'USD' },
+    paymentNotice: '',
+    paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
+  });
+  parentToolsServiceMocks.loadTeamRegistrationQueue.mockResolvedValue({
+    reviews: [{
+      id: 'reg-1',
+      status: 'pending',
+      participantName: 'Riley Runner',
+      guardianLabel: 'parent@example.com',
+      guardianEmails: ['parent@example.com'],
+      participant: { name: 'Riley Runner', grade: '5' },
+      guardian: { email: 'parent@example.com', phone: '555-0100' },
+      submittedData: {},
+      submittedAt: null,
+      selectedOptionLabel: 'Travel',
+      paymentLabel: 'paid · $150.00',
+      waiverAccepted: true,
+      linkedPlayerId: '',
+      decisionNote: '',
+    }],
+    rosterPlayers: [{ id: 'player-9', name: 'Riley Runner', number: '12' }],
+  });
   parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValue({
     success: true,
     status: 'pending',
@@ -240,6 +312,8 @@ beforeEach(() => {
     success: true,
     checkoutUrl: 'https://checkout.stripe.com/c/pay-reg-1',
   });
+  parentToolsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true });
+  parentToolsServiceMocks.rejectTeamRegistrationForApp.mockResolvedValue({ success: true });
   publicActionsMocks.openPublicUrl.mockResolvedValue(undefined);
 });
 
@@ -281,6 +355,37 @@ describe('selectInitialRegistrationOption', () => {
 });
 
 describe('RegistrationDetail page', () => {
+  it('renders the staff review queue and approves through the legacy app service with merge selection', async () => {
+    const { container } = await renderStaffRegistrationReview();
+    await waitForText(container, 'Travel Tryouts');
+    await waitForText(container, 'Riley Runner');
+
+    expect(parentToolsServiceMocks.loadStaffRegistrationDetail).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'user-1' }),
+      'team-coach',
+      'form-review'
+    );
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'user-1' }),
+      'team-coach',
+      'form-review'
+    );
+    expect(container.textContent).toContain('paid · $150.00');
+    expect(container.textContent).toContain('Waiver accepted');
+
+    await changeInputValue(container, 'Merge into existing roster player', 'player-9');
+    await clickButton(container, 'Approve application');
+
+    expect(parentToolsServiceMocks.approveTeamRegistrationForApp).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'user-1' }),
+      'team-coach',
+      'form-review',
+      'reg-1',
+      { playerId: 'player-9' }
+    );
+    await waitForText(container, 'Registration approved. Roster and parent links were updated using the legacy approval flow.');
+  });
+
   it('defaults the selected option to the first option with available capacity', async () => {
     parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
