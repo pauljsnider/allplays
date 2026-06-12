@@ -213,6 +213,28 @@ function renderScheduleEventDetailWithRouteControls(initialEntry = '/schedule/te
   );
 }
 
+describe('ScheduleEventDetail loading states', () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('shows the shared event skeleton while event details are loading', () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockReturnValue(new Promise(() => {}));
+
+    render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
+    expect(screen.queryByText('Pulling parent actions and game-day details.')).toBeNull();
+  });
+});
+
 describe('ScheduleEventDetail lineup draft guards', () => {
   it('allows empty lineup drafts to persist when a coach and formation are present', () => {
     expect(shouldPersistLineupDraft(auth.user, 'basketball-5v5', {})).toBe(true);

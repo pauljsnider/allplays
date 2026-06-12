@@ -27,6 +27,7 @@ import {
   Users,
   Zap
 } from 'lucide-react';
+import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
@@ -279,15 +280,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   if (!teamId) return <Navigate to="/teams" replace />;
 
   if (loading) {
-    return (
-      <div className="space-y-4">
-        <section className="app-card p-5 text-center">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
-          <div className="mt-3 text-sm font-black text-gray-950">Loading team</div>
-          <div className="mt-1 text-xs font-semibold text-gray-500">Getting the team photo, roster, schedule, standings, and parent-visible insights.</div>
-        </section>
-      </div>
-    );
+    return <TeamDetailPageSkeleton />;
   }
 
   if (error || !model) {

@@ -57,6 +57,7 @@ import {
   type TeamEmailTemplate,
   type ChatTeam
 } from '../lib/chatService';
+import { MessagesPageSkeleton } from '../components/PageSkeletons';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
   MAX_CHAT_MEDIA_SIZE,
@@ -288,12 +289,7 @@ function InboxList({
   const trimmedQuery = searchQuery.trim();
 
   if (loading) {
-    return (
-      <section className="app-card flex min-h-44 items-center justify-center p-5 text-sm font-bold text-gray-500">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-        Loading team chats...
-      </section>
-    );
+    return <MessagesPageSkeleton />;
   }
 
   if (error) {
@@ -1474,12 +1470,7 @@ function ChatWindow({
   }, [selectedConversationId, teamId]);
 
   if (loadingContext) {
-    return (
-      <section className={`chat-window app-card flex min-h-[520px] items-center justify-center p-5 ${embedded ? 'chat-window-embedded' : ''}`}>
-        <Loader2 className="mr-2 h-5 w-5 animate-spin text-primary-600" aria-hidden="true" />
-        <span className="text-sm font-black text-gray-600">Loading team chat...</span>
-      </section>
-    );
+    return <MessagesPageSkeleton embedded={embedded} />;
   }
 
   if (error) {

@@ -96,6 +96,7 @@ import {
   type ScheduleHubDestination,
   type ScheduleHubIcon
 } from '../lib/scheduleHub';
+import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import {
   canRequestScheduleRide,
   findScheduleRideRequestForChild,
@@ -512,13 +513,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   };
 
   if (loading) {
-    return (
-      <div className="app-card p-6 text-center">
-        <RefreshCw className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
-        <div className="mt-3 text-sm font-black text-gray-900">Loading event</div>
-        <div className="mt-1 text-xs font-semibold text-gray-500">Pulling parent actions and game-day details.</div>
-      </div>
-    );
+    return <EventDetailPageSkeleton />;
   }
 
   if (!selectedEvent) {

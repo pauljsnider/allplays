@@ -144,6 +144,21 @@ describe('TeamDetail', () => {
     cleanup();
   });
 
+  it('shows the shared team skeleton while team detail is loading', () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockReturnValue(new Promise(() => {}));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('status', { name: 'Loading team' })).toBeTruthy();
+    expect(screen.queryByText('Getting the team photo, roster, schedule, standings, and parent-visible insights.')).toBeNull();
+  });
+
   it('does not reload team detail when the auth object identity changes but the signed-in user does not', async () => {
     const initialAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
     const nextAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };

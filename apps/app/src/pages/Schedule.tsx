@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
 import { getCachedAppData, loadCachedAppData } from '../lib/appDataCache';
 import { startUxTimer } from '../lib/uxTiming';
@@ -1553,13 +1554,7 @@ function ScheduleActionQueue({ events }: { events: ParentScheduleEvent[] }) {
 }
 
 function LoadingSchedule() {
-  return (
-    <div className="app-card p-6 text-center">
-      <RefreshCw className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
-      <div className="mt-3 text-sm font-black text-gray-900">Loading schedule</div>
-      <div className="mt-1 text-xs font-semibold text-gray-500">Pulling teams, players, RSVP status, and calendar details.</div>
-    </div>
-  );
+  return <SchedulePageSkeleton />;
 }
 
 function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {

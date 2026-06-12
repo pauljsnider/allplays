@@ -68,7 +68,9 @@ describe('App protected route loading', () => {
     );
 
     expect(await screen.findByRole('navigation', { name: 'Primary navigation' })).toBeTruthy();
-    expect(screen.getByText('Loading page')).toBeTruthy();
+    expect(screen.getByRole('status', { name: 'Loading Home' })).toBeTruthy();
+    expect(screen.queryByText('Loading page')).toBeNull();
+    expect(screen.queryByText('Preparing your ALL PLAYS workspace...')).toBeNull();
     expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
   });
 
