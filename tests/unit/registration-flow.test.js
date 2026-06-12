@@ -711,6 +711,17 @@ describe('public registration flow', () => {
         expect(preparedCheckoutRegistration).toBeNull();
     });
 
+    it('uses secure retry tokens and keeps app retry flow wired to the stored checkout attempt', () => {
+        const appSource = fs.readFileSync('apps/app/src/pages/RegistrationDetail.tsx', 'utf8');
+
+        expect(appSource).toContain('function createCheckoutAttemptToken()');
+        expect(appSource).toContain("throw new Error('Crypto API not available. Cannot generate secure checkout token.');");
+        expect(appSource).not.toContain('Math.random().toString(36).slice(2, 18)');
+        expect(appSource).toContain("const checkoutAttemptToken = isRetryPaymentMode ? returnCheckoutAttemptToken : createCheckoutAttemptToken();");
+        expect(appSource).toContain('retryPayment: true');
+        expect(appSource).toContain("Stripe payment was cancelled. You can retry payment for this registration.");
+    });
+
     it('wires registration Stripe checkout to deployed functions', () => {
         const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
 
@@ -722,7 +733,14 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain('getRegistrationCheckoutAmountCents(registration)');
         expect(functionsSource).toContain("if (input.retryPayment) {");
         expect(functionsSource).toContain("params.set('retryPayment', '1');");
-        expect(functionsSource).toContain('const amountCents = input.amountCents ?? expectedAmountCents;');
+        expect(functionsSource).toContain('reserveRegistrationCheckoutCapacityForRetry');
+        expect(functionsSource).toContain('const amountCents = input.retryPayment ? expectedAmountCents : (input.amountCents ?? expectedAmountCents);');
+        expect(functionsSource).toContain("if (!input.retryPayment && input.amountCents !== null && input.amountCents !== expectedAmountCents)");
+        expect(functionsSource).toContain("(input.retryPayment ? '' : input.currency)");
+        expect(functionsSource).toContain("Registration checkout attempt is required to retry this payment.");
+        expect(functionsSource).toContain("This registration option is no longer available. Please restart registration or contact the organizer.");
+        expect(functionsSource).toContain("registrationCapacityReleased: false");
+        expect(functionsSource).toContain("capacityReleasedAt: admin.firestore.FieldValue.delete()");
         expect(functionsSource).toContain("const currency = String(");
         expect(functionsSource).toContain("form.paymentSettings?.onlineCheckoutEnabled !== true");
         expect(functionsSource).toContain("checkoutStatus: 'open'");

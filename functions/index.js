@@ -493,6 +493,67 @@ async function queueDueRegistrationFailedPaymentReminders() {
   return results;
 }
 
+async function reserveRegistrationCheckoutCapacityForRetry(input) {
+  const formRef = buildRegistrationFormRef(input);
+  const registrationRef = buildRegistrationRef(input);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  return firestore.runTransaction(async (transaction) => {
+    const [formSnap, registrationSnap] = await Promise.all([
+      transaction.get(formRef),
+      transaction.get(registrationRef)
+    ]);
+    if (!formSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration form not found.');
+    }
+    if (!registrationSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Registration not found.');
+    }
+
+    const form = formSnap.data() || {};
+    const registration = registrationSnap.data() || {};
+    if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
+    }
+    if (!registrationCheckoutAttemptStrictlyMatches(registration, input)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to retry this payment.');
+    }
+    if (registration.registrationCapacityReleased !== true) {
+      return { reserved: false, reason: 'already-held' };
+    }
+    if (registration.status !== 'pending') {
+      throw new functions.https.HttpsError('failed-precondition', 'Only pending registrations can retry payment.');
+    }
+
+    const selectedOption = registration.selectedOption || {};
+    const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();
+    const counts = form.registrationOptionCounts || {};
+    const optionCounts = countKey ? counts[countKey] || {} : {};
+    if (!countKey || !counts[countKey] || typeof optionCounts !== 'object') {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration form capacity tracking is not properly configured.');
+    }
+
+    const capacity = Number(selectedOption.capacityLimit || selectedOption.capacity || 0);
+    const enrolled = Math.max(0, Number(optionCounts.enrolled || 0));
+    if (capacity > 0 && enrolled >= capacity) {
+      throw new functions.https.HttpsError('failed-precondition', 'This registration option is no longer available. Please restart registration or contact the organizer.');
+    }
+
+    transaction.update(formRef, {
+      [`registrationOptionCounts.${countKey}.enrolled`]: enrolled + 1,
+      registrationCapacityUpdateId: input.registrationId,
+      updatedAt: now
+    });
+    transaction.set(registrationRef, {
+      registrationCapacityReleased: false,
+      capacityReleasedAt: admin.firestore.FieldValue.delete(),
+      updatedAt: now
+    }, { merge: true });
+
+    return { reserved: true };
+  });
+}
+
 async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
   const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
@@ -1866,15 +1927,18 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   }
 
   const expectedAmountCents = getRegistrationCheckoutAmountCents(registration);
-  const amountCents = input.amountCents ?? expectedAmountCents;
-  if (input.amountCents !== null && input.amountCents !== expectedAmountCents) {
+  const amountCents = input.retryPayment ? expectedAmountCents : (input.amountCents ?? expectedAmountCents);
+  if (!input.retryPayment && input.amountCents !== null && input.amountCents !== expectedAmountCents) {
     throw new functions.https.HttpsError('failed-precondition', 'Checkout amount does not match the registration fee.');
   }
   const currency = String(
-    input.currency || registration.feeSnapshot?.currency || registration.currency || form.currency || 'usd'
+    (input.retryPayment ? '' : input.currency) || registration.feeSnapshot?.currency || registration.currency || form.currency || 'usd'
   ).trim().toLowerCase() || 'usd';
   if (!registrationCheckoutAttemptMatches(registration, input)) {
     throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
+  }
+  if (input.retryPayment && registration.registrationCapacityReleased === true) {
+    await reserveRegistrationCheckoutCapacityForRetry(input);
   }
   if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
     return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };

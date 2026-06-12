@@ -524,11 +524,11 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
 
 function createCheckoutAttemptToken() {
   const bytes = new Uint8Array(16);
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new Error('Crypto API not available. Cannot generate secure checkout token.');
   }
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`;
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function normalizeRegistrationReturnStatus(value: string | null) {
