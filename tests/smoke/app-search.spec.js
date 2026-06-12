@@ -197,7 +197,7 @@ async function mockSearchModules(page) {
                 export function computeAppSearchResults({ queryText, auth, teams, players, helpRoleFilter = 'all' }) {
                     const q = String(queryText || '').trim().toLowerCase();
                     const actions = [
-                        { id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams on ALL PLAYS', href: 'https://allplays.ai/teams.html' },
+                        { id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams on ALL PLAYS', route: '/teams/browse' },
                         { id: 'dashboard', kind: 'action', title: 'Dashboard', subtitle: 'Go to your ALL PLAYS home', route: '/home' },
                         { id: 'my-teams', kind: 'action', title: 'My Teams', subtitle: 'Open your team hubs', route: '/teams' },
                         { id: 'schedule', kind: 'action', title: 'Schedule', subtitle: 'Games, practices, availability, rides, and packets', route: '/schedule' },
@@ -446,7 +446,8 @@ test.describe('desktop app global search', () => {
 
         await openDesktopSearch(page);
         await page.getByRole('button', { name: /Browse Teams/ }).click();
-        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual(['https://allplays.ai/teams.html']);
+        await expect(page).toHaveURL(/#\/teams\/browse$/, { timeout: 1000 });
+        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
     });
 
     test('desktop search filters help results by selected role', async ({ page, baseURL }) => {
