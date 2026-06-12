@@ -3,7 +3,7 @@ import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, Chev
 import { Link } from 'react-router-dom';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
-import { getCachedAppData, loadCachedAppData } from '../lib/appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { startUxTimer } from '../lib/uxTiming';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
@@ -176,9 +176,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const timer = startUxTimer('schedule summary load');
     const hasExistingSchedule = events.length > 0; // Check current state
     try {
-      const cacheKey = `app-schedule-summary:${auth.user.uid}`;
-      const scheduleCacheTtlMs = 60 * 1000 * 5; // Placeholder for cache TTL (5 minutes)
-      const cached = getCachedAppData(cacheKey); // Assuming getCachedAppData is available
+      const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);
+      const scheduleCacheTtlMs = 60 * 1000 * 5;
+      const cached = getCachedAppData(cacheKey);
 
       const result = await loadCachedAppData(
         cacheKey,

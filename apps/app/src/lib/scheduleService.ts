@@ -103,7 +103,7 @@ import {
 } from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData } from './appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import type { AuthUser } from './types';
 
@@ -2134,7 +2134,7 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
 
   const timer = startUxTimer('parent game route resolve');
   const expandStaffPlayers = options.expandStaffPlayers === true;
-  const cachedSchedule = getCachedAppData<ParentScheduleLoadResult>(`app-schedule-summary:${user.uid}`);
+  const cachedSchedule = getCachedAppData<ParentScheduleLoadResult>(getParentScheduleSummaryCacheKey(user.uid));
   const cachedMatch = (cachedSchedule?.events || []).find((event) => (
     compactString(event?.id) === requestedGameId
     && event?.type === 'game'
