@@ -1,5 +1,8 @@
 const sensitiveKeys = new Set([
     'authorization',
+    'token',
+    'authtoken',
+    'bearertoken',
     'accesstoken',
     'idtoken',
     'refreshtoken'
@@ -11,6 +14,18 @@ function redactBearerTokens(value: string) {
     return value.replace(/Bearer\s+[^\s"',}]+/gi, `Bearer ${redactedValue}`);
 }
 
+function redactTokenParameters(value: string) {
+    return value.replace(/\b(access_token|id_token|refresh_token|token)=([^&\s"',}]+)/gi, (_match, key) => `${key}=${redactedValue}`);
+}
+
+function normalizeSensitiveKey(key: string) {
+    return key.toLowerCase().replace(/[-_\s]/g, '');
+}
+
+function isSensitiveKey(key: string) {
+    return sensitiveKeys.has(normalizeSensitiveKey(key));
+}
+
 function isHeadersLike(value: unknown): value is Headers {
     return typeof Headers !== 'undefined' && value instanceof Headers;
 }
@@ -19,7 +34,7 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
     if (value == null) return value;
 
     if (typeof value === 'string') {
-        return sensitiveKeys.has(keyHint.toLowerCase()) ? redactedValue : redactBearerTokens(value);
+        return isSensitiveKey(keyHint) ? redactedValue : redactTokenParameters(redactBearerTokens(value));
     }
 
     if (typeof value !== 'object') {
@@ -59,7 +74,7 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
     }
 
     return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, entryValue]) => {
-        acc[key] = sensitiveKeys.has(key.toLowerCase())
+        acc[key] = isSensitiveKey(key)
             ? redactedValue
             : sanitizeValue(entryValue, seen, depth + 1, key);
         return acc;

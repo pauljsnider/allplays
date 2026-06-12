@@ -15,7 +15,15 @@ describe('native REST logging sanitizer', () => {
             },
             details: {
                 idToken: 'id-token-789',
-                refreshToken: 'refresh-token-999'
+                refreshToken: 'refresh-token-999',
+                access_token: 'access-token-abc',
+                auth_token: 'auth-token-def'
+            },
+            init: {
+                headers: new Headers({
+                    Authorization: 'Bearer third-token-000'
+                }),
+                url: 'https://example.test/path?access_token=query-token-111&safe=value'
             }
         });
 
@@ -26,8 +34,13 @@ describe('native REST logging sanitizer', () => {
         expect(serialized).not.toContain('second-token-456');
         expect(serialized).not.toContain('id-token-789');
         expect(serialized).not.toContain('refresh-token-999');
+        expect(serialized).not.toContain('access-token-abc');
+        expect(serialized).not.toContain('auth-token-def');
+        expect(serialized).not.toContain('third-token-000');
+        expect(serialized).not.toContain('query-token-111');
         expect(serialized).toContain('Bearer [REDACTED]');
         expect(serialized).toContain('[REDACTED]');
+        expect(serialized).toContain('access_token=[REDACTED]');
         expect(sanitized).toMatchObject({
             status: 401,
             request: {
