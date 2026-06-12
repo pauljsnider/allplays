@@ -89,7 +89,7 @@ describe('live tracker finish completion plan', () => {
           participationStatus: 'appeared',
           participationSource: 'live-tracker-finish',
           stats: { pts: 2, ast: 1, fouls: 0 },
-          timeMs: 0
+          timeMs: 123000
         }
       },
       {
@@ -101,7 +101,7 @@ describe('live tracker finish completion plan', () => {
           participationStatus: 'appeared',
           participationSource: 'live-tracker-finish',
           stats: { pts: 3, ast: 0, fouls: 2 },
-          timeMs: 0
+          timeMs: 118000
         }
       }
     ]);

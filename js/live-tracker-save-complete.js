@@ -1,6 +1,6 @@
 import { acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker-integrity.js?v=3';
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=2';
-import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=3';
+import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=4';
 
 export const LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
 export const LIVE_TRACKER_MAX_EVENT_BATCH_WRITES = 500;
