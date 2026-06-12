@@ -2787,6 +2787,7 @@ async function syncSharedScheduleCounterpart(teamId, gameId, sourceGame, previou
 
 export async function addGame(teamId, gameData) {
     gameData.createdAt = Timestamp.now();
+    gameData.createdBy = gameData.createdBy || auth.currentUser?.uid || null;
     const docRef = await addDoc(getTeamGameCollectionRef(teamId), gameData);
     if (shouldMirrorSharedGame(gameData, teamId)) {
         try {
@@ -2990,6 +2991,7 @@ export async function getEvents(teamId, options = {}) {
  */
 export async function addEvent(teamId, eventData) {
     eventData.createdAt = Timestamp.now();
+    eventData.createdBy = eventData.createdBy || auth.currentUser?.uid || null;
     eventData.type = eventData.type || 'game';
     const docRef = await addDoc(collection(db, `teams/${teamId}/games`), eventData);
     return docRef.id;

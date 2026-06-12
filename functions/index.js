@@ -84,6 +84,11 @@ const {
   buildNotificationTargetPayload,
   notificationAudienceAllowsRoles
 } = require('./notification-target-index-core.cjs');
+const {
+  coerceDate,
+  getEventTitle,
+  formatScheduleUpdateDate
+} = require('./schedule-notification-utils.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -3295,39 +3300,8 @@ async function sendDirectTargetsNotification({ targets, category, title, body, t
   };
 }
 
-function coerceDate(value) {
-  if (!value) return null;
-  if (typeof value.toDate === 'function') return value.toDate();
-  if (value instanceof Date) return value;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function getEventTitle(event) {
-  const type = String(event?.type || event?.eventType || '').toLowerCase();
-  if (type === 'practice') {
-    return event?.title || 'Practice';
-  }
-  if (event?.title) return event.title;
-  return event?.opponent ? `vs. ${event.opponent}` : 'Game';
-}
-
-
 function normalizeScheduleStatus(value) {
   return String(value || '').trim().toLowerCase();
-}
-
-function formatScheduleUpdateDate(value, timeZone) {
-  const date = coerceDate(value);
-  if (!date || !timeZone) return '';
-  return date.toLocaleString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone
-  });
 }
 
 function truncateNotificationBody(text, maxLength = 120) {
@@ -4002,6 +3976,36 @@ exports.notifyGameUpdated = functions.firestore
       title: payload.title,
       body: payload.body,
       actorUid
+    });
+  });
+
+exports.notifyGameCreated = functions.firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onCreate(async (snapshot, context) => {
+    const game = snapshot.data() || {};
+    const teamId = context.params.teamId;
+    const gameId = context.params.gameId;
+
+    const status = String(game.status || '').trim().toLowerCase();
+    if (status === 'draft') return null;
+    if (game.source || game.sourceMetadata) return null;
+
+    const isPractice = String(game.type || '').toLowerCase() === 'practice';
+    const category = isPractice ? 'practice' : 'schedule';
+    const eventTitle = getEventTitle(game);
+    const dateValue = coerceDate(game.date);
+    const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
+    const dateLabel = dateValue ? formatScheduleUpdateDate(dateValue, timeZone) : '';
+    const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;
+    const body = dateLabel || (isPractice ? 'Practice scheduled' : 'Game scheduled');
+
+    return sendCategoryNotification({
+      teamId,
+      gameId,
+      category,
+      title,
+      body,
+      actorUid: game.createdBy || null
     });
   });
 
