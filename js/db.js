@@ -2129,6 +2129,26 @@ export async function listTeamRegistrationReviews(teamId, formId, status = 'all'
     })).filter((registration) => matchesRegistrationReviewStatus(registration, status));
 }
 
+export async function listTeamRegistrationReviewsPage(teamId, formId, { status = 'all', pageSize = 25, afterDoc = null } = {}) {
+    if (!teamId || !formId) return { registrations: [], lastDoc: null, hasMore: false };
+    const collectionRef = collection(db, `teams/${teamId}/registrationForms/${formId}/registrations`);
+    const constraints = [];
+    if (status !== 'all') {
+        constraints.push(where('status', '==', status));
+    }
+    constraints.push(orderBy('createdAt', 'desc'));
+    constraints.push(limit(pageSize));
+    if (afterDoc) {
+        constraints.push(startAfter(afterDoc));
+    }
+    const snapshot = await getDocs(query(collectionRef, ...constraints));
+    return {
+        registrations: snapshot.docs.map((d) => ({ id: d.id, ...d.data() })),
+        lastDoc: snapshot.docs[snapshot.docs.length - 1] || null,
+        hasMore: snapshot.docs.length === pageSize
+    };
+}
+
 async function getExistingGuardianUsers(guardians = []) {
     const lookups = guardians
         .map((guardian) => guardian.email)
@@ -7861,4 +7881,3 @@ export async function revokeFamilyShareToken(tokenId) {
     });
 }
 
-// TEST COMMENT

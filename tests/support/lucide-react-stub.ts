@@ -56,4 +56,6 @@ export const MoreVertical = createIcon('MoreVertical');
 export const Paperclip = createIcon('Paperclip');
 export const Search = createIcon('Search');
 export const Smile = createIcon('Smile');
+export const Ticket = createIcon('Ticket');
+export const UserPlus = createIcon('UserPlus');
 export const X = createIcon('X');
