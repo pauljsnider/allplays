@@ -44,6 +44,7 @@ import {
 } from '../../../../js/roster-profile-fields.js';
 import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleEvent } from './scheduleLogic';
 import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
+import { clearAppDataCache } from './appDataCache';
 import type { AuthUser } from './types';
 
 export type ParentPlayerStatRow = {
@@ -110,6 +111,7 @@ export type ParentPlayerDetailData = {
   access: {
     isLinkedParent: boolean;
     isTeamStaff: boolean;
+    canEditRosterDetails: boolean;
     canEditCustomRosterFields: boolean;
   };
   customRosterFields: Array<{
@@ -145,19 +147,25 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
   }
 
   const schedule = await loadParentPlayerSchedule(user, { teamId, playerId });
-  const child = findLinkedChild(schedule.children, teamId, playerId);
-  if (!child) {
+  const requestedTeamId = decodeURIComponent(teamId || '');
+  const requestedPlayerId = decodeURIComponent(playerId || '');
+  const linkedChild = findLinkedChild(schedule.children, teamId, playerId);
+  const initialTeam = await Promise.resolve(getTeam(requestedTeamId, { includeInactive: true })).catch(() => null);
+  const routeAccess = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, initialTeam);
+  if (!linkedChild && !routeAccess.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
 
-  const resolvedTeamId = child.teamId;
-  const resolvedPlayerId = child.playerId;
+  const resolvedTeamId = linkedChild?.teamId || requestedTeamId;
+  const resolvedPlayerId = linkedChild?.playerId || requestedPlayerId;
   const events = schedule.events
     .filter((event) => event.teamId === resolvedTeamId && event.childId === resolvedPlayerId)
     .sort((a, b) => a.date.getTime() - b.date.getTime());
   const nextEvent = events.find((event) => !event.isCancelled && event.date.getTime() >= startOfDay(new Date()).getTime()) || null;
 
-  const team = await Promise.resolve(getTeam(resolvedTeamId, { includeInactive: true })).catch(() => null);
+  const team = requestedTeamId === resolvedTeamId
+    ? initialTeam
+    : await Promise.resolve(getTeam(resolvedTeamId, { includeInactive: true })).catch(() => null);
 
   const [
     players,
@@ -189,6 +197,12 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
 
   const playerDoc = (Array.isArray(players) ? players : []).find((candidate: any) => candidate?.id === resolvedPlayerId) || {};
   const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
+  const child = linkedChild || {
+    teamId: resolvedTeamId,
+    teamName: String(team?.name || '').trim() || String(playerDoc?.teamName || '').trim() || resolvedTeamId,
+    playerId: resolvedPlayerId,
+    playerName: String(playerDoc?.name || '').trim() || 'Player'
+  };
   const customRosterFields = buildVisibleCustomRosterFields({
     definitions: rosterFieldDefinitions,
     player: playerDoc,
@@ -352,6 +366,72 @@ export async function updateParentPlayerEditableProfile({
 
   await updatePlayerProfile(teamId, playerId, payload);
   return payload;
+}
+
+export async function saveStaffPlayerRosterDetails({
+  user,
+  teamId,
+  playerId,
+  currentPlayer,
+  name,
+  number = '',
+  photoFile = null,
+  removePhoto = false
+}: {
+  user: AuthUser | null;
+  teamId: string;
+  playerId: string;
+  currentPlayer: Record<string, any> | null;
+  name: string;
+  number?: string;
+  photoFile?: File | null;
+  removePhoto?: boolean;
+}) {
+  if (!user?.uid) {
+    throw new Error('A signed-in team staff account is required.');
+  }
+
+  const team = await Promise.resolve(getTeam(teamId, { includeInactive: true })).catch(() => null);
+  const access = buildPlayerAccess(user, teamId, playerId, team);
+  if (!access.canEditRosterDetails) {
+    throw new Error('Only team owners and admins can edit roster details.');
+  }
+
+  const nextName = String(name || '').trim();
+  if (!nextName) {
+    throw new Error('Player name is required.');
+  }
+
+  const nextNumber = String(number || '').trim();
+  const currentName = String(currentPlayer?.name || '').trim();
+  const currentNumber = String(currentPlayer?.number || '').trim();
+  const currentPhotoUrl = String(currentPlayer?.photoUrl || '').trim();
+  const payload: Record<string, any> = {};
+
+  if (nextName !== currentName) {
+    payload.name = nextName;
+  }
+  if (nextNumber !== currentNumber) {
+    payload.number = nextNumber;
+  }
+
+  if (photoFile) {
+    validateImageFile(photoFile);
+    payload.photoUrl = await uploadPlayerPhoto(photoFile);
+  } else if (removePhoto && currentPhotoUrl) {
+    payload.photoUrl = null;
+  }
+
+  if (!Object.keys(payload).length) {
+    return { updatedFields: [] };
+  }
+
+  await updatePlayer(teamId, playerId, payload);
+  clearAppDataCache();
+  return {
+    updatedFields: Object.keys(payload),
+    payload
+  };
 }
 
 export async function sendParentCoParentInvite({
@@ -647,10 +727,12 @@ function buildPlayerAccess(user: AuthUser | null, teamId: string, playerId: stri
   const linkedParent = isLinkedParent(user, teamId, playerId);
   const resolvedTeam = team ? { ...team, id: team.id || teamId } : { id: teamId };
   const isTeamStaff = isTeamStaffUser(user, resolvedTeam);
-  const canEditCustomRosterFields = isTeamOwnerOrAdminUser(user, resolvedTeam);
+  const canEditRosterDetails = isTeamOwnerOrAdminUser(user, resolvedTeam);
+  const canEditCustomRosterFields = canEditRosterDetails;
   return {
     isLinkedParent: linkedParent,
     isTeamStaff,
+    canEditRosterDetails,
     canEditCustomRosterFields
   };
 }
@@ -664,7 +746,7 @@ function buildVisibleCustomRosterFields({
   definitions: any[];
   player: Record<string, any>;
   privateProfile: Record<string, any> | null;
-  access: { isLinkedParent: boolean; isTeamStaff: boolean; canEditCustomRosterFields: boolean };
+  access: { isLinkedParent: boolean; isTeamStaff: boolean; canEditRosterDetails: boolean; canEditCustomRosterFields: boolean };
 }) {
   const normalizedFields = normalizeRosterFieldDefinitions(definitions) as CustomRosterFieldDefinition[];
   if (!normalizedFields.length) return [];

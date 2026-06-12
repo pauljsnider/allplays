@@ -35,6 +35,7 @@ import {
   saveParentAthleteProfileDraft,
   saveParentPlayerIncentiveCap,
   saveParentPlayerIncentiveRule,
+  saveStaffPlayerRosterDetails,
   sendParentCoParentInvite,
   toggleParentPlayerIncentiveRule,
   updateParentPlayerEditableProfile,
@@ -472,6 +473,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
 
       {activePanel === 'edit' ? (
         <>
+          <StaffRosterDetailsCard data={data} auth={auth} onChanged={onChanged} />
           <EditablePlayerProfileCard data={data} auth={auth} onChanged={onChanged} />
           {customRosterFields.length ? <CustomRosterFieldsCard data={data} auth={auth} onChanged={onChanged} /> : null}
         </>
@@ -514,6 +516,113 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
         </Link>
       </section>
     </div>
+  );
+}
+
+function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+  if (!data.access.canEditRosterDetails) {
+    return null;
+  }
+
+  const [name, setName] = useState(data.player.name || data.child.playerName || '');
+  const [number, setNumber] = useState(String(data.player.number || ''));
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [removePhoto, setRemovePhoto] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
+  const previewUrl = useMemo(() => {
+    if (photoFile) return URL.createObjectURL(photoFile);
+    if (removePhoto) return '';
+    return String(data.player.photoUrl || '');
+  }, [data.player.photoUrl, photoFile, removePhoto]);
+
+  useEffect(() => {
+    setName(data.player.name || data.child.playerName || '');
+    setNumber(String(data.player.number || ''));
+    setPhotoFile(null);
+    setRemovePhoto(false);
+    setStatus(null);
+  }, [data.child.playerName, data.player.name, data.player.number, data.player.photoUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    setStatus(null);
+    try {
+      await saveStaffPlayerRosterDetails({
+        user: auth.user,
+        teamId: data.child.teamId,
+        playerId: data.child.playerId,
+        currentPlayer: data.player,
+        name,
+        number,
+        photoFile,
+        removePhoto
+      });
+      setPhotoFile(null);
+      setRemovePhoto(false);
+      setStatus({ tone: 'success', message: 'Roster details saved.' });
+      await onChanged();
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save roster details.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
+          {previewUrl ? <img src={previewUrl} alt="" className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Player')}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 text-sm font-black text-gray-950">
+            <Edit3 className="h-4 w-4 text-primary-600" aria-hidden="true" />
+            Roster Details
+          </div>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Team staff can update the player name, jersey number, and roster photo here.</p>
+        </div>
+      </div>
+
+      <form className="mt-4 space-y-3" onSubmit={submit}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <TextField label="Player name" value={name} onChange={setName} placeholder="Player name" />
+          <TextField label="Jersey number" value={number} onChange={setNumber} placeholder="Number" />
+        </div>
+        <label className="block">
+          <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Roster photo</span>
+          <input
+            type="file"
+            accept="image/*"
+            className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700"
+            onChange={(event) => {
+              setPhotoFile(event.currentTarget.files?.[0] || null);
+              if (event.currentTarget.files?.[0]) {
+                setRemovePhoto(false);
+              }
+            }}
+          />
+        </label>
+        <button type="button" className="secondary-button w-full justify-center" onClick={() => {
+          setPhotoFile(null);
+          setRemovePhoto(true);
+        }}>
+          Remove roster photo
+        </button>
+        {status ? <Status tone={status.tone} message={status.message} /> : null}
+        <button type="submit" className="primary-button w-full justify-center" disabled={saving}>
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+          {saving ? 'Saving' : 'Save Roster Details'}
+        </button>
+      </form>
+    </section>
   );
 }
 
