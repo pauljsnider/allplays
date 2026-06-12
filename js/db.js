@@ -2136,7 +2136,7 @@ export async function listTeamRegistrationReviewsPage(teamId, formId, { status =
     if (status !== 'all') {
         constraints.push(where('status', '==', status));
     }
-    constraints.push(orderBy('createdAt', 'desc'));
+    constraints.push(orderBy('submittedAt', 'desc'));
     constraints.push(limit(pageSize));
     if (afterDoc) {
         constraints.push(startAfter(afterDoc));
