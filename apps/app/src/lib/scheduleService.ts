@@ -51,6 +51,7 @@ import { buildPracticePacketCompletionPayload as buildPracticePacketCompletionPa
 import { resolveMyRsvpByChildForGame } from '../../../../js/parent-dashboard-rsvp.js';
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from '../../../../js/availability-preferences.js';
 import { buildGameDayRsvpBreakdown } from '../../../../js/game-day-rsvp-breakdown.js';
+import { getPeriodsForFormation } from '../../../../js/game-day-periods.js';
 import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
 import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
 import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
@@ -2379,13 +2380,101 @@ function createAppLiveEventId() {
   return `app-live-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+export type LiveGameClockSnapshot = {
+  persistedClockMs: number;
+  effectiveClockMs: number;
+  running: boolean;
+  period: string;
+  updatedAt: Date;
+};
+
+function toClockDate(value: unknown, fallback = new Date()) {
+  const normalized = normalizeScheduleDate(value);
+  return normalized || fallback;
+}
+
+function normalizeClockMs(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+export function buildLiveGameClockPeriods(game: Record<string, any> | null | undefined) {
+  const formation = game?.gamePlan || game?.rotationPlan || game || {};
+  const periods = getPeriodsForFormation(formation).map((period: unknown) => compactString(period)).filter(Boolean);
+  const activePeriod = compactString(game?.liveClockPeriod) || compactString(game?.period);
+  if (activePeriod && !periods.includes(activePeriod)) {
+    periods.unshift(activePeriod);
+  }
+  return periods.length ? periods : ['H1', 'H2'];
+}
+
+export function resolveLiveGameClockSnapshot(game: Record<string, any> | null | undefined, now = new Date()): LiveGameClockSnapshot {
+  const persistedClockMs = normalizeClockMs(game?.liveClockMs ?? game?.gameClockMs);
+  const running = game?.liveClockRunning === true;
+  const updatedAt = toClockDate(game?.liveClockUpdatedAt ?? game?.clockUpdatedAt, now);
+  const elapsedSinceUpdateMs = running ? Math.max(0, now.getTime() - updatedAt.getTime()) : 0;
+  const periods = buildLiveGameClockPeriods(game);
+  const requestedPeriod = compactString(game?.liveClockPeriod) || compactString(game?.period) || periods[0] || 'H1';
+  const period = periods.includes(requestedPeriod) ? requestedPeriod : periods[0] || requestedPeriod;
+
+  return {
+    persistedClockMs,
+    effectiveClockMs: persistedClockMs + elapsedSinceUpdateMs,
+    running,
+    period,
+    updatedAt
+  };
+}
+
+export async function updateLiveGameClockState(teamId: string, gameId: string, clock: {
+  liveClockMs?: unknown;
+  liveClockRunning?: boolean;
+  liveClockPeriod?: string | null;
+  currentGame?: Record<string, any> | null;
+}, user: AuthUser) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before updating the live clock.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before updating the live clock.');
+  }
+
+  const now = new Date();
+  const periods = buildLiveGameClockPeriods({ ...(clock.currentGame || {}), liveClockPeriod: clock.liveClockPeriod });
+  const requestedPeriod = compactString(clock.liveClockPeriod) || compactString(clock.currentGame?.liveClockPeriod) || compactString(clock.currentGame?.period) || periods[0] || 'H1';
+  const period = periods.includes(requestedPeriod) ? requestedPeriod : periods[0] || requestedPeriod;
+  const payload: Record<string, unknown> = {
+    liveClockMs: normalizeClockMs(clock.liveClockMs),
+    liveClockRunning: clock.liveClockRunning === true,
+    liveClockPeriod: period,
+    liveClockUpdatedAt: now,
+    liveClockUpdatedBy: user.uid,
+    period,
+    liveStatus: 'live',
+    liveHasData: true
+  };
+  if (!clock.currentGame?.liveStartedAt) {
+    payload.liveStartedAt = now;
+  }
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, payload)), 'Live clock update');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn('[schedule-service] Falling back to REST live clock update:', sanitizeErrorForLogging(error));
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
+  }
+
+  return payload;
+}
+
 function getLiveEventPeriod(game: Record<string, any> | null | undefined) {
-  return compactString(game?.liveClockPeriod) || compactString(game?.period) || null;
+  if (!compactString(game?.liveClockPeriod) && !compactString(game?.period)) return null;
+  return resolveLiveGameClockSnapshot(game).period || compactString(game?.liveClockPeriod) || compactString(game?.period) || null;
 }
 
 function getLiveEventClockMs(game: Record<string, any> | null | undefined) {
-  const value = Number(game?.liveClockMs ?? game?.gameClockMs ?? 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+  return resolveLiveGameClockSnapshot(game).effectiveClockMs;
 }
 
 function isFinalLiveTrackingStatus(value: unknown) {
