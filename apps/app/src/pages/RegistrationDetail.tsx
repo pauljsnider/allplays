@@ -299,6 +299,22 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     }
   };
 
+  const handleLoadMore = async () => {
+    if (!lastDoc || !hasMore || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const nextPage = await (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId, { afterDoc: lastDoc }) as { reviews: any[]; lastDoc: any; hasMore: boolean };
+      setQueue((current: TeamRegistrationQueueModel | null) => current ? { ...current, reviews: [...current.reviews, ...nextPage.reviews] } : { reviews: nextPage.reviews, rosterPlayers: [] });
+      setLastDoc(nextPage.lastDoc);
+      setHasMore(nextPage.hasMore);
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load more registrations.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <LoadingBlock label="Loading registration" />;
   if (!form) return <EmptyState icon={Ticket} title="Registration unavailable" detail={error || 'This registration form could not be loaded.'} actionLabel={error ? 'Retry' : ''} onAction={error ? () => setReloadKey((current) => current + 1) : undefined} />;
 
@@ -354,6 +370,12 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
                   <div className="mt-2 text-xs font-semibold text-gray-500">{review.selectedOptionLabel || 'No option selected'} · {review.paymentLabel}</div>
                 </button>
               )) : <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No applications are available for this form yet.</div>}
+              {hasMore ? (
+                <button type="button" className="secondary-button w-full text-xs" onClick={handleLoadMore} disabled={saving}>
+                  {saving ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : null}
+                  Load more
+                </button>
+              ) : null}
             </div>
           </div>
 
