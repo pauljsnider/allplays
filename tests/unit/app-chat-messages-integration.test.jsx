@@ -678,6 +678,135 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Bring both jerseys.');
     });
 
+    it('does not reload the desktop thread when typing in the search box', async () => {
+        layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Parent',
+                    canModerate: false,
+                    unreadCount: 0,
+                    lastMessage: chatMessage({ id: 'last-2', senderName: 'Morgan', text: 'Tournament schedule changed.' })
+                }
+            ]
+        });
+
+        const { container } = await renderMessages('/messages');
+
+        // Initial load should select team-1 (first team).
+        expect(chatMocks.loadChatTeamContext).toHaveBeenCalledWith('team-1', auth.user);
+        expect(container.textContent).toContain('Bring both jerseys.');
+        const callCountAfterLoad = chatMocks.loadChatTeamContext.mock.calls.length;
+
+        // Type in the search box so that only Thunder matches — team-1 is filtered out.
+        const search = container.querySelector('input[placeholder="Search team chats"]');
+        await setFieldValue(search, 'soccer');
+
+        // The inbox list should now show only Thunder (Bears filtered out of the inbox pane).
+        const listPane = container.querySelector('.messages-list-pane');
+        expect(listPane.textContent).toContain('Thunder');
+        expect(listPane.textContent).not.toContain('Bears');
+
+        // The chat window must NOT have reloaded — loadChatTeamContext call count is unchanged.
+        expect(chatMocks.loadChatTeamContext.mock.calls.length).toBe(callCountAfterLoad);
+
+        // The original Bears thread must still be visible in the chat pane.
+        expect(container.querySelector('.messages-chat-pane').textContent).toContain('Bring both jerseys.');
+    });
+
+    it('resets the desktop selection when refresh removes the active inbox team', async () => {
+        layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox
+            .mockResolvedValueOnce({
+                teams: [
+                    {
+                        id: 'team-1',
+                        name: 'Bears',
+                        sport: 'Basketball',
+                        role: 'Admin',
+                        canModerate: true,
+                        unreadCount: 2,
+                        lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                    },
+                    {
+                        id: 'team-2',
+                        name: 'Thunder',
+                        sport: 'Soccer',
+                        role: 'Admin',
+                        canModerate: true,
+                        unreadCount: 0,
+                        lastMessage: chatMessage({ id: 'last-2', senderName: 'Coach Taylor', text: 'Travel roster posted.' })
+                    }
+                ]
+            })
+            .mockResolvedValueOnce({
+                teams: [
+                    {
+                        id: 'team-2',
+                        name: 'Thunder',
+                        sport: 'Soccer',
+                        role: 'Admin',
+                        canModerate: true,
+                        unreadCount: 0,
+                        lastMessage: chatMessage({ id: 'last-3', senderName: 'Coach Taylor', text: 'Travel roster posted.' })
+                    }
+                ]
+            });
+        chatMocks.loadChatTeamContext.mockImplementation(async (requestedTeamId) => ({
+            team: {
+                id: requestedTeamId,
+                name: requestedTeamId === 'team-1' ? 'Bears' : 'Thunder',
+                sport: requestedTeamId === 'team-1' ? 'Basketball' : 'Soccer'
+            },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: true
+        }));
+        chatMocks.loadChatConversations.mockImplementation(async (requestedTeamId) => ([
+            {
+                id: 'team',
+                type: 'team',
+                name: requestedTeamId === 'team-1' ? 'Bears Team Chat' : 'Thunder Team Chat',
+                participantIds: [],
+                participantRoles: ['team']
+            }
+        ]));
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((requestedTeamId, _conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: `msg-${requestedTeamId}`,
+                    senderId: requestedTeamId === 'team-1' ? 'coach-1' : 'coach-2',
+                    senderName: requestedTeamId === 'team-1' ? 'Coach Jamie' : 'Coach Taylor',
+                    text: requestedTeamId === 'team-1' ? 'Bring both jerseys.' : 'Travel roster posted.'
+                })
+            ], { id: `cursor-${requestedTeamId}` });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages');
+
+        expect(chatMocks.loadChatTeamContext).toHaveBeenCalledWith('team-1', auth.user);
+        expect(container.querySelector('.messages-chat-pane').textContent).toContain('Bring both jerseys.');
+
+        await click(container, 'Refresh messages');
+
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledTimes(2);
+        expect(chatMocks.loadChatTeamContext).toHaveBeenLastCalledWith('team-2', auth.user);
+        expect(container.querySelector('.messages-chat-pane').textContent).toContain('Travel roster posted.');
+        expect(container.querySelector('.messages-chat-pane').textContent).toContain('Thunder Team Chat');
+    });
+
     it('shows inbox and thread error states clearly', async () => {
         chatMocks.loadChatInbox.mockRejectedValueOnce(new Error('Inbox down'));
         const inbox = await renderMessages('/messages');
