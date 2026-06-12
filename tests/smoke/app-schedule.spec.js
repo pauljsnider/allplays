@@ -311,6 +311,53 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
+                export async function recordPlayerGameStat(teamId, gameId, playerId, stat) {
+                    const player = (await loadHomeScoringPlayers()).find((candidate) => candidate.id === playerId);
+                    const foulValue = Math.max(0, Number(stat?.value || 0) || 0);
+                    const liveEventId = 'live-' + playerId + '-foul-' + Date.now();
+                    const trackerEventId = 'tracker-' + playerId + '-foul-' + Date.now();
+                    window.__scheduleCalls.playerGameStats = (window.__scheduleCalls.playerGameStats || []).concat({
+                        action: 'record',
+                        teamId,
+                        gameId,
+                        playerId,
+                        stat,
+                        liveEventId,
+                        trackerEventId
+                    });
+                    return {
+                        trackerEventId,
+                        liveEventId,
+                        playerId,
+                        playerName: player?.name || '',
+                        playerNumber: player?.number || '',
+                        statKey: String(stat?.statKey || ''),
+                        value: foulValue,
+                        playerStatTotal: Math.max(0, Number(player?.fouls || 0) + foulValue),
+                        liveEvent: {
+                            eventId: liveEventId,
+                            type: 'stat',
+                            statKey: String(stat?.statKey || ''),
+                            value: foulValue,
+                            period: 'H1',
+                            isOpponent: false
+                        }
+                    };
+                }
+
+                export async function undoRecordedPlayerGameStat(teamId, gameId, stat) {
+                    const player = (await loadHomeScoringPlayers()).find((candidate) => candidate.id === stat?.playerId);
+                    window.__scheduleCalls.playerGameStats = (window.__scheduleCalls.playerGameStats || []).concat({
+                        action: 'undo',
+                        teamId,
+                        gameId,
+                        stat
+                    });
+                    return {
+                        playerStatTotal: Math.max(0, Number(player?.fouls || 0) - Math.max(0, Number(stat?.value || 0) || 0))
+                    };
+                }
+
                 export async function loadParentSchedule() {
                     if (${JSON.stringify(scheduleLoadError)}) {
                         throw new Error(${JSON.stringify(scheduleLoadError)});

@@ -426,7 +426,7 @@ describe('React app auth/profile capability parity', () => {
         const scheduleEventDetail = readProjectFile('apps/app/src/pages/ScheduleEventDetail.tsx');
 
         expectContains(capabilities, [
-            "capability('track-basketball', 'Basketball sideline tracker', 'track-basketball.html', 'Tracking', 'Starting five setup, published-lineup substitutions, on-court rotation, playing-time visibility, and shared live log handoff in the app game hub.', ['Starting five', 'Published lineup handoff', 'Substitutions', 'On-court rotation', 'Playing-time visibility', 'Shared live log'], '/schedule', 'native-shell', staffRoles)",
+            "capability('track-basketball', 'Basketball sideline tracker', 'track-basketball.html', 'Tracking', 'Starting five setup, published-lineup substitutions, on-court rotation, personal fouls, team foul bonus indicators, playing-time visibility, and shared live log handoff in the app game hub.', ['Starting five', 'Published lineup handoff', 'Substitutions', 'Personal fouls', 'Team foul bonus', 'On-court rotation', 'Playing-time visibility', 'Shared live log'], '/schedule', 'native-shell', staffRoles)",
             "'track-basketball'"
         ]);
         expectContains(capabilityPage, [

@@ -29,7 +29,9 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   summarizeParentScheduleRideOffers: vi.fn(() => ({ offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false })),
   loadHomeScoringPlayers: vi.fn(),
   publishLiveScoreUpdateEvent: vi.fn(),
+  recordPlayerGameStat: vi.fn(),
   recordPlayerScoringStat: vi.fn(),
+  undoRecordedPlayerGameStat: vi.fn(),
   saveScheduledGameLineupDraftForApp: vi.fn(),
   saveStaffPracticeAttendance: vi.fn(),
   completeGameWrapupForApp: vi.fn(),
@@ -195,11 +197,11 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
-function renderScheduleEventDetail() {
+function renderScheduleEventDetail(authOverride: AuthState = auth) {
   return render(
     <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1']}>
       <Routes>
-        <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={authOverride} />} />
         <Route path="/schedule" element={<div>Schedule</div>} />
       </Routes>
     </MemoryRouter>
@@ -268,6 +270,65 @@ describe('ScheduleEventDetail lineup draft guards', () => {
       { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1' } },
       { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' } }
     )).toBe(false);
+  });
+});
+
+describe('ScheduleEventDetail rideshare permissions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamAdmin: true,
+        rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([
+      {
+        id: 'offer-away',
+        sourceGameId: 'game-1',
+        driverUserId: 'driver-2',
+        driverName: 'Dana Driver',
+        seatCapacity: 3,
+        seatCountConfirmed: 1,
+        direction: 'to',
+        note: 'Leaving from the school lot',
+        status: 'open',
+        requests: [
+          { id: 'request-1', parentUserId: 'user-2', childId: 'player-2', childName: 'Sam', status: 'pending' }
+        ]
+      }
+    ]);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('lets team admins manage non-owned rideshare requests from the rideshare tab', async () => {
+    renderScheduleEventDetail({
+      ...auth,
+      user: {
+        ...(auth.user as any),
+        uid: 'admin-1',
+        email: 'admin@example.com',
+        displayName: 'Alex Admin'
+      } as any,
+      roles: ['admin'],
+      isCoach: false,
+      isAdmin: false
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Rideshare' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Rideshare' })[0]);
+
+    expect(await screen.findByRole('button', { name: 'Close' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Waitlist' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeTruthy();
   });
 });
 
@@ -417,6 +478,104 @@ describe('ScheduleEventDetail assignments', () => {
     });
 
     expect(screen.getAllByText(/LIVE · Q2/i).length).toBeGreaterThan(0);
+  });
+
+  it('tracks player fouls, shows bonus state, and resets team fouls by period', async () => {
+    scheduleServiceMocks.updateLiveGameClockState.mockResolvedValueOnce({
+      liveClockMs: 0,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      period: 'Q2',
+      liveClockUpdatedAt: new Date('2026-06-12T04:00:05.000Z'),
+      liveStatus: 'live'
+    });
+    scheduleServiceMocks.recordPlayerGameStat.mockResolvedValue({
+      homeScore: 10,
+      awayScore: 8,
+      playerId: 'p1',
+      playerName: 'Avery Smith',
+      playerNumber: '12',
+      statKey: 'fouls',
+      value: 1,
+      playerStatTotal: 4,
+      trackerEventId: 'tracker-foul-1',
+      liveEventId: 'live-foul-1',
+      liveEvent: { eventId: 'live-foul-1', type: 'stat', statKey: 'fouls', value: 1, period: 'Q1', isOpponent: false }
+    });
+    scheduleServiceMocks.undoRecordedPlayerGameStat.mockResolvedValue({
+      homeScore: 10,
+      awayScore: 8,
+      playerId: 'p1',
+      statKey: 'fouls',
+      playerStatTotal: 3,
+      trackerEventId: 'tracker-foul-undo-1',
+      liveEventId: 'live-foul-undo-1',
+      liveEvent: {
+        eventId: 'live-foul-undo-1',
+        type: 'stat',
+        statKey: 'fouls',
+        value: -1,
+        period: 'Q1',
+        isOpponent: false,
+        description: 'Undo #12 Avery Smith FOULS +1'
+      }
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        canUpdateScore: true,
+        homeScore: 10,
+        awayScore: 8,
+        liveClockMs: 0,
+        liveClockRunning: true,
+        liveClockPeriod: 'Q1',
+        gamePlan: { numPeriods: 4 }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', number: '12', points: 10, fouls: 3 },
+      { id: 'p2', name: 'Blake Jones', number: '7', points: 6, fouls: 1 }
+    ]);
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([
+      { id: 'f1', eventId: 'f1', type: 'stat', statKey: 'fouls', value: 6, period: 'Q1', isOpponent: false },
+      { id: 'f2', eventId: 'f2', type: 'stat', statKey: 'fouls', value: 1, period: 'Q2', isOpponent: false }
+    ]);
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('game-day-foul-panel')).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · No bonus');
+      expect(screen.getByText('6 team fouls this period')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '#12 Avery Smith add foul' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.recordPlayerGameStat).toHaveBeenCalledWith('team-1', 'game-1', 'p1', expect.objectContaining({ statKey: 'fouls', value: 1 }), auth.user);
+    });
+    expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · Bonus');
+    expect(screen.getByText('7 team fouls this period')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo last foul' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.undoRecordedPlayerGameStat).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ trackerEventId: 'tracker-foul-1', liveEventId: 'live-foul-1', statKey: 'fouls' }), auth.user);
+    });
+    expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q1 · No bonus');
+    expect(screen.getByText('Undo #12 Avery Smith FOULS +1')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Advance period' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Team foul bonus state').textContent).toContain('Q2 · No bonus');
+    });
+    expect(screen.getByText('1 team fouls this period')).toBeTruthy();
   });
 
   it('renders in-route live chat, streams messages, and keeps watch live links external', async () => {
