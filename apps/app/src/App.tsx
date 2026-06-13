@@ -3,6 +3,15 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRouteSkeleton } from './components/PageSkeletons';
+import {
+  addNativeBackButtonListener,
+  dispatchNativeBackDismissEvent,
+  exitNativeApp,
+  getNativeBackTarget,
+  isNativeExitRoute,
+  nativeBackExitPressWindowMs,
+  type NativeBackButtonEvent
+} from './lib/nativeBackButton';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { shouldReloadTeamsToHome } from './lib/reloadRouting';
 import { addPushNotificationOpenListener } from './lib/pushService';
@@ -44,6 +53,10 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const authUserRef = useRef(auth.user);
+  const locationRef = useRef(location);
+  const lastNativeExitBackPressRef = useRef(0);
+  const nativeExitNoticeTimeoutRef = useRef<number | null>(null);
+  const [nativeExitNoticeVisible, setNativeExitNoticeVisible] = useState(false);
   const shouldDefaultReloadToHome = shouldReloadTeamsToHome({
     hasUser: Boolean(auth.user),
     pathname: location.pathname,
@@ -54,6 +67,72 @@ export default function App() {
   useEffect(() => {
     authUserRef.current = auth.user;
   }, [auth.user]);
+
+  useEffect(() => {
+    locationRef.current = location;
+  }, [location]);
+
+  useEffect(() => {
+    return () => {
+      if (nativeExitNoticeTimeoutRef.current !== null) {
+        window.clearTimeout(nativeExitNoticeTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let removeListener = () => {};
+    let disposed = false;
+
+    async function registerBackButtonListener() {
+      removeListener = await addNativeBackButtonListener((event) => {
+        handleNativeBackButton(event);
+      });
+      if (disposed) removeListener();
+    }
+
+    function handleNativeBackButton(event: NativeBackButtonEvent) {
+      if (dispatchNativeBackDismissEvent()) return;
+
+      const pathname = locationRef.current.pathname;
+      const target = getNativeBackTarget(pathname);
+      if (target) {
+        lastNativeExitBackPressRef.current = 0;
+        setNativeExitNoticeVisible(false);
+        navigate(target);
+        return;
+      }
+
+      if (event.canGoBack && !isNativeExitRoute(pathname)) {
+        lastNativeExitBackPressRef.current = 0;
+        setNativeExitNoticeVisible(false);
+        navigate(-1);
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastNativeExitBackPressRef.current <= nativeBackExitPressWindowMs) {
+        setNativeExitNoticeVisible(false);
+        void exitNativeApp();
+        return;
+      }
+
+      lastNativeExitBackPressRef.current = now;
+      setNativeExitNoticeVisible(true);
+      if (nativeExitNoticeTimeoutRef.current !== null) {
+        window.clearTimeout(nativeExitNoticeTimeoutRef.current);
+      }
+      nativeExitNoticeTimeoutRef.current = window.setTimeout(() => {
+        setNativeExitNoticeVisible(false);
+      }, nativeBackExitPressWindowMs);
+    }
+
+    registerBackButtonListener();
+    return () => {
+      disposed = true;
+      removeListener();
+    };
+  }, [navigate]);
 
   useEffect(() => {
     let removeListener = async () => {};
@@ -127,6 +206,11 @@ export default function App() {
         <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />
         <Route path="*" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
       </Routes>
+      {nativeExitNoticeVisible ? (
+        <div className="fixed inset-x-0 bottom-24 z-[80] flex justify-center px-4" role="status" aria-live="polite">
+          <div className="rounded-full bg-gray-950 px-4 py-2 text-sm font-black text-white shadow-app-lg">Press back again to exit</div>
+        </div>
+      ) : null}
     </Suspense>
   );
 }

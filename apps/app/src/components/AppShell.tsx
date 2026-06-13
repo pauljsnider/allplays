@@ -28,6 +28,7 @@ import {
 import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
 import { openPublicUrl } from '../lib/publicActions';
+import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 import type { AuthState, NavItem } from '../lib/types';
 import { AppSearchDialog } from './AppSearchDialog';
 import { RoleBadge } from './Badges';
@@ -89,6 +90,23 @@ export function AppShell({ auth, children }: AppShellProps) {
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
+
+  useEffect(() => {
+    const onNativeBackDismiss = (event: Event) => {
+      if (searchOpen) {
+        setSearchOpen(false);
+        event.preventDefault();
+        return;
+      }
+      if (addTeamOpen) {
+        setAddTeamOpen(false);
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener(APP_BACK_DISMISS_EVENT, onNativeBackDismiss);
+    return () => window.removeEventListener(APP_BACK_DISMISS_EVENT, onNativeBackDismiss);
+  }, [addTeamOpen, searchOpen]);
 
   const addWorkflows = buildAddWorkflows();
 
