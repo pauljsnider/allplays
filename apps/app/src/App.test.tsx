@@ -73,6 +73,7 @@ vi.mock('./lib/reloadRouting', () => ({
 
 vi.mock('./lib/pushService', () => ({
   addPushNotificationOpenListener: vi.fn(async () => () => {}),
+  ensureAndroidNotificationChannels: vi.fn(async () => {}),
 }));
 
 vi.mock('./pages/Home', () => ({
