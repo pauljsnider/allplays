@@ -626,7 +626,7 @@ describe('edit team admin access persistence', () => {
         expect(html).toContain('Registration Provider Connection');
         expect(html).toContain('No provider login, sync job, or network call runs from these fields.');
         expect(html).toContain('id="team-create-mode-registration"');
-        expect(html).toContain('No stored registration source snapshots are available yet.');
+        expect(html).toContain('No registration sources are configured yet. Start with a blank team or load provider data before using this import path.');
         expect(html).toContain('registrationMode.setAttribute(\'aria-disabled\', String(registrationMode.disabled));');
         expect(html).toContain('configuredRegistrationTeams.length === 0');
 
