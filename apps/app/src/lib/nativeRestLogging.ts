@@ -69,3 +69,11 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
 export function sanitizeErrorForLogging(error: unknown) {
     return sanitizeValue(error, new WeakSet<object>(), 0);
 }
+
+export function sanitizeRequestInitForLogging(init: RequestInit): Partial<RequestInit> {
+    const { headers, ...rest } = init;
+    return {
+        ...rest,
+        headers: '[REDACTED]' as unknown as HeadersInit
+    };
+}

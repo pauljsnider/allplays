@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { sanitizeErrorForLogging } from '../../apps/app/src/lib/nativeRestLogging.ts';
+import { sanitizeErrorForLogging, sanitizeRequestInitForLogging } from '../../apps/app/src/lib/nativeRestLogging.ts';
 
 describe('native REST logging sanitizer', () => {
     it('redacts bearer auth and token fields from nested log payloads', () => {
@@ -37,5 +37,26 @@ describe('native REST logging sanitizer', () => {
                 }
             }
         });
+    });
+
+    it('redacts bearer token appearing in an error message string', () => {
+        const error = new Error('Request failed: Bearer sometoken123 was rejected');
+        const sanitized = sanitizeErrorForLogging(error) as { message: string };
+        expect(sanitized.message).not.toContain('sometoken123');
+        expect(sanitized.message).toContain('Bearer [REDACTED]');
+    });
+
+    it('sanitizeRequestInitForLogging replaces headers with [REDACTED]', () => {
+        const init: RequestInit = {
+            method: 'POST',
+            headers: { Authorization: 'Bearer abc123', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ foo: 'bar' })
+        };
+        const sanitized = sanitizeRequestInitForLogging(init);
+        expect(sanitized.headers).toBe('[REDACTED]');
+        expect(sanitized.method).toBe('POST');
+        expect(sanitized.body).toBe(JSON.stringify({ foo: 'bar' }));
+        expect(JSON.stringify(sanitized)).not.toContain('abc123');
+        expect(JSON.stringify(sanitized)).not.toContain('Authorization');
     });
 });
