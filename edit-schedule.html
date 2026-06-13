@@ -3442,6 +3442,17 @@
                 } else {
                     document.querySelector('input[name="recurrenceEnd"][value="never"]').checked = true;
                 }
+            } else {
+                // Explicitly reset recurring state so stale form state from a previous edit
+                // does not carry over when editing a non-recurring practice.
+                document.getElementById('practiceRecurring').checked = false;
+                document.getElementById('recurrence-builder').classList.add('hidden');
+                document.querySelectorAll('.day-checkbox').forEach(cb => { cb.checked = false; });
+                document.querySelector('input[name="recurrenceEnd"][value="never"]').checked = true;
+                document.getElementById('recurrenceUntil').value = '';
+                document.getElementById('recurrenceCount').value = '10';
+                document.getElementById('recurrenceFreq').value = 'weekly';
+                document.getElementById('recurrenceInterval').value = '1';
             }
 
             document.getElementById('submit-practice-btn').textContent = 'Update Practice';
