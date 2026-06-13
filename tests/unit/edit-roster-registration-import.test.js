@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
     formatRegistrationRosterImportResults,
     getRegistrationRosterPlayers,
+    hasConfiguredRegistrationProviderMetadata,
     isExternallyLinkedRosterTeam,
     planRegistrationRosterImport
 } from '../../js/edit-roster-registration-import.js';
@@ -12,7 +13,10 @@ function readEditRoster() {
 }
 
 describe('registration roster import planning', () => {
-    it('detects linked roster teams and source roster snapshots', () => {
+    it('distinguishes configured provider metadata from stored import snapshots', () => {
+        expect(hasConfiguredRegistrationProviderMetadata({})).toBe(false);
+        expect(hasConfiguredRegistrationProviderMetadata({ registrationSourceId: 'sports-connect' })).toBe(true);
+        expect(hasConfiguredRegistrationProviderMetadata({ registrationSource: { provider: 'Sports Connect', externalTeamId: 'team-123' } })).toBe(true);
         expect(isExternallyLinkedRosterTeam({})).toBe(false);
         expect(isExternallyLinkedRosterTeam({ registrationSourceId: 'sports-connect' })).toBe(false);
         expect(isExternallyLinkedRosterTeam({ registrationSource: { rosterPlayers: [{ id: 'p1' }] } })).toBe(true);
@@ -345,15 +349,19 @@ describe('registration roster import wiring', () => {
         const source = readEditRoster();
 
         expect(source).toContain('id="registration-roster-import"');
-        expect(source).toContain('Import from registration provider');
+        expect(source).toContain('id="registration-roster-import-title"');
+        expect(source).toContain('Import stored registration roster');
         expect(source).toContain('Preview Import');
-        expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';");
+        expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';");
+        expect(source).toContain('hasConfiguredRegistrationProviderMetadata(team)');
+        expect(source).toContain('Registration provider metadata saved');
+        expect(source).toContain('This page does not fetch provider data live.');
+        expect(source).toContain('save or load a registration roster snapshot for this team');
         expect(source).toContain('planRegistrationRosterImport({');
         expect(source).toContain('renderRegistrationRosterImportPreview');
         expect(source).toContain('registration-roster-import-row');
         expect(source).toContain('selectedOperationIds');
         expect(source).toContain('Conflicted rows are skipped automatically');
-        expect(source).toContain('No registration provider data is available yet.');
         expect(source).toContain('fields: rosterFieldDefinitions');
         expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields)');
         expect(source).toContain('function getPlayerImportSourceType');

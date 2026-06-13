@@ -54,8 +54,8 @@
                     <div id="registration-roster-import" class="hidden border-b border-emerald-200 bg-emerald-50 p-4">
                         <div class="flex items-start justify-between gap-3">
                             <div>
-                                <h3 class="font-semibold text-emerald-900">Import from registration provider</h3>
-                                <p class="text-sm text-emerald-800">Preview players and guardian/contact records from the latest registration snapshot before importing.</p>
+                                <h3 id="registration-roster-import-title" class="font-semibold text-emerald-900">Import stored registration roster</h3>
+                                <p id="registration-roster-import-description" class="text-sm text-emerald-800">Preview players and guardian/contact records from the latest stored registration snapshot before importing. This uses saved provider data only and does not fetch Sports Connect live.</p>
                                 <p id="registration-roster-import-status" class="mt-2 text-sm text-emerald-700"></p>
                             </div>
                             <button id="registration-roster-preview-btn" type="button"
@@ -553,7 +553,7 @@
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=22';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js';
-        import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=1';
+        import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';
         import { buildRegistrationReviewCsv, buildRegistrationReviewCsvFilename, getDefaultRegistrationReviewCsvColumnKeys, getRegistrationReviewCsvColumnDefinitions, matchesRegistrationReviewScreeningStatus, summarizeRegistrationReviewScreening } from './js/registration-review.js?v=5';
         import { buildRosterPrintHtml } from './js/roster-print.js?v=2';
         import { getApp } from './js/vendor/firebase-app.js';
@@ -924,11 +924,13 @@
 
         function renderRegistrationRosterImport(team = {}) {
             const container = document.getElementById('registration-roster-import');
+            const title = document.getElementById('registration-roster-import-title');
+            const description = document.getElementById('registration-roster-import-description');
             const status = document.getElementById('registration-roster-import-status');
             const previewButton = document.getElementById('registration-roster-preview-btn');
             const importButton = document.getElementById('registration-roster-import-btn');
             const preview = document.getElementById('registration-roster-import-preview');
-            if (!container || !status || !previewButton || !importButton || !preview) return;
+            if (!container || !title || !description || !status || !previewButton || !importButton || !preview) return;
 
             registrationRosterImportPlan = null;
             container.classList.remove('hidden');
@@ -936,16 +938,30 @@
             preview.innerHTML = '';
 
             const sourcePlayers = getRegistrationRosterPlayers(team);
-            const hasSnapshot = isExternallyLinkedRosterTeam(team);
-            previewButton.disabled = !hasSnapshot || sourcePlayers.length === 0;
+            const hasStoredSnapshot = isExternallyLinkedRosterTeam(team);
+            const hasConfiguredMetadata = hasConfiguredRegistrationProviderMetadata(team);
+            const hasImportableSnapshot = hasStoredSnapshot && sourcePlayers.length > 0;
+
+            title.textContent = hasConfiguredMetadata && !hasImportableSnapshot
+                ? 'Registration provider metadata saved'
+                : 'Import stored registration roster';
+            description.textContent = hasImportableSnapshot
+                ? 'Preview players and guardian/contact records from the latest stored registration snapshot before importing. This uses saved provider data only and does not fetch Sports Connect live.'
+                : (hasConfiguredMetadata
+                    ? 'Sports Connect metadata is saved for this team, but roster import only works after a registration roster snapshot has been stored. This page does not fetch provider data live.'
+                    : 'Roster import works from a stored registration snapshot. Connect a provider and save provider data before importing here.');
+
+            previewButton.classList.toggle('hidden', !hasImportableSnapshot);
+            importButton.classList.toggle('hidden', !hasImportableSnapshot);
+            previewButton.disabled = !hasImportableSnapshot;
             previewButton.classList.toggle('opacity-50', previewButton.disabled);
             importButton.disabled = true;
             importButton.classList.toggle('opacity-50', importButton.disabled);
-            status.textContent = hasSnapshot
-                ? (sourcePlayers.length > 0
-                    ? `${sourcePlayers.length} player${sourcePlayers.length === 1 ? '' : 's'} available in the latest source snapshot. Preview before importing.`
-                    : 'No roster players were found in the latest source snapshot.')
-                : 'No registration provider data is available yet. Connect or load a registration roster snapshot before importing.';
+            status.textContent = hasImportableSnapshot
+                ? `${sourcePlayers.length} player${sourcePlayers.length === 1 ? '' : 's'} available in the latest stored roster snapshot. Preview before importing.`
+                : (hasConfiguredMetadata
+                    ? 'Required next step: save or load a registration roster snapshot for this team, then return here to preview and import the stored data.'
+                    : 'No registration provider data is available yet. Connect a provider and save a registration roster snapshot before importing.');
         }
 
         async function handleRegistrationRosterPreview() {
@@ -955,9 +971,9 @@
 
             const sourcePlayers = getRegistrationRosterPlayers(currentTeam);
             if (sourcePlayers.length === 0) {
-                status.textContent = isExternallyLinkedRosterTeam(currentTeam)
-                    ? 'No roster players were found in the latest source snapshot.'
-                    : 'No registration provider data is available yet. Connect or load a registration roster snapshot before importing.';
+                status.textContent = hasConfiguredRegistrationProviderMetadata(currentTeam)
+                    ? 'No stored registration roster snapshot is available yet. Save or load provider data for this team before previewing import.'
+                    : 'No registration provider data is available yet. Connect a provider and save a registration roster snapshot before previewing import.';
                 return;
             }
 
