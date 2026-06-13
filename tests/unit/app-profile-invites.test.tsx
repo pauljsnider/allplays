@@ -462,6 +462,49 @@ describe('Profile invites', () => {
     expect((saveButton as HTMLButtonElement).disabled).toBe(false);
   });
 
+  it('reuses cached alert preferences when revisiting a previously loaded team', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Blue Team' },
+      { id: 'team-2', name: 'Gold Team' }
+    ]);
+    profileServiceMocks.loadNotificationPreferences
+      .mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false })
+      .mockResolvedValueOnce({ liveChat: false, liveScore: true, schedule: true });
+    profileServiceMocks.saveNotificationPreferences.mockImplementation(async (_userId, _teamId, preferences) => preferences);
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
+    const teamSelect = await screen.findByLabelText('Team') as HTMLSelectElement;
+    const liveChatToggle = await screen.findByLabelText('Live Chat') as HTMLInputElement;
+    const saveButton = screen.getByRole('button', { name: 'Save preferences' });
+    expect(liveChatToggle.checked).toBe(true);
+
+    fireEvent.click(liveChatToggle);
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', {
+      liveChat: false,
+      liveScore: false,
+      schedule: false
+    }));
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false));
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.change(teamSelect, { target: { value: 'team-1' } });
+
+    await waitFor(() => expect((teamSelect as HTMLSelectElement).value).toBe('team-1'));
+    expect(screen.queryByText('Loading alerts for Blue Team…')).toBeNull();
+    expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2);
+    expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(false);
+  });
+
   it('renders fallback toggles and re-enables team actions when preference loading fails', async () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([
       { id: 'team-1', name: 'Blue Team' },

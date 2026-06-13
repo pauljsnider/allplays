@@ -96,6 +96,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
+  const [notificationPreferencesByTeamId, setNotificationPreferencesByTeamId] = useState<Record<string, NotificationPreferences>>({});
   const [accessCodes, setAccessCodes] = useState<AccessCodeRecord[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitePhone, setInvitePhone] = useState('');
@@ -121,7 +122,6 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [notificationTeamsLoaded, setNotificationTeamsLoaded] = useState(false);
   const [accessCodesLoaded, setAccessCodesLoaded] = useState(false);
   const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
-  const [loadedNotificationTeamId, setLoadedNotificationTeamId] = useState('');
   const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string }>({ email: '', phone: '' });
   const ownedPhotoPreviewUrlRef = useRef<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
@@ -146,7 +146,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const alertsLoading = activeProfileSection === 'alerts' && !notificationTeamsLoaded;
   const alertsEmpty = activeProfileSection === 'alerts' && notificationTeamsLoaded && notificationTeams.length === 0;
   const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && Boolean(selectedNotificationTeam);
-  const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && loadedNotificationTeamId === selectedTeamId;
+  const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferencesByTeamId, selectedTeamId);
   const selectedTeamPreferencesLoading = alertsReady && Boolean(selectedTeamId) && !selectedTeamPreferencesHydrated;
   const nativePushEnabled = isNative && pushPermissionStatus?.state === 'enabled';
   const nativePushBlocked = isNative && pushPermissionStatus?.state === 'blocked';
@@ -214,7 +214,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       setPushPermissionStatus(null);
       setPushPermissionLoading(false);
       setNotificationPreferences(emptyPreferences);
-      setLoadedNotificationTeamId('');
+      setNotificationPreferencesByTeamId({});
       setSelectedTeamId('');
       setAccessCodes([]);
       setInviteActionStatus('');
@@ -328,10 +328,11 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
       if (!selectedTeamId) {
         setNotificationPreferences(emptyPreferences);
-        setLoadedNotificationTeamId('');
         return;
       }
-      if (loadedNotificationTeamId === selectedTeamId) {
+      const cachedPreferences = notificationPreferencesByTeamId[selectedTeamId];
+      if (cachedPreferences) {
+        setNotificationPreferences(cachedPreferences);
         return;
       }
 
@@ -339,13 +340,13 @@ export function Profile({ auth }: { auth: AuthState }) {
         const preferences = await loadNotificationPreferences(user.uid, selectedTeamId);
         if (!cancelled) {
           setNotificationPreferences(preferences);
-          setLoadedNotificationTeamId(selectedTeamId);
+          setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: preferences }));
         }
       } catch (error) {
         console.warn('[profile] Unable to load notification preferences:', error);
         if (!cancelled) {
           setNotificationPreferences(emptyPreferences);
-          setLoadedNotificationTeamId(selectedTeamId);
+          setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: emptyPreferences }));
           setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
         }
       }
@@ -355,7 +356,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, loadedNotificationTeamId, selectedTeamId, user]);
+  }, [activeProfileSection, notificationPreferencesByTeamId, selectedTeamId, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -607,6 +608,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     try {
       const saved = await saveNotificationPreferences(user.uid, selectedTeamId, notificationPreferences);
       setNotificationPreferences(saved);
+      setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: saved }));
       setNotificationStatus({ message: 'Notification preferences saved.', tone: 'success' });
     } catch (error: any) {
       setNotificationStatus({ message: error?.message || 'Failed to save notification preferences.', tone: 'error' });
@@ -671,9 +673,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         return;
       }
 
-      const currentPreferences = loadedNotificationTeamId === teamId
-        ? notificationPreferences
-        : await loadNotificationPreferences(user.uid, teamId);
+      const currentPreferences = notificationPreferencesByTeamId[teamId] || notificationPreferences;
       const nextPreferences = normalizeNotificationPreferences({
         ...currentPreferences,
         ...gameDayDefaultPreferences
@@ -683,7 +683,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       await refreshPushPermissionStatus({ silent: true });
       const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
       setNotificationPreferences(saved);
-      setLoadedNotificationTeamId(teamId);
+      setNotificationPreferencesByTeamId((current) => ({ ...current, [teamId]: saved }));
       setNotificationStatus({ message: 'Game-day alerts are on for this team.', tone: 'success' });
     } catch (error: any) {
       await refreshPushPermissionStatus({ silent: true });
