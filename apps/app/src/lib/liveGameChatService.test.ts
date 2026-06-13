@@ -31,7 +31,7 @@ describe('liveGameChatService', () => {
         expect(legacyChatMocks.isViewerChatEnabled).toHaveBeenNthCalledWith(3, { date: '2026-06-03T09:00:00Z', liveStatus: null }, { isReplay: true, now: new Date('2026-06-03T12:00:00Z') });
     });
 
-    it('builds signed-in and anonymous live chat payloads', () => {
+    it('builds signed-in live chat payloads', () => {
         expect(buildLiveGameChatPayload({
             text: ' Let\'s go ',
             user: { uid: 'user-1', displayName: 'Coach Kim', email: 'coach@example.com', roles: [] }
@@ -43,19 +43,9 @@ describe('liveGameChatService', () => {
             isAnonymous: false
         });
 
-        expect(buildLiveGameChatPayload({
-            text: 'Nice play',
-            anonymousDisplayName: 'Grandma Pat'
-        })).toEqual({
-            text: 'Nice play',
-            senderId: null,
-            senderName: 'Grandma Pat',
-            senderPhotoUrl: null,
-            isAnonymous: true
-        });
-
         expect(() => buildLiveGameChatPayload({ text: '   ', anonymousDisplayName: 'Pat' })).toThrow('Enter a message');
-        expect(() => buildLiveGameChatPayload({ text: 'Hi', anonymousDisplayName: '   ' })).toThrow('Add a display name');
+        expect(() => buildLiveGameChatPayload({ text: 'Hi', anonymousDisplayName: 'Pat' })).toThrow('Sign in before chatting.');
+        expect(() => buildLiveGameChatPayload({ text: 'Hi', user: { uid: 'user-1', email: '', displayName: '', roles: [] } })).toThrow('Add a display name');
     });
 
     it('subscribes and posts through the legacy live chat data layer', async () => {
@@ -68,10 +58,10 @@ describe('liveGameChatService', () => {
 
         const payload = await sendLiveGameChatMessage('team-1', 'game-1', {
             text: 'Defense!',
-            anonymousDisplayName: 'Pat'
+            user: { uid: 'user-1', displayName: 'Pat', email: 'pat@example.test', roles: [] }
         });
 
-        expect(payload).toMatchObject({ senderName: 'Pat', isAnonymous: true, text: 'Defense!' });
+        expect(payload).toMatchObject({ senderId: 'user-1', senderName: 'Pat', isAnonymous: false, text: 'Defense!' });
         expect(postLiveChatMessage).toHaveBeenCalledWith('team-1', 'game-1', payload);
     });
 });

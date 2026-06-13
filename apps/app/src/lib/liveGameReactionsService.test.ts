@@ -46,14 +46,6 @@ describe('liveGameReactionsService', () => {
       senderId: 'user-1'
     });
 
-    expect(buildLiveGameReactionPayload({
-      type: 'fire',
-      senderId: 'viewer-123'
-    })).toEqual({
-      type: 'fire',
-      senderId: 'viewer-123'
-    });
-
     expect(liveGameReactionOptions.map((reaction) => reaction.key)).toEqual(['fire', 'clap', 'wow', 'heart', 'hundred']);
     expect(() => buildLiveGameReactionPayload({ type: 'boom' as any, senderId: 'viewer-123' })).toThrow('Choose a supported reaction.');
     expect(() => buildLiveGameReactionPayload({ type: 'heart', senderId: '   ' })).toThrow('Sign in before reacting.');
@@ -69,7 +61,7 @@ describe('liveGameReactionsService', () => {
 
     const payload = await sendLiveGameReaction('team-1', 'game-1', {
       type: 'wow',
-      senderId: 'viewer-123'
+      user: { uid: 'viewer-123', displayName: 'Viewer', email: 'viewer@example.test', roles: [] }
     });
 
     expect(payload).toEqual({ type: 'wow', senderId: 'viewer-123' });

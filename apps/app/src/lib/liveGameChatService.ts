@@ -58,8 +58,11 @@ export function buildLiveGameChatPayload(input: {
     }
 
     const user = input.user || null;
-    const anonymousDisplayName = compactString(input.anonymousDisplayName);
-    const senderName = compactString(user?.displayName) || compactString(user?.email) || anonymousDisplayName;
+    if (!compactString(user?.uid)) {
+        throw new Error('Sign in before chatting.');
+    }
+
+    const senderName = compactString(user?.displayName) || compactString(user?.email);
 
     if (!senderName) {
         throw new Error('Add a display name before sending.');
@@ -70,7 +73,7 @@ export function buildLiveGameChatPayload(input: {
         senderId: user?.uid || null,
         senderName,
         senderPhotoUrl: compactString(user?.photoUrl) || null,
-        isAnonymous: !user
+        isAnonymous: false
     };
 }
 
