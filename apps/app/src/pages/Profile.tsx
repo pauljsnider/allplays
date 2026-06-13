@@ -308,6 +308,22 @@ export function Profile({ auth }: { auth: AuthState }) {
           return teams[0]?.id || '';
         });
         setNotificationTeamsLoaded(true);
+
+        if (teams[0]?.id) {
+          try {
+            const preferences = await loadNotificationPreferences(user.uid, teams[0].id);
+            if (!cancelled) {
+              setNotificationPreferences(preferences);
+              setLoadedNotificationTeamId(teams[0].id);
+            }
+          } catch (error) {
+            console.warn('[profile] Unable to load notification preferences for first team:', error);
+            if (!cancelled) {
+              setNotificationPreferences(emptyPreferences);
+              setLoadedNotificationTeamId(teams[0].id);
+            }
+          }
+        }
       } catch {
         // no-op: handled inline above
       }
