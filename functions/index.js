@@ -17,6 +17,7 @@ const {
   getTeamFeeRefundableCents,
   isTeamFeeCheckoutEligible,
   isEligibleTeamFeePayer,
+  getTeamFeeRecipientTargetUserIds,
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
   canReuseTeamFeeCheckoutSession,
@@ -4262,15 +4263,26 @@ exports.notifyFeeAssigned = functions.firestore
     }
 
     const { teamId } = context.params;
-    const payerUserId = String(data.userId || data.parentUserId || '').trim() || null;
-    if (!payerUserId) return null;
+    const playerId = String(data.playerId || '').trim();
+    const playerRef = playerId ? firestore.doc(`teams/${teamId}/players/${playerId}`) : null;
+    const playerSnap = playerRef ? await playerRef.get() : null;
+    const playerData = playerSnap?.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : {};
+    let privateProfileData = {};
+    if (playerRef) {
+      const privateProfileSnap = await playerRef.collection('private').doc('profile').get();
+      privateProfileData = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
+    }
+
+    const payerUserIds = getTeamFeeRecipientTargetUserIds(data, playerData, privateProfileData);
+    if (!payerUserIds.length) return null;
+
+    const payerTargets = (await getTargetsForCategory(teamId, 'fees', null))
+      .filter((target) => payerUserIds.includes(target.uid));
+    if (!payerTargets.length) return null;
 
     const title = String(data.feeTitle || data.title || 'Team fee').trim();
     const amountCents = Number(data.amountCents || data.feeAmountCents || 0);
     const amountDisplay = amountCents > 0 ? ` ($${(amountCents / 100).toFixed(2)})` : '';
-    const allFeeTargets = await getTargetsForCategory(teamId, 'fees', null);
-    const payerTargets = allFeeTargets.filter((target) => target.uid === payerUserId);
-    if (!payerTargets.length) return null;
 
     await sendDirectTargetsNotification({
       targets: payerTargets,
