@@ -74,7 +74,7 @@
                         <option value="">Select a registration team...</option>
                     </select>
                     <p id="registration-empty-state" class="hidden mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
-                        No stored registration source snapshots are available yet. Start with a blank team or load provider data before using this import path.
+                        No registration sources are configured yet. Start with a blank team or load provider data before using this import path.
                     </p>
                     <p id="registration-import-help" class="mt-2 text-xs text-gray-500">
                         This only imports team identity and source identifiers. Rosters and schedules are not imported in this step.
@@ -886,8 +886,11 @@
             if (registrationMode) {
                 registrationMode.disabled = configuredRegistrationTeams.length === 0;
                 registrationMode.setAttribute('aria-disabled', String(registrationMode.disabled));
-                registrationMode.closest('label')?.classList.toggle('opacity-60', registrationMode.disabled);
-                registrationMode.closest('label')?.classList.toggle('cursor-not-allowed', registrationMode.disabled);
+                const registrationModeLabel = typeof registrationMode.closest === 'function'
+                    ? registrationMode.closest('label')
+                    : null;
+                registrationModeLabel?.classList.toggle('opacity-60', registrationMode.disabled);
+                registrationModeLabel?.classList.toggle('cursor-not-allowed', registrationMode.disabled);
             }
             emptyState.classList.toggle('hidden', configuredRegistrationTeams.length > 0);
         }
