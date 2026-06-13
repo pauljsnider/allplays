@@ -3407,6 +3407,13 @@
             editingSeriesId = practice.seriesId || null;
             switchTab('tab-add-practice');
 
+            const recurrenceEndInputs = Array.from(document.querySelectorAll('input[name="recurrenceEnd"]'));
+            const setRecurrenceEnd = (value) => {
+                recurrenceEndInputs.forEach((input) => {
+                    input.checked = input.value === value;
+                });
+            };
+
             document.getElementById('practiceTitle').value = practice.title || 'Practice';
             document.getElementById('practiceStart').value = formatIsoForInput(practice.date);
 
@@ -3433,14 +3440,14 @@
 
                 // Set end condition
                 if (practice.recurrence.until) {
-                    document.querySelector('input[name="recurrenceEnd"][value="until"]').checked = true;
+                    setRecurrenceEnd('until');
                     const untilDate = practice.recurrence.until?.toDate ? practice.recurrence.until.toDate() : new Date(practice.recurrence.until);
                     document.getElementById('recurrenceUntil').value = untilDate.toISOString().split('T')[0];
                 } else if (practice.recurrence.count) {
-                    document.querySelector('input[name="recurrenceEnd"][value="count"]').checked = true;
+                    setRecurrenceEnd('count');
                     document.getElementById('recurrenceCount').value = practice.recurrence.count;
                 } else {
-                    document.querySelector('input[name="recurrenceEnd"][value="never"]').checked = true;
+                    setRecurrenceEnd('never');
                 }
             } else {
                 // Explicitly reset recurring state so stale form state from a previous edit
@@ -3448,7 +3455,7 @@
                 document.getElementById('practiceRecurring').checked = false;
                 document.getElementById('recurrence-builder').classList.add('hidden');
                 document.querySelectorAll('.day-checkbox').forEach(cb => { cb.checked = false; });
-                document.querySelector('input[name="recurrenceEnd"][value="never"]').checked = true;
+                setRecurrenceEnd('never');
                 document.getElementById('recurrenceUntil').value = '';
                 document.getElementById('recurrenceCount').value = '10';
                 document.getElementById('recurrenceFreq').value = 'weekly';
