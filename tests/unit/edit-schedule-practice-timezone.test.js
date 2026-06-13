@@ -60,6 +60,11 @@ console.log(formatIsoForInput('2026-01-16T00:00:00.000Z'));
 let editingPracticeId = null;
 let editingSeriesId = null;
 const elements = {};
+const recurrenceEndInputs = {
+    never: { checked: false, value: 'never' },
+    until: { checked: false, value: 'until' },
+    count: { checked: false, value: 'count' }
+};
 const document = {
     getElementById(id) {
         if (!elements[id]) {
@@ -73,6 +78,12 @@ const document = {
             };
         }
         return elements[id];
+    },
+    querySelector(selector) {
+        if (selector.includes('[value="never"]')) return recurrenceEndInputs.never;
+        if (selector.includes('[value="until"]')) return recurrenceEndInputs.until;
+        if (selector.includes('[value="count"]')) return recurrenceEndInputs.count;
+        return null;
     },
     querySelectorAll() {
         return [];
