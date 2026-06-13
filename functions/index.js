@@ -3668,6 +3668,94 @@ exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
+function getFeeReminderPlayerKey(recipient = {}, teamId = '') {
+  const explicitPlayerKey = String(recipient.playerKey || '').trim();
+  if (explicitPlayerKey) return explicitPlayerKey;
+  const resolvedTeamId = String(recipient.teamId || teamId || '').trim();
+  const playerId = String(recipient.playerId || recipient.childId || '').trim();
+  if (!resolvedTeamId || !playerId) return '';
+  return `${resolvedTeamId}::${playerId}`;
+}
+
+function buildFeeReminderCandidateUserIds(recipient = {}, playerOwnerIds = []) {
+  return Array.from(new Set([
+    recipient.userId,
+    recipient.accountUserId,
+    recipient.parentUserId,
+    ...playerOwnerIds
+  ].map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+async function resolveFeeReminderCandidateUserIds(teamId, recipient = {}) {
+  const playerKey = getFeeReminderPlayerKey(recipient, teamId);
+  let playerOwnerIds = [];
+  if (playerKey) {
+    const parentSnap = await firestore.collection('users')
+      .where('parentPlayerKeys', 'array-contains', playerKey)
+      .get();
+    playerOwnerIds = parentSnap.docs
+      .map((docSnap) => String(docSnap.id || '').trim())
+      .filter(Boolean);
+  }
+  return buildFeeReminderCandidateUserIds(recipient, playerOwnerIds);
+}
+
+async function sendFeeUnpaidDueReminders() {
+  const now = admin.firestore.Timestamp.now();
+  const threeDaysLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 3 * 24 * 60 * 60 * 1000);
+
+  // Use 'in' filter instead of '!=' to avoid Firestore inequality-on-different-field restriction
+  const snap = await firestore.collectionGroup('feeRecipients')
+    .where('status', 'in', ['unpaid', 'pending'])
+    .where('dueDate', '>=', now)
+    .where('dueDate', '<=', threeDaysLater)
+    .get();
+
+  const promises = snap.docs.map(async (doc) => {
+    const data = doc.data();
+    // Skip if reminder already sent (deduplication guard)
+    if (data.reminderSentAt) return null;
+    const pathParts = doc.ref.path.split('/');
+    // Path structure: teams/{teamId}/.../{feeId}/feeRecipients/{recipientId}
+    const teamId = pathParts[1];
+    if (!teamId) return null;
+    const title = data.feeTitle || data.title || 'Team fee due soon';
+
+    try {
+      const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, data);
+      if (!candidateUserIds.length) return null;
+
+      const allTargets = await getTargetsForCategory(teamId, 'fees', null);
+      const candidateUserIdSet = new Set(candidateUserIds);
+      const payerTargets = allTargets.filter((t) => candidateUserIdSet.has(t.uid));
+      if (!payerTargets.length) return null;
+
+      // Mark reminderSentAt only when targets exist, to prevent duplicate sends if function retries
+      await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      await sendDirectTargetsNotification({
+        targets: payerTargets,
+        category: 'fees',
+        title: `Reminder: ${title} is due soon`,
+        body: 'Your team fee payment is due in 3 days or less.',
+        teamId,
+      });
+      return { teamId, payerUserIds: candidateUserIds, feeTitle: title };
+    } catch (err) {
+      console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
+      return null;
+    }
+  });
+
+  const results = await Promise.allSettled(promises);
+  const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
+  console.log(`sendFeeUnpaidDueReminders: processed ${snap.docs.length} docs, sent ${sent} reminders`);
+}
+
+exports.sendFeeUnpaidDueReminders = functions.pubsub
+  .schedule('every 24 hours')
+  .onRun(() => sendFeeUnpaidDueReminders());
+
 function detectMentionedUids(text, members) {
   if (!text) return [];
   const mentioned = new Set();
