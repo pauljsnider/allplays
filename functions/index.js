@@ -4247,6 +4247,41 @@ exports.notifyFeeMarkedPaid = functions.firestore
     return null;
   });
 
+exports.notifyFeeAssigned = functions.firestore
+  .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data();
+    if (!data) return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('fees')) {
+      functions.logger.error('notifyFeeAssigned requires the fees notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
+
+    const { teamId } = context.params;
+    const payerUserId = String(data.userId || data.parentUserId || '').trim() || null;
+    if (!payerUserId) return null;
+
+    const title = String(data.feeTitle || data.title || 'Team fee').trim();
+    const amountCents = Number(data.amountCents || data.feeAmountCents || 0);
+    const amountDisplay = amountCents > 0 ? ` ($${(amountCents / 100).toFixed(2)})` : '';
+    const allFeeTargets = await getTargetsForCategory(teamId, 'fees', null);
+    const payerTargets = allFeeTargets.filter((target) => target.uid === payerUserId);
+    if (!payerTargets.length) return null;
+
+    await sendDirectTargetsNotification({
+      targets: payerTargets,
+      category: 'fees',
+      title: `New fee assigned: ${title}${amountDisplay}`,
+      body: 'A new team fee has been assigned to your account.',
+      teamId,
+    });
+    return null;
+  });
+
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
 const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
