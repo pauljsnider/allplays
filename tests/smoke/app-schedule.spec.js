@@ -803,7 +803,7 @@ test('app schedule loads agenda filters, player select, calendar, export, and ga
     await expect(page.getByText('For Pat · Bears')).not.toBeVisible();
 
     const detailLink = page.getByRole('link', { name: 'Game details' }).first();
-    await expect(detailLink).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-2$/);
+    await expect(detailLink).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-2&section=assignments$/);
     expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([]);
 
     await page.getByRole('button', { name: 'Calendar', exact: true }).click();
@@ -860,7 +860,7 @@ test('calendar day selection opens a visible event picker for multiple events', 
     await page.getByRole('button', { name: /May 2030 28, 2 events/ }).click();
     const pickerForNavigation = page.getByRole('dialog', { name: /Tuesday, May 28/ });
     await pickerForNavigation.locator('a').filter({ hasText: 'Open practice' }).click();
-    await expect(page).toHaveURL(/#\/schedule\/team-1\/practice-1\?childId=player-1$/);
+    await expect(page).toHaveURL(/#\/schedule\/team-1\/practice-1\?childId=player-1&section=game$/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });
 
