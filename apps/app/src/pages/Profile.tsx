@@ -316,16 +316,15 @@ export function Profile({ auth }: { auth: AuthState }) {
         }
 
         try {
-          const preferences = await loadNotificationPreferences(user.uid, initialTeamId);
+          const firstPrefs = await loadNotificationPreferences(user.uid, initialTeamId);
           if (!cancelled) {
-            setNotificationPreferences(preferences);
+            setNotificationPreferences(firstPrefs);
             setLoadedNotificationTeamId(initialTeamId);
           }
-        } catch (error) {
-          console.warn('[profile] Unable to load notification preferences for first team:', error);
+        } catch {
+          // Don't set loadedNotificationTeamId on error so loadPreferences effect can retry
           if (!cancelled) {
-            setNotificationPreferences(emptyPreferences);
-            setLoadedNotificationTeamId(initialTeamId);
+            setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
           }
         } finally {
           if (!cancelled) {
