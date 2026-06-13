@@ -332,6 +332,40 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
     });
 
+    it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-1',
+                title: 'Team dues',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                statusLabel: 'Open',
+                balanceDueCents: 10000,
+                checkoutUrl: 'https://pay.example.test/legacy',
+                canPay: true,
+                checkoutInitiatable: false,
+                paymentAction: '',
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+
+        renderParentTools(['/parent-tools/fees']);
+
+        await screen.findByText('Team dues');
+        fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
+
+        await waitFor(() => {
+            expect(openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/legacy');
+        });
+        expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+    });
+
     it('regenerates stale team fee checkout links instead of opening the stored URL', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {
