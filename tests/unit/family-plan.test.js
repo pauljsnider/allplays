@@ -10,7 +10,8 @@ import {
     getFamilySlotCounts,
     loadFamilyPlanState,
     normalizeHouseholdInvites,
-    removeFamilyMember
+    removeFamilyMember,
+    revokeHouseholdInvite
 } from '../../js/family-plan.js';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from '../../js/family-share-utils.js';
 
@@ -150,15 +151,19 @@ describe('family plan helpers', () => {
         expect(markup).toContain('alex@example.com');
         expect(markup).toContain('Grandparent');
         expect(markup).toContain('pending');
+        expect(markup).toContain('data-household-invite-revoke="invite-1"');
+        expect(markup).toContain('Revoke access');
     });
 
     it('normalizes household invite records without granting access fields', () => {
-        expect(normalizeHouseholdInvites([{ id: 'invite-1', email: ' NEW@EXAMPLE.COM ', status: 'pending', teamAccessIntent: true }])).toEqual([
+        expect(normalizeHouseholdInvites([{ id: 'invite-1', email: ' NEW@EXAMPLE.COM ', status: 'pending', teamAccessIntent: true, accessCodeId: 'code-1', inviteCode: 'home1234' }])).toEqual([
             expect.objectContaining({
                 id: 'invite-1',
                 email: 'new@example.com',
                 status: 'pending',
-                teamAccessIntent: true
+                teamAccessIntent: true,
+                accessCodeId: 'code-1',
+                inviteCode: 'home1234'
             })
         ]);
     });
@@ -280,6 +285,78 @@ describe('family plan helpers', () => {
         expect(updatedPaths).not.toContain('teams/team-1/players/player-1');
     });
 
+    it('marks a pending household invite revoked and invalidates its access code', async () => {
+        const updateDoc = vi.fn().mockResolvedValue();
+        const docs = new Map([
+            ['users/organizer/householdInvites/invite-1', {
+                email: 'household@example.com',
+                contactName: 'Household Contact',
+                status: 'pending',
+                organizerUserId: 'organizer',
+                accessCodeId: 'code-1'
+            }]
+        ]);
+        const firebase = {
+            db: {},
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            getDoc: vi.fn(async (ref) => ({
+                exists: () => docs.has(ref.path),
+                data: () => docs.get(ref.path) || {}
+            })),
+            updateDoc,
+            serverTimestamp: () => 'server-now'
+        };
+
+        await revokeHouseholdInvite('organizer', 'invite-1', { deps: { firebase } });
+
+        expect(updateDoc).toHaveBeenNthCalledWith(1, { path: 'accessCodes/code-1' }, expect.objectContaining({
+            revoked: true,
+            used: true,
+            revokedAt: 'server-now'
+        }));
+        expect(updateDoc).toHaveBeenNthCalledWith(2, { path: 'users/organizer/householdInvites/invite-1' }, expect.objectContaining({
+            status: 'removed',
+            accessStatus: 'revoked',
+            removedAt: 'server-now',
+            revokedAt: 'server-now'
+        }));
+    });
+
+    it('does not mark a household invite removed when access code revocation fails', async () => {
+        const updateDoc = vi.fn(async (ref) => {
+            if (ref.path === 'accessCodes/code-1') {
+                throw new Error('access code write failed');
+            }
+        });
+        const docs = new Map([
+            ['users/organizer/householdInvites/invite-1', {
+                email: 'household@example.com',
+                contactName: 'Household Contact',
+                status: 'pending',
+                organizerUserId: 'organizer',
+                accessCodeId: 'code-1'
+            }]
+        ]);
+        const firebase = {
+            db: {},
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            getDoc: vi.fn(async (ref) => ({
+                exists: () => docs.has(ref.path),
+                data: () => docs.get(ref.path) || {}
+            })),
+            updateDoc,
+            serverTimestamp: () => 'server-now'
+        };
+
+        await expect(revokeHouseholdInvite('organizer', 'invite-1', { deps: { firebase } })).rejects.toThrow('access code write failed');
+        expect(updateDoc).toHaveBeenCalledTimes(1);
+        expect(updateDoc).toHaveBeenCalledWith({ path: 'accessCodes/code-1' }, expect.objectContaining({
+            revoked: true,
+            used: true,
+            revokedAt: 'server-now'
+        }));
+    });
+
     it('loads family members and account entitlement state together', async () => {
         const firebase = {
             db: {},
@@ -311,7 +388,7 @@ describe('family plan helpers', () => {
         expect(rules).toContain('allow delete: if false;');
     });
 
-    it('grants parents create/read access to pending household invites only for linked players', () => {
+    it('grants parents create/read/revoke access to pending household invites only for linked players', () => {
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
         expect(rules).toContain('match /householdInvites/{inviteId}');
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
@@ -319,7 +396,9 @@ describe('family plan helpers', () => {
         expect(rules).toContain('data.status == \'pending\'');
         expect(rules).toContain('data.playerKey == data.teamId + "::" + data.playerId');
         expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
-        expect(rules).toContain('allow update, delete: if false;');
+        expect(rules).toContain('allow update: if isHouseholdInviteRevocation');
+        expect(rules).toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt', 'revokedAt'])");
+        expect(rules).toContain('allow delete: if false;');
     });
 
     it('keeps family share link listing on an owner-only query without composite index requirements', () => {

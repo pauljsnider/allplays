@@ -305,6 +305,15 @@ service cloud.firestore {
              isParentForPlayer(data.teamId, data.playerId);
     }
 
+    function isHouseholdInviteRevocation(data, userId) {
+      return isOwner(userId) &&
+             resource.data.status == 'pending' &&
+             data.organizerUserId == userId &&
+             data.status == 'removed' &&
+             data.accessStatus == 'revoked' &&
+             data.diff(resource.data).affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt', 'revokedAt']);
+    }
+
     function isFamilyMembershipAcceptance(data) {
       return isSignedIn() &&
              resource.data.status == 'pending' &&
@@ -1298,7 +1307,8 @@ service cloud.firestore {
       match /householdInvites/{inviteId} {
         allow read: if isOwner(userId) || isGlobalAdmin();
         allow create: if isOwner(userId) && isHouseholdInvitePayloadValid(request.resource.data, userId);
-        allow update, delete: if false;
+        allow update: if isHouseholdInviteRevocation(request.resource.data, userId);
+        allow delete: if false;
       }
 
       match /accountMergeRequests/{requestId} {

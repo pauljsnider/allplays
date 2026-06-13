@@ -205,6 +205,10 @@ export function normalizeHouseholdInvites(records = []) {
             teamAccessIntent: record.teamAccessIntent === true,
             invitedAt: record.invitedAt || record.createdAt || null,
             updatedAt: record.updatedAt || null,
+            removedAt: record.removedAt || null,
+            accessStatus: normalizeString(record.accessStatus),
+            accessCodeId: normalizeString(record.accessCodeId || record.inviteCodeId),
+            inviteCode: normalizeString(record.inviteCode || record.code || record.accessCode),
         }))
         .sort((a, b) => (a.playerName || '').localeCompare(b.playerName || '') || (a.contactName || a.email).localeCompare(b.contactName || b.email));
 }
@@ -231,7 +235,10 @@ export function buildHouseholdInviteMarkup({ invites = [], linkedPlayers = [], v
                         <div class="text-xs text-gray-500 mt-0.5">${escapeHtml(invite.email)}</div>
                         <div class="text-xs text-gray-600 mt-1">${escapeHtml(invite.relation || 'Relation not specified')} for ${escapeHtml(invite.playerName || 'selected player')}${invite.teamName ? ` · ${escapeHtml(invite.teamName)}` : ''}</div>
                     </div>
-                    <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusClasses(invite.status)}">${escapeHtml(invite.status)}</span>
+                    <div class="flex flex-none flex-col items-end gap-2">
+                        <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusClasses(invite.status)}">${escapeHtml(invite.status)}</span>
+                        <button type="button" class="rounded-lg border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-wait disabled:opacity-60" data-household-invite-revoke="${escapeHtml(invite.id)}" aria-label="Revoke household access for ${escapeHtml(invite.contactName || invite.email || 'household contact')}">Revoke access</button>
+                    </div>
                 </div>
                 ${invite.teamAccessIntent ? '<div class="text-xs text-primary-700 mt-2">Team access requested when invite acceptance is supported.</div>' : ''}
             </div>
@@ -433,6 +440,29 @@ export async function removeFamilyMember(userId, memberId, { deps = {} } = {}) {
     });
 }
 
+export async function revokeHouseholdInvite(userId, inviteId, { deps = {} } = {}) {
+    if (!userId || !inviteId) throw new Error('Missing household invite to revoke.');
+    const firebase = await loadFirebase(deps);
+    const { db, doc, getDoc, updateDoc, serverTimestamp } = firebase;
+    const timestamp = typeof serverTimestamp === 'function' ? serverTimestamp() : new Date().toISOString();
+    const inviteRef = doc(db, 'users', userId, 'householdInvites', inviteId);
+    const inviteSnap = getDoc ? await getDoc(inviteRef) : null;
+    const invite = normalizeHouseholdInvites([{ id: inviteId, ...dataFromSnapshot(inviteSnap) }])[0] || { id: inviteId };
+
+    try {
+        await revokeAccessCode(firebase, invite, timestamp);
+    } catch (error) {
+        throw new Error(error?.message || 'Unable to revoke the household invite access code.');
+    }
+    await updateDoc(inviteRef, {
+        status: 'removed',
+        accessStatus: 'revoked',
+        updatedAt: timestamp,
+        removedAt: timestamp,
+        revokedAt: timestamp,
+    });
+}
+
 export async function loadFamilyPlanState(user, { deps = {}, entitlementReader = readAccountPremiumEntitlement } = {}) {
     const [members, invites, entitlement] = await Promise.all([
         readFamilyMembers(user?.uid, { deps }),
@@ -508,6 +538,24 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
 
         const householdButton = container.querySelector('#household-invite-add-btn');
         const householdValidationEl = container.querySelector('#household-invite-validation');
+        container.querySelectorAll('[data-household-invite-revoke]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const inviteId = button.getAttribute('data-household-invite-revoke');
+                button.textContent = 'Revoking...';
+                button.disabled = true;
+                try {
+                    await revokeHouseholdInvite(user.uid, inviteId, { deps });
+                    await renderFamilyPlanSection(container, user, options);
+                } catch (error) {
+                    if (householdValidationEl) {
+                        householdValidationEl.textContent = error.message || 'Unable to revoke household invite.';
+                        householdValidationEl.className = 'text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 border border-red-200';
+                    }
+                    button.textContent = 'Revoke access';
+                    button.disabled = false;
+                }
+            });
+        });
         householdButton?.addEventListener('click', async () => {
             const originalText = householdButton.textContent;
             householdButton.disabled = true;
