@@ -2405,7 +2405,7 @@
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'all-upcoming') {
-                filtered = events.filter((event) => event.date >= cutoff && !event.isCancelled);
+                filtered = events.filter((event) => event.date >= cutoff && !event.isCancelled && event.status !== 'completed');
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'availability') {
