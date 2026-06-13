@@ -3264,7 +3264,7 @@ async function sendCategoryNotification({
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
 
-  const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions']);
+  const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
   if (!ALWAYS_SEND_CATEGORIES.has(category)) {
     const canSend = await checkAndSetNotificationDedup(teamId, category, gameId);
     if (!canSend) {

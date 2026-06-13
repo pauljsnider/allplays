@@ -1,154 +1,272 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
+const require = createRequire(import.meta.url);
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
-// Extract checkAndSetNotificationDedup as a standalone testable function.
-// We isolate just the helper and provide a mock Firestore and admin.
-function buildDedupHelper({ nowMs, existingSentAtMs = null } = {}) {
-    const mockDocRef = {};
+function getSourceSlice(startMarker, endMarker) {
+    const start = functionsSource.indexOf(startMarker);
+    const end = functionsSource.indexOf(endMarker, start);
+    if (start === -1 || end === -1) {
+        throw new Error(`Unable to extract source between ${startMarker} and ${endMarker}`);
+    }
+    return functionsSource.slice(start, end);
+}
+
+function buildFirestoreTimestamp(ms) {
+    return {
+        toMillis: () => ms
+    };
+}
+
+function buildDedupDocPath(teamId, category, gameId = null) {
+    const crypto = require('node:crypto');
+    const key = [teamId, category, gameId || ''].join('::');
+    const hash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+    return `teams/${teamId}/notificationSendLog/${hash}`;
+}
+
+function createDedupHarness({ nowMs, docs = {} } = {}) {
+    const store = new Map(
+        Object.entries(docs).map(([path, data]) => [path, { ...data }])
+    );
     const mockFirestore = {
-        doc: vi.fn(() => mockDocRef),
+        doc: vi.fn((path) => ({ path })),
         runTransaction: vi.fn(async (fn) => {
-            const snap = {
-                exists: existingSentAtMs !== null,
-                data: () => existingSentAtMs !== null
-                    ? { sentAt: { toMillis: () => existingSentAtMs } }
-                    : undefined
-            };
             const txn = {
-                get: vi.fn(async () => snap),
-                set: vi.fn()
+                get: vi.fn(async (docRef) => {
+                    const data = store.get(docRef.path);
+                    return {
+                        exists: Boolean(data),
+                        data: () => data
+                    };
+                }),
+                set: vi.fn((docRef, data) => {
+                    store.set(docRef.path, {
+                        ...data,
+                        sentAt: data.sentAt === 'SERVER_TIMESTAMP'
+                            ? buildFirestoreTimestamp(nowMs)
+                            : data.sentAt
+                    });
+                })
             };
             return fn(txn);
         })
     };
     const mockAdmin = {
         firestore: {
-            FieldValue: { serverTimestamp: vi.fn(() => 'SERVER_TIMESTAMP') }
+            FieldValue: {
+                serverTimestamp: vi.fn(() => 'SERVER_TIMESTAMP')
+            }
         }
     };
 
-    // Extract the constant and function body from the source
-    const windowStart = functionsSource.indexOf('const NOTIFICATION_DEDUP_WINDOW_MS');
-    const fnStart = functionsSource.indexOf('async function checkAndSetNotificationDedup');
-    const fnEnd = functionsSource.indexOf('\nasync function sendCategoryNotification');
-    const helperSource = functionsSource.slice(windowStart, fnEnd);
-
-    // Inject fixed Date.now when provided
-    const dateNow = nowMs !== undefined ? `const _origDateNow = Date.now; Date.now = () => ${nowMs};` : '';
-
-    // eslint-disable-next-line no-new-func
-    const factory = new Function(
-        'firestore', 'admin', 'crypto',
-        `${dateNow}
-         ${helperSource}
-         return checkAndSetNotificationDedup;`
+    const helperSource = getSourceSlice(
+        'const NOTIFICATION_DEDUP_WINDOW_MS',
+        '\nasync function sendCategoryNotification'
     );
 
-    const cryptoModule = require('node:crypto');
-    return { fn: factory(mockFirestore, mockAdmin, cryptoModule), mockFirestore, mockAdmin };
+    const factory = new Function(
+        'firestore', 'admin', 'crypto',
+        `${helperSource}\nreturn checkAndSetNotificationDedup;`
+    );
+
+    const rawFn = factory(mockFirestore, mockAdmin, require('node:crypto'));
+    const fn = async (...args) => {
+        const originalDateNow = Date.now;
+        Date.now = () => nowMs;
+        try {
+            return await rawFn(...args);
+        } finally {
+            Date.now = originalDateNow;
+        }
+    };
+    return { fn, mockFirestore, mockAdmin, store };
 }
 
-// Require is not available in ESM by default; use createRequire.
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
+function buildSendCategoryNotificationHarness({
+    canSend = true,
+    targets = [{ uid: 'user-1', token: 'token-1' }]
+} = {}) {
+    const sendSource = getSourceSlice(
+        'async function sendCategoryNotification({',
+        '\nasync function sendDirectTargetsNotification'
+    );
+    const sendEachForMulticast = vi.fn(async () => ({
+        responses: [{ success: true }],
+        successCount: targets.length,
+        failureCount: 0
+    }));
+    const admin = {
+        messaging: () => ({
+            sendEachForMulticast
+        })
+    };
+    const checkAndSetNotificationDedup = vi.fn(async () => canSend);
+    const getTargetsForCategory = vi.fn(async () => targets);
+    const buildNotificationLink = vi.fn(({ category, teamId, gameId }) => `https://allplays.ai/${category}/${teamId}/${gameId || ''}`);
+    const buildNotificationAppRoute = vi.fn(({ category, teamId, gameId, eventId }) => `/${category}/${teamId}/${gameId || eventId || ''}`);
+    const pruneInvalidTokens = vi.fn(async () => {});
+    const functions = {
+        logger: {
+            info: vi.fn()
+        }
+    };
+
+    const factory = new Function(
+        'NOTIFICATION_CATEGORIES',
+        'checkAndSetNotificationDedup',
+        'getTargetsForCategory',
+        'buildNotificationLink',
+        'buildNotificationAppRoute',
+        'admin',
+        'pruneInvalidTokens',
+        'functions',
+        `${sendSource}\nreturn sendCategoryNotification;`
+    );
+
+    const fn = factory(
+        ['schedule', 'liveScore', 'mentions', 'liveChat'],
+        checkAndSetNotificationDedup,
+        getTargetsForCategory,
+        buildNotificationLink,
+        buildNotificationAppRoute,
+        admin,
+        pruneInvalidTokens,
+        functions
+    );
+
+    return {
+        fn,
+        sendEachForMulticast,
+        checkAndSetNotificationDedup,
+        getTargetsForCategory,
+        buildNotificationLink,
+        buildNotificationAppRoute,
+        pruneInvalidTokens,
+        functions
+    };
+}
 
 describe('notification send dedup guard — checkAndSetNotificationDedup', () => {
-    it('returns true and writes the dedup record when no prior send exists', async () => {
+    it('writes the Firestore dedup record when no prior send exists', async () => {
         const now = Date.now();
-        const { fn, mockFirestore } = buildDedupHelper({ nowMs: now, existingSentAtMs: null });
+        const { fn, store, mockFirestore } = createDedupHarness({ nowMs: now });
 
         const result = await fn('team-1', 'schedule', 'game-1');
 
         expect(result).toBe(true);
-        expect(mockFirestore.runTransaction).toHaveBeenCalledOnce();
+        expect(mockFirestore.doc).toHaveBeenCalledWith(expect.stringMatching(/^teams\/team-1\/notificationSendLog\//));
+        const [[docPath, savedDoc]] = [...store.entries()];
+        expect(docPath).toMatch(/^teams\/team-1\/notificationSendLog\//);
+        expect(savedDoc.teamId).toBe('team-1');
+        expect(savedDoc.category).toBe('schedule');
+        expect(savedDoc.gameId).toBe('game-1');
+        expect(savedDoc.sentAt.toMillis()).toBe(now);
     });
 
-    it('returns false when an existing send occurred within the 5-minute window', async () => {
+    it('returns false when the Firestore dedup log contains a send inside the 5-minute window', async () => {
         const now = Date.now();
-        const fourMinutesAgo = now - 4 * 60 * 1000;
-        const { fn } = buildDedupHelper({ nowMs: now, existingSentAtMs: fourMinutesAgo });
+        const existingPath = buildDedupDocPath('team-1', 'schedule', 'game-1');
+        const { fn } = createDedupHarness({
+            nowMs: now,
+            docs: {
+                [existingPath]: {
+                    teamId: 'team-1',
+                    category: 'schedule',
+                    gameId: 'game-1',
+                    sentAt: buildFirestoreTimestamp(now - 4 * 60 * 1000)
+                }
+            }
+        });
 
         const result = await fn('team-1', 'schedule', 'game-1');
 
         expect(result).toBe(false);
     });
 
-    it('returns true when a prior send exists but is older than the 5-minute window', async () => {
+    it('returns true when the Firestore dedup log entry is older than the 5-minute window', async () => {
         const now = Date.now();
-        const sixMinutesAgo = now - 6 * 60 * 1000;
-        const { fn } = buildDedupHelper({ nowMs: now, existingSentAtMs: sixMinutesAgo });
+        const dedupPath = buildDedupDocPath('team-1', 'schedule', 'game-1');
+
+        const { fn } = createDedupHarness({
+            nowMs: now,
+            docs: {
+                [dedupPath]: {
+                    teamId: 'team-1',
+                    category: 'schedule',
+                    gameId: 'game-1',
+                    sentAt: buildFirestoreTimestamp(now - 6 * 60 * 1000)
+                }
+            }
+        });
 
         const result = await fn('team-1', 'schedule', 'game-1');
 
         expect(result).toBe(true);
     });
 
-    it('uses different hash keys for different gameIds so they do not interfere', async () => {
+    it('uses a different Firestore dedup document for different gameIds', async () => {
         const now = Date.now();
-        // existingSentAtMs within window — but we track the doc ref path, which must differ per gameId
-        const { fn: fn1, mockFirestore: mf1 } = buildDedupHelper({ nowMs: now, existingSentAtMs: null });
-        const { fn: fn2, mockFirestore: mf2 } = buildDedupHelper({ nowMs: now, existingSentAtMs: null });
+        const first = createDedupHarness({ nowMs: now });
+        const second = createDedupHarness({ nowMs: now });
 
-        const result1 = await fn1('team-1', 'schedule', 'game-A');
-        const result2 = await fn2('team-1', 'schedule', 'game-B');
+        await first.fn('team-1', 'schedule', 'game-A');
+        await second.fn('team-1', 'schedule', 'game-B');
 
-        const docPath1 = mf1.doc.mock.calls[0][0];
-        const docPath2 = mf2.doc.mock.calls[0][0];
-
-        expect(result1).toBe(true);
-        expect(result2).toBe(true);
-        // Different gameIds must produce different document paths (hashes differ)
-        expect(docPath1).not.toBe(docPath2);
+        expect(first.mockFirestore.doc.mock.calls[0][0]).not.toBe(second.mockFirestore.doc.mock.calls[0][0]);
     });
 });
 
-describe('notification send dedup guard — sendCategoryNotification wiring', () => {
-    it('defines the NOTIFICATION_DEDUP_WINDOW_MS constant as 5 minutes', () => {
-        expect(functionsSource).toContain('const NOTIFICATION_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes');
+describe('notification send dedup guard — sendCategoryNotification', () => {
+    it('skips schedule sends when the dedup transaction reports a recent Firestore send', async () => {
+        const harness = buildSendCategoryNotificationHarness({ canSend: false });
+
+        const result = await harness.fn({
+            teamId: 'team-1',
+            category: 'schedule',
+            gameId: 'game-1',
+            title: 'Schedule update',
+            body: 'Details changed.'
+        });
+
+        expect(result).toBeNull();
+        expect(harness.checkAndSetNotificationDedup).toHaveBeenCalledWith('team-1', 'schedule', 'game-1');
+        expect(harness.sendEachForMulticast).not.toHaveBeenCalled();
+        expect(harness.functions.logger.info).toHaveBeenCalledWith(
+            'Notification dedup: skipping duplicate send',
+            { teamId: 'team-1', category: 'schedule', gameId: 'game-1' }
+        );
     });
 
-    it('defines checkAndSetNotificationDedup with a Firestore transaction', () => {
-        expect(functionsSource).toContain('async function checkAndSetNotificationDedup(teamId, category, gameId)');
-        expect(functionsSource).toContain('firestore.runTransaction(async (txn) =>');
-        expect(functionsSource).toContain('teams/${teamId}/notificationSendLog/${hash}');
-        expect(functionsSource).toContain('return false; // duplicate within window');
-        expect(functionsSource).toContain('return true; // ok to send');
+    it('does not run the dedup guard for liveChat sends', async () => {
+        const harness = buildSendCategoryNotificationHarness({ canSend: false });
+
+        const result = await harness.fn({
+            teamId: 'team-1',
+            category: 'liveChat',
+            title: 'Coach: Team Chat',
+            body: 'New chat message.'
+        });
+
+        expect(harness.checkAndSetNotificationDedup).not.toHaveBeenCalled();
+        expect(harness.sendEachForMulticast).toHaveBeenCalledOnce();
+        expect(result).toMatchObject({ successCount: 1, failureCount: 0 });
     });
 
-    it('calls checkAndSetNotificationDedup inside sendCategoryNotification before sending', () => {
-        const sendFnStart = functionsSource.indexOf('async function sendCategoryNotification');
-        const sendFnBody = functionsSource.slice(sendFnStart, sendFnStart + 2000);
+    it('does not run the dedup guard for mentions sends', async () => {
+        const harness = buildSendCategoryNotificationHarness({ canSend: false });
 
-        expect(sendFnBody).toContain('ALWAYS_SEND_CATEGORIES');
-        expect(sendFnBody).toContain("new Set(['liveScore', 'mentions'])");
-        expect(sendFnBody).toContain('checkAndSetNotificationDedup(teamId, category, gameId)');
-        expect(sendFnBody).toContain('Notification dedup: skipping duplicate send');
-        expect(sendFnBody).toContain('return null;');
-    });
+        await harness.fn({
+            teamId: 'team-1',
+            category: 'mentions',
+            title: 'Coach mentioned you',
+            body: 'Please check chat.'
+        });
 
-    it('bypasses dedup for liveScore category', () => {
-        const sendFnStart = functionsSource.indexOf('async function sendCategoryNotification');
-        const sendFnBody = functionsSource.slice(sendFnStart, sendFnStart + 2000);
-
-        // liveScore must be in ALWAYS_SEND_CATEGORIES so it skips the dedup check
-        expect(sendFnBody).toContain("'liveScore'");
-        expect(sendFnBody).toContain("'mentions'");
-        // The guard must be conditional: only runs when NOT in ALWAYS_SEND_CATEGORIES
-        expect(sendFnBody).toContain('!ALWAYS_SEND_CATEGORIES.has(category)');
-    });
-
-    it('writes dedup records under teams/{teamId}/notificationSendLog/{hash}', () => {
-        expect(functionsSource).toContain('teams/${teamId}/notificationSendLog/${hash}');
-        // Dedup record stores teamId, category, gameId, and sentAt
-        const dedupFnStart = functionsSource.indexOf('async function checkAndSetNotificationDedup');
-        const dedupFnEnd = functionsSource.indexOf('\nasync function sendCategoryNotification');
-        const dedupBody = functionsSource.slice(dedupFnStart, dedupFnEnd);
-        expect(dedupBody).toContain('teamId,');
-        expect(dedupBody).toContain('category,');
-        expect(dedupBody).toContain('gameId: gameId || null,');
-        expect(dedupBody).toContain('sentAt: admin.firestore.FieldValue.serverTimestamp()');
+        expect(harness.checkAndSetNotificationDedup).not.toHaveBeenCalled();
+        expect(harness.sendEachForMulticast).toHaveBeenCalledOnce();
     });
 
     it('firestore.rules denies all client access to notificationSendLog', () => {
