@@ -35,7 +35,7 @@ function normalizePlayerLinks(playerLinks = []) {
 
 function loadFirebase(deps = {}) {
     if (deps.firebase) return Promise.resolve(deps.firebase);
-    return import('./firebase.js?v=17');
+    return import('./firebase.js?v=18');
 }
 
 function normalizeAccessLinks(links = []) {

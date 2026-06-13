@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
@@ -162,7 +163,7 @@ vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
 vi.mock('../../js/registration-review.js', () => registrationReviewMocks);
 vi.mock('../../js/team-media-utils.js', () => mediaMocks);
-vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
+vi.mock('../../apps/app/src/lib/authService', () => authMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../js/stripe-service.js', () => stripeMocks);
@@ -229,6 +230,15 @@ beforeEach(() => {
 });
 
 describe('React app parent tools service', () => {
+    it('uses the non-cache-busted firebase module path so the app build can resolve it', async () => {
+        const source = await import('node:fs/promises').then(({ readFile }) =>
+            readFile(resolve(process.cwd(), 'apps/app/src/lib/parentToolsService.ts'), 'utf8')
+        );
+
+        expect(source).toContain("from '../../../../js/firebase.js';");
+        expect(source).not.toContain("firebase.js?v=");
+    });
+
     it('builds legacy URLs used for current-site handoffs', () => {
         expect(getLegacyUrl('team.html', {}, { teamId: 'team-1' })).toBe('https://allplays.ai/team.html#teamId=team-1');
         expect(getFamilyShareUrl('token-1')).toBe('https://allplays.ai/family.html?token=token-1');
@@ -871,6 +881,7 @@ describe('React app parent tools service', () => {
             feeSnapshot: { finalAmountDueCents: 9900 },
             options: [{ id: 'opt-public', title: 'Clinic' }]
         });
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-public', 'registrationForms', 'form-public');
         expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
             path: 'teams/team-public/registrationForms/form-public'
         }));
