@@ -3668,6 +3668,60 @@ exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
+async function sendFeeUnpaidDueReminders() {
+  const now = admin.firestore.Timestamp.now();
+  const threeDaysLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 3 * 24 * 60 * 60 * 1000);
+
+  // Use 'in' filter instead of '!=' to avoid Firestore inequality-on-different-field restriction
+  const snap = await firestore.collectionGroup('feeRecipients')
+    .where('paymentStatus', 'in', ['unpaid', 'pending', ''])
+    .where('dueAt', '>=', now)
+    .where('dueAt', '<=', threeDaysLater)
+    .get();
+
+  const promises = snap.docs.map(async (doc) => {
+    const data = doc.data();
+    // Skip if reminder already sent (deduplication guard)
+    if (data.reminderSentAt) return null;
+    const payerUserId = data.userId || data.parentUserId;
+    if (!payerUserId) return null;
+    const pathParts = doc.ref.path.split('/');
+    // Path structure: teams/{teamId}/.../{feeId}/feeRecipients/{recipientId}
+    const teamId = pathParts[1];
+    if (!teamId) return null;
+    const title = data.feeTitle || data.title || 'Team fee due soon';
+
+    // Mark reminderSentAt first to prevent duplicate sends if function retries
+    await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });
+
+    try {
+      const allTargets = await getTargetsForCategory(teamId, 'fees');
+      const userTargets = allTargets.filter((t) => t.uid === payerUserId);
+      if (userTargets.length) {
+        await sendDirectTargetsNotification({
+          targets: userTargets,
+          category: 'fees',
+          title: `Reminder: ${title} is due soon`,
+          body: 'Your team fee payment is due in 3 days or less.',
+          teamId,
+        });
+      }
+      return { teamId, payerUserId, feeTitle: title };
+    } catch (err) {
+      console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, payerUserId, error: err });
+      return null;
+    }
+  });
+
+  const results = await Promise.allSettled(promises);
+  const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
+  console.log(`sendFeeUnpaidDueReminders: processed ${snap.docs.length} docs, sent ${sent} reminders`);
+}
+
+exports.sendFeeUnpaidDueReminders = functions.pubsub
+  .schedule('every 24 hours')
+  .onRun(() => sendFeeUnpaidDueReminders());
+
 function detectMentionedUids(text, members) {
   if (!text) return [];
   const mentioned = new Set();
