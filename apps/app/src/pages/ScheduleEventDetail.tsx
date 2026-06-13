@@ -285,7 +285,7 @@ export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<stri
 
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [selectedChildId, setSelectedChildId] = useState(searchParams.get('childId') || '');
   const [loading, setLoading] = useState(true);
@@ -305,11 +305,31 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
 
+  const replaceEventRouteParams = (updates: { section?: EventDetailSectionId; childId?: string }) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (updates.section) nextParams.set('section', updates.section);
+    if (Object.prototype.hasOwnProperty.call(updates, 'childId')) {
+      const nextChildId = String(updates.childId || '').trim();
+      if (nextChildId) {
+        nextParams.set('childId', nextChildId);
+      } else {
+        nextParams.delete('childId');
+      }
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const selectSection = (sectionId: EventDetailSectionId) => {
     setActiveSection(sectionId);
+    replaceEventRouteParams({ section: sectionId });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
+  };
+
+  const selectChild = (childId: string) => {
+    setSelectedChildId(childId);
+    replaceEventRouteParams({ childId });
   };
 
   const loadEvent = async () => {
@@ -338,6 +358,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     setActiveSection(parseEventDetailSection(searchParams.get('section')));
+    const routeChildId = searchParams.get('childId') || '';
+    if (routeChildId) {
+      setSelectedChildId(routeChildId);
+    }
   }, [searchParams]);
 
   const selectedEvent = useMemo(() => {
@@ -607,7 +631,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               <div className="min-w-0 flex-1">
                 {events.length > 1 ? (
                   <>
-                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} compact />
+                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />
                     <div className="mt-1 truncate text-xs font-bold text-gray-600">{selectedEvent.childName} · {selectedEvent.teamName}</div>
                   </>
                 ) : (
