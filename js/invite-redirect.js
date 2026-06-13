@@ -5,7 +5,16 @@ export function normalizeInviteCode(inviteCode) {
 
 function normalizeInviteType(inviteType) {
     const normalized = typeof inviteType === 'string' ? inviteType.trim().toLowerCase() : '';
-    return normalized === 'parent' || normalized === 'admin' ? normalized : null;
+
+    if (normalized === 'parent' || normalized === 'admin' || normalized === 'household') {
+        return normalized;
+    }
+
+    if (normalized === 'household_invite') {
+        return 'household';
+    }
+
+    return null;
 }
 
 export function getPostAuthRedirectUrl(defaultRedirectUrl, inviteCode, shouldRedeemInvite = false, inviteType = null) {

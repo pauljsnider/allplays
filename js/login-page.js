@@ -67,6 +67,8 @@ export function getGoogleAuthModeForLoginPage({ isLogin = true, urlCodeParam = n
     return 'signup';
 }
 
+const REDEEMABLE_INVITE_TYPES = new Set(['', 'parent', 'admin', 'household', 'household_invite']);
+
 export function createLoginRedirectCoordinator({
     windowObject = window,
     getRedirectUrl,
@@ -77,8 +79,7 @@ export function createLoginRedirectCoordinator({
     const urlInviteType = typeof urlParams.get('type') === 'string'
         ? urlParams.get('type').trim().toLowerCase()
         : '';
-    const shouldRedeemInviteFromLogin = Boolean(urlCodeParam) &&
-        (!urlInviteType || urlInviteType === 'parent' || urlInviteType === 'admin');
+    const shouldRedeemInviteFromLogin = Boolean(urlCodeParam) && REDEEMABLE_INVITE_TYPES.has(urlInviteType);
     let inviteRedemptionOverride = null;
 
     function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false) {
