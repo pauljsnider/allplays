@@ -29,7 +29,7 @@ import {
   setTeamMediaAlbumCover
 } from '../../../../js/db.js';
 import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
-import { db, doc, collection, getDoc, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
+import { db, doc, collection, getDoc, serverTimestamp, runTransaction } from '../../../../js/firebase.js?v=18';
 import {
   formatParentFeeAmount,
   formatParentFeeDueDate,
