@@ -4180,6 +4180,49 @@ exports.notifyGameCreated = functions.firestore
     });
   });
 
+exports.notifyFeeMarkedPaid = functions.firestore
+  .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
+  .onWrite(async (change, context) => {
+    const before = change.before.exists ? change.before.data() : null;
+    const after = change.after.exists ? change.after.data() : null;
+    if (!after) return null;
+    // Only fire when paymentStatus transitions to 'paid'
+    if (after.paymentStatus !== 'paid') return null;
+    if (before?.paymentStatus === 'paid') return null;
+
+    const { teamId } = context.params;
+    const title = String(after.feeTitle || after.title || 'Team fee').trim();
+    const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
+
+    const allFeeTargets = await getTargetsForCategory(teamId, 'fees', null);
+
+    const promises = [];
+    // Notify the payer directly (filtered from fee-category registered devices)
+    if (payerUserId) {
+      const payerTargets = allFeeTargets.filter((t) => t.uid === payerUserId);
+      if (payerTargets.length) {
+        promises.push(sendDirectTargetsNotification({
+          targets: payerTargets,
+          category: 'fees',
+          title: `Fee paid: ${title}`,
+          body: 'Your payment has been received. Thank you!',
+          teamId
+        }));
+      }
+    }
+    // Notify team staff via category, excluding the payer to avoid a duplicate
+    promises.push(sendCategoryNotification({
+      teamId,
+      category: 'fees',
+      title: `Fee marked paid: ${title}`,
+      body: 'A team fee has been marked as paid.',
+      excludeUids: payerUserId ? [payerUserId] : []
+    }));
+
+    await Promise.allSettled(promises);
+    return null;
+  });
+
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
 const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
