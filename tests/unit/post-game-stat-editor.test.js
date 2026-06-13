@@ -68,9 +68,9 @@ describe('post-game stat editor helpers', () => {
         });
     });
 
-    it('strips punctuation from stat keys so custom column names round-trip consistently', () => {
-        // Regression for issue #2196: "3-Pt", "FG%", "Reb." stored without punctuation but
-        // re-written with punctuation on save, wiping the original stats.
+    it('normalizes configured custom stat keys so editor inputs and payloads stay aligned', () => {
+        // Regression for issue #2196: configured columns like "3-Pt" rendered raw data-stat-field keys
+        // while completed-game saves normalized to "3pt", dropping edited values on submit.
         const statFields = resolvePostGameStatFields({
             resolvedConfig: {
                 columns: ['3-Pt', 'FG%', 'Reb.']
@@ -79,6 +79,13 @@ describe('post-game stat editor helpers', () => {
                 p1: { '3pt': 8, fg: 5, reb: 4 }
             }
         });
+
+        expect(statFields).toEqual([
+            { fieldName: '3pt', label: '3-Pt' },
+            { fieldName: 'fg', label: 'FG%' },
+            { fieldName: 'reb', label: 'Reb.' },
+            { fieldName: 'fouls', label: 'FOULS' }
+        ]);
 
         expect(buildCompletedGamePlayerStatsPayload({
             player: { name: 'Ava Cole', number: '3' },
