@@ -100,6 +100,7 @@ export function Teams({ auth }: { auth: AuthState }) {
   const selectedTeam = useMemo(() => (
     home.teams.find((team) => team.teamId === selectedTeamId) || home.teams[0] || null
   ), [home.teams, selectedTeamId]);
+  const shouldShowTeamLauncher = home.teams.length > 1;
   const teamRoles = useMemo(() => getLoadedTeamRoles(home.teams), [home.teams]);
   const hasManagementTeam = useMemo(() => home.teams.some((team) => isTeamManagementRole(team.role)), [home.teams]);
 
@@ -132,16 +133,23 @@ export function Teams({ auth }: { auth: AuthState }) {
         </section>
       ) : home.teams.length ? (
         isDesktopWeb ? (
-          <div className="teams-web-workbench">
-            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} onSelect={selectTeam} variant="rail" />
+          shouldShowTeamLauncher ? (
+            <div className="teams-web-workbench">
+              <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} onSelect={selectTeam} variant="rail" />
+              <div className="min-w-0 space-y-4">
+                {selectedTeam ? <SelectedTeamPanel team={selectedTeam} variant="web" /> : null}
+                {hasManagementTeam ? <WebsiteToolsNotice compact /> : null}
+              </div>
+            </div>
+          ) : (
             <div className="min-w-0 space-y-4">
               {selectedTeam ? <SelectedTeamPanel team={selectedTeam} variant="web" /> : null}
               {hasManagementTeam ? <WebsiteToolsNotice compact /> : null}
             </div>
-          </div>
+          )
         ) : (
           <>
-            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} onSelect={selectTeam} />
+            {shouldShowTeamLauncher ? <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} onSelect={selectTeam} /> : null}
             {selectedTeam ? <SelectedTeamPanel team={selectedTeam} /> : null}
           </>
         )
