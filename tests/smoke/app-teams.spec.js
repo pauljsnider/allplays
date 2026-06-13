@@ -8,12 +8,14 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
-async function waitForTeamsRoute(page, readyLocator) {
+async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true } = {}) {
     const searchInput = page.getByPlaceholder('Search teams or players');
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
         await expect(page.getByText('Loading teams')).toHaveCount(0, { timeout: 3000 });
-        await expect(searchInput).toBeVisible({ timeout: 3000 });
+        if (requireSearchInput) {
+            await expect(searchInput).toBeVisible({ timeout: 3000 });
+        }
         if (readyLocator) {
             await expect(readyLocator).toBeVisible({ timeout: 3000 });
         }
@@ -466,7 +468,8 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page, { scenario: 'empty' });
         await page.goto(appUrl(baseURL, '/teams?scenario=empty'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'No teams linked yet' })).toBeVisible();
+        const emptyHeading = page.getByRole('heading', { name: 'No teams linked yet' });
+        await waitForTeamsRoute(page, emptyHeading, { requireSearchInput: false });
         await expect(page.getByText('No teams available')).toBeVisible();
         await expect(page.getByRole('link', { name: 'Accept invite' })).toHaveAttribute('href', '#/accept-invite');
         await page.locator('a[href="#/teams/browse"]').click();
@@ -479,6 +482,7 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page, { scenario: 'error' });
         await page.goto(appUrl(baseURL, '/teams?scenario=error'), { waitUntil: 'domcontentloaded' });
 
+        await waitForTeamsRoute(page, page.getByText('Team service down'), { requireSearchInput: false });
         await expect(page.getByText('Team service down')).toBeVisible();
         await expect(page.getByText('No teams available')).toBeVisible();
         await expect(page.getByText('Loading teams')).toHaveCount(0);
