@@ -95,6 +95,7 @@ import {
   type ChatTargetType
 } from '../lib/chatLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { updateAppIconBadge } from '../lib/badgeService';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
@@ -135,6 +136,8 @@ export function Messages({ auth }: { auth: AuthState }) {
     try {
       const result = await loadChatInbox(auth.user);
       setTeams(result.teams);
+      const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
+      void updateAppIconBadge(totalUnread);
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load messages.');
       setTeams([]);
@@ -148,6 +151,10 @@ export function Messages({ auth }: { auth: AuthState }) {
       setLoading(false);
       setError(null);
       setTeams([]);
+      return;
+    }
+    if (!auth.user) {
+      void updateAppIconBadge(0);
       return;
     }
     refreshInbox();
