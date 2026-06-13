@@ -16,22 +16,21 @@ describe('Stripe async payment webhook handling (issue #2203)', () => {
         expect(source).toContain("return session.metadata?.product === 'registration';");
     });
 
-    it('has an isAsyncPaymentPending helper that detects payment_status === open', () => {
+    it('has an isAsyncPaymentPending helper that detects Stripe pending payment statuses', () => {
         expect(source).toContain('function isAsyncPaymentPending(session) {');
-        expect(source).toContain("return (session?.payment_status) === 'open';");
+        expect(source).toContain("return ['open', 'unpaid'].includes(String(session?.payment_status || '').trim().toLowerCase());");
     });
 
-    it('sets checkoutStatus async_pending and paymentStatus pending_payment without releasing capacity when payment_status is open', () => {
-        // When checkout.session.completed fires with payment_status 'open', hold capacity
+    it('sets checkoutStatus async_pending and paymentStatus pending_payment without releasing capacity when payment is still pending', () => {
         expect(source).toContain('if (isAsyncPaymentPending(session)) {');
         expect(source).toContain("checkoutStatus: 'async_pending',");
         expect(source).toContain("paymentStatus: 'pending_payment',");
-        // The async_pending block is only the if-branch content before the else;
-        // verify that registrationCapacityReleased appears AFTER the async_pending block
-        // (i.e., only in the else branch, not mixed in with async_pending).
-        const asyncPendingStart = source.indexOf("checkoutStatus: 'async_pending',");
-        const asyncPendingEnd = source.indexOf("} else {\n          const selectedOption");
-        const asyncPendingBlock = source.slice(asyncPendingStart, asyncPendingEnd);
+
+        const asyncPendingStart = source.indexOf("if (isAsyncPaymentPending(session)) {");
+        const asyncPendingElseIndex = source.indexOf('} else {', asyncPendingStart);
+        const asyncPendingBlock = source.slice(asyncPendingStart, asyncPendingElseIndex);
+        expect(asyncPendingStart).toBeGreaterThanOrEqual(0);
+        expect(asyncPendingElseIndex).toBeGreaterThan(asyncPendingStart);
         expect(asyncPendingBlock).not.toContain('registrationCapacityReleased');
         expect(asyncPendingBlock).not.toContain('capacityReleasedAt');
     });

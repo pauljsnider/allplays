@@ -346,7 +346,7 @@ function shouldMarkRegistrationPaidFromEvent(event) {
 }
 
 function isAsyncPaymentPending(session) {
-  return (session?.payment_status) === 'open';
+  return ['open', 'unpaid'].includes(String(session?.payment_status || '').trim().toLowerCase());
 }
 
 function buildRegistrationRefFromStripeSession(session = {}) {
