@@ -2174,6 +2174,11 @@ service cloud.firestore {
                            );
         }
       }
+
+      // Server-only dedup log for notification sends — no client access.
+      match /notificationSendLog/{docId} {
+        allow read, write: if false; // server-only
+      }
     }
 
     // Family share tokens — parent-created read-only share links for grandparents/friends.

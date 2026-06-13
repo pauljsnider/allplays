@@ -3224,6 +3224,33 @@ async function pruneInvalidTokens(sendResult, targets) {
   }
 }
 
+const NOTIFICATION_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
+async function checkAndSetNotificationDedup(teamId, category, gameId) {
+  const key = [teamId, category, gameId || ''].join('::');
+  const hash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+  const dedupRef = firestore.doc(`teams/${teamId}/notificationSendLog/${hash}`);
+
+  const result = await firestore.runTransaction(async (txn) => {
+    const snap = await txn.get(dedupRef);
+    if (snap.exists) {
+      const sentAt = snap.data()?.sentAt?.toMillis?.() || 0;
+      if (Date.now() - sentAt < NOTIFICATION_DEDUP_WINDOW_MS) {
+        return false; // duplicate within window
+      }
+    }
+    txn.set(dedupRef, {
+      teamId,
+      category,
+      gameId: gameId || null,
+      sentAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return true; // ok to send
+  });
+
+  return result;
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
@@ -3236,6 +3263,15 @@ async function sendCategoryNotification({
   excludeUids = []
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
+
+  const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions']);
+  if (!ALWAYS_SEND_CATEGORIES.has(category)) {
+    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId);
+    if (!canSend) {
+      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId });
+      return null;
+    }
+  }
 
   const allTargets = await getTargetsForCategory(teamId, category, actorUid);
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
