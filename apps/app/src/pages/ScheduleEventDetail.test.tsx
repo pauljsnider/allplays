@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
@@ -232,6 +232,23 @@ function renderScheduleEventDetailWithRouteControls(initialEntry = '/schedule/te
   );
 }
 
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="event-route">{`${location.pathname}${location.search}`}</output>;
+}
+
+function renderScheduleEventDetailWithLocation(initialEntry = '/schedule/team-1/game-1?childId=player-1') {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <LocationProbe />
+      <Routes>
+        <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        <Route path="/schedule" element={<div>Schedule</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
 describe('ScheduleEventDetail loading states', () => {
   afterEach(() => {
     cleanup();
@@ -273,6 +290,66 @@ describe('ScheduleEventDetail lineup draft guards', () => {
       { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1' } },
       { formationId: 'basketball-5v5', lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' } }
     )).toBe(false);
+  });
+});
+
+describe('ScheduleEventDetail route state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+    scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({ childId: 'player-1', childName: 'Avery Smith' }),
+        buildEvent({
+          eventKey: 'team-1::game-1::player-2::2026-06-04T18:00:00.000Z::game',
+          childId: 'player-2',
+          childName: 'Sam Lee'
+        })
+      ],
+      children: []
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('writes selected tab and child context back to the event route', async () => {
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Rideshare' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=rideshare');
+    });
+
+    fireEvent.click(within(screen.getByTestId('event-player-switcher')).getByRole('button', { name: 'Sam Lee' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=rideshare');
+    });
+  });
+
+  it('rehydrates the selected tab and child from the route query', async () => {
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-2&section=assignments');
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/Sam Lee/).length).toBeGreaterThan(0);
+    });
+
+    const switcher = screen.getByTestId('event-player-switcher');
+    expect(within(switcher).getByRole('button', { name: 'Sam Lee' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getAllByRole('button', { name: 'Assignments' })[0].className).toContain('bg-primary-600');
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=assignments');
   });
 });
 
