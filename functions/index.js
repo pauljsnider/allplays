@@ -3229,7 +3229,9 @@ async function sendCategoryNotification({
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
-  const deliveryOptions = buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId });
+  const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
+    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
+    : {};
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -3272,7 +3274,9 @@ async function sendDirectTargetsNotification({ targets, category, title, body, t
 
   const link = buildNotificationLink({ category, teamId, gameId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
-  const deliveryOptions = buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId });
+  const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
+    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
+    : {};
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
