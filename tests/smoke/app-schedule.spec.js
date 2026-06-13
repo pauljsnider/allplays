@@ -1031,6 +1031,7 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await page.getByRole('button', { name: 'Game', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Game hub' })).toBeVisible();
     await expect(page.getByText('Report sections')).toBeVisible();
+    await page.getByRole('button', { name: 'Report sections' }).click();
     await expect(page.getByText('Pat helped set the tone early and the team finished strong.')).toBeVisible();
     const reportSections = page.locator('.app-card').filter({ has: page.getByText('Report sections') });
     await expect(reportSections.locator('strong').filter({ hasText: 'Strong start' })).toBeVisible();
