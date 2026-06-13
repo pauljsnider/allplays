@@ -5,11 +5,12 @@ import { join } from 'path';
 const repoRoot = join(__dirname, '..', '..');
 
 describe('Firestore persistent local cache', () => {
-    it('initializes Firestore with initializeFirestore instead of getFirestore', () => {
+    it('initializes Firestore with initializeFirestore and falls back to getFirestore when needed', () => {
         const source = readFileSync(join(repoRoot, 'js', 'firebase.js'), 'utf8');
 
         expect(source).toContain('initializeFirestore');
-        expect(source).not.toContain('getFirestore');
+        expect(source).toContain('getFirestore');
+        expect(source).toContain("initializeFirestore() has already been called");
     });
 
     it('configures localCache with persistentLocalCache', () => {
