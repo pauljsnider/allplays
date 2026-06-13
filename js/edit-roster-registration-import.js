@@ -311,6 +311,22 @@ function buildPreviewRow({ status, sourcePlayer = {}, payload = null, existingPl
     };
 }
 
+export function hasConfiguredRegistrationProviderMetadata(team = {}) {
+    const source = firstNonEmptyObject(team.registrationSource, team.registrationProvider);
+    return !!(
+        team.registrationSourceId ||
+        team.externalRegistrationTeamId ||
+        source.provider ||
+        source.providerId ||
+        source.providerName ||
+        source.externalTeamId ||
+        source.teamId ||
+        source.connectionStatus ||
+        source.lastSyncStatus ||
+        source.syncStatus
+    );
+}
+
 export function isExternallyLinkedRosterTeam(team = {}) {
     return !!(
         team.registrationSourceSnapshot ||
