@@ -100,7 +100,7 @@ export function Teams({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     if (loading) return;
-    if (home.teams.length === 1) {
+    if (shouldAutoNavigateToSingleTeam(home.teams)) {
       navigate(`/teams/${encodeURIComponent(home.teams[0].teamId)}`, { replace: true });
     }
   }, [loading, home.teams, navigate]);
@@ -187,6 +187,10 @@ function mergeTeamSummary(current: ParentHomeModel, enriched: ParentHomeModel): 
       photoUrl: currentByTeamId.get(team.teamId)?.photoUrl || team.photoUrl
     }))
   };
+}
+
+function shouldAutoNavigateToSingleTeam(teams: ParentHomeTeam[]): boolean {
+  return teams.length === 1 && teams[0]?.players.length === 1;
 }
 
 function TeamsHeader({ loading, refreshing, teams, teamRoles, onRefresh }: {

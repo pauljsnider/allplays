@@ -151,7 +151,7 @@ describe('Teams single-team auto-navigate', () => {
     cleanup();
   });
 
-  it('navigates directly to the team hub without showing the chooser when the user has exactly one team', async () => {
+  it('navigates directly to the team hub without showing the chooser when the user has exactly one linked player on one team', async () => {
     renderTeamsWithNav();
 
     await waitFor(() => {
@@ -161,5 +161,30 @@ describe('Teams single-team auto-navigate', () => {
     expect(screen.getByTestId('team-hub').textContent).toBe('Team hub: team-solo');
     expect(screen.queryByText('Choose a team')).toBeNull();
     expect(screen.queryByText('Loading teams')).toBeNull();
+  });
+
+  it('keeps the chooser visible when the only team has no linked players yet', async () => {
+    homeServiceMocks.loadParentTeamsSummary.mockResolvedValue({
+      ...singleTeamHome,
+      teams: [{
+        ...singleTeam,
+        players: []
+      }],
+      metrics: { ...singleTeamHome.metrics, players: 0 }
+    });
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValue({
+      ...singleTeamHome,
+      teams: [{
+        ...singleTeam,
+        players: []
+      }],
+      metrics: { ...singleTeamHome.metrics, players: 0 }
+    });
+
+    renderTeamsWithNav();
+
+    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
+    expect(screen.getByText('Choose a team')).toBeInTheDocument();
+    expect(screen.queryByTestId('team-hub')).toBeNull();
   });
 });

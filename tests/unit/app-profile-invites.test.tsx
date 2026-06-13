@@ -551,7 +551,9 @@ describe('Profile invites', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
     await screen.findByText('Notifications are off in device settings');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Open device settings to finish alerts' }));
+    const openSettingsButton = await screen.findByRole('button', { name: 'Open device settings to finish alerts' });
+    expect(openSettingsButton.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(openSettingsButton);
 
     await waitFor(() => expect(pushServiceMocks.openPushNotificationSettings).toHaveBeenCalledTimes(1));
     expect(pushServiceMocks.enablePushNotificationsForUser).not.toHaveBeenCalled();
