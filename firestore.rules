@@ -1298,7 +1298,8 @@ service cloud.firestore {
       match /householdInvites/{inviteId} {
         allow read: if isOwner(userId) || isGlobalAdmin();
         allow create: if isOwner(userId) && isHouseholdInvitePayloadValid(request.resource.data, userId);
-        allow update, delete: if false;
+        allow update: if false;
+        allow delete: if isOwner(userId);
       }
 
       match /accountMergeRequests/{requestId} {
