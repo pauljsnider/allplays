@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@capacitor/core', () => ({
@@ -54,7 +55,7 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/authService', () => ({
+vi.mock(import('../../apps/app/src/lib/authService.ts'), () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
@@ -72,9 +73,11 @@ beforeEach(() => {
 describe('React app team detail model', () => {
 
     it('uses the non-cache-busted firebase module path so the app build can resolve it', async () => {
-        const source = await import('node:fs/promises').then(({ readFile }) =>
-            readFile(new URL('../../apps/app/src/lib/teamDetailService.ts', import.meta.url), 'utf8')
-        );
+        const source = await import('node:fs/promises').then(async ({ readFile }) => {
+            const { resolve, dirname } = await import('node:path');
+            const testFilePath = fileURLToPath(import.meta.url);
+            return readFile(resolve(dirname(testFilePath), '../../apps/app/src/lib/teamDetailService.ts'), 'utf8');
+        });
 
         expect(source).toContain("from '../../../../js/firebase.js';");
         expect(source).not.toContain("firebase.js?v=");
