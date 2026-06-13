@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
@@ -231,7 +232,7 @@ beforeEach(() => {
 describe('React app parent tools service', () => {
     it('uses the non-cache-busted firebase module path so the app build can resolve it', async () => {
         const source = await import('node:fs/promises').then(({ readFile }) =>
-            readFile(new URL('../../apps/app/src/lib/parentToolsService.ts', import.meta.url), 'utf8')
+            readFile(resolve(process.cwd(), 'apps/app/src/lib/parentToolsService.ts'), 'utf8')
         );
 
         expect(source).toContain("from '../../../../js/firebase.js';");
