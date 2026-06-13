@@ -413,4 +413,56 @@ describe('React app Teams page', () => {
         expect(container.textContent).not.toContain('Loading teams');
         expect(container.textContent).not.toContain('Website tools available');
     });
+
+    it('auto-navigates to the team hub when the user has exactly one team', async () => {
+        const singleTeamModel = {
+            players: [],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: { players: 1, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 },
+            teams: [
+                {
+                    teamId: 'team-solo',
+                    teamName: 'Solo Bears',
+                    role: 'Parent',
+                    sport: 'Basketball',
+                    photoUrl: null,
+                    players: [{ teamId: 'team-solo', teamName: 'Solo Bears', playerId: 'player-1', playerName: 'Alex Star' }],
+                    nextEvent: null,
+                    eventCount: 3,
+                    unreadCount: 0,
+                    openActions: 0
+                }
+            ]
+        };
+        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(singleTeamModel);
+        homeMocks.loadParentHomeSummary.mockResolvedValueOnce(singleTeamModel);
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        mountedRoots.add(root);
+
+        function TeamHubRoute() {
+            return React.createElement('div', { 'data-testid': 'team-hub' }, 'Team hub stub');
+        }
+
+        await act(async () => {
+            root.render(React.createElement(
+                MemoryRouter,
+                { initialEntries: ['/teams'] },
+                React.createElement(
+                    Routes,
+                    null,
+                    React.createElement(Route, { path: '/teams', element: React.createElement(Teams, { auth }) }),
+                    React.createElement(Route, { path: '/teams/:teamId', element: React.createElement(TeamHubRoute) })
+                )
+            ));
+        });
+
+        await waitForText(container, 'Team hub stub');
+        expect(container.textContent).not.toContain('Choose a team');
+        expect(container.textContent).not.toContain('Loading teams');
+    });
 });

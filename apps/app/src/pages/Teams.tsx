@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   CalendarDays,
@@ -57,6 +57,7 @@ function emptyHome(): ParentHomeModel {
 
 export function Teams({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [loading, setLoading] = useState(true);
@@ -96,6 +97,13 @@ export function Teams({ auth }: { auth: AuthState }) {
     loadTeams({ showLoading: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (home.teams.length === 1) {
+      navigate(`/teams/${encodeURIComponent(home.teams[0].teamId)}`, { replace: true });
+    }
+  }, [loading, home.teams, navigate]);
 
   const selectedTeam = useMemo(() => (
     home.teams.find((team) => team.teamId === selectedTeamId) || home.teams[0] || null
