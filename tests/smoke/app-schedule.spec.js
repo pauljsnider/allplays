@@ -1213,8 +1213,9 @@ test('schedule role permissions let admins manage non-owned rideshare requests',
     await mockScheduleModules(page, { isAdmin: true });
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('button', { name: 'Rideshare', exact: true })).toBeVisible({ timeout: 15000 });
-    await page.getByRole('button', { name: 'Rideshare', exact: true }).click();
+    const rideshareTab = page.getByRole('button', { name: 'Rideshare', exact: true });
+    await waitForScheduleRoute(page, rideshareTab);
+    await rideshareTab.click();
     const rideshareSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Rideshare' }) });
     const danaCard = rideshareSection.locator('article').filter({ hasText: 'Dana Driver' });
     await expect(danaCard.getByRole('button', { name: 'Close' })).toBeVisible();
