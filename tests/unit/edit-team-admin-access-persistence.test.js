@@ -1089,14 +1089,15 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('registrationProviderName').value).toBe('Sports Connect');
             expect(env.elements.get('registrationExternalTeamId').value).toBe('SC-123');
             expect(env.elements.get('registrationCopiedTeamId').value).toBe('team-1');
-            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Not synced');
-            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata configured, not connected');
-            expect(env.elements.get('registration-sync-status').textContent).toBe('Not synced');
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Sports Connect metadata only. No live sync.');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata only. No live sync.');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect metadata only. No live sync.');
             expect(env.elements.get('registration-sync-time').textContent).toContain('2026');
+            expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
 
             env.elements.get('registrationProviderName').value = 'League Apps';
             env.elements.get('registrationExternalTeamId').value = 'LA-456';
-            env.elements.get('registrationLastSyncStatus').value = 'Documented only';
+            await env.elements.get('registrationProviderName').dispatchEvent(new MockEvent('change'));
             await env.elements.get('team-form').requestSubmit();
 
             expect(env.state.updateCalls).toHaveLength(1);
@@ -1111,7 +1112,7 @@ describe('edit team admin access persistence', () => {
                 providerId: null,
                 connectionStatus: 'metadata_configured',
                 syncEnabled: false,
-                lastSyncStatus: 'Documented only',
+                lastSyncStatus: 'Registration metadata only. No live sync.',
                 lastSyncAt: '2026-05-10T18:30:00.000Z'
             });
 
@@ -1150,11 +1151,11 @@ describe('edit team admin access persistence', () => {
             env.elements.get('registrationExternalTeamId').value = 'SC-987';
             await env.elements.get('registrationProviderName').dispatchEvent(new MockEvent('change'));
 
-            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata configured, not connected');
-            expect(env.elements.get('registration-connection-help').textContent).toContain('does not contact Sports Connect');
-
-            await env.elements.get('registration-refresh-btn').click();
-            expect(env.alerts.at(-1)).toContain('No Sports Connect login, sync job, or network fetch is active yet');
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Sports Connect metadata only. No live sync.');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata only. No live sync.');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect metadata only. No live sync.');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('metadata only');
+            expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
 
             await env.elements.get('team-form').requestSubmit();
 
@@ -1165,7 +1166,7 @@ describe('edit team admin access persistence', () => {
                 teamId: 'team-1',
                 connectionStatus: 'metadata_configured',
                 syncEnabled: false,
-                lastSyncStatus: 'Not synced'
+                lastSyncStatus: 'Sports Connect metadata only. No live sync.'
             });
         } finally {
             env.cleanup();
