@@ -87,7 +87,9 @@ function createDedupHarness({ nowMs, docs = {} } = {}) {
 
 function buildSendCategoryNotificationHarness({
     canSend = true,
-    targets = [{ uid: 'user-1', token: 'token-1' }]
+    targets = [{ uid: 'user-1', token: 'token-1' }],
+    categories = ['schedule', 'liveScore', 'mentions', 'liveChat'],
+    deliveryOptions = {}
 } = {}) {
     const sendSource = getSourceSlice(
         'async function sendCategoryNotification({',
@@ -107,6 +109,7 @@ function buildSendCategoryNotificationHarness({
     const getTargetsForCategory = vi.fn(async () => targets);
     const buildNotificationLink = vi.fn(({ category, teamId, gameId }) => `https://allplays.ai/${category}/${teamId}/${gameId || ''}`);
     const buildNotificationAppRoute = vi.fn(({ category, teamId, gameId, eventId }) => `/${category}/${teamId}/${gameId || eventId || ''}`);
+    const buildNotificationDeliveryOptions = vi.fn(() => deliveryOptions);
     const pruneInvalidTokens = vi.fn(async () => {});
     const writeNotificationInboxRecords = vi.fn(async () => ({
         writeCount: targets.length,
@@ -125,7 +128,9 @@ function buildSendCategoryNotificationHarness({
         'getTargetsForCategory',
         'buildNotificationLink',
         'buildNotificationAppRoute',
+        'buildNotificationDeliveryOptions',
         'admin',
+        'WEB_PUSH_NOTIFICATION_ASSETS',
         'pruneInvalidTokens',
         'writeNotificationInboxRecords',
         'functions',
@@ -133,12 +138,14 @@ function buildSendCategoryNotificationHarness({
     );
 
     const fn = factory(
-        ['schedule', 'liveScore', 'mentions', 'liveChat'],
+        categories,
         checkAndSetNotificationDedup,
         getTargetsForCategory,
         buildNotificationLink,
         buildNotificationAppRoute,
+        buildNotificationDeliveryOptions,
         admin,
+        { icon: '/img/logo_small.png', badge: '/img/logo_small.png' },
         pruneInvalidTokens,
         writeNotificationInboxRecords,
         functions
@@ -151,6 +158,7 @@ function buildSendCategoryNotificationHarness({
         getTargetsForCategory,
         buildNotificationLink,
         buildNotificationAppRoute,
+        buildNotificationDeliveryOptions,
         pruneInvalidTokens,
         writeNotificationInboxRecords,
         functions
@@ -275,6 +283,55 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
 
         expect(harness.checkAndSetNotificationDedup).not.toHaveBeenCalled();
         expect(harness.sendEachForMulticast).toHaveBeenCalledOnce();
+    });
+
+    it('guards delivery metadata usage so liveChat sends work without extra helpers', async () => {
+        const harness = buildSendCategoryNotificationHarness({
+            categories: ['liveChat', 'mentions']
+        });
+
+        await expect(harness.fn({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            category: 'liveChat',
+            title: 'New message',
+            body: 'Hello team'
+        })).resolves.toEqual(expect.objectContaining({
+            successCount: 1,
+            failureCount: 0
+        }));
+
+        expect(harness.buildNotificationDeliveryOptions).toHaveBeenCalledWith({
+            category: 'liveChat',
+            teamId: 'team-1',
+            gameId: 'game-1',
+            eventId: 'game-1'
+        });
+    });
+
+    it('guards delivery metadata usage so mentions sends work without extra helpers', async () => {
+        const harness = buildSendCategoryNotificationHarness({
+            categories: ['liveChat', 'mentions']
+        });
+
+        await expect(harness.fn({
+            teamId: 'team-1',
+            gameId: 'game-1',
+            eventId: 'message-1',
+            category: 'mentions',
+            title: 'Mention',
+            body: 'You were mentioned'
+        })).resolves.toEqual(expect.objectContaining({
+            successCount: 1,
+            failureCount: 0
+        }));
+
+        expect(harness.buildNotificationDeliveryOptions).toHaveBeenCalledWith({
+            category: 'mentions',
+            teamId: 'team-1',
+            gameId: 'game-1',
+            eventId: 'message-1'
+        });
     });
 
     it('firestore.rules denies all client access to notificationSendLog', () => {
