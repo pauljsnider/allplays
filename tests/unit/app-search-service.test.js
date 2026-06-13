@@ -744,7 +744,7 @@ describe('React app search service', () => {
 
         expect(firebaseMocks.collectionGroup).not.toHaveBeenCalled();
         expect(firebaseMocks.collection).toHaveBeenCalledWith(firebaseMocks.db, 'teams/team-1/players');
-        expect(firebaseMocks.collection).toHaveBeenCalledWith(firebaseMocks.db, 'teams/team-private/players');
+        expect(firebaseMocks.collection).not.toHaveBeenCalledWith(firebaseMocks.db, 'teams/team-private/players');
         expect(firebaseMocks.getDocs).toHaveBeenCalled();
         expect(players).toEqual([{
             id: 'player:team-1:player-1',
@@ -755,6 +755,30 @@ describe('React app search service', () => {
             teamId: 'team-1',
             playerId: 'player-1'
         }]);
+    });
+
+    it('caps player-search fan-out to the top ranked searchable teams', async () => {
+        const visibleTeams = new Map(Array.from({ length: 12 }, (_, index) => [
+            `team-${index}`,
+            {
+                id: `team-${index}`,
+                name: `Bear Team ${index}`,
+                sport: 'Basketball',
+                isPublic: true
+            }
+        ]));
+        firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+
+        await searchAppPlayers('bear', visibleTeams, auth.user);
+
+        const playerCollectionPaths = firebaseMocks.collection.mock.calls
+            .map(([, path]) => path)
+            .filter((path) => String(path).endsWith('/players'));
+        const uniquePlayerCollections = Array.from(new Set(playerCollectionPaths));
+
+        expect(uniquePlayerCollections).toHaveLength(8);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(16);
+        expect(uniquePlayerCollections).toEqual(Array.from({ length: 8 }, (_, index) => `teams/team-${index}/players`));
     });
 
     it('reuses cached broader player prefixes for narrower refinements when local filtering is sufficient', async () => {

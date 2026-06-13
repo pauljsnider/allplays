@@ -16,6 +16,7 @@ import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
 const playerSearchQueryLimit = 20;
+const playerSearchTeamLimit = 8;
 const teamSearchQueryLimit = 20;
 
 let cachedTeams: AppSearchTeam[] | null = null;
@@ -428,7 +429,8 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
     }
   }
 
-  const playerSearchPromise = loadPlayerSearchDocs(rawQuery, prefixes, isNumeric, Array.from(teamsById.keys()))
+  const teamIds = getPlayerSearchTeamIds(rawQuery, teamsById, user);
+  const playerSearchPromise = loadPlayerSearchDocs(rawQuery, prefixes, isNumeric, teamIds)
     .then(({ docs, exhaustiveForNarrowerQueries }) => {
       const players = buildAppSearchPlayersFromDocs(docs, teamsById, user, tokens);
       playerSearchCache.set(cacheKey, {
@@ -714,6 +716,33 @@ function rankTeamsForQuery(teams: AppSearchTeam[], queryText: string) {
   return rankedItems
     .map((item) => itemsById.get(item.id.replace(/^team:/, '')))
     .filter(Boolean) as AppSearchTeam[];
+}
+
+function getPlayerSearchTeamIds(rawQuery: string, teamsById: Map<string, AppSearchTeam>, user: AuthUser | null) {
+  const searchableTeams = Array.from(teamsById.values()).filter((team) => canUserDiscoverTeamInAppSearch(team, user));
+  if (!searchableTeams.length) return [];
+
+  const privateTeams = searchableTeams.filter((team) => team.isPublic === false);
+  const publicTeams = searchableTeams.filter((team) => team.isPublic !== false);
+  const rankedPublicTeams = rankPlayerSearchTeamsForQuery(publicTeams, rawQuery);
+
+  return [...privateTeams, ...rankedPublicTeams]
+    .slice(0, playerSearchTeamLimit)
+    .map((team) => cleanString(team.id))
+    .filter(Boolean);
+}
+
+function rankPlayerSearchTeamsForQuery(teams: AppSearchTeam[], queryText: string) {
+  const tokens = splitSearchTokens(queryText);
+  if (!tokens.length) return teams;
+  return teams
+    .map((team, index) => ({
+      team,
+      index,
+      score: scoreSearchText([team.name, team.sport, team.zip || [team.city, team.state].filter(Boolean).join(' ')].filter(Boolean).join(' '), tokens)
+    }))
+    .sort((a, b) => (b.score - a.score) || (a.index - b.index))
+    .map((entry) => entry.team);
 }
 
 function teamToSearchItem(team: AppSearchTeam): AppSearchItem {
