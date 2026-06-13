@@ -23,7 +23,9 @@ import {
     applyActionCode
 } from "./vendor/firebase-auth.js";
 import {
-    getFirestore,
+    initializeFirestore,
+    persistentLocalCache,
+    persistentMultipleTabManager,
     collection,
     getDocs,
     getDoc,
@@ -88,7 +90,9 @@ function initializeFirebaseAuth(appInstance) {
 }
 
 export const auth = initializeFirebaseAuth(app);
-export const db = getFirestore(app);
+export const db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
 export const storage = getStorage(app);
 export const functions = getFunctions(app);
 
