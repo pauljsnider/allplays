@@ -974,4 +974,61 @@ describe('React app search service', () => {
         expect(queriedTeamIds.size).toBe(8);
         expect(queriedTeamIds.size).toBeLessThan(manyTeams.size);
     });
+
+    it('prioritizes private and query-matching teams before capping player search fanout', async () => {
+        const prioritizedTeams = [
+            { id: 'team-private', name: 'Private Team', sport: 'Basketball', isPublic: false, fromAppAccess: true },
+            ...Array.from({ length: 8 }, (_, index) => ({
+                id: `team-public-${index}`,
+                name: `Alpha Team ${index}`,
+                sport: 'Basketball',
+                isPublic: true,
+                fromAppAccess: true
+            })),
+            { id: 'team-match', name: 'Patriots', sport: 'Basketball', isPublic: true, fromAppAccess: true }
+        ];
+        const visibleTeams = new Map(prioritizedTeams.map((team) => [team.id, team]));
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [] });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] });
+
+        await loadAppSearchTeams({
+            ...auth.user,
+            parentOf: prioritizedTeams.map((team) => ({ teamId: team.id, teamName: team.name, sport: team.sport, active: true }))
+        });
+
+        const queriedTeamIds = new Set();
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const ref = request.parts?.[0] || request || {};
+            const collectionName = ref.collectionName || '';
+            const match = collectionName.match(/^teams\/([^/]+)\/players$/);
+            if (match) {
+                queriedTeamIds.add(match[1]);
+                if (match[1] === 'team-match') {
+                    return {
+                        docs: [firestorePlayer('teams/team-match/players/player-1', { name: 'Pat Forward', number: '3' })]
+                    };
+                }
+            }
+            return { docs: [] };
+        });
+
+        const players = await searchAppPlayers('pat', visibleTeams, auth.user);
+
+        expect(queriedTeamIds.has('team-private')).toBe(true);
+        expect(queriedTeamIds.has('team-match')).toBe(true);
+        expect(queriedTeamIds.has('team-public-7')).toBe(false);
+        expect(players).toEqual([{
+            id: 'player:team-match:player-1',
+            kind: 'player',
+            title: '#3 Pat Forward',
+            subtitle: 'Patriots',
+            route: '/players/team-match/player-1',
+            teamId: 'team-match',
+            playerId: 'player-1'
+        }]);
+    });
 });

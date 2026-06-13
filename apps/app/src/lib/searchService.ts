@@ -429,7 +429,7 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
     }
   }
 
-  const playerSearchPromise = loadPlayerSearchDocs(rawQuery, prefixes, isNumeric, Array.from(teamsById.keys()))
+  const playerSearchPromise = loadPlayerSearchDocs(rawQuery, prefixes, isNumeric, teamsById)
     .then(({ docs, exhaustiveForNarrowerQueries }) => {
       const players = buildAppSearchPlayersFromDocs(docs, teamsById, user, tokens);
       playerSearchCache.set(cacheKey, {
@@ -863,15 +863,35 @@ function buildPlayerSearchDocsFromSnapshots(snapshots: any[], nameQueryCount: nu
   };
 }
 
-async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], isNumeric: boolean, teamIds: string[]) {
-  const normalizedTeamIds = Array.from(new Set((Array.isArray(teamIds) ? teamIds : [])
-    .map((teamId) => cleanString(teamId))
-    .filter(Boolean)));
-  if (normalizedTeamIds.length === 0) {
+function getPlayerSearchTeamIds(rawQuery: string, teamsById: Map<string, AppSearchTeam>) {
+  const searchableTeams = Array.from(teamsById.values()).filter((team) => cleanString(team?.id));
+  if (!searchableTeams.length) return [];
+
+  const privateTeams = searchableTeams.filter((team) => team?.isPublic === false);
+  const publicTeams = searchableTeams.filter((team) => team?.isPublic !== false);
+  const tokens = splitSearchTokens(rawQuery);
+  const rankedPublicTeams = tokens.length === 0
+    ? publicTeams
+    : publicTeams
+      .map((team) => ({
+        team,
+        score: scoreSearchText([team.name, team.sport, team.zip, team.city, team.state].filter(Boolean).join(' '), tokens)
+      }))
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.team);
+
+  return [...privateTeams, ...rankedPublicTeams]
+    .slice(0, playerSearchTeamLimit)
+    .map((team) => team.id)
+    .filter(Boolean);
+}
+
+async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], isNumeric: boolean, teamsById: Map<string, AppSearchTeam>) {
+  const cappedTeamIds = getPlayerSearchTeamIds(rawQuery, teamsById);
+  if (cappedTeamIds.length === 0) {
     return { docs: [], exhaustiveForNarrowerQueries: false, rejected: [] };
   }
 
-  const cappedTeamIds = normalizedTeamIds.slice(0, playerSearchTeamLimit);
   const nameQueryCount = prefixes.length * cappedTeamIds.length;
   const snapshots = await Promise.allSettled(cappedTeamIds.flatMap((teamId) => {
     const playersRef = collection(db, `teams/${teamId}/players`);
@@ -899,8 +919,8 @@ async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], 
   return buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric);
 }
 
-async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean, teamIds: string[] = []) {
-  return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamIds);
+async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean, teamsById: Map<string, AppSearchTeam> = new Map()) {
+  return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamsById);
 }
 
 function buildAppSearchPlayersFromDocs(docs: any[], teamsById: Map<string, AppSearchTeam>, user: AuthUser | null, tokens: string[]) {
