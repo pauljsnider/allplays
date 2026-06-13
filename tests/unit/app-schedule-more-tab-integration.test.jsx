@@ -447,8 +447,6 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Report sections');
-        await clickButton(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
         expect(queryButtonByText(container, 'Summary')).not.toBeNull();
@@ -481,8 +479,6 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Report sections');
-        await clickButton(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
         expect(queryButtonByText(container, 'Opponent')).not.toBeNull();
@@ -501,8 +497,6 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Report sections');
-        await clickButton(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
         expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
@@ -532,8 +526,6 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Report sections');
-        await clickButton(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
         expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
@@ -802,8 +794,6 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Lineup builder');
-        await clickButton(container, 'Lineup builder');
         await waitForText(container, 'No lineup draft is available yet.');
 
         expect(container.querySelector('#game-hub-lineup-formation')).not.toBeNull();
@@ -819,8 +809,6 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Lineup builder');
-        await clickButton(container, 'Lineup builder');
 
         const select = container.querySelector('#game-hub-lineup-formation');
         await act(async () => {
@@ -863,8 +851,6 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
-        await waitForText(container, 'Lineup builder');
-        await clickButton(container, 'Lineup builder');
         await waitForText(container, 'Published v1. 1 draft assignment unpublished.');
 
         await clickButton(container, 'Publish lineup');
