@@ -332,14 +332,21 @@ function buildRegistrationCheckoutMetadata({ input, registration }) {
 function shouldProcessRegistrationCheckoutEvent(event) {
   const session = event?.data?.object || {};
   return session.metadata?.product === 'registration'
-    && ['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_failed'].includes(event?.type);
+    && ['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_failed', 'checkout.session.async_payment_succeeded'].includes(event?.type);
 }
 
 function shouldMarkRegistrationPaidFromEvent(event) {
   const session = event?.data?.object || {};
+  if (event?.type === 'checkout.session.async_payment_succeeded') {
+    return session.metadata?.product === 'registration';
+  }
   return event?.type === 'checkout.session.completed'
     && session.metadata?.product === 'registration'
     && session.payment_status === 'paid';
+}
+
+function isAsyncPaymentPending(session) {
+  return (session?.payment_status) === 'open';
 }
 
 function buildRegistrationRefFromStripeSession(session = {}) {
@@ -2089,6 +2096,19 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             });
             return;
           }
+          if (isAsyncPaymentPending(session)) {
+            // ACH / bank-transfer: checkout completed but payment is still in-flight.
+            // Hold capacity and mark as pending rather than failed.
+            transaction.set(registrationRef, {
+              checkoutStatus: 'async_pending',
+              paymentStatus: 'pending_payment',
+              stripeCheckoutSessionId: session.id || null,
+              stripePaymentIntentId: session.payment_intent || null,
+              stripePaymentStatus: session.payment_status || 'open',
+              stripeEventId: event.id,
+              updatedAt: receivedAt
+            }, { merge: true });
+          } else {
           const selectedOption = registration.selectedOption || {};
           const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();
           const counts = form.registrationOptionCounts || {};
@@ -2171,6 +2191,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           } else {
             transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'closed', nowIso: queuedAtIso }));
           }
+          } // end else (not isAsyncPaymentPending)
         }
 
         transaction.set(eventRef, {
