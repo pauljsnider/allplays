@@ -3674,16 +3674,16 @@ async function sendFeeUnpaidDueReminders() {
 
   // Use 'in' filter instead of '!=' to avoid Firestore inequality-on-different-field restriction
   const snap = await firestore.collectionGroup('feeRecipients')
-    .where('paymentStatus', 'in', ['unpaid', 'pending', ''])
-    .where('dueAt', '>=', now)
-    .where('dueAt', '<=', threeDaysLater)
+    .where('status', 'in', ['unpaid', 'pending'])
+    .where('dueDate', '>=', now)
+    .where('dueDate', '<=', threeDaysLater)
     .get();
 
   const promises = snap.docs.map(async (doc) => {
     const data = doc.data();
     // Skip if reminder already sent (deduplication guard)
     if (data.reminderSentAt) return null;
-    const payerUserId = data.userId || data.parentUserId;
+    const payerUserId = data.userId || data.accountUserId || data.parentUserId;
     if (!payerUserId) return null;
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/.../{feeId}/feeRecipients/{recipientId}
@@ -3691,21 +3691,21 @@ async function sendFeeUnpaidDueReminders() {
     if (!teamId) return null;
     const title = data.feeTitle || data.title || 'Team fee due soon';
 
-    // Mark reminderSentAt first to prevent duplicate sends if function retries
-    await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });
-
     try {
-      const allTargets = await getTargetsForCategory(teamId, 'fees');
-      const userTargets = allTargets.filter((t) => t.uid === payerUserId);
-      if (userTargets.length) {
-        await sendDirectTargetsNotification({
-          targets: userTargets,
-          category: 'fees',
-          title: `Reminder: ${title} is due soon`,
-          body: 'Your team fee payment is due in 3 days or less.',
-          teamId,
-        });
-      }
+      const allTargets = await getTargetsForCategory(teamId, 'fees', null);
+      const payerTargets = allTargets.filter((t) => t.uid === payerUserId);
+      if (!payerTargets.length) return null;
+
+      // Mark reminderSentAt only when targets exist, to prevent duplicate sends if function retries
+      await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      await sendDirectTargetsNotification({
+        targets: payerTargets,
+        category: 'fees',
+        title: `Reminder: ${title} is due soon`,
+        body: 'Your team fee payment is due in 3 days or less.',
+        teamId,
+      });
       return { teamId, payerUserId, feeTitle: title };
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, payerUserId, error: err });
