@@ -54,6 +54,7 @@ console.log(formatIsoForInput('2026-01-16T00:00:00.000Z'));
     it('prefills practice edit inputs without shifting by the timezone offset', () => {
         const source = readEditSchedule();
         const formatIsoForInput = extractFunction(source, 'function formatIsoForInput(value) {');
+        const resetPracticeRecurrenceFields = extractFunction(source, 'function resetPracticeRecurrenceFields() {');
         const startEditPractice = extractFunction(source, 'function startEditPractice(practice) {');
 
         const output = runInTimezone(`
@@ -74,12 +75,18 @@ const document = {
         }
         return elements[id];
     },
+    querySelector() {
+        return {
+            checked: false
+        };
+    },
     querySelectorAll() {
         return [];
     }
 };
 function switchTab() {}
 ${formatIsoForInput}
+${resetPracticeRecurrenceFields}
 ${startEditPractice}
 startEditPractice({
     id: 'practice-1',
@@ -100,6 +107,93 @@ console.log(JSON.stringify({
             practiceStart: '2026-01-15T18:00',
             practiceEnd: '2026-01-15T19:30',
             submitLabel: 'Update Practice'
+        });
+    });
+
+    it('clears stale recurrence controls when switching from a recurring series to a one-time practice edit', () => {
+        const source = readEditSchedule();
+        const formatIsoForInput = extractFunction(source, 'function formatIsoForInput(value) {');
+        const resetPracticeRecurrenceFields = extractFunction(source, 'function resetPracticeRecurrenceFields() {');
+        const startEditPractice = extractFunction(source, 'function startEditPractice(practice) {');
+
+        const output = runInTimezone(`
+let editingPracticeId = null;
+let editingSeriesId = null;
+const recurrenceEndNever = { checked: false };
+const dayCheckboxes = [{ value: 'MO', checked: true }, { value: 'WE', checked: true }];
+const elements = {
+    practiceRecurring: { checked: true },
+    'recurrence-builder': {
+        hidden: false,
+        classList: {
+            add(value) { if (value === 'hidden') this.hidden = true; },
+            remove(value) { if (value === 'hidden') this.hidden = false; }
+        }
+    },
+    recurrenceFreq: { value: 'daily' },
+    recurrenceInterval: { value: 3 },
+    recurrenceUntil: { value: '2026-03-01' },
+    recurrenceCount: { value: '8' }
+};
+elements['recurrence-builder'].classList.hidden = false;
+const document = {
+    getElementById(id) {
+        if (!elements[id]) {
+            elements[id] = {
+                value: '',
+                checked: false,
+                textContent: '',
+                classList: {
+                    add() {},
+                    remove() {}
+                }
+            };
+        }
+        return elements[id];
+    },
+    querySelector(selector) {
+        if (selector === 'input[name="recurrenceEnd"][value="never"]') {
+            return recurrenceEndNever;
+        }
+        return { checked: false };
+    },
+    querySelectorAll(selector) {
+        return selector === '.day-checkbox' ? dayCheckboxes : [];
+    }
+};
+function switchTab() {}
+${formatIsoForInput}
+${resetPracticeRecurrenceFields}
+${startEditPractice}
+startEditPractice({
+    id: 'practice-2',
+    title: 'One-time practice',
+    date: '2026-01-16T00:00:00.000Z',
+    end: '2026-01-16T01:30:00.000Z'
+});
+console.log(JSON.stringify({
+    recurring: elements.practiceRecurring.checked,
+    recurrenceHidden: elements['recurrence-builder'].classList.hidden,
+    freq: elements.recurrenceFreq.value,
+    interval: elements.recurrenceInterval.value,
+    days: dayCheckboxes.map((day) => day.checked),
+    endNever: recurrenceEndNever.checked,
+    until: elements.recurrenceUntil.value,
+    count: elements.recurrenceCount.value,
+    editingSeriesId
+}));
+        `);
+
+        expect(JSON.parse(output)).toEqual({
+            recurring: false,
+            recurrenceHidden: true,
+            freq: 'weekly',
+            interval: 1,
+            days: [false, false],
+            endNever: true,
+            until: '',
+            count: '',
+            editingSeriesId: null
         });
     });
 
