@@ -6,6 +6,7 @@ export function buildConfiguredStatFields(columns = [], statsObjects = []) {
 
   return (columns || []).map((col) => {
     const normalized = String(col || '').toLowerCase();
+    const slugified = normalized.replace(/[^a-z0-9_]+/g, '');
     const variations = [normalized];
 
     if (!normalized.endsWith('s')) {
@@ -22,6 +23,9 @@ export function buildConfiguredStatFields(columns = [], statsObjects = []) {
     }
     if (normalized === 'ast' || normalized === 'assists') {
       variations.push('ast', 'assists', 'assist');
+    }
+    if (slugified && slugified !== normalized) {
+      variations.push(slugified);
     }
 
     const fieldName = variations.find((variant) => actualFields.has(variant)) || normalized;
