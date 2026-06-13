@@ -78,6 +78,7 @@ class MockElement {
         this.textContent = '';
         this.href = '';
         this.files = [];
+        this.attributes = {};
         this.dataset = {};
         this.listeners = new Map();
         this.classList = new MockClassList();
@@ -107,6 +108,14 @@ class MockElement {
     }
 
     focus() {}
+
+    setAttribute(name, value) {
+        this.attributes[name] = String(value);
+    }
+
+    closest() {
+        return this;
+    }
 
     querySelectorAll(selector) {
         if (selector === '.remove-admin-btn') {
@@ -185,6 +194,7 @@ function createEnvironment(initialState, overrides = {}) {
         'team-admin-banner',
         'page-title',
         'team-create-options',
+        'team-create-mode-registration',
         'registration-import-panel',
         'registration-source-select',
         'registration-empty-state',
@@ -615,6 +625,10 @@ describe('edit team admin access persistence', () => {
         expect(html.indexOf('id="registrationProviderName"')).toBeGreaterThan(advancedIndex);
         expect(html).toContain('Registration Provider Connection');
         expect(html).toContain('No provider login, sync job, or network call runs from these fields.');
+        expect(html).toContain('id="team-create-mode-registration"');
+        expect(html).toContain('No stored registration source snapshots are available yet.');
+        expect(html).toContain('registrationMode.setAttribute(\'aria-disabled\', String(registrationMode.disabled));');
+        expect(html).toContain('configuredRegistrationTeams.length === 0');
 
         const createEnv = await bootEditTeam({
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },

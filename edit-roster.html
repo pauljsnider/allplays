@@ -954,8 +954,10 @@
             previewButton.classList.toggle('hidden', !hasImportableSnapshot);
             importButton.classList.toggle('hidden', !hasImportableSnapshot);
             previewButton.disabled = !hasImportableSnapshot;
+            previewButton.setAttribute('aria-disabled', String(previewButton.disabled));
             previewButton.classList.toggle('opacity-50', previewButton.disabled);
             importButton.disabled = true;
+            importButton.setAttribute('aria-disabled', 'true');
             importButton.classList.toggle('opacity-50', importButton.disabled);
             status.textContent = hasImportableSnapshot
                 ? `${sourcePlayers.length} player${sourcePlayers.length === 1 ? '' : 's'} available in the latest stored roster snapshot. Preview before importing.`

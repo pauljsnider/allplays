@@ -60,7 +60,7 @@
                         </span>
                     </label>
                     <label class="flex items-start rounded-lg border border-indigo-200 bg-white p-3 cursor-pointer hover:bg-indigo-50">
-                        <input type="radio" name="teamCreateMode" value="registration" class="mt-1 text-indigo-600 focus:ring-indigo-500">
+                        <input id="team-create-mode-registration" type="radio" name="teamCreateMode" value="registration" class="mt-1 text-indigo-600 focus:ring-indigo-500">
                         <span class="ml-3">
                             <span class="block text-sm font-semibold text-gray-900">Import from registration system</span>
                             <span class="block text-xs text-gray-600">Create a team shell from a configured registration source.</span>
@@ -74,7 +74,7 @@
                         <option value="">Select a registration team...</option>
                     </select>
                     <p id="registration-empty-state" class="hidden mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">
-                        No registration sources are configured yet. Start with a blank team or ask an admin to configure a registration source.
+                        No stored registration source snapshots are available yet. Start with a blank team or load provider data before using this import path.
                     </p>
                     <p id="registration-import-help" class="mt-2 text-xs text-gray-500">
                         This only imports team identity and source identifiers. Rosters and schedules are not imported in this step.
@@ -882,6 +882,13 @@
             });
 
             select.disabled = configuredRegistrationTeams.length === 0;
+            const registrationMode = document.getElementById('team-create-mode-registration');
+            if (registrationMode) {
+                registrationMode.disabled = configuredRegistrationTeams.length === 0;
+                registrationMode.setAttribute('aria-disabled', String(registrationMode.disabled));
+                registrationMode.closest('label')?.classList.toggle('opacity-60', registrationMode.disabled);
+                registrationMode.closest('label')?.classList.toggle('cursor-not-allowed', registrationMode.disabled);
+            }
             emptyState.classList.toggle('hidden', configuredRegistrationTeams.length > 0);
         }
 
@@ -905,6 +912,12 @@
         function setCreateMode(mode) {
             const panel = document.getElementById('registration-import-panel');
             const isRegistration = mode === 'registration';
+            if (isRegistration && configuredRegistrationTeams.length === 0) {
+                document.querySelector('input[name="teamCreateMode"][value="manual"]')?.click();
+                selectedRegistrationTeam = null;
+                panel.classList.add('hidden');
+                return;
+            }
             panel.classList.toggle('hidden', !isRegistration);
             if (!isRegistration) {
                 selectedRegistrationTeam = null;
