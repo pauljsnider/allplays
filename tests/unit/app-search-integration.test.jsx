@@ -39,7 +39,7 @@ const helpMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../js/firebase.js?v=18', () => firebaseMocks);
+vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
