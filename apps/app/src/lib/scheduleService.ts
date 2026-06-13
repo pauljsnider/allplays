@@ -35,7 +35,7 @@ import {
   cancelOccurrence
 } from '../../../../js/db.js';
 import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
-import { db, doc, collection, collectionGroup, getDocs, query, runTransaction, where, increment, serverTimestamp } from '../../../../js/firebase.js?v=18';
+import { db, doc, collection, collectionGroup, getDocs, query, runTransaction, where, increment, serverTimestamp } from '../../../../js/firebase.js';
 import { normalizeOfficialLinkEmail, normalizeOfficialLinkPhone } from '../../../../js/admin-user-official-links.js';
 import { getAssignedOfficiatingSlots, getOpenOfficiatingSlots } from '../../../../js/officiating-utils.js';
 import {

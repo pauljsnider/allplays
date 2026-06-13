@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => {
   return { transactionSet, transactionGet, transactionDelete, runTransactionMock };
 });
 
-vi.mock('../../../../js/firebase.js?v=18', () => ({
+vi.mock('../../../../js/firebase.js', () => ({
   db: {},
   doc: vi.fn((first: any, ...rest: any[]) => ({ path: typeof first?.path === 'string' ? [first.path, ...rest].filter(Boolean).join('/') : rest.filter(Boolean).join('/') })),
   collection: vi.fn((_db: unknown, path: string) => ({ path })),
@@ -95,7 +95,7 @@ vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 vi.mock('./appDataCache', () => ({ getCachedAppData: vi.fn(), loadCachedAppData: vi.fn(), clearAppDataCache: vi.fn() }));
 
 import { broadcastLiveEvent, claimOpenOfficiatingSlot, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance } from '../../../../js/db.js';
-import { getDocs } from '../../../../js/firebase.js?v=18';
+import { getDocs } from '../../../../js/firebase.js';
 import { fetchAndParseCalendar } from '../../../../js/utils.js';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';

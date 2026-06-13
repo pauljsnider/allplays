@@ -9,7 +9,7 @@ import {
   where,
   orderBy,
   limit
-} from '../../../../js/firebase.js?v=18';
+} from '../../../../js/firebase.js';
 import { loadParentHomeSummary } from './homeService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
 import type { AuthState, AuthUser, UserRole } from './types';

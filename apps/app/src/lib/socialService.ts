@@ -12,7 +12,7 @@ import {
   limit,
   Timestamp,
   serverTimestamp
-} from '../../../../js/firebase.js?v=18';
+} from '../../../../js/firebase.js';
 import { loadParentHome } from './homeService';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';

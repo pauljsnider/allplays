@@ -6,8 +6,8 @@ import {
   getTeam,
   getTeamStatsForGame
 } from '../../../../js/db.js';
-import { collection, getDocs } from '../../../../js/firebase.js?v=18';
-import { db } from '../../../../js/firebase.js?v=18';
+import { collection, getDocs } from '../../../../js/firebase.js';
+import { db } from '../../../../js/firebase.js';
 import { resolveReportStatColumns, resolveOpponentReportStatColumns } from '../../../../js/game-report-stats.js';
 import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from '../../../../js/live-game-video.js';
 import { resolveLiveStatConfig } from '../../../../js/live-game-state.js';
