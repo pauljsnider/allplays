@@ -95,6 +95,7 @@ import {
   type ChatTargetType
 } from '../lib/chatLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { markTeamChatReadAndRefreshBadge, updateAppIconBadge } from '../lib/badgeService';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
@@ -135,6 +136,8 @@ export function Messages({ auth }: { auth: AuthState }) {
     try {
       const result = await loadChatInbox(auth.user);
       setTeams(result.teams);
+      const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
+      void updateAppIconBadge(totalUnread);
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load messages.');
       setTeams([]);
@@ -148,6 +151,10 @@ export function Messages({ auth }: { auth: AuthState }) {
       setLoading(false);
       setError(null);
       setTeams([]);
+      return;
+    }
+    if (!auth.user) {
+      void updateAppIconBadge(0);
       return;
     }
     refreshInbox();
@@ -815,7 +822,7 @@ function ChatWindow({
           setShowJumpToLatest(true);
         }
         initialSnapshotLoadedRef.current = true;
-        maybeMarkRead(currentUser.uid, teamId, true);
+        maybeMarkRead(currentUser, teamId, true, !isDesktopWeb && !embedded);
       },
       (subscribeError) => {
         setError(subscribeError.message || 'Unable to load chat messages.');
@@ -899,7 +906,7 @@ function ChatWindow({
         hasMessages: messages.length > 0,
         hasLoadedSnapshot: initialSnapshotLoadedRef.current
       })) {
-        void markTeamChatRead(auth.user.uid, teamId);
+        maybeMarkRead(auth.user, teamId, true, !isDesktopWeb && !embedded);
       }
     };
     document.addEventListener('visibilitychange', handleReturn);
@@ -1807,16 +1814,22 @@ function resolveMutedState(teamId: string, inboxTeam?: ChatTeam, profile: Record
   return Boolean(chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]);
 }
 
-function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {
+function maybeMarkRead(user: AuthState['user'] | null | undefined, teamId: string, hasTeamId: boolean, shouldRefreshBadge = false) {
   const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
   const isWindowFocused = document.hasFocus();
   if (shouldUpdateChatLastRead({
-    hasCurrentUser: Boolean(userId),
+    hasCurrentUser: Boolean(user?.uid),
     hasTeamId,
     isPageVisible,
     isWindowFocused
   })) {
-    void markTeamChatRead(userId, teamId);
+    if (shouldRefreshBadge) {
+      void markTeamChatReadAndRefreshBadge(user || null, teamId);
+      return;
+    }
+    if (user?.uid) {
+      void markTeamChatRead(user.uid, teamId);
+    }
   }
 }
 
