@@ -763,6 +763,74 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('resets deferred game hub panels before rendering a switched event', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
+      events: [eventId === 'game-2'
+        ? buildEvent({
+            eventKey: 'team-1::game-2::player-1::2026-06-05T18:00:00.000Z::game',
+            id: 'game-2',
+            opponent: 'Lions',
+            liveStatus: 'completed',
+            status: 'completed',
+            canUpdateScore: true,
+            isTeamStaff: true
+          })
+        : buildEvent({
+            liveStatus: 'completed',
+            status: 'completed',
+            canUpdateScore: true,
+            isTeamStaff: true
+          })],
+      children: []
+    }));
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    gameReportServiceMocks.loadGameReportSections.mockImplementation(async (event) => ({
+      game: { id: event.id, liveStatus: 'completed', status: 'completed', homeScore: 42, awayScore: 38 },
+      plays: [],
+      summary: event.id === 'game-2' ? 'Second game report.' : 'First game report.',
+      opponentRows: [],
+      opponentStatKeys: [],
+      teamInsights: [],
+      playerInsightRows: [],
+      highlightClips: [],
+      statSheetPhotoUrl: null,
+      teamStatKeys: [],
+      teamStats: {},
+      statKeys: [],
+      playerRows: [],
+      statLabels: {},
+      hasPlayingTime: false,
+      team: { id: event.teamId }
+    }));
+
+    renderScheduleEventDetailWithRouteControls();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Report sections' }));
+    await waitFor(() => {
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('First game report.')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch game' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Lions/ })).toBeTruthy();
+    });
+    expect(screen.queryByText('First game report.')).toBeNull();
+    expect(screen.queryByText('Second game report.')).toBeNull();
+    expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Report sections' }));
+    await waitFor(() => {
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('Second game report.')).toBeTruthy();
+    });
+  });
+
   it('executes substitutions against shared game-day rotation fields and renders live logs', async () => {
     const gamePlan = {
       formationId: 'basketball-5v5',
