@@ -1264,6 +1264,7 @@ function SocialComposerModal({
   const [visibility, setVisibility] = useState<SocialVisibility>(activePreset.defaultVisibility);
   const [teamId, setTeamId] = useState(home.teams[0]?.teamId || '');
   const [playerKey, setPlayerKey] = useState(initialPreset.prefersPlayer && home.players[0] ? `${home.players[0].teamId}::${home.players[0].playerId}` : '');
+  const [playerTaggingEnabled, setPlayerTaggingEnabled] = useState(initialPreset.prefersPlayer);
   const [caption, setCaption] = useState('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -1271,17 +1272,20 @@ function SocialComposerModal({
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState('');
 
-  const selectedPlayer = activePreset.prefersPlayer
-    ? home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || home.players[0] || null
-    : home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || null;
-  const selectedTeam = selectedPlayer
+  const supportsOptionalPlayerTagging = type === 'game_recap' || type === 'team_media' || type === 'practice_packet';
+  const playerSelectionEnabled = activePreset.prefersPlayer || playerTaggingEnabled;
+  const fallbackPlayer = home.players.find((player) => player.teamId === teamId) || home.players[0] || null;
+  const selectedPlayer = playerSelectionEnabled
+    ? home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || (activePreset.prefersPlayer ? fallbackPlayer : null)
+    : null;
+  const selectedTeam = playerSelectionEnabled && selectedPlayer
     ? home.teams.find((team) => team.teamId === selectedPlayer.teamId) || home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null
     : home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null;
   const suggestedTitle = getComposerSuggestedTitle(type, selectedTeam, selectedPlayer);
   const visibleUserIds = visibility === 'friends' || visibility === 'friends_and_team'
     ? social.friends.map((friend) => friend.userId)
     : [];
-  const subjectLabel = selectedPlayer
+  const subjectLabel = playerSelectionEnabled && selectedPlayer
     ? `${selectedPlayer.playerName} · ${selectedPlayer.teamName}`
     : selectedTeam?.teamName || 'Choose team';
 
@@ -1291,12 +1295,13 @@ function SocialComposerModal({
     setPresetId(nextPreset.id);
     setVisibility(nextPreset.defaultVisibility);
     setLocalError('');
-    if (nextPreset.prefersPlayer && !playerKey && home.players[0]) {
-      setPlayerKey(`${home.players[0].teamId}::${home.players[0].playerId}`);
-      setTeamId(home.players[0].teamId);
-    }
-    if (!nextPreset.prefersPlayer) {
-      setPlayerKey('');
+    setPlayerTaggingEnabled(nextPreset.prefersPlayer);
+    if (nextPreset.prefersPlayer) {
+      const nextPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || home.players[0] || null;
+      if (nextPlayer) {
+        setPlayerKey(`${nextPlayer.teamId}::${nextPlayer.playerId}`);
+        setTeamId(nextPlayer.teamId);
+      }
     }
   };
 
@@ -1410,22 +1415,55 @@ function SocialComposerModal({
                   {home.teams.length ? home.teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>) : <option value="">No team linked</option>}
                 </select>
               </label>
-              <label className="block sm:col-span-2">
-                <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player</span>
-                <select
-                  value={playerKey}
-                  onChange={(event) => {
-                    const nextKey = event.target.value;
-                    setPlayerKey(nextKey);
-                    const nextPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === nextKey);
-                    if (nextPlayer?.teamId) setTeamId(nextPlayer.teamId);
-                  }}
-                  className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-                >
-                  <option value="">Team post</option>
-                  {home.players.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
-                </select>
-              </label>
+              {supportsOptionalPlayerTagging ? (
+                <div className="block sm:col-span-2">
+                  <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Optional</span>
+                  <div className="mt-1 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-black text-gray-950">Tag a player</div>
+                        <div className="mt-0.5 text-xs font-semibold text-gray-500">Keep this team-first unless you explicitly want to tag one player.</div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`rounded-full px-3 py-1.5 text-xs font-black ${playerTaggingEnabled ? 'bg-primary-600 text-white' : 'bg-white text-primary-700 ring-1 ring-primary-100'}`}
+                        onClick={() => {
+                          if (playerTaggingEnabled) {
+                            setPlayerTaggingEnabled(false);
+                            return;
+                          }
+                          const nextPlayer = home.players.find((player) => player.teamId === (selectedTeam?.teamId || teamId)) || home.players[0] || null;
+                          if (nextPlayer) {
+                            setPlayerKey(`${nextPlayer.teamId}::${nextPlayer.playerId}`);
+                            setTeamId(nextPlayer.teamId);
+                          }
+                          setPlayerTaggingEnabled(true);
+                        }}
+                      >
+                        {playerTaggingEnabled ? 'Remove player tag' : 'Tag a player'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {playerSelectionEnabled ? (
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player</span>
+                  <select
+                    value={playerKey}
+                    onChange={(event) => {
+                      const nextKey = event.target.value;
+                      setPlayerKey(nextKey);
+                      const nextPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === nextKey);
+                      if (nextPlayer?.teamId) setTeamId(nextPlayer.teamId);
+                    }}
+                    className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                  >
+                    {activePreset.prefersPlayer ? null : <option value="">Choose player</option>}
+                    {home.players.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
+                  </select>
+                </label>
+              ) : null}
             </div>
           ) : null}
 
