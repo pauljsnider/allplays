@@ -5,6 +5,7 @@ import {
   getEventRideshareSummary,
   getOfferSeatInfo,
   getRequestStatusCounts,
+  isWaitlistRequest,
   normalizeOffer
 } from '../../js/rideshare-helpers.js';
 
@@ -96,5 +97,23 @@ describe('rideshare helpers', () => {
     expect(canRequestRide(offer, 'parent-3', 'child-3')).toBe(true);
     expect(canRequestRide(offer, 'driver-1', 'child-4')).toBe(false);
     expect(canRequestRide(offer, 'parent-2', 'child-2')).toBe(false);
+  });
+
+  it('allows ride request on a full offer for waitlist placement', () => {
+    const fullOffer = {
+      status: 'open',
+      driverUserId: 'driver-1',
+      seatCapacity: 2,
+      seatCountConfirmed: 2,
+      requests: []
+    };
+    expect(canRequestRide(fullOffer, 'parent-3', 'child-3')).toBe(true);
+  });
+
+  it('isWaitlistRequest returns true when offer is full', () => {
+    const fullOffer = { status: 'open', seatCapacity: 2, seatCountConfirmed: 2 };
+    const openOffer = { status: 'open', seatCapacity: 2, seatCountConfirmed: 1 };
+    expect(isWaitlistRequest(fullOffer)).toBe(true);
+    expect(isWaitlistRequest(openOffer)).toBe(false);
   });
 });

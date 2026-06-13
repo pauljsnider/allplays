@@ -82,5 +82,10 @@ export function canRequestRide(offer = {}, parentUserId, childId) {
     const seatInfo = getOfferSeatInfo(normalized);
     const existing = findRequestForChild(normalized, parentUserId, childId);
     if (existing?.status === REQUEST_STATUS_PENDING || existing?.status === REQUEST_STATUS_CONFIRMED) return false;
-    return seatInfo.seatsLeft > 0;
+    return true;
+}
+
+export function isWaitlistRequest(offer = {}) {
+    const seatInfo = getOfferSeatInfo(normalizeOffer(offer));
+    return seatInfo.seatsLeft === 0;
 }
