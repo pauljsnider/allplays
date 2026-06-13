@@ -1781,7 +1781,12 @@ service cloud.firestore {
         // Live Chat subcollection - game-specific chat for live viewers
         match /liveChat/{messageId} {
           allow read: if true;  // Public read for all viewers
-          allow create: if true;  // Anyone can post (anonymous or authenticated)
+          allow create: if isSignedIn()
+            && request.resource.data.keys().hasAll(['text', 'senderId'])
+            && request.resource.data.senderId == request.auth.uid
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && request.resource.data.text.size() <= 2000;
           allow update: if false;  // Messages are immutable
           allow delete: if isTeamOwnerOrAdmin(teamId);  // Moderation only
         }
@@ -1789,7 +1794,9 @@ service cloud.firestore {
         // Live Reactions subcollection - ephemeral reactions during live games
         match /liveReactions/{reactionId} {
           allow read: if true;  // Public read
-          allow create: if true;  // Anyone can react
+          allow create: if isSignedIn()
+            && request.resource.data.keys().hasAll(['type', 'senderId'])
+            && request.resource.data.senderId == request.auth.uid;
           allow update, delete: if false;  // Reactions are immutable
         }
 
