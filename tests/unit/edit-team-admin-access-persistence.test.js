@@ -613,6 +613,8 @@ describe('edit team admin access persistence', () => {
         expect(html.indexOf('id="isPublic"')).toBeLessThan(advancedIndex);
         expect(html.indexOf('id="teamColorPrimary"')).toBeGreaterThan(advancedIndex);
         expect(html.indexOf('id="registrationProviderName"')).toBeGreaterThan(advancedIndex);
+        expect(html).toContain('Registration Provider Connection');
+        expect(html).toContain('No provider login, sync job, or network call runs from these fields.');
 
         const createEnv = await bootEditTeam({
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
