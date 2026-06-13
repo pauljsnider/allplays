@@ -11,4 +11,12 @@ describe('app push notification wiring', () => {
         expect(source).toContain('const pendingRoute = readPendingPushRoute();');
         expect(source).toContain('clearPendingPushRoute();');
     });
+
+    it('keeps Android channel metadata local to the app so Vite does not try to import the Functions CommonJS bundle in the browser', () => {
+        const source = readFileSync(new URL('../../apps/app/src/lib/pushService.ts', import.meta.url), 'utf8');
+        expect(source).toContain("id: 'allplays_messages'");
+        expect(source).toContain("id: 'allplays_game_day'");
+        expect(source).toContain("id: 'allplays_schedule'");
+        expect(source).not.toContain('notification-delivery-metadata.cjs');
+    });
 });
