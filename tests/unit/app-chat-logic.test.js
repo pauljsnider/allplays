@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    __chatHtmlTestUtils,
     DEFAULT_TEAM_CONVERSATION_ID,
     buildChatAudienceMetadata,
     buildEmailAudienceMetadata,
@@ -45,6 +46,12 @@ describe('React app chat logic', () => {
         expect(html).toContain('<span class="chat-mention">@ALL PLAYS</span>');
         expect(html).toContain('target="_blank"');
         expect(html).toContain('rel="noopener noreferrer"');
+    });
+
+    it('strips malformed or unsafe anchors in the fallback chat sanitizer', () => {
+        expect(__chatHtmlTestUtils.sanitizeFormattedChatHtmlFallback('<a href="javascript:alert(1)">bad</a>')).toBe('bad');
+        expect(__chatHtmlTestUtils.sanitizeFormattedChatHtmlFallback('<a href="https://safe.example.test" onload="alert(1)">safe</a>')).toBe('safe');
+        expect(__chatHtmlTestUtils.sanitizeFormattedChatHtmlFallback('<a href="https://safe.example.test">safe</a>')).toBe('<a href="https://safe.example.test" target="_blank" rel="noopener noreferrer">safe</a>');
     });
 
     it('accepts only explicit http links from the composer link action', () => {

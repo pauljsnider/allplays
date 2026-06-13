@@ -375,11 +375,25 @@ function sanitizeFormattedChatHtml(html: string) {
 }
 
 function sanitizeFormattedChatHtmlFallback(html: string) {
+  let safeAnchorDepth = 0;
+
   return String(html || '').replace(/<\/?([a-z][a-z0-9-]*)(\s[^>]*)?>/gi, (tag, rawTagName, rawAttributes = '') => {
     const tagName = String(rawTagName || '').toLowerCase();
     if (!allowedChatHtmlTags.has(tagName)) return '';
-    if (tag.startsWith('</')) return `</${tagName}>`;
-    if (tagName === 'a') return sanitizeChatAnchorTag(rawAttributes);
+    if (tag.startsWith('</')) {
+      if (tagName === 'a') {
+        if (safeAnchorDepth < 1) return '';
+        safeAnchorDepth -= 1;
+      }
+      return `</${tagName}>`;
+    }
+    if (tagName === 'a') {
+      const sanitizedAnchorTag = sanitizeChatAnchorTag(rawAttributes);
+      if (sanitizedAnchorTag) {
+        safeAnchorDepth += 1;
+      }
+      return sanitizedAnchorTag;
+    }
     if (tagName === 'span') {
       return /\bclass=(["'])chat-mention\1/i.test(rawAttributes) ? '<span class="chat-mention">' : '<span>';
     }
@@ -388,11 +402,16 @@ function sanitizeFormattedChatHtmlFallback(html: string) {
 }
 
 function sanitizeChatAnchorTag(rawAttributes: string) {
-  const hrefMatch = String(rawAttributes || '').match(/\bhref=(["'])(.*?)\1/i);
+  const attributes = String(rawAttributes || '');
+  const hrefMatch = attributes.match(/^\s*href=(["'])([^"'\s>]+)\1(?:\s+target=(["'])_blank\3)?(?:\s+rel=(["'])noopener noreferrer\4)?\s*$/i);
   const href = hrefMatch ? hrefMatch[2] : '';
-  if (!isChatUrlSafe(href)) return '<a>';
+  if (!isChatUrlSafe(href)) return '';
   return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">`;
 }
+
+export const __chatHtmlTestUtils = {
+  sanitizeFormattedChatHtmlFallback
+};
 
 export function formatChatMessageHtml(text: string) {
   let formatted = escapeHtml(text || '');
