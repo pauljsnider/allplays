@@ -85,7 +85,7 @@ describe('rideshare helpers', () => {
     expect(findRequestForChild(offer, 'u3', 'c9')).toBeNull();
   });
 
-  it('allows request only when rider is not driver and seat is available', () => {
+  it('allows requests on open offers so drivers can waitlist full rides', () => {
     const offer = {
       status: 'open',
       driverUserId: 'driver-1',
@@ -96,5 +96,10 @@ describe('rideshare helpers', () => {
     expect(canRequestRide(offer, 'parent-3', 'child-3')).toBe(true);
     expect(canRequestRide(offer, 'driver-1', 'child-4')).toBe(false);
     expect(canRequestRide(offer, 'parent-2', 'child-2')).toBe(false);
+    expect(canRequestRide({
+      ...offer,
+      seatCountConfirmed: 2,
+      requests: []
+    }, 'parent-4', 'child-4')).toBe(true);
   });
 });

@@ -79,8 +79,7 @@ export function canRequestRide(offer = {}, parentUserId, childId) {
     if (normalized.status !== OFFER_STATUS_OPEN) return false;
     if (!parentUserId || !childId) return false;
     if (normalized.driverUserId === parentUserId) return false;
-    const seatInfo = getOfferSeatInfo(normalized);
     const existing = findRequestForChild(normalized, parentUserId, childId);
     if (existing?.status === REQUEST_STATUS_PENDING || existing?.status === REQUEST_STATUS_CONFIRMED) return false;
-    return seatInfo.seatsLeft > 0;
+    return true;
 }

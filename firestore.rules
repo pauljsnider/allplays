@@ -1141,8 +1141,7 @@ service cloud.firestore {
              get(offerPath).data.seatCapacity is int &&
              get(offerPath).data.seatCapacity > 0 &&
              get(offerPath).data.seatCountConfirmed is int &&
-             get(offerPath).data.seatCountConfirmed >= 0 &&
-             get(offerPath).data.seatCountConfirmed < get(offerPath).data.seatCapacity;
+             get(offerPath).data.seatCountConfirmed >= 0;
     }
 
     // Require request status decisions/deletes to keep parent offer seat counters consistent.

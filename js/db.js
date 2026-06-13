@@ -7623,10 +7623,6 @@ export async function requestRideSpot(teamId, gameId, offerId, payload = {}) {
             }
         }
 
-        const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);
-        const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);
-        if (currentSeatCountConfirmed >= seatCapacity) throw new Error('Offer is full.');
-
         const requestedAt = Timestamp.now();
         const updatedAt = Timestamp.now();
         const requestPayload = {
@@ -7896,4 +7892,3 @@ export async function revokeFamilyShareToken(tokenId) {
         updatedAt: Timestamp.now()
     });
 }
-
