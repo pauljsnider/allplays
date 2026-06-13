@@ -15,9 +15,9 @@ vi.mock('@capacitor/core', () => ({
     Capacitor: capacitorCoreMock
 }));
 
-// @capacitor/badge is dynamically imported inside updateAppIconBadge, so we
+// @capawesome/capacitor-badge is dynamically imported inside updateAppIconBadge, so we
 // mock the module so the dynamic import resolves to our stub.
-vi.mock('@capacitor/badge', () => ({
+vi.mock('@capawesome/capacitor-badge', () => ({
     Badge: badgeMocks
 }));
 
