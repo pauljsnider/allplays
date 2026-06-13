@@ -12,6 +12,7 @@ import {
     getParentScheduleTeamOptions,
     getPracticePacketRows,
     getScheduleAssignmentStatus,
+    PRACTICE_PACKET_DETAIL_SECTION,
     getScheduleMapHref,
     getScheduleRideSeatInfo,
     getScheduleRideshareSummary,
@@ -78,6 +79,8 @@ describe('React app parent schedule logic', () => {
 
         expect(getScheduleTaskDetailSection(generic)).toBe('');
         expect(getScheduleEventDetailPath(generic, getScheduleTaskDetailSection(generic))).toBe('/schedule/team%2Fwith%20slash/game%201?childId=player+1');
+        expect(PRACTICE_PACKET_DETAIL_SECTION).toBe('game');
+        expect(getScheduleTaskDetailSection(packet)).toBe(PRACTICE_PACKET_DETAIL_SECTION);
         expect(getScheduleEventDetailPath(packet, getScheduleTaskDetailSection(packet))).toBe('/schedule/team-1/practice-1?childId=player-1&section=game');
         expect(getScheduleEventDetailPath(assignment, getScheduleTaskDetailSection(assignment))).toBe('/schedule/team-1/game-1?childId=player-1&section=assignments');
         expect(getScheduleEventDetailPath(ride, getScheduleTaskDetailSection(ride))).toBe('/schedule/team-1/game-1?childId=player-1&section=rideshare');

@@ -5,6 +5,7 @@ export type ScheduleEventType = 'game' | 'practice';
 export type RsvpResponse = 'going' | 'maybe' | 'not_going' | 'not_responded';
 export type ScheduleSourceType = 'db' | 'calendar' | 'practice-session' | 'unknown';
 export type ScheduleEventDetailSection = 'availability' | 'rideshare' | 'assignments' | 'game';
+export const PRACTICE_PACKET_DETAIL_SECTION: ScheduleEventDetailSection = 'game';
 
 export type ScheduleRsvpSummary = {
   going?: number;
@@ -499,7 +500,8 @@ export function getOpenScheduleAssignments(assignments: Array<Partial<ScheduleAs
 }
 
 export function getScheduleTaskDetailSection(event: Pick<ParentScheduleEvent, 'type' | 'practiceHomePacketSummary' | 'assignments' | 'rideshareSummary'>): ScheduleEventDetailSection | '' {
-  if (event.type === 'practice' && event.practiceHomePacketSummary) return 'game';
+  // Practice packets render in the shared game/report tab inside ScheduleEventDetail.
+  if (event.type === 'practice' && event.practiceHomePacketSummary) return PRACTICE_PACKET_DETAIL_SECTION;
   if (getOpenScheduleAssignments(event.assignments).length > 0) return 'assignments';
   const rideSummary = event.rideshareSummary;
   if (rideSummary && (rideSummary.requests > 0 || rideSummary.pending > 0 || rideSummary.seatsLeft > 0)) return 'rideshare';
