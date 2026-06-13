@@ -18,6 +18,14 @@ describe('invite redirect helper', () => {
         expect(getPostAuthRedirectUrl('dashboard.html', 'abcd1234', true, 'Admin')).toBe('accept-invite.html?code=ABCD1234&type=admin');
     });
 
+    it('preserves household invite redirects when redemption is requested', () => {
+        expect(getPostAuthRedirectUrl('dashboard.html', 'abcd1234', true, 'household')).toBe('accept-invite.html?code=ABCD1234&type=household');
+    });
+
+    it('normalizes household_invite redirects to the household accept-invite route', () => {
+        expect(getPostAuthRedirectUrl('dashboard.html', 'abcd1234', true, 'household_invite')).toBe('accept-invite.html?code=ABCD1234&type=household');
+    });
+
     it('uses default redirect when no valid code exists', () => {
         expect(getPostAuthRedirectUrl('dashboard.html', '', true)).toBe('dashboard.html');
     });
