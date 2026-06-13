@@ -919,6 +919,7 @@
                 ${rowHtml.length ? rowHtml.join('') : '<div class="rounded-md border border-gray-200 bg-white p-3 text-gray-600">No source roster rows found.</div>'}
             `;
             importButton.disabled = plan.operations.length === 0;
+            importButton.setAttribute('aria-disabled', String(importButton.disabled));
             importButton.classList.toggle('opacity-50', importButton.disabled);
         }
 
@@ -1048,6 +1049,7 @@
                 status.textContent = 'Roster import failed: ' + (error?.message || 'Please try again.');
             } finally {
                 button.disabled = !registrationRosterImportPlan;
+                button.setAttribute('aria-disabled', String(button.disabled));
                 button.classList.toggle('opacity-50', button.disabled);
                 button.textContent = 'Import Roster';
             }
