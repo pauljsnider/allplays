@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging } from '@capacitor-firebase/messaging';
-import type { NotificationActionPerformedEvent } from '@capacitor-firebase/messaging';
+import type { CreateChannelOptions, NotificationActionPerformedEvent } from '@capacitor-firebase/messaging';
 import { saveNotificationDeviceToken } from './profileService';
 import { rememberPendingPushRoute, resolvePushNotificationRoute } from './pushNotificationRouting';
 
@@ -23,6 +23,38 @@ const nativePushTimeoutMs = 15000;
 const iosNotificationSettingsUrl = 'app-settings:';
 const androidNotificationSettingsUrl = 'intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;S.extra_app_package=ai.allplays.lite;end';
 const androidAppSettingsUrl = 'app-settings:';
+export const androidNotificationChannels = [
+  {
+    id: 'allplays_messages',
+    name: 'Messages',
+    description: 'Team chat, direct messages, and mentions.',
+    importance: 4
+  },
+  {
+    id: 'allplays_game_day',
+    name: 'Game day',
+    description: 'Live scores, game-day alerts, and practice packets.',
+    importance: 4
+  },
+  {
+    id: 'allplays_schedule',
+    name: 'Schedule',
+    description: 'Schedule changes, RSVP reminders, and officiating updates.',
+    importance: 3
+  },
+  {
+    id: 'allplays_money',
+    name: 'Money',
+    description: 'Team fee assignments, reminders, and payment updates.',
+    importance: 3
+  },
+  {
+    id: 'allplays_team',
+    name: 'Team',
+    description: 'Team access, rideshare, media, and award updates.',
+    importance: 3
+  }
+] as const satisfies readonly CreateChannelOptions[];
 
 export class PushPermissionError extends Error {
   code: 'push-permission-blocked' | 'push-unsupported';
@@ -53,6 +85,20 @@ export async function addPushNotificationOpenListener(onRouteOpen: (route: strin
   return async () => {
     await listener.remove();
   };
+}
+
+export async function ensureAndroidNotificationChannels(): Promise<void> {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') {
+    return;
+  }
+
+  await Promise.all(androidNotificationChannels.map(async (channel) => {
+    try {
+      await FirebaseMessaging.createChannel({ ...channel });
+    } catch (error) {
+      console.warn('[push] Unable to create Android notification channel:', channel.id, error);
+    }
+  }));
 }
 
 export async function enablePushNotificationsForUser(userId: string): Promise<PushRegistrationResult> {

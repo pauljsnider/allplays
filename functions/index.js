@@ -85,6 +85,10 @@ const {
   notificationAudienceAllowsRoles
 } = require('./notification-target-index-core.cjs');
 const {
+  WEB_PUSH_NOTIFICATION_ASSETS,
+  buildNotificationDeliveryOptions
+} = require('./notification-delivery-metadata.cjs');
+const {
   coerceDate,
   getEventTitle,
   formatScheduleUpdateDate
@@ -3282,6 +3286,7 @@ async function sendCategoryNotification({
 
   const link = linkOverride || buildNotificationLink({ category, teamId, gameId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
+  const deliveryOptions = buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId });
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -3301,8 +3306,10 @@ async function sendCategoryNotification({
         link
       },
       webpush: {
+        notification: WEB_PUSH_NOTIFICATION_ASSETS,
         fcmOptions: { link }
-      }
+      },
+      ...deliveryOptions
     });
     allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
     successCount += Number(sendResult.successCount || 0);
@@ -3322,6 +3329,7 @@ async function sendDirectTargetsNotification({ targets, category, title, body, t
 
   const link = buildNotificationLink({ category, teamId, gameId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
+  const deliveryOptions = buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId });
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -3341,8 +3349,10 @@ async function sendDirectTargetsNotification({ targets, category, title, body, t
         link
       },
       webpush: {
+        notification: WEB_PUSH_NOTIFICATION_ASSETS,
         fcmOptions: { link }
-      }
+      },
+      ...deliveryOptions
     });
     allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
     successCount += Number(sendResult.successCount || 0);

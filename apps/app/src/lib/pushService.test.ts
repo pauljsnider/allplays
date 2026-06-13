@@ -9,6 +9,7 @@ const capacitorState = {
 const firebaseMessagingMocks = {
     addListener: vi.fn(),
     checkPermissions: vi.fn(),
+    createChannel: vi.fn(),
     getToken: vi.fn(),
     isSupported: vi.fn(),
     requestPermissions: vi.fn()
@@ -32,6 +33,7 @@ describe('pushService permission states', () => {
         capacitorState.getPlatform.mockReturnValue('ios');
         firebaseMessagingMocks.isSupported.mockResolvedValue({ isSupported: true });
         firebaseMessagingMocks.addListener.mockResolvedValue({ remove: vi.fn().mockResolvedValue(undefined) });
+        firebaseMessagingMocks.createChannel.mockResolvedValue(undefined);
         firebaseMessagingMocks.getToken.mockResolvedValue({ token: 'native-token' });
         firebaseMessagingMocks.checkPermissions.mockResolvedValue({ receive: 'prompt' });
         firebaseMessagingMocks.requestPermissions.mockResolvedValue({ receive: 'prompt' });
@@ -158,5 +160,48 @@ describe('pushService permission states', () => {
         expect(locationAssignMock).toHaveBeenCalledWith(
             'intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;S.extra_app_package=ai.allplays.lite;end'
         );
+    });
+
+    it('creates category Android channels on Android startup', async () => {
+        capacitorState.getPlatform.mockReturnValue('android');
+        const { ensureAndroidNotificationChannels } = await loadPushService();
+
+        await ensureAndroidNotificationChannels();
+
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(5);
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'allplays_messages',
+            name: 'Messages',
+            importance: 4
+        }));
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'allplays_game_day',
+            name: 'Game day',
+            importance: 4
+        }));
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'allplays_schedule',
+            name: 'Schedule',
+            importance: 3
+        }));
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'allplays_money',
+            name: 'Money',
+            importance: 3
+        }));
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'allplays_team',
+            name: 'Team',
+            importance: 3
+        }));
+    });
+
+    it('skips Android channel creation outside Android native shells', async () => {
+        capacitorState.getPlatform.mockReturnValue('ios');
+        const { ensureAndroidNotificationChannels } = await loadPushService();
+
+        await ensureAndroidNotificationChannels();
+
+        expect(firebaseMessagingMocks.createChannel).not.toHaveBeenCalled();
     });
 });
