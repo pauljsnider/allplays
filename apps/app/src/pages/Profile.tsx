@@ -1072,7 +1072,7 @@ export function Profile({ auth }: { auth: AuthState }) {
                     ? 'Notifications are blocked in device settings. Open settings, allow notifications, then return here to finish game-day alerts.'
                     : 'One tap enables push on this device and turns on schedule changes and live score updates for the selected team.'}
                 </p>
-                <button type="button" className="primary-button mt-3" onClick={nativePushBlocked ? () => void openDeviceSettingsForPush('Notifications are turned off in device settings. Open device settings to finish turning on game-day alerts.') : turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
+                <button type="button" className="primary-button mt-3" onClick={nativePushBlocked ? () => void openDeviceSettingsForPush('Notifications are turned off in device settings. Open device settings to finish turning on game-day alerts.') : turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || (!nativePushBlocked && (!selectedTeamId || !selectedTeamPreferencesHydrated))}>
                   {busy === 'game-day-alerts' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
                   {nativePushBlocked ? 'Open device settings to finish alerts' : 'Turn on game-day alerts'}
                 </button>
