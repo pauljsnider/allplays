@@ -181,4 +181,26 @@ describe('post-game stat editor helpers', () => {
         expect(pageSource).toContain("hasRecordedStatValue(pStats, key) ? pStats[key] : '&mdash;'");
         expect(pageSource).toContain("hasRecordedStatValue(p.stats, key) ? p.stats[key] : '&mdash;'");
     });
+
+    it('uses normalizeStatKey for form input keys so custom stat names round-trip correctly', () => {
+        // Regression for issue #2196: form inputs were rendered with raw fieldName (e.g. "3-pt")
+        // but buildCompletedGamePlayerStatsPayload reads back using normalizeStatKey (e.g. "3pt"),
+        // causing a key mismatch that wiped custom stat values on save.
+        const pageSource = readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
+
+        // The team stat editor comes first in the file, then the player stat editor
+        const teamEditorStart = pageSource.indexOf('function setupPostGameTeamStatEditor({');
+        const playerEditorStart = pageSource.indexOf('function setupPostGameStatEditor({');
+
+        // The team stat editor renderEditor function must normalize field keys before use
+        const teamEditorEnd = playerEditorStart;
+        const teamEditorSource = pageSource.slice(teamEditorStart, teamEditorEnd);
+        expect(teamEditorSource).toContain('normalizeStatKey(field.fieldName)');
+        expect(teamEditorSource).toContain('data-team-stat-field=');
+
+        // The player stat editor renderEditor function must also normalize field keys
+        const playerEditorSource = pageSource.slice(playerEditorStart);
+        expect(playerEditorSource).toContain('normalizeStatKey(field.fieldName)');
+        expect(playerEditorSource).toContain('data-stat-field=');
+    });
 });

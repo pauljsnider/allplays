@@ -398,7 +398,7 @@
         import { resolveLiveStatConfig } from './js/live-game-state.js?v=3';
         import { splitPlayerStatsByVisibility } from './js/stat-leaderboards.js?v=2';
         import { formatGameReportEventTimestamp, resolveReportStatColumns, resolveOpponentReportStatColumns } from './js/game-report-stats.js?v=2';
-        import { resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=3';
+        import { normalizeStatKey, resolvePostGameStatFields, resolvePostGameTeamStatFields, resolvePostGameEditorDidNotPlay, buildCompletedGamePlayerStatsPayload, buildCompletedGameTeamStatsPayload, getPostGameEditorNextIndex } from './js/post-game-stat-editor.js?v=4';
         import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from './js/live-game-video.js?v=3';
 
         let currentUser = null;
@@ -1005,7 +1005,7 @@ Write the match report now:`;
 
             function renderEditor() {
                 fieldsEl.innerHTML = teamStatFields.map((field) => {
-                    const key = field.fieldName;
+                    const key = normalizeStatKey(field.fieldName);
                     const value = teamStats[key] || 0;
                     return `
                         <label class="block">
@@ -1132,7 +1132,7 @@ Write the match report now:`;
                 metaEl.textContent = `#${player.number || '-'} • Player ${currentIndex + 1} of ${players.length}`;
                 dnpToggle.checked = didNotPlay;
                 fieldsEl.innerHTML = statFields.map((field) => {
-                    const key = field.fieldName;
+                    const key = normalizeStatKey(field.fieldName);
                     const value = didNotPlay ? 0 : (playerStats[key] || 0);
                     return `
                         <label class="block">
