@@ -162,7 +162,7 @@ vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
 vi.mock('../../js/registration-review.js', () => registrationReviewMocks);
 vi.mock('../../js/team-media-utils.js', () => mediaMocks);
-vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
+vi.mock('../../apps/app/src/lib/authService', () => authMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../js/stripe-service.js', () => stripeMocks);
@@ -871,6 +871,7 @@ describe('React app parent tools service', () => {
             feeSnapshot: { finalAmountDueCents: 9900 },
             options: [{ id: 'opt-public', title: 'Clinic' }]
         });
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-public', 'registrationForms', 'form-public');
         expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
             path: 'teams/team-public/registrationForms/form-public'
         }));

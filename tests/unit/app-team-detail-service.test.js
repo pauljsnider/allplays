@@ -54,7 +54,7 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/authService.ts', () => ({
+vi.mock('../../apps/app/src/lib/authService', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
@@ -1014,6 +1014,10 @@ describe('React app team detail model', () => {
         expect(collection).toHaveBeenCalledWith({}, 'accessCodes');
         expect(where).toHaveBeenCalledWith('teamId', '==', 'team-1');
         expect(query).toHaveBeenCalledWith({ db: {}, name: 'accessCodes' }, { field: 'teamId', op: '==', value: 'team-1' });
+        expect(getDocs).toHaveBeenCalledWith([
+            { db: {}, name: 'accessCodes' },
+            { field: 'teamId', op: '==', value: 'team-1' }
+        ]);
 
         getDocs.mockClear();
         getAllUsers.mockClear();
