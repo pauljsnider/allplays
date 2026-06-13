@@ -300,28 +300,36 @@ export function Profile({ auth }: { auth: AuthState }) {
           return;
         }
 
+        const initialTeamId = teams[0]?.id || '';
+
         setNotificationTeams(teams);
         setSelectedTeamId((current) => {
           if (current && teams.some((team) => team.id === current)) {
             return current;
           }
-          return teams[0]?.id || '';
+          return initialTeamId;
         });
-        setNotificationTeamsLoaded(true);
 
-        if (teams[0]?.id) {
-          try {
-            const preferences = await loadNotificationPreferences(user.uid, teams[0].id);
-            if (!cancelled) {
-              setNotificationPreferences(preferences);
-              setLoadedNotificationTeamId(teams[0].id);
-            }
-          } catch (error) {
-            console.warn('[profile] Unable to load notification preferences for first team:', error);
-            if (!cancelled) {
-              setNotificationPreferences(emptyPreferences);
-              setLoadedNotificationTeamId(teams[0].id);
-            }
+        if (!initialTeamId) {
+          setNotificationTeamsLoaded(true);
+          return;
+        }
+
+        try {
+          const preferences = await loadNotificationPreferences(user.uid, initialTeamId);
+          if (!cancelled) {
+            setNotificationPreferences(preferences);
+            setLoadedNotificationTeamId(initialTeamId);
+          }
+        } catch (error) {
+          console.warn('[profile] Unable to load notification preferences for first team:', error);
+          if (!cancelled) {
+            setNotificationPreferences(emptyPreferences);
+            setLoadedNotificationTeamId(initialTeamId);
+          }
+        } finally {
+          if (!cancelled) {
+            setNotificationTeamsLoaded(true);
           }
         }
       } catch {
@@ -339,7 +347,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     let cancelled = false;
 
     async function loadPreferences() {
-      if (!user || activeProfileSection !== 'alerts') {
+      if (!user || activeProfileSection !== 'alerts' || !notificationTeamsLoaded) {
         return;
       }
       if (!selectedTeamId) {
@@ -371,7 +379,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, loadedNotificationTeamId, selectedTeamId, user]);
+  }, [activeProfileSection, loadedNotificationTeamId, notificationTeamsLoaded, selectedTeamId, user]);
 
   useEffect(() => {
     let cancelled = false;
