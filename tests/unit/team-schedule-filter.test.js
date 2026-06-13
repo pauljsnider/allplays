@@ -43,6 +43,52 @@ function hoursFromNow(offsetHours) {
 }
 
 describe('team schedule filtering', () => {
+    it('defaults the team page schedule to all upcoming events while keeping recent results manual', () => {
+        const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
+        const getFilteredScheduleEvents = loadGetFilteredScheduleEvents();
+        const completedGame = {
+            type: 'db',
+            isPractice: false,
+            status: 'completed',
+            date: hoursFromNow(-24),
+            opponent: 'Past Win'
+        };
+        const laterGame = {
+            type: 'db',
+            isPractice: false,
+            status: 'scheduled',
+            isCancelled: false,
+            date: hoursFromNow(48),
+            opponent: 'Future Game'
+        };
+        const nextPractice = {
+            type: 'db',
+            isPractice: true,
+            status: 'scheduled',
+            isCancelled: false,
+            date: hoursFromNow(24),
+            opponent: 'Practice'
+        };
+
+        const initialEvents = getFilteredScheduleEvents({
+            showPractices: true,
+            scheduleViewFilter: 'all-upcoming',
+            allScheduleEvents: [completedGame, laterGame, nextPractice]
+        });
+        const recentResults = getFilteredScheduleEvents({
+            showPractices: true,
+            scheduleViewFilter: 'recent-results',
+            allScheduleEvents: [completedGame, laterGame, nextPractice]
+        });
+
+        expect(source).toContain("let scheduleViewFilter = 'all-upcoming';");
+        expect(source).toContain("setScheduleFilter('all-upcoming');");
+        expect(source).toContain("scheduleViewFilter = next || 'all-upcoming';");
+        expect(source.indexOf('id="schedule-filter-all-upcoming"')).toBeLessThan(source.indexOf('id="schedule-filter-recent-results"'));
+        expect(initialEvents.map((event) => event.opponent)).toEqual(['Practice', 'Future Game']);
+        expect(recentResults.map((event) => event.opponent)).toEqual(['Past Win']);
+    });
+
     it('forces practice visibility for the upcoming-practices filter even when the checkbox is off', () => {
         const getFilteredScheduleEvents = loadGetFilteredScheduleEvents();
         const result = getFilteredScheduleEvents({
