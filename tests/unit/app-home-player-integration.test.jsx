@@ -214,6 +214,32 @@ async function attachComposerFile(container, fileName = 'social.png') {
     return file;
 }
 
+function findLabel(container, text) {
+    const normalized = text.trim().toLowerCase();
+    return Array.from(container.querySelectorAll('label')).find((candidate) => {
+        const heading = candidate.querySelector('span');
+        return heading?.textContent?.trim().toLowerCase() === normalized;
+    }) || null;
+}
+
+function getSelectByLabel(container, text) {
+    const label = findLabel(container, text);
+    const select = label?.querySelector('select') || null;
+    if (!select) {
+        throw new Error(`Select not found for label: ${text}`);
+    }
+    return select;
+}
+
+async function changeSelectByLabel(container, text, value) {
+    const select = getSelectByLabel(container, text);
+    await act(async () => {
+        select.value = value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await flush();
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
     window.requestAnimationFrame = (callback) => {
@@ -601,7 +627,7 @@ describe('React app Home and player drill-in integration', () => {
         }));
     });
 
-    it('keeps advanced audience and subject controls tucked behind composer chips', async () => {
+    it('keeps team-first presets player-free by default and submits a team-scoped payload', async () => {
         const { container } = await renderApp('/home?section=feed&social=create&type=practice_packet');
         await waitForText(container, 'What happened?');
 
@@ -612,7 +638,8 @@ describe('React app Home and player drill-in integration', () => {
 
         await clickButton(container, 'Team');
         await waitForText(container, 'Audience');
-        expect(container.textContent).toContain('Player');
+        expect(findLabel(container, 'Player')).toBeNull();
+        expect(container.textContent).toContain('Tag a player');
 
         await clickButton(container, 'Practice packet is ready.');
         await clickLastButton(container, 'Post');
@@ -622,8 +649,126 @@ describe('React app Home and player drill-in integration', () => {
             title: 'Bears practice packet',
             caption: 'Practice packet is ready.',
             teamId: 'team-1',
+            playerIds: [],
+            playerNames: [],
+            sourceType: 'team',
             route: '/schedule?teamId=team-1',
             visibleUserIds: []
+        }));
+    });
+
+    it('shows the player selector only after explicit opt-in on team-first presets', async () => {
+        const { container } = await renderApp('/home?section=feed&social=create&type=game_recap');
+        await waitForText(container, 'What happened?');
+
+        await clickButton(container, 'Bears');
+        await waitForText(container, 'Audience');
+        expect(findLabel(container, 'Player')).toBeNull();
+
+        await clickButton(container, 'Tag a player');
+        await waitForText(container, 'Remove player tag');
+        expect(getSelectByLabel(container, 'Player').value).toBe('team-1::player-1');
+
+        await clickButton(container, 'Hard fought game today.');
+        await clickLastButton(container, 'Post');
+        expect(socialMocks.createSocialPost).toHaveBeenCalledWith(auth.user, expect.objectContaining({
+            type: 'game_recap',
+            title: 'Bears game recap',
+            caption: 'Hard fought game today.',
+            teamId: 'team-1',
+            playerIds: ['player-1'],
+            playerNames: ['Pat Star'],
+            sourceType: 'player',
+            sourceId: 'player-1'
+        }));
+    });
+
+    it('lets team changes stick on team-first presets until player tagging is explicitly enabled', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            players: [
+                {
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star',
+                    nextEvent: null,
+                    rsvpNeeded: 0,
+                    packetsReady: 0,
+                    openAssignments: 0,
+                    unreadCount: 0
+                },
+                {
+                    teamId: 'team-2',
+                    teamName: 'Wolves',
+                    playerId: 'player-2',
+                    playerName: 'Sam Swift',
+                    nextEvent: null,
+                    rsvpNeeded: 0,
+                    packetsReady: 0,
+                    openAssignments: 0,
+                    unreadCount: 0
+                }
+            ],
+            teams: [
+                {
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    role: 'Parent',
+                    sport: 'Basketball',
+                    players: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' }],
+                    nextEvent: null,
+                    eventCount: 2,
+                    unreadCount: 0,
+                    openActions: 0
+                },
+                {
+                    teamId: 'team-2',
+                    teamName: 'Wolves',
+                    role: 'Parent',
+                    sport: 'Soccer',
+                    players: [{ teamId: 'team-2', teamName: 'Wolves', playerId: 'player-2', playerName: 'Sam Swift' }],
+                    nextEvent: null,
+                    eventCount: 1,
+                    unreadCount: 0,
+                    openActions: 0
+                }
+            ],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: {
+                players: 2,
+                teams: 2,
+                rsvpNeeded: 0,
+                unreadMessages: 0,
+                packetsReady: 0
+            }
+        });
+
+        const { container } = await renderApp('/home?section=feed&social=create&type=player_moment');
+        await waitForText(container, 'What happened?');
+        await clickButton(container, 'Change share type');
+        await clickButton(container, 'Recap');
+        await clickButton(container, 'Bears');
+        await waitForText(container, 'Audience');
+
+        expect(findLabel(container, 'Player')).toBeNull();
+        await changeSelectByLabel(container, 'Team', 'team-2');
+        expect(getSelectByLabel(container, 'Team').value).toBe('team-2');
+
+        await clickButton(container, 'Great team win today.');
+        await clickLastButton(container, 'Post');
+        expect(socialMocks.createSocialPost).toHaveBeenCalledWith(auth.user, expect.objectContaining({
+            type: 'game_recap',
+            title: 'Wolves game recap',
+            caption: 'Great team win today.',
+            teamId: 'team-2',
+            teamName: 'Wolves',
+            playerIds: [],
+            playerNames: [],
+            sourceType: 'team',
+            sourceId: 'team-2',
+            route: '/schedule?teamId=team-2'
         }));
     });
 
