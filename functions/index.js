@@ -4186,20 +4186,34 @@ exports.notifyFeeMarkedPaid = functions.firestore
     const before = change.before.exists ? change.before.data() : null;
     const after = change.after.exists ? change.after.data() : null;
     if (!after) return null;
-    // Only fire when paymentStatus transitions to 'paid'
-    if (after.paymentStatus !== 'paid') return null;
-    if (before?.paymentStatus === 'paid') return null;
+    if (String(after.status || '').trim().toLowerCase() !== 'paid') return null;
+    if (String(before?.status || '').trim().toLowerCase() === 'paid') return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('fees')) {
+      functions.logger.error('notifyFeeMarkedPaid requires the fees notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
 
     const { teamId } = context.params;
     const title = String(after.feeTitle || after.title || 'Team fee').trim();
     const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
 
-    const allFeeTargets = await getTargetsForCategory(teamId, 'fees', null);
+    const [allFeeTargets, candidateUsers] = await Promise.all([
+      getTargetsForCategory(teamId, 'fees', null),
+      getCandidateUsersForTeam(teamId)
+    ]);
+    const staffUserIds = new Set(
+      candidateUsers
+        .filter((user) => Array.isArray(user?.roles) && user.roles.includes('staff'))
+        .map((user) => user.uid)
+    );
 
     const promises = [];
-    // Notify the payer directly (filtered from fee-category registered devices)
     if (payerUserId) {
-      const payerTargets = allFeeTargets.filter((t) => t.uid === payerUserId);
+      const payerTargets = allFeeTargets.filter((target) => target.uid === payerUserId);
       if (payerTargets.length) {
         promises.push(sendDirectTargetsNotification({
           targets: payerTargets,
@@ -4210,14 +4224,24 @@ exports.notifyFeeMarkedPaid = functions.firestore
         }));
       }
     }
-    // Notify team staff via category, excluding the payer to avoid a duplicate
-    promises.push(sendCategoryNotification({
-      teamId,
-      category: 'fees',
-      title: `Fee marked paid: ${title}`,
-      body: 'A team fee has been marked as paid.',
-      excludeUids: payerUserId ? [payerUserId] : []
-    }));
+
+    const staffTargets = allFeeTargets.filter((target) => staffUserIds.has(target.uid) && target.uid !== payerUserId);
+    if (staffTargets.length) {
+      promises.push(sendDirectTargetsNotification({
+        targets: staffTargets,
+        category: 'fees',
+        title: `Fee marked paid: ${title}`,
+        body: 'A team fee has been marked as paid.',
+        teamId
+      }));
+    } else {
+      functions.logger.warn('notifyFeeMarkedPaid found no staff notification targets.', {
+        teamId,
+        recipientId: context.params?.recipientId || null,
+        payerUserId,
+        totalFeeTargets: allFeeTargets.length
+      });
+    }
 
     await Promise.allSettled(promises);
     return null;
