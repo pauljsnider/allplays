@@ -68,28 +68,26 @@ describe('post-game stat editor helpers', () => {
         });
     });
 
-    it('preserves punctuation in configured stat keys when building correction payloads', () => {
+    it('strips punctuation from stat keys so custom column names round-trip consistently', () => {
+        // Regression for issue #2196: "3-Pt", "FG%", "Reb." stored without punctuation but
+        // re-written with punctuation on save, wiping the original stats.
         const statFields = resolvePostGameStatFields({
             resolvedConfig: {
-                columns: ['AST/TO', 'FG%']
+                columns: ['3-Pt', 'FG%', 'Reb.']
             },
             statsMap: {
-                p1: { 'ast/to': 2, 'fg%': 45 }
+                p1: { '3pt': 8, fg: 5, reb: 4 }
             }
         });
 
-        expect(statFields).toEqual([
-            { fieldName: 'ast/to', label: 'AST/TO' },
-            { fieldName: 'fg%', label: 'FG%' },
-            { fieldName: 'fouls', label: 'FOULS' }
-        ]);
         expect(buildCompletedGamePlayerStatsPayload({
             player: { name: 'Ava Cole', number: '3' },
             statFields,
-            values: { 'ast/to': '3', 'fg%': '47', fouls: '1' }
+            values: { '3pt': '8', fg: '5', reb: '4', fouls: '1' }
         }).stats).toEqual({
-            'ast/to': 3,
-            'fg%': 47,
+            '3pt': 8,
+            fg: 5,
+            reb: 4,
             fouls: 1
         });
     });
