@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
+const repoRoot = new URL('../../', import.meta.url);
+
 function readRepoFile(relativePath) {
-    return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
+    return readFileSync(new URL(relativePath, repoRoot), 'utf8');
 }
 
 describe('workflow registration guide', () => {
@@ -23,5 +25,23 @@ describe('workflow registration guide', () => {
         expect(source).toContain('preview table appears from the stored registration schedule snapshot or other loaded provider data already saved in ALL PLAYS');
         expect(source).toContain('preview table appears from the stored registration roster snapshot or other loaded provider data already saved in ALL PLAYS');
         expect(source).not.toContain('pull the latest data immediately without waiting for any scheduled sync');
+    });
+
+    it('regenerates help index registration copy to match the metadata-only workflow', () => {
+        const helpCenter = readRepoFile('help.html');
+        const appIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+        const capabilities = readRepoFile('apps/app/src/data/capabilities.ts');
+
+        expect(helpCenter).toContain('use stored Sports Connect metadata with manual imports');
+        expect(helpCenter).not.toContain('sync with Sports Connect');
+        expect(helpCenter).not.toContain('view connection and sync status');
+
+        expect(appIndex).toContain('use stored Sports Connect metadata with manual imports');
+        expect(appIndex).toContain('The registration provider fields currently store metadata only.');
+        expect(appIndex).not.toContain('connection status monitoring');
+        expect(appIndex).not.toContain('pull the latest data immediately without waiting for any scheduled sync');
+
+        expect(capabilities).toContain('Sports Connect metadata import workflow');
+        expect(capabilities).not.toContain('Sports Connect sync workflow');
     });
 });
