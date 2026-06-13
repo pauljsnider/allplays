@@ -16,6 +16,7 @@ import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
 const playerSearchQueryLimit = 20;
+const playerSearchTeamLimit = 8;
 const teamSearchQueryLimit = 20;
 
 let cachedTeams: AppSearchTeam[] | null = null;
@@ -870,8 +871,9 @@ async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], 
     return { docs: [], exhaustiveForNarrowerQueries: false, rejected: [] };
   }
 
-  const nameQueryCount = prefixes.length * normalizedTeamIds.length;
-  const snapshots = await Promise.allSettled(normalizedTeamIds.flatMap((teamId) => {
+  const cappedTeamIds = normalizedTeamIds.slice(0, playerSearchTeamLimit);
+  const nameQueryCount = prefixes.length * cappedTeamIds.length;
+  const snapshots = await Promise.allSettled(cappedTeamIds.flatMap((teamId) => {
     const playersRef = collection(db, `teams/${teamId}/players`);
     const scopedQueries = prefixes.map((prefix) => getDocs(query(
       playersRef,

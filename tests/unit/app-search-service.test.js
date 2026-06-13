@@ -949,4 +949,29 @@ describe('React app search service', () => {
 
         await expect(searchAppPlayers('pat', visibleTeams, auth.user)).rejects.toThrow('permission denied');
     });
+
+    it('caps team-scoped player queries at 8 teams to prevent unbounded Firestore reads', async () => {
+        const manyTeams = new Map(
+            Array.from({ length: 12 }, (_, i) => [
+                `team-${i}`,
+                { id: `team-${i}`, name: `Team ${i}`, sport: 'Basketball', fromAppAccess: true }
+            ])
+        );
+
+        const queriedTeamIds = new Set();
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const ref = request.parts?.[0] || request || {};
+            const collectionName = ref.collectionName || '';
+            const match = collectionName.match(/^teams\/([^/]+)\/players$/);
+            if (match) {
+                queriedTeamIds.add(match[1]);
+            }
+            return { docs: [] };
+        });
+
+        await searchAppPlayers('pat', manyTeams, auth.user);
+
+        expect(queriedTeamIds.size).toBe(8);
+        expect(queriedTeamIds.size).toBeLessThan(manyTeams.size);
+    });
 });
