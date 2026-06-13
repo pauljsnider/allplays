@@ -99,6 +99,13 @@ describe('game report stat helpers', () => {
     ]);
   });
 
+  it('maps punctuated configured labels to slugified stored stat keys', () => {
+    expect(buildConfiguredStatFields(['AST/TO', 'FG%'], [{ astto: 3, fg: 47 }])).toEqual([
+      { fieldName: 'astto', label: 'AST/TO' },
+      { fieldName: 'fg', label: 'FG%' }
+    ]);
+  });
+
   it('formats numeric tracker event timestamps without Invalid Date', () => {
     const timestamp = Date.UTC(2026, 0, 1, 15, 30, 0);
 
