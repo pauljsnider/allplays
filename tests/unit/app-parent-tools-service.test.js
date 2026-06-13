@@ -157,7 +157,7 @@ const stripeMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../js/firebase.js?v=18', () => firebaseMocks);
+vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
 vi.mock('../../js/registration-review.js', () => registrationReviewMocks);
@@ -229,6 +229,15 @@ beforeEach(() => {
 });
 
 describe('React app parent tools service', () => {
+    it('uses the non-cache-busted firebase module path so the app build can resolve it', async () => {
+        const source = await import('node:fs/promises').then(({ readFile }) =>
+            readFile(new URL('../../apps/app/src/lib/parentToolsService.ts', import.meta.url), 'utf8')
+        );
+
+        expect(source).toContain("from '../../../../js/firebase.js';");
+        expect(source).not.toContain("firebase.js?v=");
+    });
+
     it('builds legacy URLs used for current-site handoffs', () => {
         expect(getLegacyUrl('team.html', {}, { teamId: 'team-1' })).toBe('https://allplays.ai/team.html#teamId=team-1');
         expect(getFamilyShareUrl('token-1')).toBe('https://allplays.ai/family.html?token=token-1');

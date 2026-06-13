@@ -42,7 +42,7 @@ vi.mock('../../js/db.js', () => ({
     uploadTeamPhoto: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=18', () => ({
+vi.mock('../../js/firebase.js', () => ({
     collection: vi.fn((db, name) => ({ db, name })),
     db: {},
     getDocs: vi.fn(),
@@ -60,7 +60,7 @@ vi.mock('../../apps/app/src/lib/authService', () => ({
 }));
 
 import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
-import { collection, getDocs, query, where } from '../../js/firebase.js?v=18';
+import { collection, getDocs, query, where } from '../../js/firebase.js';
 import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 
@@ -70,6 +70,15 @@ beforeEach(() => {
 });
 
 describe('React app team detail model', () => {
+
+    it('uses the non-cache-busted firebase module path so the app build can resolve it', async () => {
+        const source = await import('node:fs/promises').then(({ readFile }) =>
+            readFile(new URL('../../apps/app/src/lib/teamDetailService.ts', import.meta.url), 'utf8')
+        );
+
+        expect(source).toContain("from '../../../../js/firebase.js';");
+        expect(source).not.toContain("firebase.js?v=");
+    });
 
     it('creates one normalized admin invite for the app and builds fallback links', async () => {
         inviteAdmin.mockResolvedValue({ code: ' CODE 1 ', teamName: 'Bears', existingUser: false });
