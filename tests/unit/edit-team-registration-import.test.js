@@ -6,12 +6,16 @@ function readRepoFile(relativePath) {
 }
 
 describe('edit team registration import', () => {
-    it('offers a registration import path with an empty state on team creation', () => {
+    it('offers a guarded registration import path with an empty state on team creation', () => {
         const source = readRepoFile('edit-team.html');
 
         expect(source).toContain('Import from registration system');
+        expect(source).toContain('id="team-create-mode-registration"');
         expect(source).toContain('registration-source-select');
-        expect(source).toContain('No registration sources are configured yet');
+        expect(source).toContain('No registration sources are configured yet. Start with a blank team or load provider data before using this import path.');
+        expect(source).toContain('registrationMode.disabled = configuredRegistrationTeams.length === 0;');
+        expect(source).toContain('registrationMode.setAttribute(\'aria-disabled\', String(registrationMode.disabled));');
+        expect(source).toContain('document.querySelector(\'input[name="teamCreateMode"][value="manual"]\')?.click();');
         expect(source).toContain('getConfiguredRegistrationTeams');
     });
 
