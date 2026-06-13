@@ -2049,9 +2049,17 @@
             const logText = buildGameNoteLogText(clean, type);
             if (!logText) return false;
 
-            addLiveNoteRecord(clean, type);
-            await addLogEntry(logText, { type: 'note', note: clean, noteType: type });
-            if (gameState.isRunning) {
+            const liveNote = addLiveNoteRecord(clean, type);
+            const noteWasPublished = gameState.isRunning;
+            await addLogEntry(logText, {
+                type: 'note',
+                note: clean,
+                noteType: type,
+                liveNoteId: liveNote?.id || null,
+                liveNoteText: liveNote?.text || clean,
+                wasPublished: noteWasPublished
+            });
+            if (noteWasPublished) {
                 broadcastLiveEvent(currentTeamId, currentGameId, {
                     type: 'note',
                     period: gameState.currentPeriod,
@@ -2061,6 +2069,7 @@
                     description: logText,
                     note: clean,
                     noteType: type,
+                    liveNoteId: liveNote?.id || null,
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
             }
@@ -2879,6 +2888,21 @@
                     description: `Undo: ${entry.text}`,
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
+            } else if (undoData && undoData.type === 'note') {
+                removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText || undoData.note);
+                scheduleLiveHasData();
+                if (undoData.wasPublished) {
+                    broadcastLiveEvent(currentTeamId, currentGameId, {
+                        type: 'undo',
+                        period: gameState.currentPeriod,
+                        gameClockMs: gameState.elapsed,
+                        homeScore,
+                        awayScore,
+                        description: `Undo: ${entry.text}`,
+                        removedNote: undoData.liveNoteText || undoData.note || '',
+                        createdBy: currentUser?.uid || null
+                    }).catch(console.warn);
+                }
             }
 
             if (undoData && undoData.type === 'football_score') {
