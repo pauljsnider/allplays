@@ -27,9 +27,7 @@ describe('rideshare re-request policy', () => {
         expect(source).toContain('const [offerSnap, existingRequestSnap] = await Promise.all([tx.get(offerRef), tx.get(requestRef)]);');
         expect(source).toContain("if (offerStatus !== RIDE_OFFER_STATUS.OPEN) throw new Error('Ride offer is closed.');");
         expect(source).toContain("if (existingStatus && existingStatus !== RIDE_REQUEST_STATUS.DECLINED && existingStatus !== RIDE_REQUEST_STATUS.WAITLISTED)");
-        expect(source).toContain('const seatCapacity = toNonNegativeInteger(offer.seatCapacity, 0);');
-        expect(source).toContain('const currentSeatCountConfirmed = toNonNegativeInteger(offer.seatCountConfirmed, 0);');
-        expect(source).toContain("if (currentSeatCountConfirmed >= seatCapacity) throw new Error('Offer is full.');");
+        expect(source).not.toContain("throw new Error('Offer is full.');");
         expect(source).toContain('tx.update(requestRef, requestPayload);');
         expect(source).toContain('tx.set(requestRef, {');
         expect(source).toContain('status: RIDE_REQUEST_STATUS.PENDING');
@@ -47,7 +45,7 @@ describe('rideshare re-request policy', () => {
         expect(rules).toContain('isParentForPlayer(teamId, resource.data.childId)');
         expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().hasOnly([\'childName\', \'status\', \'requestedAt\', \'respondedAt\', \'updatedAt\'])');
         expect(rules).toContain('function isRideshareOfferAcceptingRequests(teamId, gameId, offerId)');
-        expect(rules).toContain('get(offerPath).data.seatCountConfirmed < get(offerPath).data.seatCapacity');
+        expect(rules).not.toContain('get(offerPath).data.seatCountConfirmed < get(offerPath).data.seatCapacity');
         expect(rules).toContain('isRideshareOfferAcceptingRequests(teamId, gameId, offerId)');
     });
 });
