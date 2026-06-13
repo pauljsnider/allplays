@@ -1270,6 +1270,11 @@ service cloud.firestore {
         allow read, write: if isOwner(userId) || isGlobalAdmin();
       }
 
+      match /notificationInbox/{itemId} {
+        allow read: if isOwner(userId);
+        allow create, update, delete: if false;
+      }
+
       match /privateAiMessages/{messageId} {
         allow read, create, update, delete: if isOwner(userId) || isGlobalAdmin();
       }

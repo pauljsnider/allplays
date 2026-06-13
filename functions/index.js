@@ -85,6 +85,12 @@ const {
   notificationAudienceAllowsRoles
 } = require('./notification-target-index-core.cjs');
 const {
+  NOTIFICATION_INBOX_MAX_ITEMS,
+  buildNotificationInboxPayload,
+  getUniqueNotificationInboxTargets,
+  normalizeInboxId
+} = require('./notification-inbox-core.cjs');
+const {
   coerceDate,
   getEventTitle,
   formatScheduleUpdateDate
@@ -3203,6 +3209,88 @@ async function pruneInvalidTokens(sendResult, targets) {
   }
 }
 
+async function cleanupNotificationInbox(inboxRef) {
+  const oldItemsSnap = await inboxRef
+    .orderBy('createdAt', 'desc')
+    .offset(NOTIFICATION_INBOX_MAX_ITEMS)
+    .get();
+
+  if (oldItemsSnap.empty) return 0;
+
+  let batch = firestore.batch();
+  let pendingDeletes = 0;
+  let deletedCount = 0;
+  for (const doc of oldItemsSnap.docs) {
+    batch.delete(doc.ref);
+    pendingDeletes += 1;
+    deletedCount += 1;
+    if (pendingDeletes === 450) {
+      await batch.commit();
+      batch = firestore.batch();
+      pendingDeletes = 0;
+    }
+  }
+
+  if (pendingDeletes) {
+    await batch.commit();
+  }
+
+  return deletedCount;
+}
+
+async function writeNotificationInboxRecords({
+  targets,
+  category,
+  title,
+  body,
+  appRoute,
+  teamId,
+  gameId = null,
+  eventId = null
+}) {
+  const uniqueTargets = getUniqueNotificationInboxTargets(targets);
+  if (!uniqueTargets.length) {
+    return { writeCount: 0, cleanupCount: 0, failureCount: 0 };
+  }
+
+  const createdAt = admin.firestore.FieldValue.serverTimestamp();
+  const readAt = null;
+  const results = await Promise.allSettled(uniqueTargets.map(async (target) => {
+    const inboxRef = firestore.collection(`users/${target.uid}/notificationInbox`);
+    await inboxRef.add(buildNotificationInboxPayload({
+      category,
+      title,
+      body,
+      appRoute,
+      teamId,
+      gameId,
+      eventId,
+      createdAt,
+      readAt
+    }));
+    return cleanupNotificationInbox(inboxRef);
+  }));
+
+  let writeCount = 0;
+  let cleanupCount = 0;
+  let failureCount = 0;
+  results.forEach((result) => {
+    if (result.status === 'fulfilled') {
+      writeCount += 1;
+      cleanupCount += Number(result.value || 0);
+      return;
+    }
+    failureCount += 1;
+    functions.logger.warn('Failed to write notification inbox record', {
+      category,
+      teamId,
+      error: result.reason?.message || String(result.reason || 'Unknown error')
+    });
+  });
+
+  return { writeCount, cleanupCount, failureCount };
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
@@ -3253,10 +3341,24 @@ async function sendCategoryNotification({
     await pruneInvalidTokens(sendResult, targetChunk);
   }
 
+  const inboxResult = await writeNotificationInboxRecords({
+    targets,
+    category,
+    title,
+    body,
+    appRoute,
+    teamId,
+    gameId,
+    eventId: eventId || gameId
+  });
+
   return {
     responses: allResponses,
     successCount,
-    failureCount
+    failureCount,
+    inboxWriteCount: inboxResult.writeCount,
+    inboxCleanupCount: inboxResult.cleanupCount,
+    inboxFailureCount: inboxResult.failureCount
   };
 }
 
@@ -3293,12 +3395,76 @@ async function sendDirectTargetsNotification({ targets, category, title, body, t
     await pruneInvalidTokens(sendResult, targetChunk);
   }
 
+  const inboxResult = await writeNotificationInboxRecords({
+    targets,
+    category,
+    title,
+    body,
+    appRoute,
+    teamId,
+    gameId,
+    eventId: eventId || gameId
+  });
+
   return {
     responses: allResponses,
     successCount,
-    failureCount
+    failureCount,
+    inboxWriteCount: inboxResult.writeCount,
+    inboxCleanupCount: inboxResult.cleanupCount,
+    inboxFailureCount: inboxResult.failureCount
   };
 }
+
+exports.markNotificationInboxItemRead = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before updating notification inbox items.');
+  }
+
+  const uid = context.auth.uid;
+  const itemId = normalizeInboxId(data?.itemId);
+  if (!itemId || itemId.includes('/')) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid notification inbox item id is required.');
+  }
+
+  const itemRef = firestore.doc(`users/${uid}/notificationInbox/${itemId}`);
+  const itemSnap = await itemRef.get();
+  if (!itemSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Notification inbox item was not found.');
+  }
+
+  await itemRef.update({
+    readAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+
+  return { status: 'success', updatedCount: 1 };
+});
+
+exports.markAllNotificationInboxRead = functions.https.onCall(async (_data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before updating notification inbox items.');
+  }
+
+  const uid = context.auth.uid;
+  const unreadSnap = await firestore
+    .collection(`users/${uid}/notificationInbox`)
+    .where('readAt', '==', null)
+    .limit(NOTIFICATION_INBOX_MAX_ITEMS)
+    .get();
+
+  if (unreadSnap.empty) {
+    return { status: 'success', updatedCount: 0 };
+  }
+
+  const readAt = admin.firestore.FieldValue.serverTimestamp();
+  const batch = firestore.batch();
+  unreadSnap.docs.forEach((doc) => {
+    batch.update(doc.ref, { readAt });
+  });
+  await batch.commit();
+
+  return { status: 'success', updatedCount: unreadSnap.size };
+});
 
 function normalizeScheduleStatus(value) {
   return String(value || '').trim().toLowerCase();
