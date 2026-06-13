@@ -449,7 +449,11 @@ export async function revokeHouseholdInvite(userId, inviteId, { deps = {} } = {}
     const inviteSnap = getDoc ? await getDoc(inviteRef) : null;
     const invite = normalizeHouseholdInvites([{ id: inviteId, ...dataFromSnapshot(inviteSnap) }])[0] || { id: inviteId };
 
-    await revokeAccessCode(firebase, invite, timestamp);
+    try {
+        await revokeAccessCode(firebase, invite, timestamp);
+    } catch (error) {
+        throw new Error(error?.message || 'Unable to revoke the household invite access code.');
+    }
     await updateDoc(inviteRef, {
         status: 'removed',
         accessStatus: 'revoked',

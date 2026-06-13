@@ -322,6 +322,41 @@ describe('family plan helpers', () => {
         }));
     });
 
+    it('does not mark a household invite removed when access code revocation fails', async () => {
+        const updateDoc = vi.fn(async (ref) => {
+            if (ref.path === 'accessCodes/code-1') {
+                throw new Error('access code write failed');
+            }
+        });
+        const docs = new Map([
+            ['users/organizer/householdInvites/invite-1', {
+                email: 'household@example.com',
+                contactName: 'Household Contact',
+                status: 'pending',
+                organizerUserId: 'organizer',
+                accessCodeId: 'code-1'
+            }]
+        ]);
+        const firebase = {
+            db: {},
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            getDoc: vi.fn(async (ref) => ({
+                exists: () => docs.has(ref.path),
+                data: () => docs.get(ref.path) || {}
+            })),
+            updateDoc,
+            serverTimestamp: () => 'server-now'
+        };
+
+        await expect(revokeHouseholdInvite('organizer', 'invite-1', { deps: { firebase } })).rejects.toThrow('access code write failed');
+        expect(updateDoc).toHaveBeenCalledTimes(1);
+        expect(updateDoc).toHaveBeenCalledWith({ path: 'accessCodes/code-1' }, expect.objectContaining({
+            revoked: true,
+            used: true,
+            revokedAt: 'server-now'
+        }));
+    });
+
     it('loads family members and account entitlement state together', async () => {
         const firebase = {
             db: {},
