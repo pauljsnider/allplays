@@ -6,6 +6,7 @@ import {
     findScheduleRideRequestForChild,
     filterParentScheduleEvents,
     getCalendarScheduleEntries,
+    getScheduleEventDetailPath,
     getNextRideConfirmedSeatCount,
     getOpenScheduleAssignments,
     getParentScheduleTeamOptions,
@@ -14,6 +15,7 @@ import {
     getScheduleMapHref,
     getScheduleRideSeatInfo,
     getScheduleRideshareSummary,
+    getScheduleTaskDetailSection,
     isScheduleAssignmentClaimedByUser,
     isScheduleAssignmentOpen,
     normalizeScheduleAssignment,
@@ -53,6 +55,32 @@ describe('React app parent schedule logic', () => {
             url: 'https://example.com/team.ics?token=abc',
             error: null
         });
+    });
+
+    it('builds task-targeted event detail routes while generic opens keep the availability default', () => {
+        const generic = event({
+            teamId: 'team/with slash',
+            id: 'game 1',
+            childId: 'player 1',
+            myRsvp: 'going'
+        });
+        const packet = event({
+            id: 'practice-1',
+            type: 'practice',
+            practiceHomePacketSummary: '2 drills'
+        });
+        const assignment = event({
+            assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }]
+        });
+        const ride = event({
+            rideshareSummary: { offerCount: 1, seatsLeft: 1, requests: 0, pending: 0, confirmed: 0, isFull: false }
+        });
+
+        expect(getScheduleTaskDetailSection(generic)).toBe('');
+        expect(getScheduleEventDetailPath(generic, getScheduleTaskDetailSection(generic))).toBe('/schedule/team%2Fwith%20slash/game%201?childId=player+1');
+        expect(getScheduleEventDetailPath(packet, getScheduleTaskDetailSection(packet))).toBe('/schedule/team-1/practice-1?childId=player-1&section=game');
+        expect(getScheduleEventDetailPath(assignment, getScheduleTaskDetailSection(assignment))).toBe('/schedule/team-1/game-1?childId=player-1&section=assignments');
+        expect(getScheduleEventDetailPath(ride, getScheduleTaskDetailSection(ride))).toBe('/schedule/team-1/game-1?childId=player-1&section=rideshare');
     });
 
     it('matches parent-dashboard upcoming and past filter behavior with a three-hour cutoff', () => {

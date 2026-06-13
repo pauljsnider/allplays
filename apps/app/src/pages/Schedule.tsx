@@ -13,11 +13,13 @@ import {
   formatEventDateLabel,
   formatEventTimeLabel,
   getCalendarScheduleEntries,
+  getScheduleEventDetailPath,
   getParentScheduleTeamOptions,
   getPracticePacketRows,
   getScheduleTitle,
   getScheduleMapHref,
   getScheduleForecastHref,
+  getScheduleTaskDetailSection,
   normalizeRsvpResponse,
   validateExternalCalendarUrl,
   type CalendarScheduleEntry,
@@ -1863,9 +1865,7 @@ function ScheduleEventCard({ event }: {
 }
 
 function getEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) {
-  const params = new URLSearchParams();
-  if (event.childId) params.set('childId', event.childId);
-  return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${params.toString() ? `?${params}` : ''}`;
+  return getScheduleEventDetailPath(event, getScheduleTaskDetailSection(event));
 }
 
 function getScheduleChildLabel(event: ParentScheduleEvent | CalendarScheduleEntry) {
