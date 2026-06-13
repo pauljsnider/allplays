@@ -311,7 +311,7 @@ describe('React app auth/profile capability parity', () => {
         const turnOnGameDayAlerts = profilePage.slice(turnOnStart, turnOnEnd);
 
         expect(profilePage).toContain("const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && loadedNotificationTeamId === selectedTeamId;");
-        expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}");
+        expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || (!nativePushBlocked && (!selectedTeamId || !selectedTeamPreferencesHydrated))}");
         expect(turnOnGameDayAlerts).toContain('const teamId = selectedTeamId;');
         expect(turnOnGameDayAlerts).toContain('const currentPreferences = loadedNotificationTeamId === teamId');
         expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
