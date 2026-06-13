@@ -389,6 +389,10 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
                     onChange={(event) => setRedeemCode(event.target.value.toUpperCase())}
                     maxLength={8}
                     placeholder="XXXXXXXX"
+                    inputMode="text"
+                    autoCapitalize="characters"
+                    autoComplete="one-time-code"
+                    enterKeyHint="go"
                     disabled={redeeming || saving}
                   />
                 </label>
@@ -770,10 +774,10 @@ function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refres
               </select>
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
-              <input className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" disabled={saving || !linkedPlayers.length} />
-              <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Household contact email" disabled={saving || !linkedPlayers.length} />
+              <input className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" autoComplete="name" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
+              <input className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="send" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Household contact email" disabled={saving || !linkedPlayers.length} />
             </div>
-            <input className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" disabled={saving || !linkedPlayers.length} />
+            <input className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" autoComplete="off" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
             <button type="submit" className="primary-button" disabled={saving || loading || !linkedPlayers.length}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Users className="h-4 w-4" aria-hidden="true" />}
               Create household invite
