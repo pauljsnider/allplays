@@ -312,7 +312,7 @@ function buildPreviewRow({ status, sourcePlayer = {}, payload = null, existingPl
 }
 
 export function hasConfiguredRegistrationProviderMetadata(team = {}) {
-    const source = asObject(team.registrationSource);
+    const source = firstNonEmptyObject(team.registrationSource, team.registrationProvider);
     return !!(
         team.registrationSourceId ||
         team.externalRegistrationTeamId ||

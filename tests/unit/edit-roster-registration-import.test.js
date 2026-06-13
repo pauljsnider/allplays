@@ -17,6 +17,7 @@ describe('registration roster import planning', () => {
         expect(hasConfiguredRegistrationProviderMetadata({})).toBe(false);
         expect(hasConfiguredRegistrationProviderMetadata({ registrationSourceId: 'sports-connect' })).toBe(true);
         expect(hasConfiguredRegistrationProviderMetadata({ registrationSource: { provider: 'Sports Connect', externalTeamId: 'team-123' } })).toBe(true);
+        expect(hasConfiguredRegistrationProviderMetadata({ registrationProvider: { providerName: 'Sports Connect', externalTeamId: 'team-legacy' } })).toBe(true);
         expect(isExternallyLinkedRosterTeam({})).toBe(false);
         expect(isExternallyLinkedRosterTeam({ registrationSourceId: 'sports-connect' })).toBe(false);
         expect(isExternallyLinkedRosterTeam({ registrationSource: { rosterPlayers: [{ id: 'p1' }] } })).toBe(true);
