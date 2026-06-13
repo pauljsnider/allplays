@@ -11,9 +11,16 @@ const capacitorCoreMock = vi.hoisted(() => ({
     isNativePlatform: vi.fn(() => true)
 }));
 
+const chatServiceMocks = vi.hoisted(() => ({
+    loadChatInbox: vi.fn().mockResolvedValue({ teams: [] }),
+    markTeamChatRead: vi.fn().mockResolvedValue(undefined)
+}));
+
 vi.mock('@capacitor/core', () => ({
     Capacitor: capacitorCoreMock
 }));
+
+vi.mock('./chatService', () => chatServiceMocks);
 
 // @capawesome/capacitor-badge is dynamically imported inside updateAppIconBadge, so we
 // mock the module so the dynamic import resolves to our stub.
@@ -21,11 +28,13 @@ vi.mock('@capawesome/capacitor-badge', () => ({
     Badge: badgeMocks
 }));
 
-import { updateAppIconBadge } from './badgeService';
+import { markTeamChatReadAndRefreshBadge, refreshUnreadChatBadge, updateAppIconBadge } from './badgeService';
 
 describe('updateAppIconBadge', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [] });
+        chatServiceMocks.markTeamChatRead.mockResolvedValue(undefined);
         // Default: native platform.
         capacitorCoreMock.isNativePlatform.mockReturnValue(true);
         // Ensure protocol appears non-capacitor so only isNativePlatform governs.
@@ -80,5 +89,34 @@ describe('updateAppIconBadge', () => {
         badgeMocks.set.mockRejectedValueOnce(new Error('Badge permission denied'));
 
         await expect(updateAppIconBadge(7)).resolves.toBeUndefined();
+    });
+
+    it('refreshes the badge count from the unread inbox total on native', async () => {
+        chatServiceMocks.loadChatInbox.mockResolvedValue({
+            teams: [
+                { id: 'team-1', unreadCount: 2 },
+                { id: 'team-2', unreadCount: 3 }
+            ]
+        });
+
+        await refreshUnreadChatBadge({ uid: 'user-1' } as any);
+
+        expect(chatServiceMocks.loadChatInbox).toHaveBeenCalledWith({ uid: 'user-1' }, { includeLastMessages: false });
+        expect(badgeMocks.set).toHaveBeenCalledWith({ count: 5 });
+    });
+
+    it('marks the direct chat read and then refreshes the unread badge total', async () => {
+        chatServiceMocks.loadChatInbox.mockResolvedValue({
+            teams: [
+                { id: 'team-1', unreadCount: 0 },
+                { id: 'team-2', unreadCount: 1 }
+            ]
+        });
+
+        await markTeamChatReadAndRefreshBadge({ uid: 'user-1' } as any, 'team-1');
+
+        expect(chatServiceMocks.markTeamChatRead).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(chatServiceMocks.loadChatInbox).toHaveBeenCalledWith({ uid: 'user-1' }, { includeLastMessages: false });
+        expect(badgeMocks.set).toHaveBeenCalledWith({ count: 1 });
     });
 });
