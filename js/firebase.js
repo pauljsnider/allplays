@@ -23,6 +23,7 @@ import {
     applyActionCode
 } from "./vendor/firebase-auth.js";
 import {
+    getFirestore,
     initializeFirestore,
     persistentLocalCache,
     persistentMultipleTabManager,
@@ -89,10 +90,31 @@ function initializeFirebaseAuth(appInstance) {
     }
 }
 
+function initializeFirebaseDb(appInstance) {
+    const globalDbKey = '__allplaysFirebaseDb';
+    const existingDb = globalThis?.[globalDbKey];
+    if (existingDb) {
+        return existingDb;
+    }
+
+    try {
+        const firestore = initializeFirestore(appInstance, {
+            localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+        });
+        globalThis[globalDbKey] = firestore;
+        return firestore;
+    } catch (error) {
+        if (error?.code === 'failed-precondition' || String(error?.message || '').includes('initializeFirestore() has already been called')) {
+            const firestore = getFirestore(appInstance);
+            globalThis[globalDbKey] = firestore;
+            return firestore;
+        }
+        throw error;
+    }
+}
+
 export const auth = initializeFirebaseAuth(app);
-export const db = initializeFirestore(app, {
-    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-});
+export const db = initializeFirebaseDb(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app);
 

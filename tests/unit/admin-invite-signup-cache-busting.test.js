@@ -15,7 +15,7 @@ describe('admin invite signup cache busting', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain(
-            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=45';"
+            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=46';"
         );
         expect(acceptInviteSource).toContain(
             "import { createInviteProcessor } from './js/accept-invite-flow.js?v=6';"
@@ -25,7 +25,7 @@ describe('admin invite signup cache busting', () => {
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
             'login.html': 'auth.js?v=22',
-            'accept-invite.html': 'auth.js?v=22',
+            'accept-invite.html': 'auth.js?v=23',
             'edit-team.html': 'auth.js?v=22',
             'js/admin.js': 'auth.js?v=22',
             'js/live-game.js': 'auth.js?v=22',

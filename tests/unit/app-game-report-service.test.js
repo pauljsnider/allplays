@@ -16,7 +16,7 @@ const firebaseMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../js/firebase.js', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=18', () => firebaseMocks);
 
 import { loadGameReportSections } from '../../apps/app/src/lib/gameReportService.ts';
 

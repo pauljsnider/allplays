@@ -1,4 +1,4 @@
-import { db, deleteDoc, doc, increment, setDoc } from '../../../../js/firebase.js';
+import { db, deleteDoc, doc, increment, setDoc } from '../../../../js/firebase.js?v=18';
 import { splitPlayerStatsByVisibility } from '../../../../js/stat-leaderboards.js';
 
 export type TrackerScoreState = {

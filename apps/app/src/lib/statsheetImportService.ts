@@ -1,6 +1,6 @@
 import { acquireProfilePhoto } from './profileService'
 import { getConfigs, getGame, getPlayers, getTeam, uploadStatSheetPhoto } from '../../../../js/db.js'
-import { collection, db, deleteDoc, doc, getDocs, writeBatch } from '../../../../js/firebase.js'
+import { collection, db, deleteDoc, doc, getDocs, writeBatch } from '../../../../js/firebase.js?v=18'
 import { buildTrackStatsheetApplyPlan, validateTrackStatsheetApplyRows } from '../../../../js/track-statsheet-apply.js'
 import { addAggregatedStatsWritesToBatch } from '../../../../js/live-tracker-save-complete.js'
 import { getApp } from '../../../../js/vendor/firebase-app.js'

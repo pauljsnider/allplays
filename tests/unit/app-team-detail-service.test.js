@@ -42,7 +42,7 @@ vi.mock('../../js/db.js', () => ({
     uploadTeamPhoto: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js', () => ({
+vi.mock('../../js/firebase.js?v=18', () => ({
     collection: vi.fn((db, name) => ({ db, name })),
     db: {},
     getDocs: vi.fn(),
@@ -60,7 +60,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
 }));
 
 import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
-import { collection, getDocs, query, where } from '../../js/firebase.js';
+import { collection, getDocs, query, where } from '../../js/firebase.js?v=18';
 import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
 

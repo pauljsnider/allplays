@@ -16,7 +16,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getDownloadURL: vi.fn(async (storageRef) => `https://cdn.example.test/${storageRef.fullPath}`)
 }));
 
-vi.mock('../../js/firebase.js?v=17', () => ({
+vi.mock('../../js/firebase.js?v=18', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-42' } },
     storage: 'main-storage',

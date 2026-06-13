@@ -157,7 +157,7 @@ const stripeMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../js/firebase.js', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=18', () => firebaseMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
 vi.mock('../../js/registration-review.js', () => registrationReviewMocks);

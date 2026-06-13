@@ -59,7 +59,7 @@ const toolsMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../js/firebase.js', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=18', () => firebaseMocks);
 vi.mock('../../js/vendor/firebase-app.js', () => ({
     getApp: aiMocks.getApp
 }));

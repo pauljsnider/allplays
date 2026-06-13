@@ -25,7 +25,7 @@ const chatMocks = vi.hoisted(() => ({
     uploadTeamChatAttachment: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=18', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
 

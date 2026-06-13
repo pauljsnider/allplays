@@ -42,7 +42,7 @@ const firebaseAiMocks = vi.hoisted(() => ({
   }
 }))
 
-vi.mock('../../../../js/firebase.js', () => firebaseMocks)
+vi.mock('../../../../js/firebase.js?v=18', () => firebaseMocks)
 vi.mock('../../../../js/db.js', () => dbMocks)
 vi.mock('../../../../js/vendor/firebase-app.js', () => firebaseAppMocks)
 vi.mock('../../../../js/vendor/firebase-ai.js', () => firebaseAiMocks)

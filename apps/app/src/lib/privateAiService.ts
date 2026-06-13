@@ -10,7 +10,7 @@ import {
   query,
   serverTimestamp,
   setDoc
-} from '../../../../js/firebase.js';
+} from '../../../../js/firebase.js?v=18';
 import { getApp } from '../../../../js/vendor/firebase-app.js';
 import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
 import { getChatInboxPreview, loadChatInbox } from './chatService';

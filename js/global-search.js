@@ -9,7 +9,7 @@ import {
     where,
     orderBy,
     limit
-} from './firebase.js?v=17';
+} from './firebase.js?v=18';
 
 let cachedTeams = null;
 let cachedTeamsLoadedAt = 0;
