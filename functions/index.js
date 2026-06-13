@@ -4180,6 +4180,73 @@ exports.notifyGameCreated = functions.firestore
     });
   });
 
+exports.notifyFeeMarkedPaid = functions.firestore
+  .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
+  .onWrite(async (change, context) => {
+    const before = change.before.exists ? change.before.data() : null;
+    const after = change.after.exists ? change.after.data() : null;
+    if (!after) return null;
+    if (String(after.status || '').trim().toLowerCase() !== 'paid') return null;
+    if (String(before?.status || '').trim().toLowerCase() === 'paid') return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('fees')) {
+      functions.logger.error('notifyFeeMarkedPaid requires the fees notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
+
+    const { teamId } = context.params;
+    const title = String(after.feeTitle || after.title || 'Team fee').trim();
+    const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
+
+    const [allFeeTargets, candidateUsers] = await Promise.all([
+      getTargetsForCategory(teamId, 'fees', null),
+      getCandidateUsersForTeam(teamId)
+    ]);
+    const staffUserIds = new Set(
+      candidateUsers
+        .filter((user) => Array.isArray(user?.roles) && user.roles.includes('staff'))
+        .map((user) => user.uid)
+    );
+
+    const promises = [];
+    if (payerUserId) {
+      const payerTargets = allFeeTargets.filter((target) => target.uid === payerUserId);
+      if (payerTargets.length) {
+        promises.push(sendDirectTargetsNotification({
+          targets: payerTargets,
+          category: 'fees',
+          title: `Fee paid: ${title}`,
+          body: 'Your payment has been received. Thank you!',
+          teamId
+        }));
+      }
+    }
+
+    const staffTargets = allFeeTargets.filter((target) => staffUserIds.has(target.uid) && target.uid !== payerUserId);
+    if (staffTargets.length) {
+      promises.push(sendDirectTargetsNotification({
+        targets: staffTargets,
+        category: 'fees',
+        title: `Fee marked paid: ${title}`,
+        body: 'A team fee has been marked as paid.',
+        teamId
+      }));
+    } else {
+      functions.logger.warn('notifyFeeMarkedPaid found no staff notification targets.', {
+        teamId,
+        recipientId: context.params?.recipientId || null,
+        payerUserId,
+        totalFeeTargets: allFeeTargets.length
+      });
+    }
+
+    await Promise.allSettled(promises);
+    return null;
+  });
+
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
 const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
 const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
