@@ -46,17 +46,35 @@ describe('native REST logging sanitizer', () => {
         expect(sanitized.message).toContain('Bearer [REDACTED]');
     });
 
-    it('sanitizeRequestInitForLogging replaces headers with [REDACTED]', () => {
-        const init: RequestInit = {
+    it('sanitizeRequestInitForLogging redacts headers and nested body secrets', () => {
+        const init = {
             method: 'POST',
             headers: { Authorization: 'Bearer abc123', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ foo: 'bar' })
-        };
+            body: {
+                idToken: 'id-token-123',
+                refreshToken: 'refresh-token-456',
+                nested: {
+                    authorization: 'Bearer nested-token-789'
+                }
+            } as unknown as BodyInit
+        } as RequestInit;
+
         const sanitized = sanitizeRequestInitForLogging(init);
+        const serialized = JSON.stringify(sanitized);
+
         expect(sanitized.headers).toBe('[REDACTED]');
         expect(sanitized.method).toBe('POST');
-        expect(sanitized.body).toBe(JSON.stringify({ foo: 'bar' }));
-        expect(JSON.stringify(sanitized)).not.toContain('abc123');
-        expect(JSON.stringify(sanitized)).not.toContain('Authorization');
+        expect(serialized).not.toContain('abc123');
+        expect(serialized).not.toContain('Authorization');
+        expect(serialized).not.toContain('id-token-123');
+        expect(serialized).not.toContain('refresh-token-456');
+        expect(serialized).not.toContain('nested-token-789');
+        expect(sanitized.body).toEqual({
+            idToken: '[REDACTED]',
+            refreshToken: '[REDACTED]',
+            nested: {
+                authorization: '[REDACTED]'
+            }
+        });
     });
 });

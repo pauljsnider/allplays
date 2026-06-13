@@ -70,10 +70,13 @@ export function sanitizeErrorForLogging(error: unknown) {
     return sanitizeValue(error, new WeakSet<object>(), 0);
 }
 
-export function sanitizeRequestInitForLogging(init: RequestInit): Partial<RequestInit> {
-    const { headers, ...rest } = init;
+export type SanitizedRequestInitForLogging = Record<string, unknown>;
+
+export function sanitizeRequestInitForLogging(init: RequestInit): SanitizedRequestInitForLogging {
+    const sanitized = sanitizeValue(init, new WeakSet<object>(), 0);
+
     return {
-        ...rest,
-        headers: '[REDACTED]' as unknown as HeadersInit
+        ...(sanitized as Record<string, unknown>),
+        headers: redactedValue
     };
 }
