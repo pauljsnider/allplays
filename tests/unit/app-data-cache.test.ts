@@ -76,7 +76,23 @@ describe('appDataCache', () => {
     expect(cached?.startsAt.toISOString()).toBe('2026-06-12T18:30:00.000Z');
   });
 
-  it('returns stale hydrated data immediately and refreshes it in the background', async () => {
+  it('awaits a fresh loader result when a hydrated entry is stale by default', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-12T12:00:00Z'));
+    const firstCache = await loadCacheModule();
+    await firstCache.loadCachedAppData('stale:key', async () => ({ version: 1 }), { ttlMs: 1000 });
+
+    vi.setSystemTime(new Date('2026-06-12T12:00:02Z'));
+    vi.resetModules();
+    const secondCache = await loadCacheModule();
+    const loader = vi.fn().mockResolvedValue({ version: 2 });
+
+    await expect(secondCache.loadCachedAppData('stale:key', loader, { ttlMs: 1000 })).resolves.toEqual({ version: 2 });
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(secondCache.getCachedAppData('stale:key')).toEqual({ version: 2 });
+  });
+
+  it('returns stale hydrated data immediately only when stale-while-revalidate is enabled', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-12T12:00:00Z'));
     const firstCache = await loadCacheModule();
@@ -88,7 +104,7 @@ describe('appDataCache', () => {
     const loader = vi.fn().mockResolvedValue({ version: 2 });
     const onRefresh = vi.fn();
 
-    await expect(secondCache.loadCachedAppData('stale:key', loader, { ttlMs: 1000, onRefresh })).resolves.toEqual({ version: 1 });
+    await expect(secondCache.loadCachedAppData('stale:key', loader, { ttlMs: 1000, staleWhileRevalidate: true, onRefresh })).resolves.toEqual({ version: 1 });
     expect(loader).toHaveBeenCalledTimes(1);
 
     await Promise.resolve();

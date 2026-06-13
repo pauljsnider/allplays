@@ -53,7 +53,7 @@ export function loadCachedAppData<T>(
     force = false,
     persist = true,
     maxStaleMs = defaultMaxStaleMs,
-    staleWhileRevalidate = true,
+    staleWhileRevalidate = false,
     onRefresh
   }: LoadCachedAppDataOptions<T> = {}
 ): Promise<T> {
