@@ -695,7 +695,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {activeSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
     </div>
   );
@@ -2076,10 +2076,47 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   );
 }
 
+function LazyGameHubPanel({
+  panelId,
+  title,
+  description,
+  open,
+  onToggle,
+  children
+}: {
+  panelId: string;
+  title: string;
+  description: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-left transition hover:border-primary-200 hover:bg-primary-50"
+        onClick={onToggle}
+        aria-label={title}
+        aria-expanded={open}
+        aria-controls={panelId}
+      >
+        <div className="min-w-0">
+          <div className="text-sm font-black text-gray-950">{title}</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">{description}</div>
+        </div>
+        <ChevronDown className={`h-4 w-4 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {open ? <div id={panelId}>{children}</div> : null}
+    </div>
+  );
+}
+
 function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
   const [liveClockNow, setLiveClockNow] = useState(() => new Date());
@@ -2099,6 +2136,17 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
     const intervalId = window.setInterval(() => setLiveClockNow(new Date()), 1000);
     return () => window.clearInterval(intervalId);
   }, [event.eventKey, event.liveClockRunning, event.liveClockMs, event.liveClockUpdatedAt]);
+
+  useEffect(() => {
+    setOpenPanels({});
+  }, [event.eventKey]);
+
+  const togglePanel = useCallback((panelId: string) => {
+    setOpenPanels((current) => ({
+      ...current,
+      [panelId]: !current[panelId]
+    }));
+  }, []);
 
   const cancelGame = async () => {
     if (!auth.user) return;
@@ -2197,19 +2245,76 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
           {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
           {canUpdateScore ? <GameDayFoulTrackerPanel auth={auth} event={event} /> : null}
-          {!isPractice ? <LiveGameReactionsPanel auth={auth} event={event} /> : null}
-          {!isPractice ? <LiveGameChatPanel auth={auth} event={event} /> : null}
 
-          {canWrapup ? <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} /> : null}
+          {!isPractice ? (
+            <LazyGameHubPanel
+              panelId="game-hub-reactions-panel"
+              title="Live reactions"
+              description="Start the shared reaction stream only when you need it."
+              open={Boolean(openPanels.reactions)}
+              onToggle={() => togglePanel('reactions')}
+            >
+              <LiveGameReactionsPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
+          ) : null}
+          {!isPractice ? (
+            <LazyGameHubPanel
+              panelId="game-hub-chat-panel"
+              title="Live chat"
+              description="Open chat on demand instead of subscribing during first paint."
+              open={Boolean(openPanels.chat)}
+              onToggle={() => togglePanel('chat')}
+            >
+              <LiveGameChatPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
+          ) : null}
 
-          {canWrapup ? <StatsheetImportPanel event={event} onImported={onStatsheetImported} /> : null}
+          {canWrapup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-wrapup-panel"
+              title="Post-game wrap-up"
+              description="Load wrap-up tools only when staff is ready to finish the game."
+              open={Boolean(openPanels.wrapup)}
+              onToggle={() => togglePanel('wrapup')}
+            >
+              <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} />
+            </LazyGameHubPanel>
+          ) : null}
 
-          {canPublishLineup ? (
-            <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
+          {canWrapup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-statsheet-panel"
+              title="Statsheet import"
+              description="Defer photo analysis and roster context until someone opens import."
+              open={Boolean(openPanels.statsheet)}
+              onToggle={() => togglePanel('statsheet')}
+            >
+              <StatsheetImportPanel event={event} onImported={onStatsheetImported} />
+            </LazyGameHubPanel>
           ) : null}
 
           {canPublishLineup ? (
-            <GameDaySubstitutionPanel auth={auth} event={event} />
+            <LazyGameHubPanel
+              panelId="game-hub-lineup-panel"
+              title="Lineup builder"
+              description="Only load lineup preview data after staff opens lineup tools."
+              open={Boolean(openPanels.lineup)}
+              onToggle={() => togglePanel('lineup')}
+            >
+              <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
+            </LazyGameHubPanel>
+          ) : null}
+
+          {canPublishLineup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-substitutions-panel"
+              title="Live substitutions"
+              description="Keep substitution planning idle until the bench actually needs it."
+              open={Boolean(openPanels.substitutions)}
+              onToggle={() => togglePanel('substitutions')}
+            >
+              <GameDaySubstitutionPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
           ) : null}
 
           {canCancelGame ? (
@@ -2269,7 +2374,17 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
 
       {shareStatus ? <Status tone={shareStatus.startsWith('Unable') ? 'error' : 'success'} message={shareStatus} /> : null}
       {cancelStatus ? <Status tone={cancelStatus.tone} message={cancelStatus.message} /> : null}
-      {!isPractice ? <GameReportSections event={event} /> : null}
+      {!isPractice ? (
+        <LazyGameHubPanel
+          panelId="game-hub-report-panel"
+          title="Report sections"
+          description="Load reports and live play refreshes only when someone opens reports."
+          open={Boolean(openPanels.report)}
+          onToggle={() => togglePanel('report')}
+        >
+          <GameReportSections event={event} />
+        </LazyGameHubPanel>
+      ) : null}
     </section>
   );
 }
