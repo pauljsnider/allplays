@@ -18,6 +18,19 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('description: `Corrected stat: ${statKey.toUpperCase()} adjusted`');
   });
 
+  it('removes live note state and emits an undo event when notes are undone', () => {
+    const source = readTrackLive();
+
+    expect(source).toContain('const liveNote = addLiveNoteRecord(clean, type);');
+    expect(source).toContain("type: 'note'");
+    expect(source).toContain('liveNoteId: liveNote?.id || null');
+    expect(source).toContain("} else if (undoData && undoData.type === 'note') {");
+    expect(source).toContain('removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText || undoData.note);');
+    expect(source).toContain('scheduleLiveHasData();');
+    expect(source).toContain('description: `Undo: ${entry.text}`');
+    expect(source).toContain("removedNote: undoData.liveNoteText || undoData.note || ''");
+  });
+
   it('wires bounded goal-sport controls into track-live', () => {
     const source = readTrackLive();
 
