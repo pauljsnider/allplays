@@ -99,11 +99,11 @@ export function Teams({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid]);
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || selectedTeamId) return;
     if (shouldAutoNavigateToSingleTeam(home.teams)) {
       navigate(`/teams/${encodeURIComponent(home.teams[0].teamId)}`, { replace: true });
     }
-  }, [loading, home.teams, navigate]);
+  }, [loading, home.teams, navigate, selectedTeamId]);
 
   const selectedTeam = useMemo(() => (
     home.teams.find((team) => team.teamId === selectedTeamId) || home.teams[0] || null
