@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging } from '@capacitor-firebase/messaging';
-import type { NotificationActionPerformedEvent } from '@capacitor-firebase/messaging';
+import type { CreateChannelOptions, NotificationActionPerformedEvent } from '@capacitor-firebase/messaging';
+import { ANDROID_NOTIFICATION_CHANNELS } from '../../../../functions/notification-delivery-metadata.cjs';
 import { saveNotificationDeviceToken } from './profileService';
 import { rememberPendingPushRoute, resolvePushNotificationRoute } from './pushNotificationRouting';
 
@@ -23,6 +24,7 @@ const nativePushTimeoutMs = 15000;
 const iosNotificationSettingsUrl = 'app-settings:';
 const androidNotificationSettingsUrl = 'intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;S.extra_app_package=ai.allplays.lite;end';
 const androidAppSettingsUrl = 'app-settings:';
+export const androidNotificationChannels = ANDROID_NOTIFICATION_CHANNELS as readonly CreateChannelOptions[];
 
 export class PushPermissionError extends Error {
   code: 'push-permission-blocked' | 'push-unsupported';
@@ -53,6 +55,20 @@ export async function addPushNotificationOpenListener(onRouteOpen: (route: strin
   return async () => {
     await listener.remove();
   };
+}
+
+export async function ensureAndroidNotificationChannels(): Promise<void> {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'android') {
+    return;
+  }
+
+  await Promise.all(androidNotificationChannels.map(async (channel) => {
+    try {
+      await FirebaseMessaging.createChannel({ ...channel });
+    } catch (error) {
+      console.warn('[push] Unable to create Android notification channel:', channel.id, error);
+    }
+  }));
 }
 
 export async function enablePushNotificationsForUser(userId: string): Promise<PushRegistrationResult> {

@@ -6,6 +6,8 @@ importScripts('https://www.gstatic.com/firebasejs/12.6.0/firebase-messaging-comp
 const CONFIG_CACHE_NAME = 'allplays-push-config-v1';
 const CONFIG_CACHE_KEY = '/__allplays/push/firebase-config.json';
 const FIREBASE_INIT_JSON_URL = '/__/firebase/init.json';
+const WEB_PUSH_NOTIFICATION_ICON = '/img/logo_small.png';
+const WEB_PUSH_NOTIFICATION_BADGE = '/img/logo_small.png';
 const ALLOWED_CLICK_HOSTS = new Set([
     self.location.hostname.toLowerCase(),
     'allplays.ai',
@@ -96,9 +98,13 @@ function registerBackgroundMessageHandler(messaging) {
         const title = payload?.notification?.title || 'ALL PLAYS Update';
         const body = payload?.notification?.body || '';
         const link = payload?.fcmOptions?.link || payload?.data?.link || '/';
+        const icon = payload?.notification?.icon || payload?.data?.icon || WEB_PUSH_NOTIFICATION_ICON;
+        const badge = payload?.notification?.badge || payload?.data?.badge || WEB_PUSH_NOTIFICATION_BADGE;
 
         self.registration.showNotification(title, {
             body,
+            icon,
+            badge,
             data: { link: normalizeNotificationLink(link) }
         });
     });
