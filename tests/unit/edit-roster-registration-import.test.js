@@ -179,7 +179,7 @@ describe('registration roster import planning', () => {
         expect(plan.operations[0]).toMatchObject({ type: 'update', playerId: 'player-legacy' });
     });
 
-    it('flags contact conflicts before import operations are applied', () => {
+    it('allows new sibling imports to reuse an existing parent contact without flagging a conflict', () => {
         const plan = planRegistrationRosterImport({
             source: { type: 'sports-connect', id: 'league-1' },
             sourcePlayers: [
@@ -198,11 +198,18 @@ describe('registration roster import planning', () => {
             ]
         });
 
-        expect(plan.results).toMatchObject({ added: 0, updated: 0, skipped: 0, conflicted: 1 });
-        expect(plan.results.conflicts).toEqual([
-            { externalPlayerId: 'ext-2', existingPlayerId: 'player-1', conflictType: 'contact', contact: 'email: pat@example.com' }
-        ]);
-        expect(plan.operations).toHaveLength(0);
+        expect(plan.results).toMatchObject({ added: 1, updated: 0, skipped: 0, conflicted: 0 });
+        expect(plan.results.conflicts).toEqual([]);
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({
+            id: 'source-ext-2',
+            type: 'add',
+            payload: {
+                name: 'New Player',
+                guardians: [{ name: 'Pat Lee', email: 'pat@example.com', phone: '', relation: 'Parent' }]
+            }
+        });
+        expect(plan.previewRows.map((row) => row.status)).toEqual(['add']);
     });
 
     it('maps configured roster profile fields from matching registration answer keys and labels', () => {
