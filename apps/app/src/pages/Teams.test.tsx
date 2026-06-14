@@ -159,7 +159,7 @@ describe('Teams empty state', () => {
 
     expect(await screen.findByText('Teams could not load')).toBeTruthy();
     expect(screen.getByText('Try loading teams again to restore your team dashboard.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Retry loading teams' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry team load' })).toBeTruthy();
     expect(screen.queryByText('No teams available')).toBeNull();
     expect(screen.queryByText('Loading teams')).toBeNull();
   });

@@ -490,7 +490,7 @@ test.describe('mobile My Teams', () => {
         await waitForTeamsRoute(page, page.getByText('Teams could not load'), { requireSearchInput: false });
         await expect(page.getByText('Teams could not load')).toBeVisible();
         await expect(page.getByText('Try loading teams again to restore your team dashboard.')).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Retry loading teams' })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Retry team load' })).toBeVisible();
         await expect(page.getByText('Loading teams')).toHaveCount(0);
         await expect(page.getByText('No teams available')).toHaveCount(0);
     });

@@ -640,7 +640,7 @@ function TeamsLoadErrorState({ error, onRetry, retrying }: { error: AppServiceEr
       <Shield className="mx-auto h-8 w-8 text-rose-400" aria-hidden="true" />
       <div className="mt-3 text-sm font-black text-gray-900">{copy.title}</div>
       <div className="mt-1 text-xs font-semibold text-gray-500">{copy.detail}</div>
-      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry loading teams">
+      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry team load">
         <RefreshCw className={`h-4 w-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
         Retry
       </button>
