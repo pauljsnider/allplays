@@ -149,6 +149,7 @@ export async function loadTeamDrillLibraryPage(
     type: normalizeFilterValue(filters.type, DRILL_TYPES as string[]),
     level: normalizeFilterValue(filters.level, DRILL_LEVELS as string[])
   };
+  const isPaginatedRequest = Boolean(filters.cursor);
 
   const [favoriteIds, page, publishedDrills] = await Promise.all([
     Promise.resolve(getDrillFavorites(teamId)),
@@ -160,13 +161,15 @@ export async function loadTeamDrillLibraryPage(
       limitCount: drillLibraryPageSize,
       startAfterDoc: filters.cursor || null
     })),
-    Promise.resolve(getPublishedDrills({
-      sport: access.team.sport,
-      type: normalizedFilters.type || undefined,
-      level: normalizedFilters.level || undefined,
-      searchText: normalizedFilters.searchText || undefined,
-      limitCount: drillLibraryPageSize
-    }))
+    isPaginatedRequest
+      ? Promise.resolve([])
+      : Promise.resolve(getPublishedDrills({
+        sport: access.team.sport,
+        type: normalizedFilters.type || undefined,
+        level: normalizedFilters.level || undefined,
+        searchText: normalizedFilters.searchText || undefined,
+        limitCount: drillLibraryPageSize
+      }))
   ]);
 
   const mergedDrills = [...(Array.isArray(page?.drills) ? page.drills : []), ...(Array.isArray(publishedDrills) ? publishedDrills : [])];
