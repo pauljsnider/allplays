@@ -21,7 +21,7 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=48')");
+        expect(adminSource).toContain("import('./db.js?v=49')");
         expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=9"></script>');
     });
 });
@@ -196,19 +196,21 @@ describe('buildBalanceAdjustmentUpdate', () => {
         expect(updates.adjustment).toMatchObject({
             amountCents: 2000,
             previousAmountDueCents: 15000,
-            amountDueCents: 13000,
-            note: 'Scholarship credit',
-            adjustedBy: 'admin-1'
+            amountDueCents: 13000
         });
         expect(updates.ledgerEntries).toEqual([
             expect.objectContaining({
                 type: 'balance_adjustment',
                 amountCents: 2000,
                 previousAmountDueCents: 15000,
-                amountDueCents: 13000,
-                reason: 'Scholarship credit'
+                amountDueCents: 13000
             })
         ]);
+        expect(updates.adminBilling).toEqual(expect.objectContaining({
+            type: 'balance_adjustment',
+            reason: 'Scholarship credit',
+            adjustedBy: 'admin-1'
+        }));
     });
 
     it('treats negative adjustments as charges that increase the amount owed', () => {
@@ -282,18 +284,21 @@ describe('buildOfflineRefundUpdate', () => {
         expect(updates.refunded).toMatchObject({
             amountCents: 400,
             refundType: 'partial',
-            refundMethod: 'cash',
-            recordedBy: 'admin-1'
+            refundMethod: 'cash'
         });
         expect(updates.ledgerEntries).toEqual([
             expect.objectContaining({
                 type: 'offline_refund',
                 amountCents: -400,
                 refundAmountCents: 400,
-                refundMethod: 'cash',
-                note: 'Refunded duplicate cash collection.'
+                refundMethod: 'cash'
             })
         ]);
+        expect(updates.adminBilling).toEqual(expect.objectContaining({
+            type: 'offline_refund',
+            note: 'Refunded duplicate cash collection.',
+            recordedBy: 'admin-1'
+        }));
     });
 
     it('records a full offline check refund and resets paid status to unpaid', () => {
