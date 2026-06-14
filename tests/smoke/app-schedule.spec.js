@@ -40,6 +40,8 @@ async function mockScheduleModules(page, options = {}) {
     const gameLiveStatus = options.gameLiveStatus || null;
     const gameHomeScore = options.gameHomeScore ?? null;
     const gameAwayScore = options.gameAwayScore ?? null;
+    const gameMyRsvp = options.gameMyRsvp || 'not_responded';
+    const gameMyRsvpNote = options.gameMyRsvpNote || '';
     const extraUpcomingEvents = Array.from({ length: options.extraUpcomingEvents || 0 }, (_, index) => {
         const day = String(index + 1).padStart(2, '0');
         return `baseEvent({ eventKey: 'bulk-upcoming-${index}', id: 'bulk-upcoming-${index}', childId: 'player-1', childName: 'Pat', date: new Date('2030-06-${day}T18:00:00Z'), opponent: 'Team ${index + 1}', location: 'Field ${index + 1}' })`;
@@ -175,8 +177,8 @@ async function mockScheduleModules(page, options = {}) {
                         sourceLabel: overrides.sourceLabel || 'ALL PLAYS schedule',
                         isImported: overrides.isImported === true,
                         visibility: 'team',
-                        myRsvp: overrides.myRsvp || 'not_responded',
-                        myRsvpNote: overrides.myRsvpNote || '',
+                        myRsvp: overrides.myRsvp || ${JSON.stringify(gameMyRsvp)},
+                        myRsvpNote: overrides.myRsvpNote || ${JSON.stringify(gameMyRsvpNote)},
                         rsvpSummary: overrides.rsvpSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1 },
                         rideshareSummary: overrides.rideshareSummary || { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false },
                         assignments: overrides.assignments || getAssignments(),
@@ -1074,6 +1076,34 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
         { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' }
     ]);
     await expect(page.getByText('Pat marked going.')).toBeVisible();
+});
+
+test('app schedule saves edited availability notes without re-tapping RSVP', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, {
+        gameMyRsvp: 'going',
+        gameMyRsvpNote: 'Original note'
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+
+    const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
+    await waitForScheduleRoute(page, availabilitySection.getByRole('heading', { name: 'Availability' }));
+    await expect(availabilitySection.getByText('Availability saved')).toBeVisible();
+
+    const noteInput = availabilitySection.getByLabel('Availability note');
+    await noteInput.fill('Running late from pickup.');
+    await expect(availabilitySection.getByText('Unsaved note changes')).toBeVisible();
+    await availabilitySection.getByRole('button', { name: 'Save note' }).click();
+
+    await expect(page.getByText('Pat availability note saved.')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
+        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: 'Running late from pickup.' }
+    ]);
+
+    await page.getByRole('button', { name: 'Rideshare', exact: true }).click();
+    await page.getByRole('button', { name: 'Availability', exact: true }).click();
+    await expect(availabilitySection.getByLabel('Availability note')).toHaveValue('Running late from pickup.');
+    await expect(availabilitySection.getByRole('button', { name: 'Save note' })).toHaveCount(0);
 });
 
 test('app practice more tab uses hub cards and shares event details without a link', async ({ page, baseURL }) => {
