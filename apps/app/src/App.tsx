@@ -94,16 +94,16 @@ export default function App() {
     function handleNativeBackButton(event: NativeBackButtonEvent) {
       if (dispatchNativeBackDismissEvent()) return;
 
-      const pathname = locationRef.current.pathname;
-      const target = getNativeBackTarget(pathname);
+      const { pathname, search } = locationRef.current;
+      const target = getNativeBackTarget(pathname, search);
       if (target) {
         lastNativeExitBackPressRef.current = 0;
         setNativeExitNoticeVisible(false);
-        navigate(target);
+        navigate(target, { replace: pathname === '/home' });
         return;
       }
 
-      if (event.canGoBack && !isNativeExitRoute(pathname)) {
+      if (event.canGoBack && !isNativeExitRoute(pathname, search)) {
         lastNativeExitBackPressRef.current = 0;
         setNativeExitNoticeVisible(false);
         navigate(-1);

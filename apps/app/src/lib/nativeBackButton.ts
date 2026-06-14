@@ -36,9 +36,11 @@ export function dispatchNativeBackDismissEvent() {
   return event.defaultPrevented;
 }
 
-export function getNativeBackTarget(pathname: string) {
+export function getNativeBackTarget(pathname: string, search = '') {
   const path = normalizePathname(pathname);
-  if (isNativeExitRoute(path)) return null;
+  const homeStateTarget = getNativeHomeBackTarget(path, search);
+  if (homeStateTarget) return homeStateTarget;
+  if (isNativeExitRoute(path, search)) return null;
   if (['/schedule', '/messages', '/teams', '/officials', '/parent-tools', '/profile', '/ai', '/help'].includes(path)) return '/home';
   if (/^\/schedule\/[^/]+\/[^/]+/.test(path)) return '/schedule';
   if (/^\/messages\/[^/]+/.test(path)) return '/messages';
@@ -55,9 +57,37 @@ export function getNativeBackTarget(pathname: string) {
   return null;
 }
 
-export function isNativeExitRoute(pathname: string) {
+export function isNativeExitRoute(pathname: string, search = '') {
   const path = normalizePathname(pathname);
-  return path === '/' || path === '/home' || path === '/auth';
+  if (path === '/home') return normalizeSearch(search) === '';
+  return path === '/' || path === '/auth';
+}
+
+function getNativeHomeBackTarget(pathname: string, search: string) {
+  if (pathname !== '/home') return null;
+
+  const normalizedSearch = normalizeSearch(search);
+  if (!normalizedSearch) return null;
+
+  const params = new URLSearchParams(normalizedSearch);
+  if (params.has('social') || params.has('type')) {
+    params.delete('social');
+    params.delete('type');
+    return buildRoute(pathname, params);
+  }
+
+  return '/home';
+}
+
+function buildRoute(pathname: string, searchParams: URLSearchParams) {
+  const nextSearch = searchParams.toString();
+  return nextSearch ? `${pathname}?${nextSearch}` : pathname;
+}
+
+function normalizeSearch(search: string) {
+  const trimmed = String(search || '').trim();
+  if (!trimmed) return '';
+  return trimmed.startsWith('?') ? trimmed.slice(1) : trimmed;
 }
 
 function normalizePathname(pathname: string) {

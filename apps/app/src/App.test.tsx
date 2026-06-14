@@ -184,7 +184,38 @@ describe('App protected route loading', () => {
     expect(await screen.findByText('Schedule page')).toBeTruthy();
   });
 
-  it('prompts on first Home back press and exits on the second', async () => {
+  it('clears Home query-only state before showing the native exit prompt', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home?section=feed&social=create']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(nativeBackMock.listeners).toHaveLength(1));
+
+    await act(async () => {
+      nativeBackMock.listeners[0]({ canGoBack: false });
+    });
+
+    expect(screen.queryByText('Press back again to exit')).toBeNull();
+    expect(nativeBackMock.exitApp).not.toHaveBeenCalled();
+
+    await act(async () => {
+      nativeBackMock.listeners[0]({ canGoBack: false });
+    });
+
+    expect(screen.queryByText('Press back again to exit')).toBeNull();
+    expect(nativeBackMock.exitApp).not.toHaveBeenCalled();
+
+    await act(async () => {
+      nativeBackMock.listeners[0]({ canGoBack: false });
+    });
+
+    expect(screen.getByText('Press back again to exit')).toBeTruthy();
+    expect(nativeBackMock.exitApp).not.toHaveBeenCalled();
+  });
+
+  it('prompts on first bare Home back press and exits on the second', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <App />

@@ -17,11 +17,14 @@ describe('native back button helpers', () => {
     expect(getNativeBackTarget('/teams/browse')).toBe('/teams');
     expect(getNativeBackTarget('/parent-tools/registrations/team-1/form-1')).toBe('/parent-tools');
     expect(getNativeBackTarget('/help/game-day')).toBe('/help');
+    expect(getNativeBackTarget('/home', '?section=feed&social=create')).toBe('/home?section=feed');
+    expect(getNativeBackTarget('/home', '?section=friends')).toBe('/home');
     expect(getNativeBackTarget('/home')).toBeNull();
   });
 
-  it('treats Home and auth roots as native exit routes', () => {
+  it('treats only bare Home and auth roots as native exit routes', () => {
     expect(isNativeExitRoute('/home')).toBe(true);
+    expect(isNativeExitRoute('/home', '?section=feed')).toBe(false);
     expect(isNativeExitRoute('/auth')).toBe(true);
     expect(isNativeExitRoute('/schedule')).toBe(false);
   });
