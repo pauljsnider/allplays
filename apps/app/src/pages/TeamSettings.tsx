@@ -1,19 +1,21 @@
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Camera, Loader2, Save } from 'lucide-react';
+import { ArrowLeft, Camera, Loader2, RefreshCw, Save } from 'lucide-react';
 import { loadParentTeamDetail, updateTeamSettingsForApp } from '../lib/teamDetailService';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
 
 export function TeamSettings({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [loading, setLoading] = useState(true);
+  const photoPreviewUrlRef = useRef('');
+  const { loading, error, run: runPrimaryLoad } = useAsyncOperation();
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [nameError, setNameError] = useState('');
   const [canManageTeam, setCanManageTeam] = useState(false);
+  const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(false);
   const [teamName, setTeamName] = useState('Team');
   const [form, setForm] = useState({
     name: '',
@@ -26,42 +28,59 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState('');
 
   useEffect(() => {
-    let cancelled = false;
+    photoPreviewUrlRef.current = photoPreviewUrl;
+  }, [photoPreviewUrl]);
 
-    async function load() {
-      if (!teamId) return;
-      setLoading(true);
-      setError('');
-      try {
-        const model = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
-        if (cancelled) return;
-        setCanManageTeam(model.canManageTeam);
-        setTeamName(model.team.name || 'Team');
-        setForm({
-          name: model.team.name || '',
-          sport: model.team.sport === 'Sport not set' ? '' : model.team.sport,
-          zip: model.team.zip || '',
-          isPublic: model.team.isPublic !== false,
-          photoUrl: model.team.photoUrl || ''
-        });
-        setPhotoPreviewUrl(model.team.photoUrl || '');
-      } catch (loadError: any) {
-        if (!cancelled) {
-          setError(loadError?.message || 'Unable to load team settings.');
+  const loadSettings = useCallback(async () => {
+    if (!teamId) return null;
+
+    return runPrimaryLoad(
+      () => loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false }),
+      {
+        errorMessage: 'Unable to load team settings.',
+        rethrow: false,
+        onSuccess: (model) => {
+          setCanManageTeam(model.canManageTeam);
+          setTeamName(model.team.name || 'Team');
+          setForm({
+            name: model.team.name || '',
+            sport: model.team.sport === 'Sport not set' ? '' : model.team.sport,
+            zip: model.team.zip || '',
+            isPublic: model.team.isPublic !== false,
+            photoUrl: model.team.photoUrl || ''
+          });
+          setPhotoPreviewUrl(model.team.photoUrl || '');
+        },
+        onError: () => {
+          setCanManageTeam(false);
+          setTeamName('Team');
+          setForm({
+            name: '',
+            sport: '',
+            zip: '',
+            isPublic: true,
+            photoUrl: ''
+          });
+          setPhotoFile(null);
+          setPhotoPreviewUrl('');
+        },
+        onFinally: () => {
+          setHasResolvedInitialLoad(true);
         }
-      } finally {
-        if (!cancelled) setLoading(false);
       }
-    }
+    );
+  }, [auth.user, runPrimaryLoad, teamId]);
 
-    void load();
+  useEffect(() => {
+    setHasResolvedInitialLoad(false);
+    void loadSettings();
+
     return () => {
-      cancelled = true;
-      if (photoPreviewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(photoPreviewUrl);
+      if (photoPreviewUrlRef.current.startsWith('blob:')) {
+        URL.revokeObjectURL(photoPreviewUrlRef.current);
       }
     };
-  }, [auth.user, teamId]);
+  }, [loadSettings]);
 
   function handlePhotoChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] || null;
@@ -105,7 +124,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
     }
   }
 
-  if (loading) {
+  if (loading || !hasResolvedInitialLoad) {
     return (
       <div className="app-card flex min-h-[240px] items-center justify-center p-5 text-center">
         <div className="flex items-center gap-3 text-sm font-semibold text-gray-600">
@@ -125,6 +144,10 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
         </Link>
         <div className="mt-4 text-lg font-black text-gray-950">Team settings unavailable</div>
         <div className="mt-2 text-sm font-semibold text-rose-700">{error}</div>
+        <button type="button" className="primary-button mt-4" onClick={() => void loadSettings()} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+          Retry
+        </button>
       </section>
     );
   }
