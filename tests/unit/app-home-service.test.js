@@ -37,7 +37,15 @@ vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 const user = {
     uid: 'user-1',
     email: 'parent@example.com',
-    displayName: 'Pat Parent'
+    displayName: 'Pat Parent',
+    parentOf: [
+        {
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Pat Star'
+        }
+    ]
 };
 
 function event(overrides = {}) {
@@ -184,6 +192,28 @@ describe('React app Home service', () => {
             type: 'permission',
             message: 'Permission denied for fees'
         });
+    });
+
+    it('keeps the Teams summary usable when chat fails', async () => {
+        chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentTeamsSummary(user, { force: true });
+
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user, { includeLastMessages: false });
+        expect(home.teams).toEqual([
+            expect.objectContaining({
+                teamId: 'team-1',
+                teamName: 'Bears',
+                unreadCount: 0,
+                players: [expect.objectContaining({ playerId: 'player-1' })]
+            })
+        ]);
+        expect(home.metrics).toEqual(expect.objectContaining({
+            teams: 1,
+            players: 1,
+            unreadMessages: 0
+        }));
     });
 
     it('composes the fast Home summary without optional secondary data', async () => {
