@@ -143,24 +143,26 @@ export function Home({ auth }: { auth: AuthState }) {
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
 
-  const hasLoadedHome = Boolean(auth.user?.uid) && auth.user.uid === loadedHomeUserId;
+  const authUserId = auth.user?.uid || null;
+  const hasLoadedHome = Boolean(authUserId) && authUserId === loadedHomeUserId;
 
   const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
-    if (!auth.user) return;
-    const hasExistingHome = loadedHomeUserId === auth.user.uid;
+    const user = auth.user;
+    if (!user) return;
+    const hasExistingHome = loadedHomeUserId === user.uid;
     clearError();
     setSocialStatus(null);
     return runPrimaryLoad(
       async () => {
-        const summary = await loadParentHomeSummaryBootstrap(auth.user, { force });
+        const summary = await loadParentHomeSummaryBootstrap(user, { force });
         setHome(summary.home);
-        setLoadedHomeUserId(auth.user?.uid || null);
+        setLoadedHomeUserId(user.uid);
 
         void runSecondaryLoad(
           async () => {
-            const secondaryHome = await loadParentHomeWithSecondaryData(auth.user, { force, schedule: summary.schedule });
+            const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
             setHome(secondaryHome);
-            setSocial(await loadSocialHome(auth.user, secondaryHome));
+            setSocial(await loadSocialHome(user, secondaryHome));
           },
           {
             errorMessage: 'Unable to refresh Home details.',
@@ -263,15 +265,21 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   const refreshSocial = async (nextHome = home) => {
-    if (!auth.user) return;
-    setSocialLoading(true);
-    try {
-      setSocial(await loadSocialHome(auth.user, nextHome));
-    } catch (loadError: any) {
-      setSocialStatus({ tone: 'error', message: loadError?.message || 'Unable to refresh Feed.' });
-    } finally {
-      setSocialLoading(false);
-    }
+    const user = auth.user;
+    if (!user) return;
+    setSocialStatus(null);
+    await runSecondaryLoad(
+      async () => {
+        setSocial(await loadSocialHome(user, nextHome));
+      },
+      {
+        getErrorMessage: (loadError) => getAsyncErrorMessage(loadError, 'Unable to refresh Feed.'),
+        rethrow: false,
+        onError: (loadError) => {
+          setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(loadError, 'Unable to refresh Feed.') });
+        }
+      }
+    );
   };
 
   const handleCreatePost = async (input: CreateSocialPostInput) => {
