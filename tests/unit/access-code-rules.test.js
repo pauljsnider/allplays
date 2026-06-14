@@ -57,11 +57,13 @@ describe('access code Firestore rules', () => {
 
     it('locks parent_invite targeting to redemption and revoke-only updates', () => {
         expect(rules).toContain('function isParentInviteRedemptionUpdate()');
+        expect(rules).toContain("resource.data.get('type', null) == 'parent_invite'");
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
         expect(rules).toContain('function isParentInviteRevocationUpdate()');
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'updatedAt'])");
         expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) != 'parent_invite'");
-        expect(accessCodeRules).toContain("resource.data.type != 'parent_invite'");
+        expect(accessCodeRules).toContain("resource.data.get('type', null) != 'parent_invite'");
+        expect(accessCodeRules).not.toContain("resource.data.type != 'parent_invite'");
     });
 
     it('validates the allowed admin_invite payload fields before redemption can trust the record', () => {

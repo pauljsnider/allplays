@@ -99,7 +99,7 @@ service cloud.firestore {
     }
 
     function isParentInviteRedemptionUpdate() {
-      return resource.data.type == 'parent_invite' &&
+      return resource.data.get('type', null) == 'parent_invite' &&
              request.resource.data.get('type', resource.data.get('type', null)) == 'parent_invite' &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
              request.resource.data.used == true &&
@@ -108,7 +108,7 @@ service cloud.firestore {
     }
 
     function isParentInviteRevocationUpdate() {
-      return resource.data.type == 'parent_invite' &&
+      return resource.data.get('type', null) == 'parent_invite' &&
              resource.data.generatedBy == request.auth.uid &&
              resource.data.teamId is string &&
              isTeamOwnerOrAdmin(resource.data.teamId) &&
@@ -1413,10 +1413,10 @@ service cloud.firestore {
                         isParentInviteRedemptionUpdate() ||
                         isParentInviteRevocationUpdate() ||
                         // Allow marking as used only if setting these specific fields
-                        (resource.data.type != 'parent_invite' &&
+                        (resource.data.get('type', null) != 'parent_invite' &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
                          request.resource.data.usedBy == request.auth.uid) ||
-                        (resource.data.type != 'parent_invite' &&
+                        (resource.data.get('type', null) != 'parent_invite' &&
                          resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
