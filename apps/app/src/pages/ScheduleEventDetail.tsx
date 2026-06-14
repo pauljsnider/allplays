@@ -4683,8 +4683,15 @@ function MatchSummarySection({ report }: { report: GameReportData }) {
 }
 
 function PlayerPerformanceSection({ report }: { report: GameReportData }) {
+  const [showFullRoster, setShowFullRoster] = useState(false);
   const statKeys = report.statKeys.slice(0, 4);
-  if (!report.playerRows.length) {
+  const playerRows = Array.isArray(report.playerRows) ? report.playerRows : [];
+  const visiblePlayerRows = Array.isArray(report.visiblePlayerRows) ? report.visiblePlayerRows : [];
+  const deferredPlayerRows = Array.isArray(report.deferredPlayerRows) ? report.deferredPlayerRows : [];
+  const visiblePlayers = visiblePlayerRows.length ? visiblePlayerRows : playerRows;
+  const deferredPlayers = deferredPlayerRows;
+
+  if (!playerRows.length) {
     return <EmptyReportState title="No players found" detail="Player performance will appear after roster and stats load." />;
   }
 
@@ -4694,7 +4701,7 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
         <span>Player</span>
         <span>Stats</span>
       </div>
-      {report.playerRows.map((player) => (
+      {visiblePlayers.map((player) => (
         <PlayerPerformanceRow
           key={player.playerId}
           player={player}
@@ -4705,6 +4712,40 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
           gameId={report.game.id || ''}
         />
       ))}
+      {deferredPlayers.length ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 text-left"
+            onClick={() => setShowFullRoster((current) => !current)}
+            aria-expanded={showFullRoster}
+            aria-label={showFullRoster ? 'Hide full roster' : `Show full roster (${deferredPlayers.length})`}
+          >
+            <div>
+              <div className="text-sm font-black text-gray-950">Other rostered players</div>
+              <div className="mt-0.5 text-xs font-semibold text-gray-500">Show the full roster, including players without participation records for this game.</div>
+            </div>
+            <span className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-black text-gray-700">
+              {showFullRoster ? 'Hide full roster' : `Show full roster (${deferredPlayers.length})`}
+            </span>
+          </button>
+          {showFullRoster ? (
+            <div className="mt-3 space-y-2">
+              {deferredPlayers.map((player) => (
+                <PlayerPerformanceRow
+                  key={player.playerId}
+                  player={player}
+                  statKeys={statKeys}
+                  statLabels={report.statLabels}
+                  hasPlayingTime={report.hasPlayingTime}
+                  teamId={report.team.id || ''}
+                  gameId={report.game.id || ''}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

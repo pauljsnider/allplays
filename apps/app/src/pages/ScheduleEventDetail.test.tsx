@@ -840,6 +840,55 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('falls back to player rows when older report payloads omit roster partitions', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'completed',
+        status: 'completed',
+        canUpdateScore: true,
+        isTeamStaff: true
+      })],
+      children: []
+    });
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'completed', status: 'completed', homeScore: 42, awayScore: 38 },
+      plays: [],
+      summary: 'Loaded on demand.',
+      opponentRows: [],
+      opponentStatKeys: [],
+      teamInsights: [],
+      playerInsightRows: [],
+      highlightClips: [],
+      statSheetPhotoUrl: null,
+      teamStatKeys: [],
+      teamStats: {},
+      statKeys: ['pts'],
+      playerRows: [
+        { playerId: 'player-1', playerName: 'Avery Smith', number: '1', stats: { pts: 8 }, timeMs: 600000, didNotPlay: false }
+      ],
+      statLabels: { pts: 'PTS' },
+      hasPlayingTime: true,
+      team: { id: 'team-1' }
+    } as any);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Report sections' }));
+    await waitFor(() => {
+      expect(screen.getByText('Loaded on demand.')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Players' }));
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /#1 Avery Smith/i })).toBeTruthy();
+      expect(screen.getByText('8')).toBeTruthy();
+    });
+  });
+
   it('resets deferred game hub panels before rendering a switched event', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
       events: [eventId === 'game-2'
