@@ -230,11 +230,11 @@
                     </div>
                     <div class="px-6 py-3 border-b border-gray-100 bg-gray-50">
                         <div class="flex flex-wrap items-center gap-2">
-                            <button id="schedule-filter-recent-results" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-primary-200 bg-primary-50 text-primary-700">Recent Results</button>
+                            <button id="schedule-filter-all-upcoming" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-primary-200 bg-primary-50 text-primary-700">All Upcoming</button>
                             <button id="schedule-filter-upcoming-games" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Games</button>
                             <button id="schedule-filter-upcoming-practices" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Upcoming Practices</button>
-                            <button id="schedule-filter-all-upcoming" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">All Upcoming</button>
                             <button id="schedule-filter-availability" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Availability</button>
+                            <button id="schedule-filter-recent-results" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Recent Results</button>
                             <button id="schedule-filter-past-events" class="px-2.5 py-1 text-xs font-semibold rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-100">Past Events</button>
                         </div>
                     </div>
@@ -324,7 +324,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=43';
+        import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=48';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=11';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
@@ -332,7 +332,7 @@
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=3';
         import { aggregateSeasonStatsByPlayerId, buildPlayerLeaderboardSnapshot, selectAnalyticsConfig } from './js/stat-leaderboards.js?v=3';
         import { calculateSeasonRecord, listSeasonLabels } from './js/season-record.js';
-        import { checkAuth } from './js/auth.js?v=20';
+        import { checkAuth } from './js/auth.js?v=23';
         import { collection, getDocs, query, where } from "./js/firebase.js?v=17";
         import { db } from './js/firebase.js?v=17';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
@@ -378,7 +378,7 @@
         let gamesById = {};
         let allScheduleEvents = [];
         let adSpaceSponsors = [];
-        let scheduleViewFilter = 'recent-results';
+        let scheduleViewFilter = 'all-upcoming';
         let scheduleViewMode = 'list';
         let scheduleCalendarMonth = new Date().getMonth();
         let scheduleCalendarYear = new Date().getFullYear();
@@ -2376,7 +2376,7 @@
 
         async function renderSchedule(team, dbGames) {
             allScheduleEvents = await getAllEvents(team, dbGames);
-            setScheduleFilter('recent-results');
+            setScheduleFilter('all-upcoming');
         }
 
         function getFilteredScheduleEvents() {
@@ -2405,7 +2405,7 @@
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'all-upcoming') {
-                filtered = events.filter((event) => event.date >= cutoff && !event.isCancelled);
+                filtered = events.filter((event) => event.date >= cutoff && !event.isCancelled && event.status !== 'completed');
                 return filtered.sort((a, b) => a.date - b.date);
             }
             if (scheduleViewFilter === 'availability') {
@@ -2628,7 +2628,7 @@
         }
 
         function setScheduleFilter(next) {
-            scheduleViewFilter = next || 'recent-results';
+            scheduleViewFilter = next || 'all-upcoming';
             const ids = ['recent-results', 'upcoming-games', 'upcoming-practices', 'all-upcoming', 'availability', 'past-events'];
             ids.forEach((id) => {
                 const btn = document.getElementById(`schedule-filter-${id}`);

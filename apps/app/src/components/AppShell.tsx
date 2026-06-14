@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
+import { openPublicUrl } from '../lib/publicActions';
+import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 import type { AuthState, NavItem } from '../lib/types';
 import { AppSearchDialog } from './AppSearchDialog';
 import { RoleBadge } from './Badges';
@@ -89,12 +91,28 @@ export function AppShell({ auth, children }: AppShellProps) {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
+  useEffect(() => {
+    const onNativeBackDismiss = (event: Event) => {
+      if (searchOpen) {
+        setSearchOpen(false);
+        event.preventDefault();
+        return;
+      }
+      if (addTeamOpen) {
+        setAddTeamOpen(false);
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener(APP_BACK_DISMISS_EVENT, onNativeBackDismiss);
+    return () => window.removeEventListener(APP_BACK_DISMISS_EVENT, onNativeBackDismiss);
+  }, [addTeamOpen, searchOpen]);
+
   const addWorkflows = buildAddWorkflows();
 
   const handleAddWorkflow = async (workflow: AddWorkflow) => {
     setAddTeamOpen(false);
     if (workflow.kind === 'website') {
-      const { openPublicUrl } = await import('../lib/publicActions');
       await openPublicUrl(workflow.href);
       return;
     }
@@ -138,6 +156,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   onClick={() => setSearchOpen(true)}
                   aria-label="Search"
                   title="Search (Ctrl+K / Cmd+K)"
+                  data-testid="app-shell-search-trigger"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
                   Search
@@ -221,6 +240,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   onClick={() => setSearchOpen(true)}
                   aria-label="Search"
                   title="Search (Ctrl+K / Cmd+K)"
+                  data-testid="app-shell-search-trigger"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
                   <span className="sr-only">Search</span>

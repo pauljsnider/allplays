@@ -162,4 +162,73 @@ describe('edit schedule practice save flow', () => {
         expect(source).toContain('const { savedPracticeId } = await savePracticeForm({');
         expect(source).toContain('applyPracticeRecurrenceFields');
     });
+
+    it('does not save isSeriesMaster or recurrence when editing a non-recurring practice', async () => {
+        // Regression test for issue #2201: editing a non-recurring practice after a recurring one
+        // would carry over the stale recurring checkbox state and accidentally persist recurrence fields.
+        const addPractice = vi.fn();
+        const updateEvent = vi.fn().mockResolvedValue(undefined);
+        const deletedFields = [];
+        const deleteField = () => {
+            const sentinel = Symbol('deleteField');
+            deletedFields.push(sentinel);
+            return sentinel;
+        };
+        const startDate = createLocalDate(2026, 3, 10, 9, 0);
+        const endDate = createLocalDate(2026, 3, 10, 10, 0);
+        const Timestamp = {
+            fromDate: (value) => ({ iso: value.toISOString() })
+        };
+
+        // Simulate the form state as it would be after a user previously edited a recurring
+        // practice and left the recurring checkbox checked, then opens a non-recurring practice.
+        // The form code should supply isRecurring: false derived from the practice's own data.
+        const result = await savePracticeForm({
+            teamId: 'team-1',
+            editingPracticeId: 'practice-nonrecurring',
+            editingSeriesId: null,
+            formState: {
+                title: 'One-Off Practice',
+                startDate,
+                endDate,
+                location: 'Field A',
+                notes: '',
+                scheduleNotifications: { enabled: false }
+            },
+            recurrenceState: {
+                isRecurring: false,
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO'],
+                endType: 'never',
+                untilValue: '',
+                countValue: '10'
+            },
+            Timestamp,
+            deleteField,
+            generateSeriesId: () => 'should-not-be-called',
+            addPractice,
+            updateEvent
+        });
+
+        expect(addPractice).not.toHaveBeenCalled();
+        const savedPayload = updateEvent.mock.calls[0][2];
+
+        // Recurrence fields must be wiped (set to deleteField()) — not persisted as true
+        expect(savedPayload.isSeriesMaster).not.toBe(true);
+        expect(savedPayload.recurrence).not.toMatchObject({ freq: expect.any(String) });
+
+        // The deleteField sentinel must have been applied (recurrence fields cleared)
+        expect(deletedFields.length).toBeGreaterThan(0);
+
+        expect(result.savedPracticeId).toBe('practice-nonrecurring');
+    });
+
+    it('resets recurring checkbox and builder when startEditPractice loads a non-recurring practice', () => {
+        const source = readEditSchedule();
+
+        // The else branch that resets recurring state must exist in startEditPractice
+        expect(source).toContain("practiceRecurring').checked = false");
+        expect(source).toContain("recurrence-builder').classList.add('hidden')");
+    });
 });

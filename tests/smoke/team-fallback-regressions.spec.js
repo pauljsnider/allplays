@@ -146,6 +146,9 @@ export function getRegistrationRosterPlayers() {
 export function isExternallyLinkedRosterTeam() {
     return false;
 }
+export function hasConfiguredRegistrationProviderMetadata() {
+    return false;
+}
 export function planRegistrationRosterImport() {
     return { operations: [], results: { conflicts: [] } };
 }

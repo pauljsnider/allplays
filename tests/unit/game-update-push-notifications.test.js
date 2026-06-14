@@ -1,16 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 
+const require = createRequire(import.meta.url);
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const scheduleNotificationUtils = require('../../functions/schedule-notification-utils.cjs');
 
 function getScheduleNotificationHelpers() {
     const start = functionsSource.indexOf('function toNumericScore');
     const end = functionsSource.indexOf('function buildNotificationLink');
     const firstSlice = functionsSource.slice(start, end);
-    const secondStart = functionsSource.indexOf('function coerceDate');
+    const secondStart = functionsSource.indexOf('function normalizeScheduleStatus');
     const secondEnd = functionsSource.indexOf('function getReminderDueAt');
     const secondSlice = functionsSource.slice(secondStart, secondEnd);
-    return new Function(`${firstSlice}\n${secondSlice}; return { buildScheduleUpdateNotificationPayload, detectGameNotificationCategory };`)();
+    return new Function(
+        'deps',
+        `${firstSlice}\nconst { getEventTitle, formatScheduleUpdateDate } = deps;\n${secondSlice}; return { buildScheduleUpdateNotificationPayload, detectGameNotificationCategory };`
+    )(scheduleNotificationUtils);
 }
 
 const {

@@ -7,6 +7,7 @@ import {
   createTeamMediaLink,
   discoverPublicTeams,
   getPlayers,
+  getTeamRegistrationForm,
   getTeam,
   getTeamMediaFolders,
   getTeamMediaItems,
@@ -17,6 +18,7 @@ import {
   listParentTeamFeeRecipients,
   listTeamRegistrationForms,
   listTeamRegistrationReviews,
+  listTeamRegistrationReviewsPage,
   rejectTeamRegistration,
   revokeFamilyShareToken,
   updateFamilyShareTokenCalendars,
@@ -103,6 +105,9 @@ export type ParentFeeAppRecord = Record<string, any> & {
   feeNotes?: string;
   offlinePaymentInstructions?: string;
   paymentInstructions?: string;
+  collectionMode?: string;
+  checkoutUrl?: string;
+  checkoutStatus?: string;
   canPay: boolean;
   checkoutInitiatable: boolean;
   paymentAction: 'checkoutUrl' | 'createCheckout' | '';
@@ -668,6 +673,35 @@ export async function loadTeamRegistrationQueue(
   };
 }
 
+export async function loadTeamRegistrationQueuePage(
+  teamId: string,
+  formId: string,
+  options: { status?: string; pageSize?: number; afterDoc?: any } = {}
+): Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }> {
+  const { status = 'all', pageSize = 25, afterDoc = null } = options;
+  const { registrations, lastDoc, hasMore } = await listTeamRegistrationReviewsPage(teamId, formId, { status, pageSize, afterDoc });
+  return {
+    reviews: (registrations || []).map((review: any) => toTeamRegistrationReviewCard(review)),
+    lastDoc,
+    hasMore
+  };
+}
+
+export async function loadTeamRegistrationRosterPlayers(
+  user: AuthUser | null,
+  teamId: string
+): Promise<TeamRegistrationRosterPlayer[]> {
+  if (!canManageTeamRegistrations(user, teamId)) {
+    throw new Error('Admin access is required to review registrations.');
+  }
+  const rosterPlayers = await Promise.resolve(getPlayers(teamId)).catch(() => []);
+  return (rosterPlayers || []).map((player: any) => ({
+    id: compactString(player.id),
+    name: compactString(player.name) || 'Player',
+    number: compactString(player.number)
+  }));
+}
+
 export async function approveTeamRegistrationForApp(
   user: AuthUser | null,
   teamId: string,
@@ -897,13 +931,22 @@ function normalizeAccessRequest(request: any): ParentAccessRequest {
 
 function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
   const normalized = normalizeParentFeeRecord(fee);
-  const meta = getParentFeeStatusMeta(normalized.status);
-  const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(normalized) && Boolean(normalized.checkoutUrl);
-  const checkoutInitiatable = canInitiateParentTeamFeeCheckout(normalized);
-  return {
+  const collectionMode = compactString(normalized.collectionMode);
+  const checkoutUrl = compactString(normalized.checkoutUrl);
+  const checkoutStatus = compactString(normalized.checkoutStatus);
+  const parentFee = {
     ...normalized,
-    amountLabel: formatParentFeeAmount(normalized),
-    dueLabel: formatParentFeeDueDate(normalized.dueDate),
+    collectionMode,
+    checkoutUrl,
+    checkoutStatus
+  };
+  const meta = getParentFeeStatusMeta(normalized.status);
+  const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(parentFee) && hasReusableParentTeamFeeCheckoutUrl(parentFee);
+  const checkoutInitiatable = canInitiateParentTeamFeeCheckout(parentFee);
+  return {
+    ...parentFee,
+    amountLabel: formatParentFeeAmount(parentFee),
+    dueLabel: formatParentFeeDueDate(parentFee.dueDate),
     statusLabel: meta.label,
     canPay: canOpenCheckoutUrl || checkoutInitiatable,
     checkoutInitiatable,
@@ -914,7 +957,25 @@ function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
   };
 }
 
+function isOnlineParentTeamFeeCollection(fee: any) {
+  const collectionMode = compactString(fee?.collectionMode).toLowerCase();
+  if (!collectionMode) {
+    return Boolean(compactString(fee?.checkoutUrl));
+  }
+
+  return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
+}
+
+function hasReusableParentTeamFeeCheckoutUrl(fee: any) {
+  if (!compactString(fee?.checkoutUrl)) return false;
+
+  const checkoutStatus = compactString(fee?.checkoutStatus).toLowerCase();
+  return !checkoutStatus || checkoutStatus === 'open';
+}
+
 export function isParentTeamFeePayActionAllowed(fee: any) {
+  if (!isOnlineParentTeamFeeCollection(fee)) return false;
+
   const status = compactString(fee?.status).toLowerCase();
   if (status === 'paid' || status === 'canceled' || status === 'cancelled') return false;
 
@@ -927,7 +988,7 @@ export function isParentTeamFeePayActionAllowed(fee: any) {
 export function canInitiateParentTeamFeeCheckout(fee: any) {
   return Boolean(
     isParentTeamFeePayActionAllowed(fee)
-    && !fee?.checkoutUrl
+    && !hasReusableParentTeamFeeCheckoutUrl(fee)
     && compactString(fee?.teamId)
     && compactString(fee?.batchId)
     && compactString(fee?.recipientId)
@@ -1112,12 +1173,11 @@ async function loadRegistrationDetailModel(teamId: string, formId: string): Prom
   if (!teamId || !formId) {
     throw new Error('Team and form are required.');
   }
-  const [team, forms] = await Promise.all([
+  const [team, form] = await Promise.all([
     Promise.resolve(getTeam(teamId)).catch(() => null),
-    Promise.resolve(listTeamRegistrationForms(teamId)).catch(() => [])
+    Promise.resolve(getTeamRegistrationForm(teamId, formId)).catch(() => null)
   ]);
 
-  const form = forms.find((candidate: any) => candidate.id === formId);
   if (!form) throw new Error('Registration form not found.');
   if (!team) throw new Error('Team not found.');
 

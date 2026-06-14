@@ -181,7 +181,8 @@ export function renderHeader(container, user) {
       navProfile.classList.add('hidden');
     }
 
-    // Add logout handler
+    // Shared header logout intentionally stays pinned to auth.js?v=21.
+    // Broader auth consumer cache busting moved to auth.js?v=22.
     navLogout.addEventListener('click', async () => {
       const { logout } = await import('./auth.js?v=21');
       await logout();
@@ -203,7 +204,7 @@ export function renderHeader(container, user) {
   // Global search: injected into the shared header in one place.
   // Lazy-import to avoid adding weight to initial render and to avoid circular deps.
   try {
-    import('./global-search.js?v=7')
+    import('./global-search.js?v=8')
       .then(({ setupHeaderSearch }) => {
         if (typeof setupHeaderSearch === 'function') {
           setupHeaderSearch({ user, headerContainer: container });

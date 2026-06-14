@@ -32,7 +32,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=17';
+} from './firebase.js?v=18';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=6';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
@@ -890,7 +890,21 @@ export async function getTeamMediaItems(teamId, folderId = null) {
         .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
         .filter((item) => item.deleted !== true)
         .filter((item) => !folderId || item.folderId === folderId);
-    return sortByMediaOrder(items);
+
+    const resolvedItems = await Promise.all(items.map(async (item) => {
+        if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
+        if (String(item.downloadUrl || item.url || item.src || '').trim()) return item;
+        if (!item.storagePath) return item;
+        try {
+            const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
+            return { ...item, downloadUrl };
+        } catch (error) {
+            console.warn('Unable to resolve team media download URL:', error);
+            return item;
+        }
+    }));
+
+    return sortByMediaOrder(resolvedItems);
 }
 
 export async function createTeamMediaFolder(teamId, draft = {}) {
@@ -1023,13 +1037,11 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const url = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
         type: 'photo',
-        url,
         storagePath,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
@@ -1069,14 +1081,12 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const url = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
         fileName: String(file.name || '').trim(),
         type: 'file',
-        url,
         storagePath,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
@@ -2112,6 +2122,16 @@ export async function listTeamRegistrationForms(teamId) {
         .sort((a, b) => String(a.name || a.title || a.id).localeCompare(String(b.name || b.title || b.id)));
 }
 
+export async function getTeamRegistrationForm(teamId, formId) {
+    if (!teamId || !formId) return null;
+    const formSnap = await getDoc(doc(db, 'teams', teamId, 'registrationForms', formId));
+    if (!formSnap.exists()) return null;
+    return {
+        id: formSnap.id,
+        ...formSnap.data()
+    };
+}
+
 export async function listTeamRegistrationReviews(teamId, formId, status = 'all') {
     if (!teamId || !formId) return [];
     const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms/${formId}/registrations`));
@@ -2127,6 +2147,26 @@ export async function listTeamRegistrationReviews(teamId, formId, status = 'all'
             reviewSummary: summarizeRegistration(registration)
         };
     })).filter((registration) => matchesRegistrationReviewStatus(registration, status));
+}
+
+export async function listTeamRegistrationReviewsPage(teamId, formId, { status = 'all', pageSize = 25, afterDoc = null } = {}) {
+    if (!teamId || !formId) return { registrations: [], lastDoc: null, hasMore: false };
+    const collectionRef = collection(db, `teams/${teamId}/registrationForms/${formId}/registrations`);
+    const constraints = [];
+    if (status !== 'all') {
+        constraints.push(where('status', '==', status));
+    }
+    constraints.push(orderBy('submittedAt', 'desc'));
+    constraints.push(limit(pageSize));
+    if (afterDoc) {
+        constraints.push(startAfter(afterDoc));
+    }
+    const snapshot = await getDocs(query(collectionRef, ...constraints));
+    return {
+        registrations: snapshot.docs.map((d) => ({ id: d.id, ...d.data() })),
+        lastDoc: snapshot.docs[snapshot.docs.length - 1] || null,
+        hasMore: snapshot.docs.length === pageSize
+    };
 }
 
 async function getExistingGuardianUsers(guardians = []) {
@@ -2787,6 +2827,7 @@ async function syncSharedScheduleCounterpart(teamId, gameId, sourceGame, previou
 
 export async function addGame(teamId, gameData) {
     gameData.createdAt = Timestamp.now();
+    gameData.createdBy = gameData.createdBy || auth.currentUser?.uid || null;
     const docRef = await addDoc(getTeamGameCollectionRef(teamId), gameData);
     if (shouldMirrorSharedGame(gameData, teamId)) {
         try {
@@ -2990,6 +3031,7 @@ export async function getEvents(teamId, options = {}) {
  */
 export async function addEvent(teamId, eventData) {
     eventData.createdAt = Timestamp.now();
+    eventData.createdBy = eventData.createdBy || auth.currentUser?.uid || null;
     eventData.type = eventData.type || 'game';
     const docRef = await addDoc(collection(db, `teams/${teamId}/games`), eventData);
     return docRef.id;
@@ -5882,6 +5924,22 @@ export async function updateChatLastRead(userId, teamId) {
     const fieldPath = `chatLastRead.${teamId}`;
     return await updateDoc(userRef, {
         [fieldPath]: Timestamp.now()
+    });
+}
+
+export async function updateChatMuted(userId, teamId) {
+    const userRef = doc(db, 'users', userId);
+    const fieldPath = `chatMuted.${teamId}`;
+    return await updateDoc(userRef, {
+        [fieldPath]: Timestamp.now()
+    });
+}
+
+export async function clearChatMuted(userId, teamId) {
+    const userRef = doc(db, 'users', userId);
+    const fieldPath = `chatMuted.${teamId}`;
+    return await updateDoc(userRef, {
+        [fieldPath]: deleteField()
     });
 }
 

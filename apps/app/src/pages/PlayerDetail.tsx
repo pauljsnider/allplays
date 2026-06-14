@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type InputHTMLAttributes } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -594,7 +594,7 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
       <form className="mt-4 space-y-3" onSubmit={submit}>
         <div className="grid gap-3 sm:grid-cols-2">
           <TextField label="Player name" value={name} onChange={setName} placeholder="Player name" />
-          <TextField label="Jersey number" value={number} onChange={setNumber} placeholder="Number" />
+          <TextField label="Jersey number" value={number} onChange={setNumber} placeholder="Number" inputMode="numeric" />
         </div>
         <label className="block">
           <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Roster photo</span>
@@ -1754,12 +1754,18 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
   );
 }
 
-function TextField({ label, value, onChange, placeholder = '', type = 'text' }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string }) {
+type TextFieldHints = Pick<InputHTMLAttributes<HTMLInputElement>, 'inputMode' | 'autoComplete' | 'enterKeyHint'>;
+
+function TextField({ label, value, onChange, placeholder = '', type = 'text', inputMode, autoComplete, enterKeyHint }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; type?: string } & TextFieldHints) {
+  const hints = inferInputHints(type);
   return (
     <label className="block">
       <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">{label}</span>
       <input
         type={type}
+        inputMode={inputMode || hints.inputMode}
+        autoComplete={autoComplete || hints.autoComplete}
+        enterKeyHint={enterKeyHint || hints.enterKeyHint}
         value={value}
         onChange={(event) => onChange(event.currentTarget.value)}
         placeholder={placeholder}
@@ -1767,6 +1773,13 @@ function TextField({ label, value, onChange, placeholder = '', type = 'text' }: 
       />
     </label>
   );
+}
+
+function inferInputHints(type: string): TextFieldHints {
+  if (type === 'email') return { inputMode: 'email', autoComplete: 'email', enterKeyHint: 'next' };
+  if (type === 'tel') return { inputMode: 'tel', autoComplete: 'tel', enterKeyHint: 'next' };
+  if (type === 'number') return { inputMode: 'decimal', enterKeyHint: 'next' };
+  return { enterKeyHint: 'next' };
 }
 
 function MiniMoney({ label, cents = 0, value, warn = false, inverse = false }: { label: string; cents?: number; value?: string; warn?: boolean; inverse?: boolean }) {
