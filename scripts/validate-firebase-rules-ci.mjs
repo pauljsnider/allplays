@@ -33,6 +33,8 @@ export function validateFirebaseRulesCi() {
     const firestoreRules = readText('firestore.rules');
     const storageRules = readText('storage.rules');
     const legacyGameClipRules = extractMatchBlock(storageRules, 'match /game-clips/{fileName} {');
+    const gameEventsRules = (firestoreRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/) || [''])[0];
+    const aggregatedStatsRules = (firestoreRules.match(/match \/aggregatedStats\/\{statId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const deployProd = readText('.github/workflows/deploy-prod.yml');
     const deployPreview = readText('.github/workflows/deploy-preview.yml');
     const regressionGuards = readText('.github/workflows/regression-guards.yml');
@@ -56,9 +58,17 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaFolder(teamId, resource.data);', 'Firestore media folder read rules');
     assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaItem(teamId, resource.data);', 'Firestore media item read rules');
     assertIncludes(firestoreRules, 'function canReadGameDocument(teamId, gameId, data)', 'Firestore game visibility helper');
+    assertIncludes(firestoreRules, 'function canReadGameSubcollectionDocument(teamId, gameId)', 'Firestore game subcollection visibility helper');
     assertIncludes(firestoreRules, 'function canReadCollectionGroupGameDocument(teamPath, data)', 'Firestore collection-group game visibility helper');
     assertIncludes(firestoreRules, 'allow read: if canReadGameDocument(teamId, gameId, resource.data);', 'Firestore team game read rules');
+    assertIncludes(firestoreRules, 'allow read: if canReadGameSubcollectionDocument(teamId, gameId);', 'Firestore game subcollection read rules');
     assertIncludes(firestoreRules, 'allow read: if canReadCollectionGroupGameDocument(path, resource.data);', 'Firestore collection-group game read rules');
+    if (gameEventsRules.includes('allow read: if true;')) {
+        throw new Error('Firestore game events read rules must not allow unconditional public reads.');
+    }
+    if (aggregatedStatsRules.includes('allow read: if true;')) {
+        throw new Error('Firestore aggregated stats read rules must not allow unconditional public reads.');
+    }
     assertIncludes(firestoreRules, 'allow create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media folder write rules');
     assertIncludes(firestoreRules, 'allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);', 'Firestore media item create rules');
     assertIncludes(firestoreRules, 'allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);', 'Firestore media item update rules');
