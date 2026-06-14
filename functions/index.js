@@ -17,6 +17,7 @@ const {
   getTeamFeeRefundableCents,
   isTeamFeeCheckoutEligible,
   isEligibleTeamFeePayer,
+  getTeamFeeRecipientTargetUserIds,
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
   canReuseTeamFeeCheckoutSession,
@@ -4244,6 +4245,52 @@ exports.notifyFeeMarkedPaid = functions.firestore
     }
 
     await Promise.allSettled(promises);
+    return null;
+  });
+
+exports.notifyFeeAssigned = functions.firestore
+  .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data();
+    if (!data) return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('fees')) {
+      functions.logger.error('notifyFeeAssigned requires the fees notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
+
+    const { teamId } = context.params;
+    const playerId = String(data.playerId || '').trim();
+    const playerRef = playerId ? firestore.doc(`teams/${teamId}/players/${playerId}`) : null;
+    const playerSnap = playerRef ? await playerRef.get() : null;
+    const playerData = playerSnap?.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : {};
+    let privateProfileData = {};
+    if (playerRef) {
+      const privateProfileSnap = await playerRef.collection('private').doc('profile').get();
+      privateProfileData = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
+    }
+
+    const payerUserIds = getTeamFeeRecipientTargetUserIds(data, playerData, privateProfileData);
+    if (!payerUserIds.length) return null;
+
+    const payerTargets = (await getTargetsForCategory(teamId, 'fees', null))
+      .filter((target) => payerUserIds.includes(target.uid));
+    if (!payerTargets.length) return null;
+
+    const title = String(data.feeTitle || data.title || 'Team fee').trim();
+    const amountCents = Number(data.amountCents || data.feeAmountCents || 0);
+    const amountDisplay = amountCents > 0 ? ` ($${(amountCents / 100).toFixed(2)})` : '';
+
+    await sendDirectTargetsNotification({
+      targets: payerTargets,
+      category: 'fees',
+      title: `New fee assigned: ${title}${amountDisplay}`,
+      body: 'A new team fee has been assigned to your account.',
+      teamId,
+    });
     return null;
   });
 

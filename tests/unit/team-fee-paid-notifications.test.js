@@ -5,7 +5,7 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 
 function extractNotifyFeeMarkedPaid() {
     const start = functionsSource.indexOf('exports.notifyFeeMarkedPaid = functions.firestore');
-    const end = functionsSource.indexOf('\n\nconst PUBLIC_RSVP_TOKEN_TTL_DAYS', start);
+    const end = functionsSource.indexOf('\n\nexports.notifyFeeAssigned = functions.firestore', start);
     if (start === -1 || end === -1) {
         throw new Error('Unable to extract notifyFeeMarkedPaid source.');
     }
