@@ -276,7 +276,7 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
   const visiblePlayerRows = playerRows.filter((player) => (
     hasPlayerProfileParticipation(player)
     || player.didNotPlay
-    || (recordedPlayerIds.has(player.playerId) && player.didNotPlay !== true)
+    || recordedPlayerIds.has(player.playerId)
   ));
   const deferredPlayerRows = playerRows.filter((player) => !visiblePlayerRows.includes(player));
   const playerLookup = new Map(playerRows.map((player) => [player.playerId, player]));
