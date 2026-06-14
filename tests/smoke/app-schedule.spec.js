@@ -1185,6 +1185,7 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     await mockScheduleModules(page, { extraUpcomingEvents: 22, extraPastEvents: 12 });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
+    await waitForScheduleRoute(page, mobileScheduleFilter(page));
     const mobileRows = page.locator('.schedule-list > a');
     await expect(async () => {
         await expect(mobileRows.first()).toBeVisible({ timeout: 1000 });
