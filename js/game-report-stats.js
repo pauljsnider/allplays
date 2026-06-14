@@ -7,7 +7,8 @@ export function buildConfiguredStatFields(columns = [], statsObjects = []) {
   return (columns || []).map((col) => {
     const normalized = String(col || '').toLowerCase();
     const slugified = normalized.replace(/[^a-z0-9_]+/g, '');
-    const variations = [normalized];
+    // Prefer slugified key over legacy punctuated key so corrected stats win
+    const variations = slugified && slugified !== normalized ? [slugified, normalized] : [normalized];
 
     if (!normalized.endsWith('s')) {
       variations.push(normalized + 's');
@@ -23,9 +24,6 @@ export function buildConfiguredStatFields(columns = [], statsObjects = []) {
     }
     if (normalized === 'ast' || normalized === 'assists') {
       variations.push('ast', 'assists', 'assist');
-    }
-    if (slugified && slugified !== normalized) {
-      variations.push(slugified);
     }
 
     const fieldName = variations.find((variant) => actualFields.has(variant)) || normalized;
