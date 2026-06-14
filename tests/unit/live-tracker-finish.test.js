@@ -380,4 +380,27 @@ describe('live tracker finish completion plan', () => {
     const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8');
     expect(source).toContain('runSaveAndCompleteWorkflow');
   });
+
+  it('preserves accumulated playing time from .time field rather than writing 0 (regression: issue #2124)', () => {
+    // live-tracker accumulates elapsed time in state.stats[id].time (not .timeMs).
+    // Finalization must read .time so player playing-time is not zeroed out on game completion.
+    const plan = buildFinishCompletionPlan({
+      requestedHome: 10,
+      requestedAway: 8,
+      liveHome: 10,
+      liveAway: 8,
+      columns: ['PTS'],
+      roster: [{ id: 'player-1', name: 'Jordan Smith', num: '23' }],
+      statsByPlayerId: {
+        'player-1': { time: 90000, timeMs: 0, pts: 12, fouls: 2 }
+      },
+      statTrackerConfig: {},
+      teamId: 'team-1',
+      gameId: 'game-1'
+    });
+
+    const playerWrite = plan.aggregatedStatsWrites.find(w => w.playerId === 'player-1');
+    expect(playerWrite).toBeDefined();
+    expect(playerWrite.data.timeMs).toBe(90000);
+  });
 });

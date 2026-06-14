@@ -667,7 +667,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage } from './js/db.js?v=43';
+        import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage } from './js/db.js?v=48';
         import { db } from './js/firebase.js?v=17';
         import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './js/firebase.js?v=17';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
@@ -680,7 +680,7 @@
         import { applyVolleyballServeOutcome, createVolleyballUndoState, restoreVolleyballUndoState, isVolleyballSport } from './js/live-scorekeeping-volleyball.js?v=2';
 
         import { applyBaseballScorekeepingAction, createBaseballLiveState, getBaseballPeriodLabel, getBaseballSituationSummary, isBaseballScorekeepingSport, parseBaseballPeriodLabel } from './js/live-scorekeeping-baseball.js?v=1';
-        import { checkAuth } from './js/auth.js?v=20';
+        import { checkAuth } from './js/auth.js?v=23';
         import { getApp } from './js/vendor/firebase-app.js';
         import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, removeGameSummaryLine, buildGameNoteLogText, buildGoalSportNoteText } from './js/live-tracker-notes.js?v=3';
         import { collectTournamentAdvancementPatches } from './js/tournament-brackets.js?v=1';
@@ -2049,9 +2049,17 @@
             const logText = buildGameNoteLogText(clean, type);
             if (!logText) return false;
 
-            addLiveNoteRecord(clean, type);
-            await addLogEntry(logText, { type: 'note', note: clean, noteType: type });
-            if (gameState.isRunning) {
+            const liveNote = addLiveNoteRecord(clean, type);
+            const noteWasPublished = gameState.isRunning;
+            await addLogEntry(logText, {
+                type: 'note',
+                note: clean,
+                noteType: type,
+                liveNoteId: liveNote?.id || null,
+                liveNoteText: liveNote?.text || clean,
+                wasPublished: noteWasPublished
+            });
+            if (noteWasPublished) {
                 broadcastLiveEvent(currentTeamId, currentGameId, {
                     type: 'note',
                     period: gameState.currentPeriod,
@@ -2061,6 +2069,7 @@
                     description: logText,
                     note: clean,
                     noteType: type,
+                    liveNoteId: liveNote?.id || null,
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
             }
@@ -2604,13 +2613,15 @@
                         await setGameLiveStatus(currentTeamId, currentGameId, 'scheduled').catch(console.warn);
                     },
                     cleanupPersistedState: async () => {
-                        const [eventsSnapshot, statsSnapshot] = await Promise.all([
+                        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
                             getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
-                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`))
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`)),
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`))
                         ]);
                         const cleanupResults = await Promise.allSettled([
                             ...eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)),
-                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref))
+                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref)),
+                            ...liveEventsSnapshot.docs.map(doc => deleteDoc(doc.ref))
                         ]);
                         const failedDeletes = cleanupResults.filter((result) => result.status === 'rejected');
                         if (failedDeletes.length) {
@@ -2630,31 +2641,49 @@
             }
 
             try {
-                // Delete all events
-                const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
-                const deleteEventPromises = eventsSnap.docs.map(doc => deleteDoc(doc.ref));
-                await Promise.all(deleteEventPromises);
-
-                // Delete all aggregated stats
-                const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-                const deleteStatsPromises = statsSnap.docs.map(doc => deleteDoc(doc.ref));
-                await Promise.all(deleteStatsPromises);
-
-                // Always reset live broadcast state, even when the scheduled game was only marked liveStatus=live.
-                await updateGame(currentTeamId, currentGameId, {
-                    ...buildTrackLiveResetUpdate({
-                        currentGame,
-                        currentConfig,
-                        period: gameState.currentPeriod,
-                        liveLineup: getLiveLineup(gameState.playerFieldStatus, players)
-                    }),
-                    status: 'scheduled',
-                    liveBaseballState: gameState.isBaseballScorekeeping ? createBaseballLiveState() : null
+                await runTrackLiveResetPersistence({
+                    updateResetState: async () => {
+                        await updateGame(currentTeamId, currentGameId, {
+                            ...buildTrackLiveResetUpdate({
+                                currentGame,
+                                currentConfig,
+                                period: gameState.currentPeriod,
+                                liveLineup: getLiveLineup(gameState.playerFieldStatus, players)
+                            }),
+                            status: 'scheduled',
+                            liveBaseballState: gameState.isBaseballScorekeeping ? createBaseballLiveState() : null,
+                            ...(isFootballTrackingConfig() ? { liveFootballState: createFootballLiveState() } : {})
+                        });
+                        if (currentGame) {
+                            currentGame.liveHasData = false;
+                            currentGame.liveStatus = 'scheduled';
+                            currentGame.homeScore = 0;
+                            currentGame.awayScore = 0;
+                            currentGame.opponentStats = {};
+                            currentGame.liveBaseballState = gameState.isBaseballScorekeeping ? createBaseballLiveState() : null;
+                            currentGame.liveFootballState = isFootballTrackingConfig() ? createFootballLiveState() : null;
+                        }
+                        liveState.isLive = false;
+                        liveState.lastClockSyncAt = 0;
+                    },
+                    cleanupPersistedState: async () => {
+                        const [eventsSnapshot, statsSnapshot] = await Promise.all([
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`))
+                        ]);
+                        const cleanupResults = await Promise.allSettled([
+                            ...eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)),
+                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref))
+                        ]);
+                        const failedDeletes = cleanupResults.filter((result) => result.status === 'rejected');
+                        if (failedDeletes.length) {
+                            console.warn('Some persisted tracking records could not be deleted during cancel:', failedDeletes);
+                        }
+                    },
+                    logWarn: (...args) => console.warn(...args),
+                    logError: (...args) => console.error(...args)
                 });
-                liveState.isLive = false;
-                liveState.lastClockSyncAt = 0;
 
-                // Navigate back to schedule
                 alert('Game cancelled. All data has been deleted.');
                 window.location.href = `edit-schedule.html#teamId=${currentTeamId}`;
             } catch (error) {
@@ -2859,6 +2888,21 @@
                     description: `Undo: ${entry.text}`,
                     createdBy: currentUser?.uid || null
                 }).catch(console.warn);
+            } else if (undoData && undoData.type === 'note') {
+                removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText || undoData.note);
+                scheduleLiveHasData();
+                if (undoData.wasPublished) {
+                    broadcastLiveEvent(currentTeamId, currentGameId, {
+                        type: 'undo',
+                        period: gameState.currentPeriod,
+                        gameClockMs: gameState.elapsed,
+                        homeScore,
+                        awayScore,
+                        description: `Undo: ${entry.text}`,
+                        removedNote: undoData.liveNoteText || undoData.note || '',
+                        createdBy: currentUser?.uid || null
+                    }).catch(console.warn);
+                }
             }
 
             if (undoData && undoData.type === 'football_score') {

@@ -15,12 +15,12 @@ import {
   subscribeGame,
   updateGame,
   uploadGameClip
-} from './db.js?v=42';
+} from './db.js?v=48';
 import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=9';
 import { hasFullTeamAccess } from './team-access.js?v=1';
 import { buildScoreLinkedClipRecord, isScoredPlayEvent, validateGameClipFile } from './game-clips.js?v=1';
 import { computePanelVisibility } from './live-stream-utils.js?v=1';
-import { checkAuth } from './auth.js?v=21';
+import { checkAuth } from './auth.js?v=23';
 import { isViewerChatEnabled } from './live-game-chat.js?v=1';
 import { createPlayAnnouncer } from './live-game-announcer.js?v=1';
 import {
@@ -1608,8 +1608,8 @@ function initChat() {
   els.chatForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (state.isReplay) return;
-    if (!state.chatEnabled) {
-      showFloatingText('Chat is disabled', 'text-sand/70 text-sm');
+    if (!state.chatEnabled || !state.user) {
+      showFloatingText(state.chatEnabled ? 'Sign in to chat' : 'Chat is disabled', 'text-sand/70 text-sm');
       return;
     }
     const text = els.chatInput.value.trim();
@@ -1743,7 +1743,7 @@ function initReactions() {
     const type = btn.dataset.reaction;
     sendReaction(state.teamId, state.gameId, {
       type,
-      senderId: state.user?.uid || state.anonName
+      senderId: state.user.uid
     }).catch(err => console.warn('Reaction failed:', err));
 
     if (state.chatEnabled) {
@@ -2284,6 +2284,7 @@ function initReplayControls() {
 }
 
 async function generateAiResponse(question) {
+  if (!state.user) return;
   showAiThinking();
   try {
     const app = getApp();
@@ -2296,7 +2297,7 @@ async function generateAiResponse(question) {
 
     await postLiveChatMessage(state.teamId, state.gameId, {
       text,
-      senderId: null,
+      senderId: state.user?.uid || null,
       senderName: 'ALL PLAYS',
       senderPhotoUrl: null,
       isAnonymous: false,
@@ -2307,7 +2308,7 @@ async function generateAiResponse(question) {
     console.warn('AI response failed:', error);
     await postLiveChatMessage(state.teamId, state.gameId, {
       text: 'ALL PLAYS is unavailable right now.',
-      senderId: null,
+      senderId: state.user?.uid || null,
       senderName: 'ALL PLAYS',
       senderPhotoUrl: null,
       isAnonymous: false,
@@ -2481,18 +2482,28 @@ function handleGameUpdate(gameDoc) {
 
 function updateChatAvailability() {
   state.chatEnabled = isViewerChatEnabled(state.game, { isReplay: state.isReplay });
+  const canWriteToChat = state.chatEnabled && !!state.user;
 
   if (els.chatInput) {
-    if (state.chatEnabled) {
+    if (canWriteToChat) {
       els.chatInput.removeAttribute('disabled');
       els.chatInput.placeholder = 'Send a message...';
     } else {
       els.chatInput.setAttribute('disabled', 'disabled');
-      els.chatInput.placeholder = 'Chat disabled';
+      els.chatInput.placeholder = state.chatEnabled ? 'Sign in to join chat' : 'Chat disabled';
     }
   }
+  if (els.chatAnonNotice) {
+    els.chatAnonNotice.classList.toggle('hidden', !state.chatEnabled || !!state.user);
+  }
   if (els.chatLockedNotice) {
-    els.chatLockedNotice.classList.toggle('hidden', state.chatEnabled);
+    els.chatLockedNotice.textContent = state.chatEnabled
+      ? 'Sign in to join live chat and reactions.'
+      : 'Chat is disabled until game time.';
+    els.chatLockedNotice.classList.toggle('hidden', canWriteToChat);
+  }
+  if (els.reactionsBar) {
+    els.reactionsBar.classList.toggle('hidden', !canWriteToChat);
   }
 }
 
@@ -2618,7 +2629,6 @@ async function init() {
       state.anonName = saved || `Fan${Math.floor(1000 + Math.random() * 9000)}`;
       sessionStorage.setItem('liveChatAnonName', state.anonName);
       if (els.anonName) els.anonName.textContent = state.anonName;
-      if (els.chatAnonNotice) els.chatAnonNotice.classList.remove('hidden');
       if (els.anonChange && !els.anonChange.dataset.bound) {
         els.anonChange.dataset.bound = 'true';
         els.anonChange.addEventListener('click', openAnonNameEditor);

@@ -396,6 +396,78 @@ describe('TeamFeesComponent checkout flow', () => {
       { id: 'recipient-paid', status: 'paid', canPayOnline: false },
       { id: 'recipient-canceled', status: 'canceled', canPayOnline: false }
     ]);
+    expect(component.outstandingFees.map((fee) => fee.id)).toEqual(['recipient-online', 'recipient-offline']);
+    expect(component.feeHistory.map((fee) => fee.id)).toEqual(['recipient-paid', 'recipient-canceled']);
+    expect(template).toContain('*ngFor="let fee of outstandingFees"');
+    expect(template).toContain('*ngFor="let fee of feeHistory"');
+    expect(template).toContain('paymentHistoryOpen');
+    expect(template).toContain('togglePaymentHistory()');
+    expect(template).toContain('No outstanding team fees');
+  });
+
+  it('keeps paid and canceled fees accessible when there are no outstanding balances', async () => {
+    const paidFee = feeDoc('teams/team-real/feeBatches/batch-paid/feeRecipients/recipient-paid', 'recipient-paid', {
+      parentUserId: 'parent-123',
+      title: 'Paid registration',
+      balanceDueCents: 0,
+      status: 'paid',
+      collectionMode: 'online_stripe'
+    });
+    const canceledFee = feeDoc('teams/team-real/feeBatches/batch-canceled/feeRecipients/recipient-canceled', 'recipient-canceled', {
+      parentUserId: 'parent-123',
+      title: 'Canceled registration',
+      balanceDueCents: 6500,
+      status: 'canceled',
+      collectionMode: 'online_stripe'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [paidFee, canceledFee] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(component.outstandingFees).toEqual([]);
+    expect(component.feeHistory.map((fee) => ({ id: fee.id, status: fee.status, canPayOnline: fee.canPayOnline }))).toEqual([
+      { id: 'recipient-paid', status: 'paid', canPayOnline: false },
+      { id: 'recipient-canceled', status: 'canceled', canPayOnline: false }
+    ]);
+    expect(component.paymentHistoryOpen).toBe(false);
+
+    component.togglePaymentHistory();
+
+    expect(component.paymentHistoryOpen).toBe(true);
+  });
+
+  it('treats zero-balance unpaid records as paid history entries', async () => {
+    const zeroRemainingBalanceFee = feeDoc('teams/team-real/feeBatches/batch-zero-balance/feeRecipients/recipient-zero-balance', 'recipient-zero-balance', {
+      parentUserId: 'parent-123',
+      title: 'Zero remaining balance',
+      amountCents: 12500,
+      remainingBalanceCents: 0,
+      status: 'unpaid',
+      collectionMode: 'online_stripe'
+    });
+    const fullyPaidFee = feeDoc('teams/team-real/feeBatches/batch-fully-paid/feeRecipients/recipient-fully-paid', 'recipient-fully-paid', {
+      parentUserId: 'parent-123',
+      title: 'Fully paid by amount',
+      amountCents: 12500,
+      paidAmountCents: 12500,
+      status: 'unpaid',
+      collectionMode: 'online_stripe'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [zeroRemainingBalanceFee, fullyPaidFee] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(component.outstandingFees).toEqual([]);
+    expect(component.feeHistory.map((fee) => ({ id: fee.id, status: fee.status, isPaid: fee.isPaid, canPayOnline: fee.canPayOnline }))).toEqual([
+      { id: 'recipient-zero-balance', status: 'paid', isPaid: true, canPayOnline: false },
+      { id: 'recipient-fully-paid', status: 'paid', isPaid: true, canPayOnline: false }
+    ]);
   });
 
   it('passes the selected fee recipient IDs to StripeService before redirecting', async () => {
