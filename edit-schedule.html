@@ -3392,6 +3392,8 @@
             document.getElementById('practiceRecurring').checked = false;
             document.getElementById('recurrence-builder').classList.add('hidden');
             document.getElementById('recurrenceFreq').value = 'weekly';
+            document.getElementById('interval-label').textContent = 'week(s)';
+            document.getElementById('day-selector').classList.remove('hidden');
             document.getElementById('recurrenceInterval').value = 1;
             document.querySelectorAll('.day-checkbox').forEach(cb => cb.checked = false);
             document.querySelector('input[name="recurrenceEnd"][value="never"]').checked = true;
