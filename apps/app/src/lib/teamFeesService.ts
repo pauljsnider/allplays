@@ -42,6 +42,8 @@ export type TeamFeeRosterPlayer = {
   id: string;
   name: string;
   number: string;
+  parentName: string;
+  parentEmail: string;
 };
 
 export type CreateTeamFeeBatchInput = {
@@ -338,6 +340,8 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
     playerKey: `${teamId}::${player.id}`,
     playerName: player.name,
     playerNumber: player.number,
+    parentName: player.parentName,
+    parentEmail: player.parentEmail,
     feeTitle: cleanTitle,
     amountCents,
     dueDate: draft.dueDate,
@@ -484,9 +488,44 @@ function toRecipientSummary(recipient: any): TeamFeeRecipientSummary {
 }
 
 function toRosterPlayer(player: any): TeamFeeRosterPlayer {
+  const parentContact = normalizeRosterPlayerParentContact(player);
   return {
     id: String(player?.id || ''),
     name: normalizeString(player?.name || player?.displayName) || 'Roster member',
-    number: normalizeString(player?.number)
+    number: normalizeString(player?.number),
+    parentName: parentContact.parentName,
+    parentEmail: parentContact.parentEmail
   };
+}
+
+function normalizeRosterPlayerParentContact(player: any) {
+  const privateParents = Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : [];
+  const publicParents = Array.isArray(player?.parents) ? player.parents : [];
+  const parentRecords = privateParents.length > 0 ? privateParents : publicParents;
+  const primaryParent = parentRecords.find((parent: any) => normalizeString(parent?.email || parent?.parentEmail || parent?.guardianEmail))
+    || parentRecords[0]
+    || {};
+  const parentName = normalizeString(
+    player?.parentName
+    || player?.guardianName
+    || player?.parent?.name
+    || player?.guardian?.name
+    || primaryParent.name
+    || primaryParent.displayName
+    || primaryParent.fullName
+    || primaryParent.email
+    || primaryParent.parentEmail
+    || primaryParent.guardianEmail
+  );
+  const parentEmail = normalizeString(
+    player?.parentEmail
+    || player?.guardianEmail
+    || player?.parent?.email
+    || player?.guardian?.email
+    || primaryParent.email
+    || primaryParent.parentEmail
+    || primaryParent.guardianEmail
+  ).toLowerCase();
+
+  return { parentName, parentEmail };
 }
