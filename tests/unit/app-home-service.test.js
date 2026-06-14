@@ -194,26 +194,17 @@ describe('React app Home service', () => {
         });
     });
 
-    it('keeps the Teams summary usable when chat fails', async () => {
+    it('throws a typed network error when the Teams summary chat load fails', async () => {
         chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
 
-        const home = await loadParentTeamsSummary(user, { force: true });
+        await expect(loadParentTeamsSummary(user, { force: true })).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
+        });
 
         expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user, { includeLastMessages: false });
-        expect(home.teams).toEqual([
-            expect.objectContaining({
-                teamId: 'team-1',
-                teamName: 'Bears',
-                unreadCount: 0,
-                players: [expect.objectContaining({ playerId: 'player-1' })]
-            })
-        ]);
-        expect(home.metrics).toEqual(expect.objectContaining({
-            teams: 1,
-            players: 1,
-            unreadMessages: 0
-        }));
     });
 
     it('composes the fast Home summary without optional secondary data', async () => {
