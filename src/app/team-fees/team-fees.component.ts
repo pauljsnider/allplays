@@ -143,7 +143,7 @@ function isFeePaid(data: FeeRecipientData): boolean {
   const status = getFeeStatus(data);
   if (status === 'paid') return true;
   if (data.paid === true || data.isPaid === true) return true;
-  return typeof data.balanceDueCents === 'number' && data.balanceDueCents <= 0;
+  return getFeeBalanceCents(data) <= 0;
 }
 
 function isFeeCanceled(data: FeeRecipientData): boolean {
