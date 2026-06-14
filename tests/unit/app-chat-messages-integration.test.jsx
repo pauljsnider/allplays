@@ -672,14 +672,49 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Thunder');
     });
 
-    it('auto-selects the first filtered team in the desktop messages workspace', async () => {
+    it('keeps the current desktop thread selected while filtering the inbox', async () => {
         layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Parent',
+                    canModerate: false,
+                    unreadCount: 0,
+                    lastMessage: chatMessage({ id: 'last-2', senderName: 'Morgan', text: 'Tournament schedule changed.' })
+                }
+            ]
+        });
         const { container } = await renderMessages('/messages');
+        const search = container.querySelector('input[placeholder="Search team chats"]');
 
         expect(container.querySelector('.messages-list-pane')).toBeTruthy();
         expect(container.querySelector('.chat-window-embedded')).toBeTruthy();
         expect(chatMocks.loadChatTeamContext).toHaveBeenCalledWith('team-1', auth.user);
+        const initialContextLoadCount = chatMocks.loadChatTeamContext.mock.calls.length;
+        const initialSubscriptionCount = chatMocks.subscribeToTeamChatMessages.mock.calls.length;
         expect(container.textContent).toContain('Bring both jerseys.');
+
+        await setFieldValue(search, 'soccer');
+
+        const visibleInboxRows = Array.from(container.querySelectorAll('.message-row')).map((row) => row.textContent);
+        expect(visibleInboxRows).toHaveLength(1);
+        expect(visibleInboxRows[0]).toContain('Thunder');
+        expect(container.textContent).toContain('Bring both jerseys.');
+        expect(chatMocks.loadChatTeamContext).toHaveBeenCalledTimes(initialContextLoadCount);
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenCalledTimes(initialSubscriptionCount);
+        expect(chatMocks.loadChatTeamContext).not.toHaveBeenCalledWith('team-2', auth.user);
     });
 
     it('does not reload the desktop thread when typing in the search box', async () => {
