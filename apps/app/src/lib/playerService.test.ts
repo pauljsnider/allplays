@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const dbMocks = vi.hoisted(() => ({
+const legacyPlayerDbMocks = vi.hoisted(() => ({
   deleteAthleteProfileMediaByPath: vi.fn(),
   getAggregatedStatsForPlayer: vi.fn(),
   getGames: vi.fn(),
@@ -22,30 +22,48 @@ const dbMocks = vi.hoisted(() => ({
   uploadPlayerPhoto: vi.fn()
 }));
 
-vi.mock('../../../../js/db.js', () => dbMocks);
-vi.mock('../../../../js/parent-incentives.js', () => ({
-  calculateEarnings: vi.fn(),
-  getApplicableRulesForGame: vi.fn(),
-  getCapSetting: vi.fn(),
-  getIncentiveRules: vi.fn(),
-  getPaidGames: vi.fn(),
-  getStatOptionsForTeam: vi.fn(),
-  isCurrentRuleVersion: vi.fn(),
+const legacyPlayerProfileMocks = vi.hoisted(() => ({
+  calculateEarnings: vi.fn(() => ({ totalCents: 0, uncappedTotalCents: 0, wasCapped: false, breakdown: [] })),
+  buildAthleteProfileShareUrl: vi.fn(() => 'https://allplays.ai/athlete-profile.html?profileId=profile-1'),
+  collectPlayerVideoClips: vi.fn(() => []),
+  getApplicableRulesForGame: vi.fn((rules) => rules),
+  getCapSetting: vi.fn().mockResolvedValue(null),
+  getIncentiveRules: vi.fn().mockResolvedValue([]),
+  getPaidGames: vi.fn().mockResolvedValue(new Map()),
+  getStatOptionsForTeam: vi.fn().mockResolvedValue([]),
+  getVisiblePlayerTrackingSummary: vi.fn(() => []),
+  isCurrentRuleVersion: vi.fn(() => true),
   markGamePaid: vi.fn(),
   retireIncentiveRule: vi.fn(),
   saveCapSetting: vi.fn(),
   saveIncentiveRule: vi.fn(),
   toggleIncentiveRule: vi.fn()
 }));
-vi.mock('../../../../js/athlete-profile-utils.js', () => ({
-  buildAthleteProfileShareUrl: vi.fn(() => 'https://allplays.ai/athlete-profile.html?profileId=profile-1')
+const legacyRosterPrivacyMocks = vi.hoisted(() => ({
+  canViewRosterField: vi.fn((field, access) => {
+    if (field?.visibility === 'admins') return Boolean(access?.isAdmin);
+    if (field?.visibility === 'team' || field?.visibility === 'parents') {
+      return Boolean(access?.isAdmin || access?.isTeamMember || access?.isLinkedParent);
+    }
+    return true;
+  }),
+  getRosterProfileValues: vi.fn((player) => ({
+    ...(player?.rosterFieldValues || {}),
+    ...(player?.customFields || {}),
+    ...(player?.profile?.rosterFields || {}),
+    ...(player?.profile?.customFields || {})
+  })),
+  normalizeRosterFieldDefinitions: vi.fn((fields) => fields),
+  splitRosterProfileValuesByVisibility: vi.fn((fields, values) => ({
+    publicValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => !fields.find((field: any) => field.key === key && field.visibility === 'admins'))),
+    privateValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => !!fields.find((field: any) => field.key === key && field.visibility === 'admins')))
+  })),
+  validateRosterProfileValues: vi.fn(() => [])
 }));
-vi.mock('../../../../js/player-profile-stats.js', () => ({
-  collectPlayerVideoClips: vi.fn(() => [])
-}));
-vi.mock('../../../../js/player-tracking-summary.js', () => ({
-  getVisiblePlayerTrackingSummary: vi.fn(() => [])
-}));
+
+vi.mock('./adapters/legacyPlayerDb', () => legacyPlayerDbMocks);
+vi.mock('./adapters/legacyPlayerProfile', () => legacyPlayerProfileMocks);
+vi.mock('./adapters/legacyRosterPrivacy', () => legacyRosterPrivacyMocks);
 vi.mock('./scheduleLogic', () => ({
   getOpenScheduleAssignments: vi.fn(() => []),
   normalizeRsvpResponse: vi.fn(() => 'not_responded')
@@ -66,7 +84,7 @@ import { loadParentPlayerDetail, saveParentAthleteProfileDraft, savePlayerCustom
 describe('saveParentAthleteProfileDraft', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbMocks.saveAthleteProfile.mockResolvedValue({ id: 'profile-1' });
+    legacyPlayerDbMocks.saveAthleteProfile.mockResolvedValue({ id: 'profile-1' });
   });
 
   it('passes caller-provided selectedSeasonKeys to saveAthleteProfile', async () => {
@@ -89,7 +107,7 @@ describe('saveParentAthleteProfileDraft', () => {
       }
     });
 
-    expect(dbMocks.saveAthleteProfile).toHaveBeenCalledWith(
+    expect(legacyPlayerDbMocks.saveAthleteProfile).toHaveBeenCalledWith(
       'parent-1',
       expect.objectContaining({
         selectedSeasonKeys: ['team-current::player-current', 'team-prior::player-prior']
@@ -103,13 +121,13 @@ describe('saveParentAthleteProfileDraft', () => {
 describe('saveStaffPlayerRosterDetails', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbMocks.getTeam.mockResolvedValue({
+    legacyPlayerDbMocks.getTeam.mockResolvedValue({
       id: 'team-1',
       ownerId: 'owner-1',
       adminEmails: ['coach@example.com']
     });
-    dbMocks.uploadPlayerPhoto.mockResolvedValue('https://cdn.example.com/photo.jpg');
-    dbMocks.updatePlayer.mockResolvedValue(undefined);
+    legacyPlayerDbMocks.uploadPlayerPhoto.mockResolvedValue('https://cdn.example.com/photo.jpg');
+    legacyPlayerDbMocks.updatePlayer.mockResolvedValue(undefined);
   });
 
   it('updates only dirty public roster fields and clears app cache', async () => {
@@ -129,11 +147,11 @@ describe('saveStaffPlayerRosterDetails', () => {
       photoFile: file
     });
 
-    expect(dbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
+    expect(legacyPlayerDbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
       number: '44',
       photoUrl: 'https://cdn.example.com/photo.jpg'
     });
-    expect(dbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledWith();
     expect(result).toEqual({
       updatedFields: ['number', 'photoUrl'],
@@ -158,7 +176,7 @@ describe('saveStaffPlayerRosterDetails', () => {
       number: '12'
     })).rejects.toThrow('Only team owners and admins can edit roster details.');
 
-    expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.updatePlayer).not.toHaveBeenCalled();
     expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
   });
 
@@ -176,7 +194,7 @@ describe('saveStaffPlayerRosterDetails', () => {
       number: '12'
     })).rejects.toThrow('Only team owners and admins can edit roster details.');
 
-    expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.updatePlayer).not.toHaveBeenCalled();
     expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
   });
 });
@@ -184,12 +202,12 @@ describe('saveStaffPlayerRosterDetails', () => {
 describe('savePlayerCustomRosterFieldValues', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbMocks.getTeam.mockResolvedValue({
+    legacyPlayerDbMocks.getTeam.mockResolvedValue({
       id: 'team-1',
       ownerId: 'owner-1',
       adminEmails: ['coach@example.com']
     });
-    dbMocks.getPlayers.mockResolvedValue([
+    legacyPlayerDbMocks.getPlayers.mockResolvedValue([
       {
         id: 'player-1',
         profile: {
@@ -201,17 +219,17 @@ describe('savePlayerCustomRosterFieldValues', () => {
         }
       }
     ]);
-    dbMocks.getPlayerPrivateProfile.mockResolvedValue({
+    legacyPlayerDbMocks.getPlayerPrivateProfile.mockResolvedValue({
       rosterFields: {
         jerseySize: 'YM'
       }
     });
-    dbMocks.getRosterFieldDefinitions.mockResolvedValue([
+    legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([
       { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'team', sortOrder: 1 },
       { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'admins', options: ['YS', 'YM'], sortOrder: 2 }
     ]);
-    dbMocks.updatePlayer.mockResolvedValue(undefined);
-    dbMocks.setPlayerPrivateRosterProfileFields.mockResolvedValue(undefined);
+    legacyPlayerDbMocks.updatePlayer.mockResolvedValue(undefined);
+    legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields.mockResolvedValue(undefined);
   });
 
   it('writes only currently defined custom roster values to public and private containers', async () => {
@@ -226,7 +244,7 @@ describe('savePlayerCustomRosterFieldValues', () => {
       }
     });
 
-    expect(dbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
+    expect(legacyPlayerDbMocks.updatePlayer).toHaveBeenCalledWith('team-1', 'player-1', {
       profile: {
         position: 'Guard',
         customFields: {
@@ -234,7 +252,7 @@ describe('savePlayerCustomRosterFieldValues', () => {
         }
       }
     });
-    expect(dbMocks.setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
+    expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
       jerseySize: 'YS'
     });
   });
@@ -251,8 +269,8 @@ describe('savePlayerCustomRosterFieldValues', () => {
       values: { nickname: 'Speedy' }
     })).rejects.toThrow('Only team owners and admins can edit custom roster fields.');
 
-    expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
-    expect(dbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.updatePlayer).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
   });
 
   it('rejects custom roster field edits from coachOf-only users without team admin rights', async () => {
@@ -267,8 +285,8 @@ describe('savePlayerCustomRosterFieldValues', () => {
       values: { nickname: 'Speedy' }
     })).rejects.toThrow('Only team owners and admins can edit custom roster fields.');
 
-    expect(dbMocks.updatePlayer).not.toHaveBeenCalled();
-    expect(dbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.updatePlayer).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).not.toHaveBeenCalled();
   });
 });
 
@@ -280,12 +298,12 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       children: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }],
       events: []
     });
-    dbMocks.getTeam.mockResolvedValue({
+    legacyPlayerDbMocks.getTeam.mockResolvedValue({
       id: 'team-1',
       name: 'Comets',
       adminEmails: ['coach@example.com']
     });
-    dbMocks.getPlayers.mockResolvedValue([
+    legacyPlayerDbMocks.getPlayers.mockResolvedValue([
       {
         id: 'player-1',
         name: 'Sam Player',
@@ -296,20 +314,20 @@ describe('loadParentPlayerDetail custom roster fields', () => {
         }
       }
     ]);
-    dbMocks.getPlayerPrivateProfile.mockResolvedValue({
+    legacyPlayerDbMocks.getPlayerPrivateProfile.mockResolvedValue({
       rosterFields: {
         jerseySize: 'YM'
       }
     });
-    dbMocks.getRosterFieldDefinitions.mockResolvedValue([
+    legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([
       { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'team', sortOrder: 1 },
       { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'admins', options: ['YS', 'YM'], sortOrder: 2 }
     ]);
-    dbMocks.getGames.mockResolvedValue([]);
-    dbMocks.listCertificatesForPlayer.mockResolvedValue([]);
-    dbMocks.getPublicTrackingItems.mockResolvedValue([]);
-    dbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
-    dbMocks.listAthleteProfilesForParent.mockResolvedValue([]);
+    legacyPlayerDbMocks.getGames.mockResolvedValue([]);
+    legacyPlayerDbMocks.listCertificatesForPlayer.mockResolvedValue([]);
+    legacyPlayerDbMocks.getPublicTrackingItems.mockResolvedValue([]);
+    legacyPlayerDbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
+    legacyPlayerDbMocks.listAthleteProfilesForParent.mockResolvedValue([]);
   });
 
   it('applies roster field privacy so parents do not receive admin-only custom values', async () => {

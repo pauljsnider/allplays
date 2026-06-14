@@ -1,13 +1,13 @@
 import {
+  deleteAthleteProfileMediaByPath,
   getAggregatedStatsForPlayer,
   getGames,
   getPlayerPrivateProfile,
-  getPlayerTrackingStatuses,
   getPlayers,
+  getPlayerTrackingStatuses,
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
-  deleteAthleteProfileMediaByPath,
   inviteCoParentToAthlete,
   listAthleteProfilesForParent,
   listCertificatesForPlayer,
@@ -16,32 +16,39 @@ import {
   updatePlayer,
   updatePlayerProfile,
   uploadAthleteProfileMedia,
-  uploadPlayerPhoto
-} from '../../../../js/db.js';
+  uploadPlayerPhoto,
+  type LegacyAthleteProfileRecord,
+  type LegacyPlayerPrivateProfileRecord,
+  type LegacyPlayerRecord,
+  type LegacyTeamRecord
+} from './adapters/legacyPlayerDb';
 import {
+  buildAthleteProfileShareUrl,
   calculateEarnings,
+  collectPlayerVideoClips,
   getApplicableRulesForGame,
   getCapSetting,
   getIncentiveRules,
   getPaidGames,
   getStatOptionsForTeam,
+  getVisiblePlayerTrackingSummary,
   isCurrentRuleVersion,
   markGamePaid,
   retireIncentiveRule,
   saveCapSetting,
   saveIncentiveRule,
-  toggleIncentiveRule
-} from '../../../../js/parent-incentives.js';
-import { buildAthleteProfileShareUrl } from '../../../../js/athlete-profile-utils.js';
-import { collectPlayerVideoClips } from '../../../../js/player-profile-stats.js';
-import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-summary.js';
-import { canViewRosterField } from '../../../../js/roster-field-privacy.js';
+  toggleIncentiveRule,
+  type LegacyIncentiveRule,
+  type LegacyStatOption
+} from './adapters/legacyPlayerProfile';
 import {
+  canViewRosterField,
   getRosterProfileValues,
   normalizeRosterFieldDefinitions,
   splitRosterProfileValuesByVisibility,
-  validateRosterProfileValues
-} from '../../../../js/roster-profile-fields.js';
+  validateRosterProfileValues,
+  type LegacyRosterFieldDefinition
+} from './adapters/legacyRosterPrivacy';
 import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleEvent } from './scheduleLogic';
 import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
 import { clearAppDataCache } from './appDataCache';
@@ -93,16 +100,7 @@ export type ParentAthleteProfileData = {
   }>;
 };
 
-type CustomRosterFieldDefinition = {
-  key: string;
-  label: string;
-  type: 'text' | 'menu' | 'checkbox' | 'date';
-  section?: string;
-  description?: string;
-  visibility: string;
-  required?: boolean;
-  options?: Array<{ value: string; label: string }>;
-};
+type CustomRosterFieldDefinition = LegacyRosterFieldDefinition;
 
 export type ParentPlayerDetailData = {
   child: ParentScheduleChild;
@@ -150,7 +148,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
   const requestedTeamId = decodeURIComponent(teamId || '');
   const requestedPlayerId = decodeURIComponent(playerId || '');
   const linkedChild = findLinkedChild(schedule.children, teamId, playerId);
-  const initialTeam = await Promise.resolve(getTeam(requestedTeamId, { includeInactive: true })).catch(() => null);
+  const initialTeam = await getTeam(requestedTeamId, { includeInactive: true });
   const routeAccess = buildPlayerAccess(user, requestedTeamId, requestedPlayerId, initialTeam);
   if (!linkedChild && !routeAccess.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
@@ -165,7 +163,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
 
   const team = requestedTeamId === resolvedTeamId
     ? initialTeam
-    : await Promise.resolve(getTeam(resolvedTeamId, { includeInactive: true })).catch(() => null);
+    : await getTeam(resolvedTeamId, { includeInactive: true });
 
   const [
     players,
@@ -181,21 +179,21 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     statOptions,
     athleteProfiles
   ] = await Promise.all([
-    Promise.resolve(getPlayers(resolvedTeamId, { includeInactive: true })).catch(() => []),
-    Promise.resolve(getGames(resolvedTeamId)).catch(() => []),
-    Promise.resolve(listCertificatesForPlayer(resolvedTeamId, resolvedPlayerId, { status: 'published', limit: 5 })).catch(() => []),
-    Promise.resolve(getPublicTrackingItems(resolvedTeamId)).catch(() => []),
-    Promise.resolve(getPlayerTrackingStatuses(resolvedTeamId, [resolvedPlayerId])).catch(() => []),
-    Promise.resolve(getPlayerPrivateProfile(resolvedTeamId, resolvedPlayerId)).catch(() => null),
-    Promise.resolve(getRosterFieldDefinitions(resolvedTeamId, team || null)).catch(() => []),
-    Promise.resolve(getIncentiveRules(user.uid, resolvedPlayerId)).catch(() => []),
-    Promise.resolve(getPaidGames(user.uid, resolvedPlayerId)).catch(() => new Map()),
-    Promise.resolve(getCapSetting(user.uid, resolvedPlayerId)).catch(() => null),
-    Promise.resolve(getStatOptionsForTeam(resolvedTeamId)).catch(() => []),
-    Promise.resolve(listAthleteProfilesForParent(user.uid)).catch(() => [])
+    getPlayers(resolvedTeamId, { includeInactive: true }).catch(() => []),
+    getGames(resolvedTeamId).catch(() => []),
+    listCertificatesForPlayer(resolvedTeamId, resolvedPlayerId, { status: 'published', limit: 5 }).catch(() => []),
+    getPublicTrackingItems(resolvedTeamId).catch(() => []),
+    getPlayerTrackingStatuses(resolvedTeamId, [resolvedPlayerId]).catch(() => []),
+    getPlayerPrivateProfile(resolvedTeamId, resolvedPlayerId).catch(() => null),
+    getRosterFieldDefinitions(resolvedTeamId, team || null).catch(() => []),
+    getIncentiveRules(user.uid, resolvedPlayerId).catch(() => []),
+    getPaidGames(user.uid, resolvedPlayerId).catch(() => new Map()),
+    getCapSetting(user.uid, resolvedPlayerId).catch(() => null),
+    getStatOptionsForTeam(resolvedTeamId).catch(() => []),
+    listAthleteProfilesForParent(user.uid).catch(() => [])
   ]);
 
-  const playerDoc = (Array.isArray(players) ? players : []).find((candidate: any) => candidate?.id === resolvedPlayerId) || {};
+  const playerDoc = (Array.isArray(players) ? players : []).find((candidate: LegacyPlayerRecord) => candidate?.id === resolvedPlayerId) || {};
   const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
   const child = linkedChild || {
     teamId: resolvedTeamId,
@@ -216,7 +214,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
 
   const statRows = await Promise.all(completedGameEvents.map(async (event) => ({
     event,
-    stats: await Promise.resolve(getAggregatedStatsForPlayer(resolvedTeamId, event.id, resolvedPlayerId)).catch(() => ({})) || {}
+    stats: await getAggregatedStatsForPlayer(resolvedTeamId, event.id, resolvedPlayerId).catch(() => ({})) || {}
   })));
 
   const clips = collectPlayerVideoClips(Array.isArray(games) ? games : [], {
@@ -289,16 +287,16 @@ export async function savePlayerCustomRosterFieldValues({
     throw new Error('A signed-in team staff account is required.');
   }
 
-  const team = await Promise.resolve(getTeam(teamId, { includeInactive: true })).catch(() => null);
+  const team = await getTeam(teamId, { includeInactive: true });
   const access = buildPlayerAccess(user, teamId, playerId, team);
   if (!access.canEditCustomRosterFields) {
     throw new Error('Only team owners and admins can edit custom roster fields.');
   }
 
   const [players, privateProfile, rosterFieldDefinitions] = await Promise.all([
-    Promise.resolve(getPlayers(teamId, { includeInactive: true })).catch(() => []),
-    Promise.resolve(getPlayerPrivateProfile(teamId, playerId)).catch(() => null),
-    Promise.resolve(getRosterFieldDefinitions(teamId, team || null)).catch(() => [])
+    getPlayers(teamId, { includeInactive: true }).catch(() => []),
+    getPlayerPrivateProfile(teamId, playerId).catch(() => null),
+    getRosterFieldDefinitions(teamId, team || null).catch(() => [])
   ]);
 
   const player = (Array.isArray(players) ? players : []).find((candidate: any) => candidate?.id === playerId) || {};
@@ -391,7 +389,7 @@ export async function saveStaffPlayerRosterDetails({
     throw new Error('A signed-in team staff account is required.');
   }
 
-  const team = await Promise.resolve(getTeam(teamId, { includeInactive: true })).catch(() => null);
+  const team = await getTeam(teamId, { includeInactive: true });
   const access = buildPlayerAccess(user, teamId, playerId, team);
   if (!access.canEditRosterDetails) {
     throw new Error('Only team owners and admins can edit roster details.');
@@ -606,9 +604,9 @@ function buildPlayerIncentiveData({
   maxPerGameCents,
   statRows
 }: {
-  rules: Array<Record<string, any>>;
-  paidGames: Map<string, any>;
-  statOptions: Array<{ key: string; label: string }>;
+  rules: LegacyIncentiveRule[];
+  paidGames: Map<string, Record<string, any>>;
+  statOptions: LegacyStatOption[];
   maxPerGameCents: number | null;
   statRows: ParentPlayerStatRow[];
 }): ParentPlayerIncentiveData {
@@ -651,7 +649,7 @@ function buildAthleteProfileData({
   teamId,
   playerId
 }: {
-  profiles: Array<Record<string, any>>;
+  profiles: LegacyAthleteProfileRecord[];
   parentLinks: Array<Record<string, any>>;
   teamId: string;
   playerId: string;
@@ -709,7 +707,7 @@ function normalizeEmail(value: unknown) {
   return String(value || '').trim().toLowerCase();
 }
 
-function isTeamOwnerOrAdminUser(user: AuthUser | null, team: Record<string, any> | null) {
+function isTeamOwnerOrAdminUser(user: AuthUser | null, team: LegacyTeamRecord | null) {
   if (!user?.uid) return false;
   if (isElevatedAppAdmin(user)) return true;
   if (team?.ownerId === user.uid) return true;
@@ -718,12 +716,12 @@ function isTeamOwnerOrAdminUser(user: AuthUser | null, team: Record<string, any>
   return !!(email && adminEmails.includes(email));
 }
 
-function isTeamStaffUser(user: AuthUser | null, team: Record<string, any> | null) {
+function isTeamStaffUser(user: AuthUser | null, team: LegacyTeamRecord | null) {
   if (isTeamOwnerOrAdminUser(user, team)) return true;
   return !!(Array.isArray(user?.coachOf) && user.coachOf.map((value) => String(value || '').trim()).includes(String(team?.id || '').trim()));
 }
 
-function buildPlayerAccess(user: AuthUser | null, teamId: string, playerId: string, team: Record<string, any> | null) {
+function buildPlayerAccess(user: AuthUser | null, teamId: string, playerId: string, team: LegacyTeamRecord | null) {
   const linkedParent = isLinkedParent(user, teamId, playerId);
   const resolvedTeam = team ? { ...team, id: team.id || teamId } : { id: teamId };
   const isTeamStaff = isTeamStaffUser(user, resolvedTeam);
@@ -744,8 +742,8 @@ function buildVisibleCustomRosterFields({
   access
 }: {
   definitions: any[];
-  player: Record<string, any>;
-  privateProfile: Record<string, any> | null;
+  player: LegacyPlayerRecord;
+  privateProfile: LegacyPlayerPrivateProfileRecord | null;
   access: { isLinkedParent: boolean; isTeamStaff: boolean; canEditRosterDetails: boolean; canEditCustomRosterFields: boolean };
 }) {
   const normalizedFields = normalizeRosterFieldDefinitions(definitions) as CustomRosterFieldDefinition[];
