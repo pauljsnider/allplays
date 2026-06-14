@@ -75,8 +75,11 @@ describe('Schedule', () => {
     cleanup();
   });
 
-  it('shows network-specific schedule copy after the initial load fails', async () => {
-    scheduleServiceMocks.loadParentSchedule.mockRejectedValue(new TypeError('Failed to fetch'));
+  it.each([
+    new TypeError('Failed to fetch'),
+    new Error('Schedule unavailable.')
+  ])('shows network-specific schedule copy after the initial load fails', async (loadError) => {
+    scheduleServiceMocks.loadParentSchedule.mockRejectedValue(loadError);
 
     renderSchedule();
 
