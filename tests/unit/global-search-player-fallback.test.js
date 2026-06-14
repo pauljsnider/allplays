@@ -29,4 +29,11 @@ describe('legacy global player search scoping', () => {
         expect(source).toContain('.slice(0, playerSearchTeamLimit)');
         expect(source).toContain('const teamIds = getPlayerSearchTeamIds(rawQuery, teamsById);');
     });
+
+    it('avoids unreadable stream-only team queries when loading accessible teams', () => {
+        expect(source).toContain("teamQueries.push(getDocs(query(teamsRef, where('ownerId', '==', uid))));");
+        expect(source).toContain("teamQueries.push(getDocs(query(teamsRef, where('adminEmails', 'array-contains', email))));");
+        expect(source).not.toContain("teamPermissions.streaming.memberIds");
+        expect(source).not.toContain("streamVolunteerEmails");
+    });
 });

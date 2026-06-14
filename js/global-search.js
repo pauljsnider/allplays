@@ -149,11 +149,9 @@ async function loadAccessibleTeams(user) {
 
     if (uid) {
         teamQueries.push(getDocs(query(teamsRef, where('ownerId', '==', uid))));
-        teamQueries.push(getDocs(query(teamsRef, where('teamPermissions.streaming.memberIds', 'array-contains', uid))));
     }
     if (email) {
         teamQueries.push(getDocs(query(teamsRef, where('adminEmails', 'array-contains', email))));
-        teamQueries.push(getDocs(query(teamsRef, where('streamVolunteerEmails', 'array-contains', email))));
     }
 
     const [queryResults, parentTeamResults] = await Promise.all([
