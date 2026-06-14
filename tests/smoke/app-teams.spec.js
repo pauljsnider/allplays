@@ -8,12 +8,14 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
-async function waitForTeamsRoute(page, readyLocator) {
+async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true } = {}) {
     const searchInput = page.getByPlaceholder('Search teams or players');
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
         await expect(page.getByText('Loading teams')).toHaveCount(0, { timeout: 3000 });
-        await expect(searchInput).toBeVisible({ timeout: 3000 });
+        if (requireSearchInput) {
+            await expect(searchInput).toBeVisible({ timeout: 3000 });
+        }
         if (readyLocator) {
             await expect(readyLocator).toBeVisible({ timeout: 3000 });
         }
@@ -307,19 +309,31 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                         return {
                             team: {
                                 id: 'team-empty',
+                                ownerId: 'owner-empty',
                                 name: 'Empty Team',
                                 sport: 'Soccer',
                                 photoUrl: null,
                                 description: '',
                                 zip: '',
+                                isPublic: true,
+                                active: true,
                                 leagueUrl: null,
                                 bracketUrl: null,
                                 streamUrl: null,
                                 websiteUrl: 'https://allplays.ai/team.html#teamId=team-empty',
+                                editTeamUrl: 'https://allplays.ai/edit-team.html#teamId=team-empty',
                                 mediaUrl: 'https://allplays.ai/team-media.html#teamId=team-empty',
-                                registrationProvider: []
+                                registrationProvider: [],
+                                scheduleNotifications: {
+                                    enabled: true,
+                                    reminderHours: 24,
+                                    delivery: 'team_chat',
+                                    hasExplicitReminderHours: true,
+                                    summary: 'Team default reminder window: 24 hours before event start.'
+                                }
                             },
                             players: [],
+                            inactivePlayers: [],
                             linkedPlayers: [],
                             upcomingEvents: [],
                             recentResults: [],
@@ -329,6 +343,10 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                             leaderboards: [],
                             trackingSummaries: [],
                             sponsors: [],
+                            statTrackerConfigs: [],
+                            canManageTeam: false,
+                            canManageAdmins: false,
+                            staffPermissions: null,
                             counts: { games: 0, practices: 0, completedGames: 0 }
                         };
                     }
@@ -337,24 +355,36 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                     return {
                         team: {
                             id: 'team-1',
+                            ownerId: 'owner-1',
                             name: 'Bears',
                             sport: 'Basketball',
                             photoUrl: 'https://img.example.test/bears.png',
                             description: 'Parent-facing team page',
                             zip: '66210',
+                            isPublic: true,
+                            active: true,
                             leagueUrl: 'https://league.example.test/standings',
                             bracketUrl: 'https://bracket.example.test/official',
                             streamUrl: 'https://youtube.example.test/watch',
                             websiteUrl: 'https://allplays.ai/team.html#teamId=team-1',
+                            editTeamUrl: 'https://allplays.ai/edit-team.html#teamId=team-1',
                             mediaUrl: 'https://allplays.ai/team-media.html#teamId=team-1',
-                            registrationProvider: [{ label: 'Provider', value: 'Sports Connect' }]
+                            registrationProvider: [{ label: 'Provider', value: 'Sports Connect' }],
+                            scheduleNotifications: {
+                                enabled: true,
+                                reminderHours: 24,
+                                delivery: 'team_chat',
+                                hasExplicitReminderHours: true,
+                                summary: 'Team default reminder window: 24 hours before event start.'
+                            }
                         },
                         players: [
-                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true },
-                            { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: null, position: 'Forward', isLinked: false }
+                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true },
+                            { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: null, position: 'Forward', isLinked: false, active: true }
                         ],
+                        inactivePlayers: [],
                         linkedPlayers: [
-                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true }
+                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true }
                         ],
                         upcomingEvents: [
                             { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false }
@@ -371,6 +401,10 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                             { id: 'item-2', title: 'Upload waiver', description: '', isComplete: false }
                         ] }],
                         sponsors: [{ id: 'sponsor-1', name: 'Pizza Place', description: 'After the game', imageUrl: 'https://img.example.test/pizza.png', websiteUrl: 'https://pizza.example.test' }],
+                        statTrackerConfigs: [],
+                        canManageTeam: false,
+                        canManageAdmins: false,
+                        staffPermissions: null,
                         counts: { games: 8, practices: 3, completedGames: 6 }
                     };
                 }
@@ -434,11 +468,14 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page, { scenario: 'empty' });
         await page.goto(appUrl(baseURL, '/teams?scenario=empty'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'No teams linked yet' })).toBeVisible();
+        const emptyHeading = page.getByRole('heading', { name: 'No teams linked yet' });
+        await waitForTeamsRoute(page, emptyHeading, { requireSearchInput: false });
+        const emptyState = page.locator('section').filter({ hasText: 'No teams available' });
         await expect(page.getByText('No teams available')).toBeVisible();
         await expect(page.getByRole('link', { name: 'Accept invite' })).toHaveAttribute('href', '#/accept-invite');
-        await page.locator('a[href="https://allplays.ai/teams.html"]').click();
-        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/teams.html');
+        await emptyState.getByRole('link', { name: 'Browse teams' }).click();
+        await expect(page).toHaveURL(/#\/teams\/browse$/);
+        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
         await expect(page.getByText('Loading teams')).toHaveCount(0);
     });
 
@@ -446,6 +483,7 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page, { scenario: 'error' });
         await page.goto(appUrl(baseURL, '/teams?scenario=error'), { waitUntil: 'domcontentloaded' });
 
+        await waitForTeamsRoute(page, page.getByText('Team service down'), { requireSearchInput: false });
         await expect(page.getByText('Team service down')).toBeVisible();
         await expect(page.getByText('No teams available')).toBeVisible();
         await expect(page.getByText('Loading teams')).toHaveCount(0);

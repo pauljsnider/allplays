@@ -105,7 +105,7 @@ describe('team media db ordering', () => {
         uploadTaskQueue.length = 0;
     });
 
-    it('assigns unique sequential orders to concurrent photo uploads without album reads', async () => {
+    it('assigns unique sequential orders to concurrent photo uploads without album reads or stored bearer URLs', async () => {
         const { uploadTeamMediaPhoto } = await import('../../js/db.js');
         const files = [
             new File(['photo-1'], 'tipoff.jpg', { type: 'image/jpeg' }),
@@ -126,15 +126,18 @@ describe('team media db ordering', () => {
             order: 0,
             type: 'photo'
         }));
+        expect(firebaseMocks.addDoc.mock.calls[0][1]).not.toHaveProperty('url');
         expect(firebaseMocks.addDoc).toHaveBeenNthCalledWith(2, { path: 'teams/team-1/mediaItems' }, expect.objectContaining({
             folderId: 'folder-1',
             title: 'bench.jpg',
             order: 1,
             type: 'photo'
         }));
+        expect(firebaseMocks.addDoc.mock.calls[1][1]).not.toHaveProperty('url');
+        expect(firebaseMocks.getDownloadURL).not.toHaveBeenCalled();
     });
 
-    it('starts legacy folders at zero when the media order counter is missing', async () => {
+    it('starts legacy folders at zero when the media order counter is missing and omits stored file URLs', async () => {
         folderState.nextMediaOrder = Number.NaN;
         const { createTeamMediaLink, uploadTeamMediaFile } = await import('../../js/db.js');
         const file = new File(['doc'], 'lineup.pdf', { type: 'application/pdf' });
@@ -160,5 +163,33 @@ describe('team media db ordering', () => {
             order: 1,
             type: 'file'
         }));
+        expect(firebaseMocks.addDoc.mock.calls[1][1]).not.toHaveProperty('url');
+        expect(firebaseMocks.getDownloadURL).not.toHaveBeenCalled();
+    });
+
+    it('resolves team media download URLs from storagePath after reading authorized metadata', async () => {
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [{
+                id: 'media-1',
+                data: () => ({
+                    folderId: 'folder-1',
+                    type: 'photo',
+                    storagePath: 'team-media/team-1/folder-1/user-1/tipoff.jpg',
+                    order: 0,
+                    deleted: false
+                })
+            }]
+        });
+        firebaseMocks.getDownloadURL.mockResolvedValueOnce('https://cdn.example.test/resolved-tipoff.jpg');
+
+        const { getTeamMediaItems } = await import('../../js/db.js');
+        const items = await getTeamMediaItems('team-1', 'folder-1');
+
+        expect(firebaseMocks.getDownloadURL).toHaveBeenCalledWith({ fullPath: 'team-media/team-1/folder-1/user-1/tipoff.jpg' });
+        expect(items).toEqual([expect.objectContaining({
+            id: 'media-1',
+            storagePath: 'team-media/team-1/folder-1/user-1/tipoff.jpg',
+            downloadUrl: 'https://cdn.example.test/resolved-tipoff.jpg'
+        })]);
     });
 });

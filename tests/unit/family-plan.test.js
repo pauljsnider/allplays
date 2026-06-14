@@ -11,6 +11,7 @@ import {
     loadFamilyPlanState,
     normalizeHouseholdInvites,
     removeFamilyMember,
+    removePendingHouseholdInvite,
     revokeHouseholdInvite
 } from '../../js/family-plan.js';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from '../../js/family-share-utils.js';
@@ -153,6 +154,20 @@ describe('family plan helpers', () => {
         expect(markup).toContain('pending');
         expect(markup).toContain('data-household-invite-revoke="invite-1"');
         expect(markup).toContain('Revoke access');
+    });
+
+    it('deletes the householdInvites document when revoking a pending invite', async () => {
+        const deleteDoc = vi.fn().mockResolvedValue();
+        const firebase = {
+            db: {},
+            doc: vi.fn((_db, path) => ({ path })),
+            deleteDoc,
+        };
+
+        await removePendingHouseholdInvite('user-1', 'invite-1', { deps: { firebase } });
+
+        expect(firebase.doc).toHaveBeenCalledWith({}, 'users/user-1/householdInvites/invite-1');
+        expect(deleteDoc).toHaveBeenCalledWith({ path: 'users/user-1/householdInvites/invite-1' });
     });
 
     it('normalizes household invite records without granting access fields', () => {
@@ -398,7 +413,7 @@ describe('family plan helpers', () => {
         expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
         expect(rules).toContain('allow update: if isHouseholdInviteRevocation');
         expect(rules).toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt', 'revokedAt'])");
-        expect(rules).toContain('allow delete: if false;');
+        expect(rules).toContain('allow delete: if isOwner(userId);');
     });
 
     it('keeps family share link listing on an owner-only query without composite index requirements', () => {
@@ -453,6 +468,6 @@ describe('family plan helpers', () => {
         expect(html).toContain('function updateShareLinkControlsReady()');
         expect(html).toContain('Link created and copied to clipboard.');
         expect(html).toContain('id="retry-share-links-btn"');
-        expect(html).toContain("from './js/db.js?v=45'");
+        expect(html).toContain("from './js/db.js?v=48'");
     });
 });

@@ -327,6 +327,12 @@ export async function addPendingHouseholdInvite(userId, invite, { deps = {}, lin
     });
 }
 
+export async function removePendingHouseholdInvite(userId, inviteId, { deps = {} } = {}) {
+    if (!userId || !inviteId) throw new Error('Missing household invite to revoke.');
+    const { db, doc, deleteDoc } = await loadFirebase(deps);
+    await deleteDoc(doc(db, `users/${userId}/householdInvites/${inviteId}`));
+}
+
 export async function addPendingFamilyMember(userId, member, { deps = {}, existingMembers = [] } = {}) {
     if (!userId) throw new Error('Missing signed-in user.');
     if (!canAddFamilyMember(existingMembers)) {
@@ -536,7 +542,6 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
             }
         });
 
-        const householdButton = container.querySelector('#household-invite-add-btn');
         const householdValidationEl = container.querySelector('#household-invite-validation');
         container.querySelectorAll('[data-household-invite-revoke]').forEach((button) => {
             button.addEventListener('click', async () => {
@@ -556,6 +561,8 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
                 }
             });
         });
+
+        const householdButton = container.querySelector('#household-invite-add-btn');
         householdButton?.addEventListener('click', async () => {
             const originalText = householdButton.textContent;
             householdButton.disabled = true;
