@@ -571,6 +571,34 @@ async function loadUsersByEmail(email: string) {
   );
 }
 
+async function loadUsersByParentTeamId(teamId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) return [] as any[];
+
+  return readWithNativeFallback(
+    `users by parentTeamIds ${normalizedTeamId}`,
+    async () => {
+      const snapshot = await getDocs(query(collection(db, 'users'), where('parentTeamIds', 'array-contains', normalizedTeamId)));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    async () => nativeRunQuery('users', 'parentTeamIds', 'ARRAY_CONTAINS', normalizedTeamId)
+  );
+}
+
+async function loadUsersByParentPlayerKey(parentPlayerKey: string) {
+  const normalizedParentPlayerKey = cleanString(parentPlayerKey);
+  if (!normalizedParentPlayerKey) return [] as any[];
+
+  return readWithNativeFallback(
+    `users by parentPlayerKeys ${normalizedParentPlayerKey}`,
+    async () => {
+      const snapshot = await getDocs(query(collection(db, 'users'), where('parentPlayerKeys', 'array-contains', normalizedParentPlayerKey)));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    async () => nativeRunQuery('users', 'parentPlayerKeys', 'ARRAY_CONTAINS', normalizedParentPlayerKey)
+  );
+}
+
 function collectRelevantTeamMemberUserIds(team: any, players: any[] = []) {
   const userIds = new Set<string>();
   const addUserId = (value: any) => {
@@ -620,17 +648,31 @@ async function loadRelevantTeamMembers({
   pendingAdminInvites?: any[];
   pendingParentInvites?: any[];
 }) {
+  const normalizedTeamId = cleanString(team?.id || team?.teamId);
   const userIds = collectRelevantTeamMemberUserIds(team, players);
   const emails = collectRelevantTeamMemberEmails(team, players, [...pendingAdminInvites, ...pendingParentInvites]);
+  const parentPlayerKeys = (Array.isArray(players) ? players : [])
+    .map((player) => {
+      const playerId = cleanString(player?.id || player?.playerId);
+      return normalizedTeamId && playerId ? `${normalizedTeamId}::${playerId}` : '';
+    })
+    .filter(Boolean);
 
-  const [usersById, usersByEmail] = await Promise.all([
+  const [usersById, usersByEmail, usersByParentTeamId, usersByParentPlayerKey] = await Promise.all([
     Promise.all(userIds.map((userId) => loadUserById(userId).catch(() => null))),
-    Promise.all(emails.map((email) => loadUsersByEmail(email).catch(() => [])))
+    Promise.all(emails.map((email) => loadUsersByEmail(email).catch(() => []))),
+    loadUsersByParentTeamId(normalizedTeamId).catch(() => []),
+    Promise.all(parentPlayerKeys.map((parentPlayerKey) => loadUsersByParentPlayerKey(parentPlayerKey).catch(() => [])))
   ]);
 
   const membersById = new Map<string, any>();
   const membersByEmail = new Map<string, any>();
-  [...usersById.filter(Boolean), ...usersByEmail.flat()].forEach((member) => {
+  [
+    ...usersById.filter(Boolean),
+    ...usersByEmail.flat(),
+    ...usersByParentTeamId,
+    ...usersByParentPlayerKey.flat()
+  ].forEach((member) => {
     const normalizedUserId = cleanString(member?.id || member?.uid);
     const normalizedEmail = cleanString(member?.email).toLowerCase();
     if (normalizedUserId && !membersById.has(normalizedUserId)) membersById.set(normalizedUserId, member);
@@ -1308,10 +1350,8 @@ function buildPermissionGrantTargets(team: Record<string, any>, players: any[], 
   });
 
   (Array.isArray(confirmedTeamMembers) ? confirmedTeamMembers : []).forEach((member) => {
-    const parentLinks = (Array.isArray(member?.parentOf) ? member.parentOf : [])
-      .filter((link: any) => cleanString(link?.teamId) === teamId);
-    parentLinks.forEach((link: any) => {
-      const player = playersById.get(cleanString(link?.playerId));
+    getAcceptedParentPlayerIds(member, teamId).forEach((playerId) => {
+      const player = playersById.get(playerId);
       if (player) addTarget(member?.id || member?.uid, player, member);
     });
   });

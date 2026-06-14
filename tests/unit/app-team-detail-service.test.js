@@ -57,7 +57,7 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
-vi.mock(import('../../apps/app/src/lib/authService.ts'), () => ({
+vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
@@ -390,8 +390,7 @@ describe('React app team detail model', () => {
             },
             {
                 id: 'player-2',
-                name: 'Sam Wing',
-                parents: [{ userId: 'parent-2', email: 'parent2@example.com' }]
+                name: 'Sam Wing'
             }
         ]);
         getGames.mockResolvedValue([]);
@@ -403,16 +402,33 @@ describe('React app team detail model', () => {
             if (ref.path === 'users/parent-1') {
                 return { id: 'parent-1', exists: () => true, data: () => ({ email: 'parent1@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) };
             }
-            if (ref.path === 'users/parent-2') {
-                return { id: 'parent-2', exists: () => true, data: () => ({ email: 'parent2@example.com', parentPlayerKeys: ['team-1::player-2'] }) };
-            }
             return { id: ref.id, exists: () => false, data: () => ({}) };
         });
         const future = Date.now() + 60_000;
-        getDocs.mockResolvedValue({
-            docs: [
-                { id: 'invite-1', data: () => ({ email: 'pending@example.com', playerId: 'player-1', teamId: 'team-1', code: 'PENDING1', type: 'parent_invite', used: false, expiresAt: { toMillis: () => future } }) }
-            ]
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                return {
+                    docs: [
+                        { id: 'invite-1', data: () => ({ email: 'pending@example.com', playerId: 'player-1', teamId: 'team-1', code: 'PENDING1', type: 'parent_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                    ]
+                };
+            }
+            if (filter.field === 'email') {
+                return { docs: [] };
+            }
+            if (filter.field === 'parentTeamIds') {
+                return { docs: [] };
+            }
+            if (filter.field === 'parentPlayerKeys' && filter.value === 'team-1::player-2') {
+                return {
+                    docs: [
+                        { id: 'parent-2', data: () => ({ email: 'parent2@example.com', parentPlayerKeys: ['team-1::player-2'] }) }
+                    ]
+                };
+            }
+            return { docs: [] };
         });
 
         const summaries = await loadTeamRosterParentInvites('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
@@ -436,7 +452,8 @@ describe('React app team detail model', () => {
         expect(getAllUsers).not.toHaveBeenCalled();
         expect(doc).toHaveBeenCalledWith({}, 'users', 'coach-1');
         expect(doc).toHaveBeenCalledWith({}, 'users', 'parent-1');
-        expect(doc).toHaveBeenCalledWith({}, 'users', 'parent-2');
+        expect(doc).not.toHaveBeenCalledWith({}, 'users', 'parent-2');
+        expect(where).toHaveBeenCalledWith('parentPlayerKeys', 'array-contains', 'team-1::player-2');
     });
 
     it('wraps scorekeeper and roster active-state mutations with app validation', async () => {
@@ -1119,13 +1136,17 @@ describe('React app team detail model', () => {
         expect(getAllUsers).not.toHaveBeenCalled();
         expect(doc).toHaveBeenCalledWith({}, 'users', 'coach-1');
         expect(doc).toHaveBeenCalledWith({}, 'users', 'video-1');
-        expect(getDocs).toHaveBeenCalledTimes(2);
+        expect(getDocs).toHaveBeenCalledTimes(4);
         expect(collection).toHaveBeenCalledWith({}, 'accessCodes');
         expect(collection).toHaveBeenCalledWith({}, 'users');
         expect(where).toHaveBeenCalledWith('teamId', '==', 'team-1');
         expect(where).toHaveBeenCalledWith('email', '==', 'pending@example.com');
+        expect(where).toHaveBeenCalledWith('parentTeamIds', 'array-contains', 'team-1');
+        expect(where).toHaveBeenCalledWith('parentPlayerKeys', 'array-contains', 'team-1::player-1');
         expect(query).toHaveBeenCalledWith({ db: {}, name: 'accessCodes' }, { field: 'teamId', op: '==', value: 'team-1' });
         expect(query).toHaveBeenCalledWith({ db: {}, name: 'users' }, { field: 'email', op: '==', value: 'pending@example.com' });
+        expect(query).toHaveBeenCalledWith({ db: {}, name: 'users' }, { field: 'parentTeamIds', op: 'array-contains', value: 'team-1' });
+        expect(query).toHaveBeenCalledWith({ db: {}, name: 'users' }, { field: 'parentPlayerKeys', op: 'array-contains', value: 'team-1::player-1' });
 
         getDocs.mockClear();
         getDoc.mockClear();
