@@ -139,14 +139,15 @@ describe('Teams empty state', () => {
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
-  it('shows retryable Teams error UI when the initial summary load fails', async () => {
-    homeServiceMocks.loadParentTeamsSummary.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  it('shows the load error while keeping the empty-state recovery actions available', async () => {
+    homeServiceMocks.loadParentTeamsSummary.mockRejectedValueOnce(new Error('Team service down'));
 
     renderTeams();
 
-    expect(await screen.findByText('Teams could not connect')).toBeTruthy();
-    expect(screen.getByText('Check your connection and try loading teams again.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Retry loading teams' })).toBeTruthy();
+    expect(await screen.findByText('Team service down')).toBeTruthy();
+    expect(screen.getByText('No teams available')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Accept invite' })).toBeTruthy();
+    expect(screen.queryByText('Loading teams')).toBeNull();
   });
 });
 

@@ -64,7 +64,6 @@ export function Teams({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [loadError, setLoadError] = useState<AppServiceError | null>(null);
   const [loadedTeamUserId, setLoadedTeamUserId] = useState<string | null>(null);
   const selectedTeamId = searchParams.get('selectedTeamId') || '';
 
@@ -78,7 +77,6 @@ export function Teams({ auth }: { auth: AuthState }) {
       setRefreshing(true);
     }
     setError('');
-    setLoadError(null);
     try {
       const fastHome = await loadParentTeamsSummary(user, { force: !showLoading });
       setHome(fastHome);
@@ -91,7 +89,6 @@ export function Teams({ auth }: { auth: AuthState }) {
       } catch (enrichError) {
         const appError = toAppServiceError(enrichError, 'Unable to load teams.');
         if (!hasExistingTeams) {
-          setLoadError(appError);
           setHome(emptyHome());
           setLoadedTeamUserId(null);
         } else {
@@ -100,7 +97,6 @@ export function Teams({ auth }: { auth: AuthState }) {
       }
     } catch (loadError: any) {
       const appError = toAppServiceError(loadError, 'Unable to load teams.');
-      setLoadError(appError);
       setError(getTeamsLoadErrorMessage(appError, hasExistingTeams));
       if (!hasExistingTeams) {
         setHome(emptyHome());
@@ -149,11 +145,9 @@ export function Teams({ auth }: { auth: AuthState }) {
         onRefresh={() => loadTeams()}
       />
 
-      {error && !(loadError && !loading && !home.teams.length) ? <Status tone="error" message={error} /> : null}
+      {error ? <Status tone="error" message={error} /> : null}
 
-      {!loading && !home.teams.length && loadError ? (
-        <TeamsLoadErrorState error={loadError} onRetry={() => loadTeams({ showLoading: true })} retrying={refreshing} />
-      ) : loading ? (
+      {loading ? (
         <section className="app-card p-6 text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-900">Loading teams</div>
