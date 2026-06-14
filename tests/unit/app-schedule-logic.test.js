@@ -65,20 +65,31 @@ describe('React app parent schedule logic', () => {
             childId: 'player 1',
             myRsvp: 'going'
         });
+        const rsvpNeeded = event({
+            id: 'game-rsvp',
+            myRsvp: 'not_responded',
+            assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }],
+            rideshareSummary: { offerCount: 1, seatsLeft: 1, requests: 1, pending: 1, confirmed: 0, isFull: false }
+        });
         const packet = event({
             id: 'practice-1',
             type: 'practice',
+            isDbGame: false,
             practiceHomePacketSummary: '2 drills'
         });
         const assignment = event({
+            myRsvp: 'going',
             assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }]
         });
         const ride = event({
+            myRsvp: 'going',
             rideshareSummary: { offerCount: 1, seatsLeft: 1, requests: 0, pending: 0, confirmed: 0, isFull: false }
         });
 
         expect(getScheduleTaskDetailSection(generic)).toBe('');
         expect(getScheduleEventDetailPath(generic, getScheduleTaskDetailSection(generic))).toBe('/schedule/team%2Fwith%20slash/game%201?childId=player+1');
+        expect(getScheduleTaskDetailSection(rsvpNeeded)).toBe('availability');
+        expect(getScheduleEventDetailPath(rsvpNeeded, getScheduleTaskDetailSection(rsvpNeeded))).toBe('/schedule/team-1/game-rsvp?childId=player-1&section=availability');
         expect(PRACTICE_PACKET_DETAIL_SECTION).toBe('game');
         expect(getScheduleTaskDetailSection(packet)).toBe(PRACTICE_PACKET_DETAIL_SECTION);
         expect(getScheduleEventDetailPath(packet, getScheduleTaskDetailSection(packet))).toBe('/schedule/team-1/practice-1?childId=player-1&section=game');

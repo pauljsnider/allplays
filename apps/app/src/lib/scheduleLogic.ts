@@ -499,7 +499,8 @@ export function getOpenScheduleAssignments(assignments: Array<Partial<ScheduleAs
     .filter(isScheduleAssignmentOpen);
 }
 
-export function getScheduleTaskDetailSection(event: Pick<ParentScheduleEvent, 'type' | 'practiceHomePacketSummary' | 'assignments' | 'rideshareSummary'>): ScheduleEventDetailSection | '' {
+export function getScheduleTaskDetailSection(event: Pick<ParentScheduleEvent, 'type' | 'practiceHomePacketSummary' | 'assignments' | 'rideshareSummary' | 'isDbGame' | 'isCancelled' | 'myRsvp'>): ScheduleEventDetailSection | '' {
+  if (event.type === 'game' && event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded') return 'availability';
   // Practice packets render in the shared game/report tab inside ScheduleEventDetail.
   if (event.type === 'practice' && event.practiceHomePacketSummary) return PRACTICE_PACKET_DETAIL_SECTION;
   if (getOpenScheduleAssignments(event.assignments).length > 0) return 'assignments';
