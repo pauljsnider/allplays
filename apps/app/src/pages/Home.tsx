@@ -140,18 +140,18 @@ export function Home({ auth }: { auth: AuthState }) {
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [loadedHomeUserId, setLoadedHomeUserId] = useState<string | null>(null);
+  const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
 
   const authUserId = auth.user?.uid || null;
-  const hasLoadedHome = Boolean(authUserId) && authUserId === loadedHomeUserId;
+  const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
 
   const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
-    const hasExistingHome = loadedHomeUserId === user.uid;
+    const hasExistingHome = loadedHomeDetailsUserId === user.uid;
     clearError();
     setHomeLoadError(null);
     setSocialStatus(null);
@@ -159,7 +159,6 @@ export function Home({ auth }: { auth: AuthState }) {
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, { force });
         setHome(summary.home);
-        setLoadedHomeUserId(user.uid);
         setHomeLoadError(null);
 
         void runSecondaryLoad(
@@ -167,12 +166,21 @@ export function Home({ auth }: { auth: AuthState }) {
             const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
             setHome(secondaryHome);
             setSocial(await loadSocialHome(user, secondaryHome));
+            setLoadedHomeDetailsUserId(user.uid);
+            setHomeLoadError(null);
           },
           {
             rethrow: false,
             getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
             onError: (secondaryError) => {
-              setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')) });
+              const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
+              if (!hasExistingHome) {
+                setHomeLoadError(appError);
+                setLoadedHomeDetailsUserId(null);
+                setSocial(emptySocialHome());
+                return;
+              }
+              setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
             }
           }
         );
@@ -187,7 +195,7 @@ export function Home({ auth }: { auth: AuthState }) {
           if (!hasExistingHome) {
             setHome(emptyHome());
             setSocial(emptySocialHome());
-            setLoadedHomeUserId(null);
+            setLoadedHomeDetailsUserId(null);
           }
         }
       }
@@ -232,7 +240,7 @@ export function Home({ auth }: { auth: AuthState }) {
   }, [searchParams]);
 
   const topAction = home.actionItems[0] || null;
-  const showBlockingErrorState = !loading && !hasLoadedHome && Boolean(error);
+  const showBlockingErrorState = !loading && !hasLoadedHomeDetails && Boolean(homeLoadError);
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
   const today = new Date();

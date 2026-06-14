@@ -138,6 +138,16 @@ describe('Teams empty state', () => {
     expect(await screen.findByText('Browse public teams route')).toBeTruthy();
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
+
+  it('shows retryable Teams error UI when the initial summary load fails', async () => {
+    homeServiceMocks.loadParentTeamsSummary.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    renderTeams();
+
+    expect(await screen.findByText('Teams could not connect')).toBeTruthy();
+    expect(screen.getByText('Check your connection and try loading teams again.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry loading teams' })).toBeTruthy();
+  });
 });
 
 describe('Teams single-team auto-navigate', () => {
