@@ -487,10 +487,12 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page, { scenario: 'error' });
         await page.goto(appUrl(baseURL, '/teams?scenario=error'), { waitUntil: 'domcontentloaded' });
 
-        await waitForTeamsRoute(page, page.getByText('Team service down'), { requireSearchInput: false });
-        await expect(page.getByText('Team service down')).toBeVisible();
-        await expect(page.getByText('No teams available')).toBeVisible();
+        await waitForTeamsRoute(page, page.getByText('Teams could not load'), { requireSearchInput: false });
+        await expect(page.getByText('Teams could not load')).toBeVisible();
+        await expect(page.getByText('Try loading teams again to restore your team dashboard.')).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Retry loading teams' })).toBeVisible();
         await expect(page.getByText('Loading teams')).toHaveCount(0);
+        await expect(page.getByText('No teams available')).toHaveCount(0);
     });
 
     test('team detail tabs expose parent-facing team page features', async ({ page, baseURL }) => {
