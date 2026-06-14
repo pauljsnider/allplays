@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
@@ -100,6 +100,7 @@ import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
 import { useChatSheets } from './messages/hooks/useChatSheets';
+import { emailReducer, initialEmailComposerState } from './messages/state/emailReducer';
 
 type StatusTone = 'neutral' | 'success' | 'error';
 
@@ -498,9 +499,7 @@ function ChatWindow({
     openEmailSheet: openTeamEmailSheet,
     closeEmailSheet: closeTeamEmailSheet
   } = useChatSheets();
-  const [emailSubject, setEmailSubject] = useState('');
-  const [emailBody, setEmailBody] = useState('');
-  const [emailTemplateName, setEmailTemplateName] = useState('');
+  const [emailState, emailDispatch] = useReducer(emailReducer, initialEmailComposerState);
   const [emailSending, setEmailSending] = useState(false);
   const [emailSavingTemplate, setEmailSavingTemplate] = useState(false);
   const [emailSavingDraft, setEmailSavingDraft] = useState(false);
@@ -509,9 +508,6 @@ function ChatWindow({
   const [emailLoadingTemplates, setEmailLoadingTemplates] = useState(false);
   const [emailStatus, setEmailStatus] = useState<ChatStatus | null>(null);
   const [emailHistoryStatus, setEmailHistoryStatus] = useState<ChatStatus | null>(null);
-  const [emailDrafts, setEmailDrafts] = useState<TeamEmailDraft[]>([]);
-  const [selectedEmailDraftId, setSelectedEmailDraftId] = useState('');
-  const [emailTemplates, setEmailTemplates] = useState<TeamEmailTemplate[]>([]);
   const [sentEmails, setSentEmails] = useState<SentTeamEmail[]>([]);
   const [linkDraft, setLinkDraft] = useState('');
   const [reactionMessageId, setReactionMessageId] = useState('');
@@ -1182,7 +1178,7 @@ function ChatWindow({
     if (!canModerate) return;
     setEmailLoadingTemplates(true);
     try {
-      setEmailTemplates(await loadTeamEmailTemplates(teamId));
+      emailDispatch({ type: 'setTemplates', templates: await loadTeamEmailTemplates(teamId) });
       if (!suppressErrorStatus) {
         setEmailStatus(null);
       }
@@ -1199,7 +1195,7 @@ function ChatWindow({
     if (!canModerate) return;
     setEmailLoadingDrafts(true);
     try {
-      setEmailDrafts(await loadTeamEmailDrafts(teamId));
+      emailDispatch({ type: 'setDrafts', drafts: await loadTeamEmailDrafts(teamId) });
       if (!suppressErrorStatus) {
         setEmailStatus(null);
       }
@@ -1215,10 +1211,10 @@ function ChatWindow({
   const openEmailSheet = () => {
     if (!canModerate) return;
     openTeamEmailSheet();
-    setEmailTemplateName('');
+    emailDispatch({ type: 'updateTemplateName', templateName: '' });
     setEmailStatus(null);
     setEmailHistoryStatus(null);
-    setSelectedEmailDraftId('');
+    emailDispatch({ type: 'clearSelectedDraft' });
     void ensureRecipientOptionsLoaded().catch(() => undefined);
     void reloadEmailDrafts();
     void reloadEmailTemplates();
@@ -1226,24 +1222,21 @@ function ChatWindow({
   };
 
   const handleApplyEmailDraft = (draftId: string) => {
-    const draft = emailDrafts.find((item) => item.id === draftId);
+    const draft = emailState.drafts.find((item) => item.id === draftId);
     if (!draft) return;
     if (!isDefaultTeamConversation(selectedConversationId)) {
       switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
     }
     setSelectedRecipientTarget('individuals');
     setSelectedRecipientIds(draft.recipientIds);
-    setEmailSubject(draft.subject || '');
-    setEmailBody(draft.body || '');
-    setSelectedEmailDraftId(draft.id);
+    emailDispatch({ type: 'selectDraft', draftId: draft.id });
     setEmailStatus({ tone: 'success', message: `Restored draft “${draft.subject || 'Untitled draft'}”. This replaced the current email composer.` });
   };
 
   const handleApplyEmailTemplate = (templateId: string) => {
-    const template = emailTemplates.find((item) => item.id === templateId);
+    const template = emailState.templates.find((item) => item.id === templateId);
     if (!template) return;
-    setEmailSubject(template.subject || '');
-    setEmailBody(template.body || '');
+    emailDispatch({ type: 'applyTemplate', templateId: template.id });
     setEmailStatus({ tone: 'success', message: `Applied template “${template.name}”.` });
   };
 
@@ -1254,12 +1247,12 @@ function ChatWindow({
     try {
       const savedTemplate = await saveTeamEmailTemplate({
         teamId,
-        name: emailTemplateName,
-        subject: emailSubject,
-        body: emailBody
+        name: emailState.templateName,
+        subject: emailState.subject,
+        body: emailState.body
       });
-      setEmailTemplateName('');
-      setEmailTemplates((current) => [savedTemplate, ...current.filter((item) => item.id !== savedTemplate.id)]);
+      emailDispatch({ type: 'updateTemplateName', templateName: '' });
+      emailDispatch({ type: 'setTemplates', templates: [savedTemplate, ...emailState.templates.filter((item) => item.id !== savedTemplate.id)] });
       setEmailStatus({ tone: 'success', message: `Saved template “${savedTemplate.name}”.` });
       void reloadEmailTemplates({ suppressErrorStatus: true });
     } catch (saveError: any) {
@@ -1276,17 +1269,16 @@ function ChatWindow({
     try {
       const savedDraft = await saveTeamEmailDraft({
         teamId,
-        draftId: selectedEmailDraftId || null,
-        subject: emailSubject,
-        body: emailBody,
+        draftId: emailState.selectedDraftId || null,
+        subject: emailState.subject,
+        body: emailState.body,
         recipientIds: emailAudienceMetadata.recipientIds,
         recipientOptions,
         authorId: auth.user?.uid || null,
         authorEmail: auth.user?.email || null,
         authorName: profile?.fullName || auth.user?.displayName || null
       });
-      setSelectedEmailDraftId(savedDraft.id);
-      setEmailDrafts((current) => [savedDraft, ...current.filter((item) => item.id !== savedDraft.id)]);
+      emailDispatch({ type: 'saveDraft', draft: savedDraft });
       setEmailStatus({ tone: 'success', message: `Saved draft “${savedDraft.subject || 'Untitled draft'}”. No email was sent.` });
       void reloadEmailDrafts({ suppressErrorStatus: true });
     } catch (saveError: any) {
@@ -1299,8 +1291,8 @@ function ChatWindow({
   const handleSendEmail = async (event?: FormEvent) => {
     event?.preventDefault();
     if (!canModerate || emailSending) return;
-    const subject = emailSubject.trim();
-    const body = emailBody.trim();
+    const subject = emailState.subject.trim();
+    const body = emailState.body.trim();
     if (!subject || !body) {
       setEmailStatus({ tone: 'error', message: 'Subject and message are required.' });
       return;
@@ -1320,8 +1312,7 @@ function ChatWindow({
         targetType: emailAudienceMetadata.targetType,
         recipientIds: emailAudienceMetadata.recipientIds
       });
-      setEmailSubject('');
-      setEmailBody('');
+      emailDispatch({ type: 'clearComposer' });
       setEmailStatus({ tone: 'success', message: `Queued ${Number(result?.recipientCount || 0)} recipient${Number(result?.recipientCount || 0) === 1 ? '' : 's'} for backend email delivery.` });
       await reloadSentEmailHistory({ suppressErrorStatus: true });
     } catch (sendError: any) {
@@ -1747,14 +1738,14 @@ function ChatWindow({
 
       {showEmailSheet && canModerate ? (
         <TeamEmailSheet
-          subject={emailSubject}
-          body={emailBody}
-          drafts={emailDrafts}
-          selectedDraftId={selectedEmailDraftId}
-          templateName={emailTemplateName}
+          subject={emailState.subject}
+          body={emailState.body}
+          drafts={emailState.drafts}
+          selectedDraftId={emailState.selectedDraftId}
+          templateName={emailState.templateName}
           savingDraft={emailSavingDraft}
           loadingDrafts={emailLoadingDrafts}
-          templates={emailTemplates}
+          templates={emailState.templates}
           sending={emailSending}
           savingTemplate={emailSavingTemplate}
           loadingHistory={emailLoadingHistory}
@@ -1766,9 +1757,9 @@ function ChatWindow({
           sentEmails={sentEmails}
           audienceSummary={getAudienceSummaryText(emailAudienceMetadata, recipientOptions)}
           audienceMetadata={emailAudienceMetadata}
-          onSubjectChange={setEmailSubject}
-          onBodyChange={setEmailBody}
-          onTemplateNameChange={setEmailTemplateName}
+          onSubjectChange={(subject) => emailDispatch({ type: 'updateSubject', subject })}
+          onBodyChange={(body) => emailDispatch({ type: 'updateBody', body })}
+          onTemplateNameChange={(templateName) => emailDispatch({ type: 'updateTemplateName', templateName })}
           onApplyDraft={handleApplyEmailDraft}
           onSaveDraft={handleSaveEmailDraft}
           onApplyTemplate={handleApplyEmailTemplate}
