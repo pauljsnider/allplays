@@ -1407,8 +1407,8 @@ service cloud.firestore {
     // Collection group rule for assigned team fee recipient records.
     // Parents can only read records tied directly to their account or linked players.
     match /{path=**}/feeRecipients/{recipientId} {
-      allow read: if isTeamFeeRecipientForCurrentParent(resource.data) ||
-                     (resource.data.get('teamId', '') is string &&
+      allow read: if resource.data.get('teamId', '') is string &&
+                     (isTeamFeeRecipientForCurrentParent(resource.data, resource.data.get('teamId', '')) ||
                       isTeamOwnerOrAdmin(resource.data.get('teamId', '')));
       allow create: if request.resource.data.get('teamId', '') is string &&
                        isTeamOwnerOrAdmin(request.resource.data.get('teamId', ''));
