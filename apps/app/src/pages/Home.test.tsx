@@ -216,7 +216,8 @@ describe('Home', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'Big team win today.' }
     });
-    fireEvent.click(screen.getAllByRole('button', { name: 'Post' }).at(-1)!);
+    const postButtons = screen.getAllByRole('button', { name: 'Post' });
+    fireEvent.click(postButtons[postButtons.length - 1]!);
 
     await waitFor(() => {
       expect(socialServiceMocks.createSocialPost).toHaveBeenCalledTimes(1);
