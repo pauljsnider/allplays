@@ -470,9 +470,10 @@ test.describe('mobile My Teams', () => {
 
         const emptyHeading = page.getByRole('heading', { name: 'No teams linked yet' });
         await waitForTeamsRoute(page, emptyHeading, { requireSearchInput: false });
+        const emptyState = page.locator('section').filter({ hasText: 'No teams available' });
         await expect(page.getByText('No teams available')).toBeVisible();
         await expect(page.getByRole('link', { name: 'Accept invite' })).toHaveAttribute('href', '#/accept-invite');
-        await page.locator('a[href="#/teams/browse"]').click();
+        await emptyState.getByRole('link', { name: 'Browse teams' }).click();
         await expect(page).toHaveURL(/#\/teams\/browse$/);
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
         await expect(page.getByText('Loading teams')).toHaveCount(0);
