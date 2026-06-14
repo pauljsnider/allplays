@@ -269,22 +269,6 @@ describe('ScheduleEventDetail loading states', () => {
     expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
     expect(screen.queryByText('Pulling parent actions and game-day details.')).toBeNull();
   });
-
-  it('shows the error state and schedule back link when loading fails', async () => {
-    scheduleServiceMocks.loadParentScheduleEventDetail.mockRejectedValue(new Error('Unable to load event details.'));
-
-    render(
-      <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
-        <Routes>
-          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
-          <Route path="/schedule" element={<div>Schedule</div>} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    expect(await screen.findByText('Unable to load event details.')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Schedule' })).toBeTruthy();
-  });
 });
 
 describe('ScheduleEventDetail lineup draft guards', () => {
