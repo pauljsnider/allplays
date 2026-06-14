@@ -111,11 +111,11 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { broadcastLiveEvent, claimOpenOfficiatingSlot, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
+import { broadcastLiveEvent, claimOpenOfficiatingSlot, releaseAssignmentClaim, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
 import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
@@ -339,6 +339,19 @@ describe('official assignments app service', () => {
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(2, 'team-alpha', 'game-assigned', 'center', 'declined');
     expect(claimOpenOfficiatingSlot).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'line', user);
   });
+});
+
+it('releases parent assignment claims through the legacy adapter using the active auth user contract', async () => {
+  await releaseParentScheduleAssignmentClaim({
+    id: 'game-assigned',
+    teamId: 'team-alpha',
+    type: 'game',
+    isDbGame: true,
+    isCancelled: false,
+    assignments: [{ role: 'Team Snack' }]
+  } as any, 'Team Snack');
+
+  expect(releaseAssignmentClaim).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'Team Snack');
 });
 
 describe('live game clock state', () => {

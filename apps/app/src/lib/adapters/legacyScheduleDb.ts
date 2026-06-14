@@ -63,7 +63,7 @@ export async function getAssignmentClaims(teamId: string, gameId: string) {
     return await Promise.resolve(legacyGetAssignmentClaims(teamId, gameId));
 }
 
-export async function claimOpenOfficiatingSlot(teamId: string, gameId: string, slotId: string, user: Record<string, unknown>) {
+export async function claimOpenOfficiatingSlot(teamId: string, gameId: string, slotId: string, user: unknown) {
     return await Promise.resolve(legacyClaimOpenOfficiatingSlot(teamId, gameId, slotId, user));
 }
 
@@ -157,8 +157,8 @@ export async function cancelRideRequest(teamId: string, gameId: string, offerId:
     return await Promise.resolve(legacyCancelRideRequest(teamId, gameId, offerId, requestId));
 }
 
-export async function releaseAssignmentClaim(teamId: string, gameId: string, role: string, userId: string) {
-    return await Promise.resolve(legacyReleaseAssignmentClaim(teamId, gameId, role, userId));
+export async function releaseAssignmentClaim(teamId: string, gameId: string, role: string, _userId?: string) {
+    return await Promise.resolve(legacyReleaseAssignmentClaim(teamId, gameId, role));
 }
 
 export async function submitRsvpForPlayer(teamId: string, gameId: string, userId: string, payload: Record<string, unknown>) {
@@ -193,8 +193,8 @@ export async function postChatMessage(teamId: string, payload: Record<string, un
     return await Promise.resolve(legacyPostChatMessage(teamId, payload));
 }
 
-export async function postSharedGameCancellationNotification(teamId: string, gameId: string, payload: Record<string, unknown>) {
-    return await Promise.resolve(legacyPostSharedGameCancellationNotification(teamId, gameId, payload));
+export async function postSharedGameCancellationNotification(payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyPostSharedGameCancellationNotification(payload));
 }
 
 export async function cancelOccurrence(teamId: string, masterId: string, instanceDate: string, payload?: Record<string, unknown>) {

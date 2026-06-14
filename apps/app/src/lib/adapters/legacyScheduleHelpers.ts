@@ -24,7 +24,7 @@ import {
 } from '../../../../../js/game-day-live-substitutions.js';
 import { buildRotationPlanFromGamePlan as legacyBuildRotationPlanFromGamePlan } from '../../../../../js/game-plan-interop.js';
 
-function normalizeArray<T>(value: T[] | null | undefined) {
+function normalizeArray<T = unknown>(value: T[] | null | undefined) {
     return Array.isArray(value) ? value : [];
 }
 
@@ -32,8 +32,15 @@ function normalizeRecord(value: unknown) {
     return value && typeof value === 'object' ? value as Record<string, unknown> : {};
 }
 
-export async function sendPublicRsvpReminderEmails(teamId: string, gameId: string, payload: Record<string, unknown>) {
-    return await Promise.resolve(legacySendPublicRsvpReminderEmails(teamId, gameId, payload));
+export async function sendPublicRsvpReminderEmails(payload: {
+    auth?: unknown;
+    teamId?: string;
+    gameId?: string;
+    eventType?: string;
+    eventTitle?: string;
+    eventDate?: unknown;
+}) {
+    return await Promise.resolve(legacySendPublicRsvpReminderEmails(payload));
 }
 
 export function normalizeOfficialLinkEmail(value: unknown) {
@@ -52,8 +59,8 @@ export function getOpenOfficiatingSlots(game: unknown) {
     return normalizeArray(legacyGetOpenOfficiatingSlots(game));
 }
 
-export function expandRecurrence(game: unknown) {
-    return normalizeArray(legacyExpandRecurrence(game));
+export function expandRecurrence(game: unknown): Record<string, any>[] {
+    return normalizeArray<Record<string, any>>(legacyExpandRecurrence(game) as Record<string, any>[]);
 }
 
 export function extractOpponent(summary: unknown, teamName: unknown) {
