@@ -803,7 +803,7 @@ test('app schedule loads agenda filters, player select, calendar, export, and ga
     await expect(page.getByText('For Pat · Bears')).not.toBeVisible();
 
     const detailLink = page.getByRole('link', { name: 'Game details' }).first();
-    await expect(detailLink).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-2$/);
+    await expect(detailLink).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-2&section=assignments$/);
     expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([]);
 
     await page.getByRole('button', { name: 'Calendar', exact: true }).click();
@@ -860,7 +860,7 @@ test('calendar day selection opens a visible event picker for multiple events', 
     await page.getByRole('button', { name: /May 2030 28, 2 events/ }).click();
     const pickerForNavigation = page.getByRole('dialog', { name: /Tuesday, May 28/ });
     await pickerForNavigation.locator('a').filter({ hasText: 'Open practice' }).click();
-    await expect(page).toHaveURL(/#\/schedule\/team-1\/practice-1\?childId=player-1$/);
+    await expect(page).toHaveURL(/#\/schedule\/team-1\/practice-1\?childId=player-1&section=game$/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });
 
@@ -1185,6 +1185,7 @@ test('app schedule paginates long agenda lists and resets on filter changes', as
     await mockScheduleModules(page, { extraUpcomingEvents: 22, extraPastEvents: 12 });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
+    await waitForScheduleRoute(page, mobileScheduleFilter(page));
     const mobileRows = page.locator('.schedule-list > a');
     await expect(async () => {
         await expect(mobileRows.first()).toBeVisible({ timeout: 1000 });
@@ -1213,8 +1214,9 @@ test('schedule role permissions let admins manage non-owned rideshare requests',
     await mockScheduleModules(page, { isAdmin: true });
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('button', { name: 'Rideshare', exact: true })).toBeVisible({ timeout: 15000 });
-    await page.getByRole('button', { name: 'Rideshare', exact: true }).click();
+    const rideshareTab = page.getByRole('button', { name: 'Rideshare', exact: true });
+    await waitForScheduleRoute(page, rideshareTab);
+    await rideshareTab.click();
     const rideshareSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Rideshare' }) });
     const danaCard = rideshareSection.locator('article').filter({ hasText: 'Dana Driver' });
     await expect(danaCard.getByRole('button', { name: 'Close' })).toBeVisible();
