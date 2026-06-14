@@ -34,8 +34,8 @@ function normalizeElapsedTimeMs(value) {
 }
 
 function getPlayerElapsedTimeMs(playerStats) {
-  return normalizeElapsedTimeMs(playerStats?.timeMs)
-    ?? normalizeElapsedTimeMs(playerStats?.time)
+  return normalizeElapsedTimeMs(playerStats?.time)
+    ?? normalizeElapsedTimeMs(playerStats?.timeMs)
     ?? 0;
 }
 
