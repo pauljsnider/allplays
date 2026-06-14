@@ -9,11 +9,14 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
   loadParentRegistrations: vi.fn(),
   loadStaffRegistrationDetail: vi.fn(),
   loadTeamRegistrationQueue: vi.fn(),
+  loadTeamRegistrationQueuePage: vi.fn(),
+  loadTeamRegistrationRosterPlayers: vi.fn(),
   loadPublicRegistrationDetail: vi.fn(),
   submitOfflineRegistration: vi.fn(),
   initiateRegistrationCheckout: vi.fn(),
   approveTeamRegistrationForApp: vi.fn(),
   rejectTeamRegistrationForApp: vi.fn(),
+  cancelRegistrationCheckout: vi.fn(),
 }));
 
 const publicActionsMocks = vi.hoisted(() => ({
@@ -314,6 +317,30 @@ beforeEach(() => {
   });
   parentToolsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true });
   parentToolsServiceMocks.rejectTeamRegistrationForApp.mockResolvedValue({ success: true });
+  parentToolsServiceMocks.loadTeamRegistrationQueuePage.mockResolvedValue({
+    reviews: [{
+      id: 'reg-1',
+      status: 'pending',
+      participantName: 'Riley Runner',
+      guardianLabel: 'parent@example.com',
+      guardianEmails: ['parent@example.com'],
+      participant: { name: 'Riley Runner', grade: '5' },
+      guardian: { email: 'parent@example.com', phone: '555-0100' },
+      submittedData: {},
+      submittedAt: null,
+      selectedOptionLabel: 'Travel',
+      paymentLabel: 'paid · $150.00',
+      waiverAccepted: true,
+      linkedPlayerId: '',
+      decisionNote: '',
+    }],
+    lastDoc: { id: 'reg-1' },
+    hasMore: false,
+  });
+  parentToolsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([
+    { id: 'player-9', name: 'Riley Runner', number: '12' }
+  ]);
+  parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue(undefined);
   publicActionsMocks.openPublicUrl.mockResolvedValue(undefined);
 });
 
@@ -365,10 +392,13 @@ describe('RegistrationDetail page', () => {
       'team-coach',
       'form-review'
     );
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueue).toHaveBeenCalledWith(
-      expect.objectContaining({ uid: 'user-1' }),
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenCalledWith(
       'team-coach',
       'form-review'
+    );
+    expect(parentToolsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'user-1' }),
+      'team-coach'
     );
     expect(container.textContent).toContain('paid · $150.00');
     expect(container.textContent).toContain('Waiver accepted');
@@ -416,8 +446,7 @@ describe('RegistrationDetail page', () => {
     await waitForText(container, 'Riley Runner');
 
     expect(container.textContent).not.toContain('This linked registration form is not published right now.');
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueue).toHaveBeenCalledWith(
-      expect.objectContaining({ uid: 'user-1' }),
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenCalledWith(
       'team-coach',
       'form-review'
     );

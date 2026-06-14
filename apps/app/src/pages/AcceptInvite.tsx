@@ -166,7 +166,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       {state === 'email-link' ? (
         <form className="mt-4 space-y-3" onSubmit={handleEmailLink}>
           <p className="text-sm font-semibold leading-6 text-gray-600">Enter the email address that received this invite link.</p>
-          <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" />
+          <input className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="next" value={email} onChange={(event) => setEmail(event.target.value)} required placeholder="you@example.com" />
           <button type="submit" className="primary-button w-full justify-center">Continue</button>
         </form>
       ) : null}
@@ -177,7 +177,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
             <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
             Invite code
           </span>
-          <input className="auth-input text-center font-mono uppercase tracking-widest" value={manualCode} onChange={(event) => setManualCode(event.target.value.toUpperCase())} maxLength={8} placeholder="XXXXXXXX" />
+          <input className="auth-input text-center font-mono uppercase tracking-widest" value={manualCode} onChange={(event) => setManualCode(event.target.value.toUpperCase())} maxLength={8} placeholder="XXXXXXXX" inputMode="text" autoCapitalize="characters" autoComplete="one-time-code" enterKeyHint="go" />
         </label>
         <button type="submit" className="secondary-button w-full justify-center" disabled={state === 'processing'}>
           {auth.user ? 'Join team' : 'Continue with code'}

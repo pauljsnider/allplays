@@ -23,6 +23,10 @@ function readTeamPage() {
     return readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
 }
 
+function readUtilsSource() {
+    return readFileSync(new URL('../../js/utils.js', import.meta.url), 'utf8');
+}
+
 describe('ICS recurring tracking ids', () => {
     it('keeps recurring occurrences distinct when matching tracked calendar events', () => {
         const ics = [
@@ -78,5 +82,12 @@ describe('ICS recurring tracking ids', () => {
         expect(readParentDashboard()).toContain("./js/utils.js?v=11");
         expect(readGamePlan()).toContain("./js/utils.js?v=11");
         expect(readTeamPage()).toContain("./js/utils.js?v=11");
+    });
+
+    it('declares each calendar tracking helper only once in utils', () => {
+        const utilsSource = readUtilsSource();
+
+        expect(utilsSource.match(/export function getCalendarEventTrackingId\(/g)).toHaveLength(1);
+        expect(utilsSource.match(/export function isTrackedCalendarEvent\(/g)).toHaveLength(1);
     });
 });

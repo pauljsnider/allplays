@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, 
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
+  BellOff,
   Bot,
   Camera,
   Check,
@@ -43,6 +44,8 @@ import {
   loadTeamEmailDrafts,
   loadTeamEmailTemplates,
   markTeamChatRead,
+  muteTeamChat,
+  unmuteTeamChat,
   saveTeamEmailDraft,
   saveTeamEmailTemplate,
   sendAllPlaysChatAnswer,
@@ -92,6 +95,7 @@ import {
   type ChatTargetType
 } from '../lib/chatLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { markTeamChatReadAndRefreshBadge, updateAppIconBadge } from '../lib/badgeService';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
@@ -122,6 +126,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
   const shouldLoadInbox = isDesktopWeb || !teamId;
 
   const refreshInbox = async () => {
@@ -131,6 +136,8 @@ export function Messages({ auth }: { auth: AuthState }) {
     try {
       const result = await loadChatInbox(auth.user);
       setTeams(result.teams);
+      const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
+      void updateAppIconBadge(totalUnread);
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load messages.');
       setTeams([]);
@@ -146,9 +153,35 @@ export function Messages({ auth }: { auth: AuthState }) {
       setTeams([]);
       return;
     }
+    if (!auth.user) {
+      void updateAppIconBadge(0);
+      return;
+    }
     refreshInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, shouldLoadInbox]);
+
+  // Keep the desktop selection in sync with the current inbox contents.
+  useEffect(() => {
+    if (!isDesktopWeb || teamId) return;
+    if (!teams.length) {
+      if (selectedDesktopTeamId) {
+        setSelectedDesktopTeamId(undefined);
+      }
+      return;
+    }
+    if (!selectedDesktopTeamId || !teams.some((team) => team.id === selectedDesktopTeamId)) {
+      setSelectedDesktopTeamId(teams[0].id);
+    }
+  }, [isDesktopWeb, selectedDesktopTeamId, teamId, teams]);
+
+  // Sync selectedDesktopTeamId when the URL route changes (explicit navigation).
+  useEffect(() => {
+    if (isDesktopWeb && teamId) {
+      setSelectedDesktopTeamId(teamId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId]);
 
   const filteredTeams = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -162,7 +195,7 @@ export function Messages({ auth }: { auth: AuthState }) {
 
   const preferredConversationId = useMemo(() => getPreferredConversationIdFromSearch(location.search), [location.search]);
 
-  const activeTeamId = teamId || (isDesktopWeb ? filteredTeams[0]?.id : undefined);
+  const activeTeamId = teamId || (isDesktopWeb ? selectedDesktopTeamId : undefined);
 
   if (isDesktopWeb) {
     return (
@@ -180,6 +213,7 @@ export function Messages({ auth }: { auth: AuthState }) {
                 searchQuery={query}
                 totalTeamsCount={teams.length}
                 onClearSearch={() => setQuery('')}
+                onSelect={setSelectedDesktopTeamId}
                 compact
               />
             </div>
@@ -262,6 +296,7 @@ function InboxSearch({ query, onChange }: { query: string; onChange: (value: str
         onChange={(event) => onChange(event.target.value)}
         className="min-w-0 flex-1 border-0 bg-transparent text-base font-semibold text-gray-900 outline-none placeholder:text-gray-400"
         placeholder="Search team chats"
+        enterKeyHint="search"
       />
     </label>
   );
@@ -275,6 +310,7 @@ function InboxList({
   searchQuery,
   totalTeamsCount,
   onClearSearch,
+  onSelect,
   compact = false
 }: {
   teams: ChatTeam[];
@@ -284,6 +320,7 @@ function InboxList({
   searchQuery: string;
   totalTeamsCount: number;
   onClearSearch: () => void;
+  onSelect?: (teamId: string) => void;
   compact?: boolean;
 }) {
   const trimmedQuery = searchQuery.trim();
@@ -326,13 +363,13 @@ function InboxList({
   return (
     <section className={compact ? 'space-y-2' : 'space-y-3'}>
       {teams.map((team) => (
-        <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} />
+        <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} onSelect={onSelect} />
       ))}
     </section>
   );
 }
 
-function InboxRow({ team, active, compact }: { team: ChatTeam; active: boolean; compact: boolean }) {
+function InboxRow({ team, active, compact, onSelect }: { team: ChatTeam; active: boolean; compact: boolean; onSelect?: (teamId: string) => void }) {
   const preview = getChatInboxPreview(team.lastMessage);
   const timeLabel = formatInboxTime(team.lastMessage?.createdAt);
   const route = buildMessagesRoute(team.id, team.preferredConversationId);
@@ -340,6 +377,7 @@ function InboxRow({ team, active, compact }: { team: ChatTeam; active: boolean; 
   return (
     <Link
       to={route}
+      onClick={onSelect ? () => onSelect(team.id) : undefined}
       className={`message-row app-card flex items-center gap-3 p-3 transition hover:border-primary-200 hover:shadow-app-lg ${
         active ? '!border-primary-200 bg-primary-50/50' : ''
       }`}
@@ -363,6 +401,8 @@ function InboxRow({ team, active, compact }: { team: ChatTeam; active: boolean; 
         <span className="flex h-6 min-w-6 flex-none items-center justify-center rounded-full bg-rose-600 px-1.5 text-[11px] font-black text-white">
           {team.unreadCount > 99 ? '99+' : team.unreadCount}
         </span>
+      ) : team.isMuted ? (
+        <BellOff className="h-4 w-4 flex-none text-gray-400" aria-label="Notifications muted" />
       ) : compact ? null : (
         <ChevronDown className="-rotate-90 h-5 w-5 flex-none text-gray-300" aria-hidden="true" />
       )}
@@ -464,6 +504,7 @@ function ChatWindow({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState('');
+  const [isMuted, setIsMuted] = useState(() => resolveMutedState(teamId, inboxTeam, {}));
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -687,6 +728,10 @@ function ChatWindow({
   }, [teamId]);
 
   useEffect(() => {
+    setIsMuted(resolveMutedState(teamId, inboxTeam, profile));
+  }, [inboxTeam, profile, teamId]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadContext() {
@@ -778,7 +823,7 @@ function ChatWindow({
           setShowJumpToLatest(true);
         }
         initialSnapshotLoadedRef.current = true;
-        maybeMarkRead(currentUser.uid, teamId, true);
+        maybeMarkRead(currentUser, teamId, true, !isDesktopWeb && !embedded);
       },
       (subscribeError) => {
         setError(subscribeError.message || 'Unable to load chat messages.');
@@ -862,7 +907,7 @@ function ChatWindow({
         hasMessages: messages.length > 0,
         hasLoadedSnapshot: initialSnapshotLoadedRef.current
       })) {
-        void markTeamChatRead(auth.user.uid, teamId);
+        maybeMarkRead(auth.user, teamId, true, !isDesktopWeb && !embedded);
       }
     };
     document.addEventListener('visibilitychange', handleReturn);
@@ -1469,6 +1514,21 @@ function ChatWindow({
     }
   }, [selectedConversationId, teamId]);
 
+  const handleToggleMute = useCallback(async () => {
+    if (!auth.user?.uid) return;
+    const next = !isMuted;
+    setIsMuted(next);
+    try {
+      if (next) {
+        await muteTeamChat(auth.user.uid, teamId);
+      } else {
+        await unmuteTeamChat(auth.user.uid, teamId);
+      }
+    } catch {
+      setIsMuted(!next);
+    }
+  }, [auth.user?.uid, isMuted, teamId]);
+
   if (loadingContext) {
     return <MessagesPageSkeleton embedded={embedded} />;
   }
@@ -1509,6 +1569,15 @@ function ChatWindow({
               Staff
             </span>
           ) : null}
+          <button
+            type="button"
+            className={`ghost-button !h-10 !min-h-10 !w-10 !p-0 ${isMuted ? 'text-gray-500' : ''}`}
+            onClick={handleToggleMute}
+            aria-label={isMuted ? 'Unmute notifications' : 'Mute notifications'}
+            aria-pressed={isMuted}
+          >
+            <BellOff className="h-5 w-5" aria-hidden="true" />
+          </button>
           <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={() => setShowMediaGallery(true)} aria-label="Open photos and videos">
             <ImageIcon className="h-5 w-5" aria-hidden="true" />
             {mediaEntries.length ? <span className="sr-only">{mediaEntries.length} shared media items</span> : null}
@@ -1738,16 +1807,30 @@ function buildMessagesRoute(teamId: string, preferredConversationId?: string | n
   return `${route}?conversationId=${encodeURIComponent(normalizedConversationId)}`;
 }
 
-function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {
+function resolveMutedState(teamId: string, inboxTeam?: ChatTeam, profile: Record<string, any> = {}) {
+  if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
+    return inboxTeam.isMuted;
+  }
+  const chatMuted = profile?.chatMuted;
+  return Boolean(chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]);
+}
+
+function maybeMarkRead(user: AuthState['user'] | null | undefined, teamId: string, hasTeamId: boolean, shouldRefreshBadge = false) {
   const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
   const isWindowFocused = document.hasFocus();
   if (shouldUpdateChatLastRead({
-    hasCurrentUser: Boolean(userId),
+    hasCurrentUser: Boolean(user?.uid),
     hasTeamId,
     isPageVisible,
     isWindowFocused
   })) {
-    void markTeamChatRead(userId, teamId);
+    if (shouldRefreshBadge) {
+      void markTeamChatReadAndRefreshBadge(user || null, teamId);
+      return;
+    }
+    if (user?.uid) {
+      void markTeamChatRead(user.uid, teamId);
+    }
   }
 }
 
@@ -1983,6 +2066,7 @@ function TeamEmailSheet({
                 className="min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
                 placeholder="Weekly reminder"
                 maxLength={120}
+                enterKeyHint="next"
               />
               <button type="button" className="secondary-button sm:min-w-[148px]" disabled={!canSaveTemplate} onClick={onSaveTemplate}>
                 {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
@@ -1999,6 +2083,7 @@ function TeamEmailSheet({
             className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
             placeholder="Team update"
             maxLength={160}
+            enterKeyHint="next"
           />
         </label>
         <label className="block">
@@ -2009,6 +2094,7 @@ function TeamEmailSheet({
             className="mt-1 min-h-36 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
             placeholder="Write the email body..."
             maxLength={5000}
+            enterKeyHint="send"
           />
         </label>
         <button type="submit" className="primary-button w-full" disabled={!canSendEmail}>
@@ -2517,6 +2603,7 @@ function Composer({
           maxLength={2000}
           className="chat-composer-textarea"
           placeholder={placeholder}
+          enterKeyHint="send"
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();

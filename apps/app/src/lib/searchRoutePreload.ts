@@ -3,6 +3,7 @@ const routePreloaders: Array<{ pattern: RegExp; load: () => Promise<unknown> }> 
   { pattern: /^\/schedule$/, load: () => import('../pages/Schedule') },
   { pattern: /^\/schedule\/[^/]+\/[^/]+$/, load: () => import('../pages/ScheduleEventDetail') },
   { pattern: /^\/messages(?:\/[^/]+)?$/, load: () => import('../pages/Messages') },
+  { pattern: /^\/teams\/browse$/, load: () => import('../pages/PublicTeamsBrowse') },
   { pattern: /^\/teams$/, load: () => import('../pages/Teams') },
   { pattern: /^\/teams\/browse$/, load: () => import('../pages/PublicTeamsBrowse') },
   { pattern: /^\/teams\/[^/]+$/, load: () => import('../pages/TeamDetail') },

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
   CalendarDays,
@@ -57,6 +57,7 @@ function emptyHome(): ParentHomeModel {
 
 export function Teams({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [loading, setLoading] = useState(true);
@@ -96,6 +97,13 @@ export function Teams({ auth }: { auth: AuthState }) {
     loadTeams({ showLoading: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    if (loading || selectedTeamId) return;
+    if (shouldAutoNavigateToSingleTeam(home.teams)) {
+      navigate(`/teams/${encodeURIComponent(home.teams[0].teamId)}`, { replace: true });
+    }
+  }, [loading, home.teams, navigate, selectedTeamId]);
 
   const selectedTeam = useMemo(() => (
     home.teams.find((team) => team.teamId === selectedTeamId) || home.teams[0] || null
@@ -179,6 +187,10 @@ function mergeTeamSummary(current: ParentHomeModel, enriched: ParentHomeModel): 
       photoUrl: currentByTeamId.get(team.teamId)?.photoUrl || team.photoUrl
     }))
   };
+}
+
+function shouldAutoNavigateToSingleTeam(teams: ParentHomeTeam[]): boolean {
+  return teams.length === 1 && teams[0]?.players.length === 1;
 }
 
 function TeamsHeader({ loading, refreshing, teams, teamRoles, onRefresh }: {
@@ -573,16 +585,9 @@ function EmptyTeams() {
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <Link to="/accept-invite" className="secondary-button justify-center !min-h-9 text-xs">Accept invite</Link>
             <Link to="/home" className="ghost-button justify-center !min-h-9 text-xs">Back to Home</Link>
-            <a
-              href="https://allplays.ai/teams.html"
-              className="ghost-button justify-center !min-h-9 text-xs"
-              onClick={(event) => {
-                event.preventDefault();
-                void openPublicUrl('https://allplays.ai/teams.html');
-              }}
-            >
+            <Link to="/teams/browse" className="ghost-button justify-center !min-h-9 text-xs">
               Browse teams
-            </a>
+            </Link>
           </div>
         </div>
       </div>

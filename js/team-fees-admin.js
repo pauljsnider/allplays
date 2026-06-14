@@ -582,7 +582,7 @@ export function buildOnlineRefundRequest({ amount, reason, teamId, batchId, reci
 }
 
 export async function submitOnlineTeamFeeRefund(request) {
-    const { getFunctions, httpsCallable } = await import('./firebase.js?v=17');
+    const { getFunctions, httpsCallable } = await import('./firebase.js?v=18');
     const functions = getFunctions();
     const refundTeamFee = httpsCallable(functions, 'refundStripeTeamFeePayment');
     const result = await refundTeamFee(request);
@@ -1157,8 +1157,8 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=43'),
-        import('./auth.js?v=20')
+        import('./db.js?v=48'),
+        import('./auth.js?v=23')
     ]);
 
     try {
