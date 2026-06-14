@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
@@ -66,6 +66,7 @@ export function Teams({ auth }: { auth: AuthState }) {
   const [error, setError] = useState('');
   const [teamsLoadError, setTeamsLoadError] = useState<AppServiceError | null>(null);
   const [loadedTeamUserId, setLoadedTeamUserId] = useState<string | null>(null);
+  const activeLoadIdRef = useRef(0);
   const selectedTeamId = searchParams.get('selectedTeamId') || '';
   const authUserId = auth.user?.uid || null;
   const hasLoadedTeamDetails = Boolean(authUserId) && authUserId === loadedTeamUserId;
@@ -73,6 +74,8 @@ export function Teams({ auth }: { auth: AuthState }) {
   const loadTeams = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
+    const loadId = activeLoadIdRef.current + 1;
+    activeLoadIdRef.current = loadId;
     const hasExistingTeams = loadedTeamUserId === user.uid;
     if (showLoading) {
       setLoading(true);
@@ -83,16 +86,19 @@ export function Teams({ auth }: { auth: AuthState }) {
     setTeamsLoadError(null);
     try {
       const fastHome = await loadParentTeamsSummary(user, { force: !showLoading });
+      if (loadId !== activeLoadIdRef.current) return;
       setHome(fastHome);
       setTeamsLoadError(null);
       setLoading(false);
       setRefreshing(true);
       try {
         const enrichedHome = await loadParentHomeSummary(user, { force: !showLoading });
+        if (loadId !== activeLoadIdRef.current) return;
         setHome((current) => mergeTeamSummary(current, enrichedHome));
         setLoadedTeamUserId(user.uid);
         setTeamsLoadError(null);
       } catch (enrichError) {
+        if (loadId !== activeLoadIdRef.current) return;
         const appError = toAppServiceError(enrichError, 'Unable to load teams.');
         if (!hasExistingTeams) {
           setHome(emptyHome());
@@ -103,6 +109,7 @@ export function Teams({ auth }: { auth: AuthState }) {
         }
       }
     } catch (loadError: any) {
+      if (loadId !== activeLoadIdRef.current) return;
       const appError = toAppServiceError(loadError, 'Unable to load teams.');
       setError(getTeamsLoadErrorMessage(appError, hasExistingTeams));
       setTeamsLoadError(appError);
@@ -111,6 +118,7 @@ export function Teams({ auth }: { auth: AuthState }) {
         setLoadedTeamUserId(null);
       }
     } finally {
+      if (loadId !== activeLoadIdRef.current) return;
       setLoading(false);
       setRefreshing(false);
     }
@@ -118,6 +126,9 @@ export function Teams({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     loadTeams({ showLoading: true });
+    return () => {
+      activeLoadIdRef.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 

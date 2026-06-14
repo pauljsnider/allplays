@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Teams } from './Teams';
@@ -84,8 +85,8 @@ const emptyHome = {
   }
 };
 
-function renderTeams() {
-  return render(
+function renderTeams({ strictMode = false }: { strictMode?: boolean } = {}) {
+  const tree = (
     <MemoryRouter initialEntries={["/teams"]}>
       <Routes>
         <Route path="/teams" element={<Teams auth={auth} />} />
@@ -94,6 +95,8 @@ function renderTeams() {
       </Routes>
     </MemoryRouter>
   );
+
+  return render(strictMode ? <StrictMode>{tree}</StrictMode> : tree);
 }
 
 function TeamHubRoute() {
@@ -110,6 +113,16 @@ function renderTeamsWithNav() {
       </Routes>
     </MemoryRouter>
   );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 describe('Teams empty state', () => {
@@ -148,6 +161,29 @@ describe('Teams empty state', () => {
     expect(screen.getByText('Try loading teams again to restore your team dashboard.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry loading teams' })).toBeTruthy();
     expect(screen.queryByText('No teams available')).toBeNull();
+    expect(screen.queryByText('Loading teams')).toBeNull();
+  });
+
+  it('keeps the loading state bound to the latest initial request under StrictMode before showing the retryable error UI', async () => {
+    const firstLoad = deferred<typeof emptyHome>();
+    const secondLoad = deferred<typeof emptyHome>();
+    homeServiceMocks.loadParentTeamsSummary
+      .mockImplementationOnce(() => firstLoad.promise)
+      .mockImplementationOnce(() => secondLoad.promise);
+
+    renderTeams({ strictMode: true });
+
+    expect(await screen.findByText('Loading teams')).toBeTruthy();
+
+    firstLoad.reject(new Error('First request failed'));
+    await waitFor(() => {
+      expect(screen.getByText('Loading teams')).toBeTruthy();
+    });
+
+    secondLoad.reject(new Error('Second request failed'));
+
+    expect(await screen.findByText('Teams could not load')).toBeTruthy();
+    expect(screen.getByText('Try loading teams again to restore your team dashboard.')).toBeTruthy();
     expect(screen.queryByText('Loading teams')).toBeNull();
   });
 });
