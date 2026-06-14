@@ -890,7 +890,21 @@ export async function getTeamMediaItems(teamId, folderId = null) {
         .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
         .filter((item) => item.deleted !== true)
         .filter((item) => !folderId || item.folderId === folderId);
-    return sortByMediaOrder(items);
+
+    const resolvedItems = await Promise.all(items.map(async (item) => {
+        if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
+        if (String(item.downloadUrl || item.url || item.src || '').trim()) return item;
+        if (!item.storagePath) return item;
+        try {
+            const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
+            return { ...item, downloadUrl };
+        } catch (error) {
+            console.warn('Unable to resolve team media download URL:', error);
+            return item;
+        }
+    }));
+
+    return sortByMediaOrder(resolvedItems);
 }
 
 export async function createTeamMediaFolder(teamId, draft = {}) {
@@ -1023,13 +1037,11 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const url = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
         type: 'photo',
-        url,
         storagePath,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
@@ -1069,14 +1081,12 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const url = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
         fileName: String(file.name || '').trim(),
         type: 'file',
-        url,
         storagePath,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
@@ -2110,6 +2120,16 @@ export async function listTeamRegistrationForms(teamId) {
     return snapshot.docs
         .map((formDoc) => ({ id: formDoc.id, ...formDoc.data() }))
         .sort((a, b) => String(a.name || a.title || a.id).localeCompare(String(b.name || b.title || b.id)));
+}
+
+export async function getTeamRegistrationForm(teamId, formId) {
+    if (!teamId || !formId) return null;
+    const formSnap = await getDoc(doc(db, 'teams', teamId, 'registrationForms', formId));
+    if (!formSnap.exists()) return null;
+    return {
+        id: formSnap.id,
+        ...formSnap.data()
+    };
 }
 
 export async function listTeamRegistrationReviews(teamId, formId, status = 'all') {
@@ -7896,4 +7916,3 @@ export async function revokeFamilyShareToken(tokenId) {
         updatedAt: Timestamp.now()
     });
 }
-

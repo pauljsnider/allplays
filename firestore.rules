@@ -67,6 +67,58 @@ service cloud.firestore {
              data.usedAt == null;
     }
 
+    function isParentInvitePayloadValid(data) {
+      return data.keys().hasOnly([
+               'code', 'type', 'teamId', 'playerId', 'playerNum', 'playerName',
+               'teamName', 'relation', 'email', 'generatedBy', 'createdAt',
+               'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.keys().hasAll([
+               'code', 'type', 'teamId', 'playerId', 'generatedBy',
+               'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt'
+             ]) &&
+             data.type == 'parent_invite' &&
+             data.code is string &&
+             data.code.size() > 0 &&
+             data.teamId is string &&
+             data.teamId.size() > 0 &&
+             data.playerId is string &&
+             data.playerId.size() > 0 &&
+             (!('playerNum' in data) || data.playerNum == null || data.playerNum is string || data.playerNum is int) &&
+             (!('playerName' in data) || data.playerName == null || data.playerName is string) &&
+             (!('teamName' in data) || data.teamName == null || data.teamName is string) &&
+             (!('relation' in data) || data.relation == null || data.relation is string) &&
+             (!('email' in data) || data.email == null || data.email is string) &&
+             data.generatedBy == request.auth.uid &&
+             data.createdAt is timestamp &&
+             data.expiresAt is timestamp &&
+             data.expiresAt > request.time &&
+             data.used == false &&
+             data.usedBy == null &&
+             data.usedAt == null;
+    }
+
+    function isParentInviteRedemptionUpdate() {
+      return resource.data.get('type', null) == 'parent_invite' &&
+             request.resource.data.get('type', resource.data.get('type', null)) == 'parent_invite' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+             request.resource.data.used == true &&
+             request.resource.data.usedBy == request.auth.uid &&
+             request.resource.data.usedAt is timestamp;
+    }
+
+    function isParentInviteRevocationUpdate() {
+      return resource.data.get('type', null) == 'parent_invite' &&
+             resource.data.generatedBy == request.auth.uid &&
+             resource.data.teamId is string &&
+             isTeamOwnerOrAdmin(resource.data.teamId) &&
+             request.resource.data.get('type', resource.data.get('type', null)) == 'parent_invite' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'updatedAt']) &&
+             request.resource.data.revoked == true &&
+             request.resource.data.revokedAt is timestamp &&
+             (!request.resource.data.keys().hasAny(['updatedAt']) || request.resource.data.updatedAt is timestamp);
+    }
+
     function canReadManagedTeamDocument(data) {
       return isSignedIn() &&
              (data.ownerId == request.auth.uid ||
@@ -78,6 +130,12 @@ service cloud.firestore {
     function canReadTeamDocument(data) {
       return (data.isPublic is bool && data.isPublic == true) ||
              canReadManagedTeamDocument(data);
+    }
+
+    function keepsTeamPrivilegeFieldsImmutable() {
+      return request.resource.data.get('ownerId', '') == resource.data.get('ownerId', '') &&
+             request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
+             request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false);
     }
 
     function isSafeDocumentId(documentId) {
@@ -1328,28 +1386,38 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
                        request.resource.data.generatedBy == request.auth.uid &&
                        (
-                         request.resource.data.get('type', null) != 'admin_invite' ||
-                         (
-                           request.resource.data.teamId is string &&
-                           isTeamOwnerOrAdmin(request.resource.data.teamId) &&
-                           isAdminInvitePayloadValid(request.resource.data) &&
-                           request.resource.data.code == codeId
-                         )
+                         (request.resource.data.get('type', null) == 'admin_invite' &&
+                          request.resource.data.teamId is string &&
+                          isTeamOwnerOrAdmin(request.resource.data.teamId) &&
+                          isAdminInvitePayloadValid(request.resource.data) &&
+                          request.resource.data.code == codeId) ||
+                         (request.resource.data.get('type', null) == 'parent_invite' &&
+                          request.resource.data.teamId is string &&
+                          isTeamOwnerOrAdmin(request.resource.data.teamId) &&
+                          isParentInvitePayloadValid(request.resource.data) &&
+                          request.resource.data.code == codeId) ||
+                         (request.resource.data.get('type', null) != 'admin_invite' &&
+                          request.resource.data.get('type', null) != 'parent_invite')
                        );
       // Only allow the code generator to update/delete, OR allow system to mark as used during signup
       allow update: if isSignedIn() &&
                        ((resource.data.generatedBy == request.auth.uid &&
-                         request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite') ||
+                         request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite' &&
+                         request.resource.data.get('type', resource.data.get('type', null)) != 'parent_invite') ||
                         (resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.get('type', resource.data.get('type', null)) == 'admin_invite' &&
                          request.resource.data.teamId is string &&
                          isTeamOwnerOrAdmin(request.resource.data.teamId) &&
                          isAdminInvitePayloadValid(request.resource.data) &&
                          request.resource.data.code == codeId) ||
+                        isParentInviteRedemptionUpdate() ||
+                        isParentInviteRevocationUpdate() ||
                         // Allow marking as used only if setting these specific fields
-                        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+                        (resource.data.get('type', null) != 'parent_invite' &&
+                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
                          request.resource.data.usedBy == request.auth.uid) ||
-                        (resource.data.generatedBy == request.auth.uid &&
+                        (resource.data.get('type', null) != 'parent_invite' &&
+                         resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;
 	    }
@@ -1401,8 +1469,8 @@ service cloud.firestore {
     // Collection group rule for assigned team fee recipient records.
     // Parents can only read records tied directly to their account or linked players.
     match /{path=**}/feeRecipients/{recipientId} {
-      allow read: if isTeamFeeRecipientForCurrentParent(resource.data) ||
-                     (resource.data.get('teamId', '') is string &&
+      allow read: if resource.data.get('teamId', '') is string &&
+                     (isTeamFeeRecipientForCurrentParent(resource.data, resource.data.get('teamId', '')) ||
                       isTeamOwnerOrAdmin(resource.data.get('teamId', '')));
       allow create: if request.resource.data.get('teamId', '') is string &&
                        isTeamOwnerOrAdmin(request.resource.data.get('teamId', ''));
@@ -1513,7 +1581,7 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow read: if canReadTeamDocument(resource.data);
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if isTeamOwnerOrAdmin(teamId);
+      allow update: if isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable();
       allow delete: if isGlobalAdmin();
 
 	      // Players subcollection
@@ -1783,6 +1851,11 @@ service cloud.firestore {
         match /liveChat/{messageId} {
           allow read: if true;  // Public read for all viewers
           allow create: if isSignedIn()
+            && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
+                (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
+                 isShareableGameDocument(
+                   get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data
+                 )))
             && request.resource.data.keys().hasAll(['text', 'senderId'])
             && request.resource.data.senderId == request.auth.uid
             && request.resource.data.text is string
@@ -1796,6 +1869,11 @@ service cloud.firestore {
         match /liveReactions/{reactionId} {
           allow read: if true;  // Public read
           allow create: if isSignedIn()
+            && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
+                (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
+                 isShareableGameDocument(
+                   get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data
+                 )))
             && request.resource.data.keys().hasAll(['type', 'senderId'])
             && request.resource.data.senderId == request.auth.uid;
           allow update, delete: if false;  // Reactions are immutable

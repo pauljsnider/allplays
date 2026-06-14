@@ -254,6 +254,20 @@ const rsvpBadgeClasses: Record<RsvpResponse, string> = {
   not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
 };
 
+export function getAvailabilityNoteSaveState(rsvp: RsvpResponse, availabilityNote: string, savedAvailabilityNote: string) {
+  const trimmedAvailabilityNote = String(availabilityNote || '').trim();
+  const trimmedSavedAvailabilityNote = String(savedAvailabilityNote || '').trim();
+  const isDirty = trimmedAvailabilityNote !== trimmedSavedAvailabilityNote;
+  const canSaveNote = rsvp !== 'not_responded' && isDirty;
+
+  return {
+    isDirty,
+    canSaveNote,
+    trimmedAvailabilityNote,
+    trimmedSavedAvailabilityNote
+  };
+}
+
 type AttentionItem = {
   title: string;
   detail: string;
@@ -285,7 +299,7 @@ export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<stri
 
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [selectedChildId, setSelectedChildId] = useState(searchParams.get('childId') || '');
   const [loading, setLoading] = useState(true);
@@ -305,11 +319,31 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
 
+  const replaceEventRouteParams = (updates: { section?: EventDetailSectionId; childId?: string }) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (updates.section) nextParams.set('section', updates.section);
+    if (Object.prototype.hasOwnProperty.call(updates, 'childId')) {
+      const nextChildId = String(updates.childId || '').trim();
+      if (nextChildId) {
+        nextParams.set('childId', nextChildId);
+      } else {
+        nextParams.delete('childId');
+      }
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const selectSection = (sectionId: EventDetailSectionId) => {
     setActiveSection(sectionId);
+    replaceEventRouteParams({ section: sectionId });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
+  };
+
+  const selectChild = (childId: string) => {
+    setSelectedChildId(childId);
+    replaceEventRouteParams({ childId });
   };
 
   const loadEvent = async () => {
@@ -338,6 +372,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     setActiveSection(parseEventDetailSection(searchParams.get('section')));
+    const routeChildId = searchParams.get('childId') || '';
+    if (routeChildId) {
+      setSelectedChildId(routeChildId);
+    }
   }, [searchParams]);
 
   const selectedEvent = useMemo(() => {
@@ -479,6 +517,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     setError(null);
     setStatusMessage(null);
     try {
+      const previousRsvp = normalizeRsvpResponse(selectedEvent.myRsvp);
+      const previousNote = String(selectedEvent.myRsvpNote || '').trim();
       const note = availabilityNote.trim();
       const summary = await submitParentScheduleRsvp(selectedEvent, auth.user, response, note);
       setEvents((current) => current.map((event) => {
@@ -491,7 +531,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           rsvpSummary: summary || event.rsvpSummary
         };
       }));
-      setStatusMessage(`${selectedEvent.childName} marked ${rsvpLabels[response].toLowerCase()}.`);
+      const noteOnlySave = previousRsvp === response && previousNote !== note;
+      setStatusMessage(noteOnlySave
+        ? `${selectedEvent.childName} availability note saved.`
+        : `${selectedEvent.childName} marked ${rsvpLabels[response].toLowerCase()}.`);
     } catch (submitError: any) {
       setError(submitError?.message || 'Unable to submit availability.');
     } finally {
@@ -607,7 +650,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               <div className="min-w-0 flex-1">
                 {events.length > 1 ? (
                   <>
-                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} compact />
+                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />
                     <div className="mt-1 truncate text-xs font-bold text-gray-600">{selectedEvent.childName} · {selectedEvent.teamName}</div>
                   </>
                 ) : (
@@ -772,13 +815,15 @@ function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availa
   onSubmit: (response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
 }) {
   const needsResponse = rsvp === 'not_responded';
+  const noteSaveState = getAvailabilityNoteSaveState(rsvp, availabilityNote, event.myRsvpNote || '');
+  const showDirtyState = rsvp !== 'not_responded' && noteSaveState.isDirty;
   return (
     <div className={`border-b px-3 py-2.5 sm:px-4 sm:py-3 ${needsResponse ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
       <div className="flex items-center gap-2.5 sm:items-start sm:gap-3">
         <PlayerInitials name={event.childName} />
         <div className="min-w-0 flex-1">
-          <div className={`text-[11px] font-black uppercase tracking-[0.06em] ${needsResponse ? 'text-amber-800' : 'text-gray-500'}`}>
-            {needsResponse ? 'Availability needed' : 'Availability saved'}
+          <div className={`text-[11px] font-black uppercase tracking-[0.06em] ${needsResponse ? 'text-amber-800' : showDirtyState ? 'text-amber-800' : 'text-gray-500'}`}>
+            {needsResponse ? 'Availability needed' : showDirtyState ? 'Unsaved note changes' : 'Availability saved'}
           </div>
           <div className="mt-0.5 text-sm font-black leading-tight text-gray-950 sm:mt-1 sm:text-base">Is {event.childName} going?</div>
           <div className="mt-2 grid grid-cols-3 gap-1.5">
@@ -812,6 +857,19 @@ function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availa
           <div className="mt-1 text-[11px] font-semibold text-gray-500">
             {event.availabilityNotesVisible ? 'Team note sharing is on for this team.' : 'Notes are visible to team staff unless sharing is enabled.'}
           </div>
+          {noteSaveState.canSaveNote ? (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+              <div className="text-xs font-black text-amber-900">Note edited but not saved yet.</div>
+              <button
+                type="button"
+                className="min-h-8 rounded-full border border-primary-200 bg-white px-3 text-xs font-black text-primary-700 transition hover:border-primary-300 hover:bg-primary-50"
+                disabled={!canSubmitRsvp || submitting === rsvp}
+                onClick={() => onSubmit(rsvp as Exclude<RsvpResponse, 'not_responded'>)}
+              >
+                {submitting === rsvp ? 'Saving' : 'Save note'}
+              </button>
+            </div>
+          ) : null}
           {!canSubmitRsvp ? <div className="mt-2 text-xs font-semibold text-gray-500">Availability is not open for this event.</div> : null}
         </div>
       </div>

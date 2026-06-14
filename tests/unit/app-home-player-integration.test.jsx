@@ -134,9 +134,24 @@ function buttonByText(container, text) {
     return button;
 }
 
+function buttonByAriaLabel(container, label) {
+    const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.getAttribute('aria-label') === label);
+    if (!button) {
+        throw new Error(`Button not found: ${label}`);
+    }
+    return button;
+}
+
 async function clickButton(container, text) {
     await act(async () => {
         buttonByText(container, text).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await flush();
+}
+
+async function clickButtonByAriaLabel(container, label) {
+    await act(async () => {
+        buttonByAriaLabel(container, label).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
 }
@@ -879,16 +894,34 @@ describe('React app Home and player drill-in integration', () => {
         await waitForText(container, 'No players linked yet');
     });
 
-    it('shows a useful empty Home state when the live Home service fails', async () => {
+    it('shows a retryable Home error state and recovers on retry after an initial failure', async () => {
         homeMocks.loadParentHome.mockRejectedValueOnce(new Error('Home service down'));
 
         const { container } = await renderApp('/home');
 
         await waitForText(container, 'Home service down');
-        expect(container.textContent).toContain('All caught up');
+        expect(container.textContent).toContain('Home could not load');
+        expect(container.textContent).toContain('Try loading Home again to restore your dashboard.');
+        expect(buttonByAriaLabel(container, 'Retry loading Home')).toBeTruthy();
+        expect(container.textContent).not.toContain('No upcoming events');
+
+        await clickButtonByAriaLabel(container, 'Retry loading Home');
+
+        await waitForText(container, 'Pat Star highlight');
         expect(container.textContent).toContain('Team chats');
-        expect(container.textContent).toContain('Caught up');
-        expect(container.textContent).toContain('No upcoming events');
-        expect(container.textContent).not.toContain('Loading Home');
+        expect(homeMocks.loadParentHome).toHaveBeenCalledTimes(3);
+    });
+
+    it('keeps the last loaded Home visible when a refresh fails', async () => {
+        const { container } = await renderApp('/home');
+
+        await waitForText(container, 'Pat Star highlight');
+        homeMocks.loadParentHome.mockRejectedValueOnce(new Error('Refresh failed.'));
+        await clickButtonByAriaLabel(container, 'Refresh Home');
+
+        await waitForText(container, 'Unable to refresh Home. Showing the last loaded Home. Try again.');
+        expect(container.textContent).toContain('Pat Star highlight');
+        expect(container.textContent).toContain('Team chats');
+        expect(container.textContent).not.toContain('Home could not load');
     });
 });

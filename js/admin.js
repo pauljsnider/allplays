@@ -11,10 +11,10 @@ import {
     getTelemetryPageDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=45';
+} from './db.js?v=48';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=18';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
-import { checkAuth } from './auth.js?v=22';
+import { checkAuth } from './auth.js?v=23';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
@@ -162,7 +162,7 @@ async function loadGameStats() {
     // Load games from all teams
     const gamesPromises = allTeams.map(async (team) => {
         try {
-            const { getGames } = await import('./db.js?v=45');
+            const { getGames } = await import('./db.js?v=48');
             const games = await getGames(team.id);
             return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
         } catch (e) {
