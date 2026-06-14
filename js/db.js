@@ -2112,6 +2112,16 @@ export async function listTeamRegistrationForms(teamId) {
         .sort((a, b) => String(a.name || a.title || a.id).localeCompare(String(b.name || b.title || b.id)));
 }
 
+export async function getTeamRegistrationForm(teamId, formId) {
+    if (!teamId || !formId) return null;
+    const formSnap = await getDoc(doc(db, 'teams', teamId, 'registrationForms', formId));
+    if (!formSnap.exists()) return null;
+    return {
+        id: formSnap.id,
+        ...formSnap.data()
+    };
+}
+
 export async function listTeamRegistrationReviews(teamId, formId, status = 'all') {
     if (!teamId || !formId) return [];
     const snapshot = await getDocs(collection(db, `teams/${teamId}/registrationForms/${formId}/registrations`));
@@ -7896,4 +7906,3 @@ export async function revokeFamilyShareToken(tokenId) {
         updatedAt: Timestamp.now()
     });
 }
-

@@ -20,6 +20,7 @@ const dbMocks = vi.hoisted(() => ({
     setDoc: vi.fn(),
     runTransaction: vi.fn(),
     getPlayers: vi.fn(),
+    getTeamRegistrationForm: vi.fn(),
     getTeam: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItems: vi.fn(),
@@ -725,17 +726,16 @@ describe('React app parent tools service', () => {
 
     it('loads a linked registration detail model for in-app review', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
-        dbMocks.listTeamRegistrationForms.mockResolvedValue([
-            {
-                id: 'form-1',
-                programName: 'Summer Camp',
-                status: 'published',
-                finalAmountDueCents: 12000,
-                checkoutUrl: 'https://pay.example.test/camp',
-                options: [{ id: 'opt-1', title: 'Full Day' }],
-                paymentNotice: 'Online checkout available.'
-            }
-        ]);
+        dbMocks.listTeamRegistrationForms.mockRejectedValue(new Error('registration detail should not scan all forms'));
+        dbMocks.getTeamRegistrationForm.mockResolvedValue({
+            id: 'form-1',
+            programName: 'Summer Camp',
+            status: 'published',
+            finalAmountDueCents: 12000,
+            checkoutUrl: 'https://pay.example.test/camp',
+            options: [{ id: 'opt-1', title: 'Full Day' }],
+            paymentNotice: 'Online checkout available.'
+        });
 
         await expect(loadParentRegistrationDetail(user, 'team-1', 'form-1')).resolves.toMatchObject({
             teamName: 'Bears',
@@ -746,19 +746,20 @@ describe('React app parent tools service', () => {
             options: [{ id: 'opt-1', title: 'Full Day' }],
             paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }]
         });
+        expect(dbMocks.getTeamRegistrationForm).toHaveBeenCalledWith('team-1', 'form-1');
+        expect(dbMocks.listTeamRegistrationForms).not.toHaveBeenCalled();
     });
 
     it('loads the staff registration detail model only for team staff', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-coach', name: 'Coach Wolves' });
-        dbMocks.listTeamRegistrationForms.mockResolvedValue([
-            {
-                id: 'form-review',
-                programName: 'Travel Tryouts',
-                status: 'published',
-                finalAmountDueCents: 15000,
-                options: [{ id: 'opt-1', title: 'Travel' }]
-            }
-        ]);
+        dbMocks.listTeamRegistrationForms.mockRejectedValue(new Error('registration detail should not scan all forms'));
+        dbMocks.getTeamRegistrationForm.mockResolvedValue({
+            id: 'form-review',
+            programName: 'Travel Tryouts',
+            status: 'published',
+            finalAmountDueCents: 15000,
+            options: [{ id: 'opt-1', title: 'Travel' }]
+        });
 
         await expect(loadStaffRegistrationDetail(user, 'team-coach', 'form-review')).resolves.toMatchObject({
             teamName: 'Coach Wolves',
@@ -766,6 +767,8 @@ describe('React app parent tools service', () => {
             legacyUrl: 'https://allplays.ai/registration.html?teamId=team-coach&formId=form-review',
             options: [{ id: 'opt-1', title: 'Travel' }]
         });
+        expect(dbMocks.getTeamRegistrationForm).toHaveBeenCalledWith('team-coach', 'form-review');
+        expect(dbMocks.listTeamRegistrationForms).not.toHaveBeenCalled();
         await expect(loadStaffRegistrationDetail({ ...user, coachOf: [] }, 'team-coach', 'form-review')).rejects.toThrow('Admin access is required to review registrations.');
     });
 
