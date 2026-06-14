@@ -440,6 +440,18 @@ describe('React app auth/profile capability parity', () => {
         ]);
     });
 
+    it('keeps the live broadcast tracker capability scoped to shipped app features', () => {
+        const capabilities = readProjectFile('apps/app/src/data/capabilities.ts');
+        const trackLiveLine = capabilities
+            .split('\n')
+            .find((line) => line.includes("capability('track-live'"));
+
+        expect(trackLiveLine).toContain("'native-shell'");
+        expect(trackLiveLine).toContain('Score updates');
+        expect(trackLiveLine).toContain('Live play-by-play publish');
+        expect(trackLiveLine).not.toMatch(/'Chat'|'Game log'|'Notes'|'Replay data'/);
+    });
+
     it('covers parent-dashboard.html schedule capabilities and filters in the React app schedule', () => {
         const legacyParentDashboard = readProjectFile('parent-dashboard.html');
         const schedulePage = readProjectFile('apps/app/src/pages/Schedule.tsx');
