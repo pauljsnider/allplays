@@ -189,6 +189,16 @@ describe('Home', () => {
     expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
   });
 
+  it('shows network-specific Home retry copy after an initial load failure', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Unable to load Home while offline. Check your connection and try again.')).toBeTruthy();
+    expect(screen.getByText('Home could not connect')).toBeTruthy();
+    expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
+  });
+
   it('refreshes the social feed with the async loading helper', async () => {
     renderHome(signedInAuth, '/home?section=feed');
 
@@ -223,6 +233,19 @@ describe('Home', () => {
       expect(socialServiceMocks.createSocialPost).toHaveBeenCalledTimes(1);
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('shows permission-specific Home refresh copy when access is denied after a prior load', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap
+      .mockResolvedValueOnce({ home: baseHome, schedule: [] })
+      .mockRejectedValueOnce(new Error('Permission denied for Home refresh'));
+
+    renderHome(signedInAuth);
+
+    await screen.findByRole('heading', { name: 'Today for your players' });
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+
+    expect(await screen.findByText('Unable to refresh Home because access was denied. Showing the last loaded Home.')).toBeTruthy();
   });
 
   it('refreshes the social feed after responding to a friend request', async () => {
