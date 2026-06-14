@@ -78,6 +78,4 @@ packages.microsoft.gpg
 
 # Generated React app assets
 apps/app/dist/
-
-# Claude Code
-.claude/
+apps/app/bundle-visualizer.html

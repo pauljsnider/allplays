@@ -231,7 +231,10 @@ export function buildHouseholdInviteMarkup({ invites = [], linkedPlayers = [], v
                         <div class="text-xs text-gray-500 mt-0.5">${escapeHtml(invite.email)}</div>
                         <div class="text-xs text-gray-600 mt-1">${escapeHtml(invite.relation || 'Relation not specified')} for ${escapeHtml(invite.playerName || 'selected player')}${invite.teamName ? ` · ${escapeHtml(invite.teamName)}` : ''}</div>
                     </div>
-                    <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusClasses(invite.status)}">${escapeHtml(invite.status)}</span>
+                    <div class="flex flex-col items-end gap-2">
+                        <span class="px-2 py-1 rounded-full border text-[10px] font-semibold uppercase tracking-wide ${statusClasses(invite.status)}">${escapeHtml(invite.status)}</span>
+                        <button type="button" data-household-invite-revoke="${escapeHtml(invite.id)}" class="text-xs font-semibold text-red-600 hover:text-red-700">Revoke</button>
+                    </div>
                 </div>
                 ${invite.teamAccessIntent ? '<div class="text-xs text-primary-700 mt-2">Team access requested when invite acceptance is supported.</div>' : ''}
             </div>
@@ -318,6 +321,12 @@ export async function addPendingHouseholdInvite(userId, invite, { deps = {}, lin
         invitedAt: timestamp,
         updatedAt: timestamp,
     });
+}
+
+export async function removePendingHouseholdInvite(userId, inviteId, { deps = {} } = {}) {
+    if (!userId || !inviteId) throw new Error('Missing household invite to revoke.');
+    const { db, doc, deleteDoc } = await loadFirebase(deps);
+    await deleteDoc(doc(db, `users/${userId}/householdInvites/${inviteId}`));
 }
 
 export async function addPendingFamilyMember(userId, member, { deps = {}, existingMembers = [] } = {}) {
@@ -506,8 +515,27 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
             }
         });
 
-        const householdButton = container.querySelector('#household-invite-add-btn');
         const householdValidationEl = container.querySelector('#household-invite-validation');
+        container.querySelectorAll('[data-household-invite-revoke]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const inviteId = button.getAttribute('data-household-invite-revoke');
+                button.textContent = 'Revoking...';
+                button.disabled = true;
+                try {
+                    await removePendingHouseholdInvite(user.uid, inviteId, { deps });
+                    await renderFamilyPlanSection(container, user, options);
+                } catch (error) {
+                    if (householdValidationEl) {
+                        householdValidationEl.textContent = error.message || 'Unable to revoke household invite.';
+                        householdValidationEl.className = 'text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 border border-red-200';
+                    }
+                    button.textContent = 'Revoke';
+                    button.disabled = false;
+                }
+            });
+        });
+
+        const householdButton = container.querySelector('#household-invite-add-btn');
         householdButton?.addEventListener('click', async () => {
             const originalText = householdButton.textContent;
             householdButton.disabled = true;

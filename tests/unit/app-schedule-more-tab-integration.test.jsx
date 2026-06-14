@@ -61,7 +61,7 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 
-import { ScheduleEventDetail, parseEventDetailSection } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSection } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -253,6 +253,53 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(parseEventDetailSection('assignments')).toBe('assignments');
         expect(parseEventDetailSection('invalid')).toBe('availability');
         expect(parseEventDetailSection(null)).toBe('availability');
+    });
+
+    it('enables Save note only for dirty notes on existing RSVPs', () => {
+        expect(getAvailabilityNoteSaveState('going', 'Running late', 'Original note')).toMatchObject({
+            isDirty: true,
+            canSaveNote: true
+        });
+        expect(getAvailabilityNoteSaveState('going', 'Original note', 'Original note')).toMatchObject({
+            isDirty: false,
+            canSaveNote: false
+        });
+        expect(getAvailabilityNoteSaveState('not_responded', 'Need a ride', '')).toMatchObject({
+            isDirty: true,
+            canSaveNote: false
+        });
+    });
+
+    it('saves an edited RSVP note without reselecting the current response', async () => {
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            events: [event({ myRsvp: 'going', myRsvpNote: 'Original note' })]
+        });
+        scheduleMocks.submitParentScheduleRsvp.mockResolvedValue({ going: 1, maybe: 0, notGoing: 0, notResponded: 0 });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'Is Pat going?');
+
+        const noteInput = container.querySelector('textarea[aria-label="Availability note"]');
+        await act(async () => {
+            const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+            setValue.call(noteInput, 'Running late from pickup');
+            noteInput.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        await waitForText(container, 'Unsaved note changes');
+        expect(buttonByText(container, 'Save note')).not.toBeNull();
+
+        await clickButton(container, 'Save note');
+
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'game-1', childId: 'player-1' }),
+            auth.user,
+            'going',
+            'Running late from pickup'
+        );
+        await waitForText(container, 'Pat availability note saved.');
+        await waitForText(container, 'Availability saved');
+        expect(container.querySelector('textarea[aria-label="Availability note"]')?.value).toBe('Running late from pickup');
     });
 
     it('renders the practice More tab with text-only sharing wired to the primary top card', async () => {

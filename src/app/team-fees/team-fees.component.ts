@@ -143,7 +143,7 @@ function isFeePaid(data: FeeRecipientData): boolean {
   const status = getFeeStatus(data);
   if (status === 'paid') return true;
   if (data.paid === true || data.isPaid === true) return true;
-  return typeof data.balanceDueCents === 'number' && data.balanceDueCents <= 0;
+  return getFeeBalanceCents(data) <= 0;
 }
 
 function isFeeCanceled(data: FeeRecipientData): boolean {
@@ -188,6 +188,7 @@ export class TeamFeesComponent implements OnInit {
   pendingPaymentFeeId: string | null = null;
   paymentErrorMessage: string | null = null;
   isLoadingFees = false;
+  paymentHistoryOpen = false;
 
   constructor(private stripeService: StripeService) { }
 
@@ -318,6 +319,22 @@ export class TeamFeesComponent implements OnInit {
 
   isPaymentPending(): boolean {
     return this.pendingPaymentFeeId !== null;
+  }
+
+  get outstandingFees(): TeamFee[] {
+    return this.teamFees.filter((fee) => !this.isHistoricalFee(fee));
+  }
+
+  get feeHistory(): TeamFee[] {
+    return this.teamFees.filter((fee) => this.isHistoricalFee(fee));
+  }
+
+  togglePaymentHistory(): void {
+    this.paymentHistoryOpen = !this.paymentHistoryOpen;
+  }
+
+  private isHistoricalFee(fee: TeamFee): boolean {
+    return fee.isPaid || fee.status === 'paid' || fee.status === 'canceled';
   }
 
   async handlePayFee(fee: TeamFee): Promise<void> {

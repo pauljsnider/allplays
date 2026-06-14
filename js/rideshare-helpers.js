@@ -1,6 +1,7 @@
 const OFFER_STATUS_OPEN = 'open';
 const REQUEST_STATUS_PENDING = 'pending';
 const REQUEST_STATUS_CONFIRMED = 'confirmed';
+const REQUEST_STATUS_WAITLISTED = 'waitlisted';
 
 export function normalizeOffer(offer = {}) {
     const statusRaw = (offer.status || '').toString().toLowerCase();
@@ -79,8 +80,12 @@ export function canRequestRide(offer = {}, parentUserId, childId) {
     if (normalized.status !== OFFER_STATUS_OPEN) return false;
     if (!parentUserId || !childId) return false;
     if (normalized.driverUserId === parentUserId) return false;
-    const seatInfo = getOfferSeatInfo(normalized);
     const existing = findRequestForChild(normalized, parentUserId, childId);
-    if (existing?.status === REQUEST_STATUS_PENDING || existing?.status === REQUEST_STATUS_CONFIRMED) return false;
-    return seatInfo.seatsLeft > 0;
+    if (existing?.status === REQUEST_STATUS_PENDING || existing?.status === REQUEST_STATUS_CONFIRMED || existing?.status === REQUEST_STATUS_WAITLISTED) return false;
+    return true;
+}
+
+export function isWaitlistRequest(offer = {}) {
+    const seatInfo = getOfferSeatInfo(normalizeOffer(offer));
+    return seatInfo.seatsLeft === 0;
 }

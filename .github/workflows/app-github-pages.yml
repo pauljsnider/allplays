@@ -42,6 +42,9 @@ jobs:
       - name: Build React app
         run: npm run app:build
 
+      - name: Check React app bundle size
+        run: npm run app:check-bundle-size
+
       - name: Stage GitHub Pages bundle
         run: node scripts/stage-pages-bundle.mjs "$RUNNER_TEMP/allplays-pages"
 
