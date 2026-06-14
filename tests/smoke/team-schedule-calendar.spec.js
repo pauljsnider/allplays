@@ -681,6 +681,7 @@ test('team schedule keeps tracked duplicates and cancelled items out of the wron
     await mockTeamPageModules(page, scenario);
     await page.goto(buildUrl(baseURL, '/team.html#teamId=team-a'), { waitUntil: 'domcontentloaded' });
 
+    await page.locator('#schedule-filter-recent-results').click();
     await expect(page.locator('#schedule-list')).toContainText('Falcons');
     await expect(page.locator('#schedule-list')).not.toContainText('Meteors');
     await expect(page.locator('#schedule-list')).not.toContainText('Storm');

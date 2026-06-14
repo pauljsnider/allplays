@@ -114,9 +114,9 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
         expect(functionsSource).toContain('mentioned you');
     });
 
-    it('sends a liveChat notification with excludeUids to skip mentioned users', () => {
+    it('sends a liveChat notification with excludeUids to skip mentioned and muted users', () => {
         expect(functionsSource).toContain("category: 'liveChat'");
-        expect(functionsSource).toContain('excludeUids: mentionedUids');
+        expect(functionsSource).toContain('excludeUids: [...new Set([...mentionedUids, ...mutedUids])]');
     });
 
     it('sendCategoryNotification accepts excludeUids parameter', () => {

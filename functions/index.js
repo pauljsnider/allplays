@@ -17,6 +17,7 @@ const {
   getTeamFeeRefundableCents,
   isTeamFeeCheckoutEligible,
   isEligibleTeamFeePayer,
+  getTeamFeeRecipientTargetUserIds,
   buildTeamFeeCheckoutUrls,
   buildTeamFeeCheckoutMetadata,
   canReuseTeamFeeCheckoutSession,
@@ -84,6 +85,11 @@ const {
   buildNotificationTargetPayload,
   notificationAudienceAllowsRoles
 } = require('./notification-target-index-core.cjs');
+const {
+  coerceDate,
+  getEventTitle,
+  formatScheduleUpdateDate
+} = require('./schedule-notification-utils.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -327,14 +333,21 @@ function buildRegistrationCheckoutMetadata({ input, registration }) {
 function shouldProcessRegistrationCheckoutEvent(event) {
   const session = event?.data?.object || {};
   return session.metadata?.product === 'registration'
-    && ['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_failed'].includes(event?.type);
+    && ['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_failed', 'checkout.session.async_payment_succeeded'].includes(event?.type);
 }
 
 function shouldMarkRegistrationPaidFromEvent(event) {
   const session = event?.data?.object || {};
+  if (event?.type === 'checkout.session.async_payment_succeeded') {
+    return session.metadata?.product === 'registration';
+  }
   return event?.type === 'checkout.session.completed'
     && session.metadata?.product === 'registration'
     && session.payment_status === 'paid';
+}
+
+function isAsyncPaymentPending(session) {
+  return ['open', 'unpaid'].includes(String(session?.payment_status || '').trim().toLowerCase());
 }
 
 function buildRegistrationRefFromStripeSession(session = {}) {
@@ -2084,6 +2097,19 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             });
             return;
           }
+          if (isAsyncPaymentPending(session)) {
+            // ACH / bank-transfer: checkout completed but payment is still in-flight.
+            // Hold capacity and mark as pending rather than failed.
+            transaction.set(registrationRef, {
+              checkoutStatus: 'async_pending',
+              paymentStatus: 'pending_payment',
+              stripeCheckoutSessionId: session.id || null,
+              stripePaymentIntentId: session.payment_intent || null,
+              stripePaymentStatus: session.payment_status || 'open',
+              stripeEventId: event.id,
+              updatedAt: receivedAt
+            }, { merge: true });
+          } else {
           const selectedOption = registration.selectedOption || {};
           const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();
           const counts = form.registrationOptionCounts || {};
@@ -2166,6 +2192,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           } else {
             transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'closed', nowIso: queuedAtIso }));
           }
+          } // end else (not isAsyncPaymentPending)
         }
 
         transaction.set(eventRef, {
@@ -3198,6 +3225,33 @@ async function pruneInvalidTokens(sendResult, targets) {
   }
 }
 
+const NOTIFICATION_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
+async function checkAndSetNotificationDedup(teamId, category, gameId) {
+  const key = [teamId, category, gameId || ''].join('::');
+  const hash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
+  const dedupRef = firestore.doc(`teams/${teamId}/notificationSendLog/${hash}`);
+
+  const result = await firestore.runTransaction(async (txn) => {
+    const snap = await txn.get(dedupRef);
+    if (snap.exists) {
+      const sentAt = snap.data()?.sentAt?.toMillis?.() || 0;
+      if (Date.now() - sentAt < NOTIFICATION_DEDUP_WINDOW_MS) {
+        return false; // duplicate within window
+      }
+    }
+    txn.set(dedupRef, {
+      teamId,
+      category,
+      gameId: gameId || null,
+      sentAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return true; // ok to send
+  });
+
+  return result;
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
@@ -3210,6 +3264,15 @@ async function sendCategoryNotification({
   excludeUids = []
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
+
+  const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
+  if (!ALWAYS_SEND_CATEGORIES.has(category)) {
+    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId);
+    if (!canSend) {
+      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId });
+      return null;
+    }
+  }
 
   const allTargets = await getTargetsForCategory(teamId, category, actorUid);
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
@@ -3295,39 +3358,8 @@ async function sendDirectTargetsNotification({ targets, category, title, body, t
   };
 }
 
-function coerceDate(value) {
-  if (!value) return null;
-  if (typeof value.toDate === 'function') return value.toDate();
-  if (value instanceof Date) return value;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function getEventTitle(event) {
-  const type = String(event?.type || event?.eventType || '').toLowerCase();
-  if (type === 'practice') {
-    return event?.title || 'Practice';
-  }
-  if (event?.title) return event.title;
-  return event?.opponent ? `vs. ${event.opponent}` : 'Game';
-}
-
-
 function normalizeScheduleStatus(value) {
   return String(value || '').trim().toLowerCase();
-}
-
-function formatScheduleUpdateDate(value, timeZone) {
-  const date = coerceDate(value);
-  if (!date || !timeZone) return '';
-  return date.toLocaleString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone
-  });
 }
 
 function truncateNotificationBody(text, maxLength = 120) {
@@ -3637,6 +3669,94 @@ exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
 
+function getFeeReminderPlayerKey(recipient = {}, teamId = '') {
+  const explicitPlayerKey = String(recipient.playerKey || '').trim();
+  if (explicitPlayerKey) return explicitPlayerKey;
+  const resolvedTeamId = String(recipient.teamId || teamId || '').trim();
+  const playerId = String(recipient.playerId || recipient.childId || '').trim();
+  if (!resolvedTeamId || !playerId) return '';
+  return `${resolvedTeamId}::${playerId}`;
+}
+
+function buildFeeReminderCandidateUserIds(recipient = {}, playerOwnerIds = []) {
+  return Array.from(new Set([
+    recipient.userId,
+    recipient.accountUserId,
+    recipient.parentUserId,
+    ...playerOwnerIds
+  ].map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+async function resolveFeeReminderCandidateUserIds(teamId, recipient = {}) {
+  const playerKey = getFeeReminderPlayerKey(recipient, teamId);
+  let playerOwnerIds = [];
+  if (playerKey) {
+    const parentSnap = await firestore.collection('users')
+      .where('parentPlayerKeys', 'array-contains', playerKey)
+      .get();
+    playerOwnerIds = parentSnap.docs
+      .map((docSnap) => String(docSnap.id || '').trim())
+      .filter(Boolean);
+  }
+  return buildFeeReminderCandidateUserIds(recipient, playerOwnerIds);
+}
+
+async function sendFeeUnpaidDueReminders() {
+  const now = admin.firestore.Timestamp.now();
+  const threeDaysLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 3 * 24 * 60 * 60 * 1000);
+
+  // Use 'in' filter instead of '!=' to avoid Firestore inequality-on-different-field restriction
+  const snap = await firestore.collectionGroup('feeRecipients')
+    .where('status', 'in', ['unpaid', 'pending'])
+    .where('dueDate', '>=', now)
+    .where('dueDate', '<=', threeDaysLater)
+    .get();
+
+  const promises = snap.docs.map(async (doc) => {
+    const data = doc.data();
+    // Skip if reminder already sent (deduplication guard)
+    if (data.reminderSentAt) return null;
+    const pathParts = doc.ref.path.split('/');
+    // Path structure: teams/{teamId}/.../{feeId}/feeRecipients/{recipientId}
+    const teamId = pathParts[1];
+    if (!teamId) return null;
+    const title = data.feeTitle || data.title || 'Team fee due soon';
+
+    try {
+      const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, data);
+      if (!candidateUserIds.length) return null;
+
+      const allTargets = await getTargetsForCategory(teamId, 'fees', null);
+      const candidateUserIdSet = new Set(candidateUserIds);
+      const payerTargets = allTargets.filter((t) => candidateUserIdSet.has(t.uid));
+      if (!payerTargets.length) return null;
+
+      // Mark reminderSentAt only when targets exist, to prevent duplicate sends if function retries
+      await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });
+
+      await sendDirectTargetsNotification({
+        targets: payerTargets,
+        category: 'fees',
+        title: `Reminder: ${title} is due soon`,
+        body: 'Your team fee payment is due in 3 days or less.',
+        teamId,
+      });
+      return { teamId, payerUserIds: candidateUserIds, feeTitle: title };
+    } catch (err) {
+      console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
+      return null;
+    }
+  });
+
+  const results = await Promise.allSettled(promises);
+  const sent = results.filter((r) => r.status === 'fulfilled' && r.value).length;
+  console.log(`sendFeeUnpaidDueReminders: processed ${snap.docs.length} docs, sent ${sent} reminders`);
+}
+
+exports.sendFeeUnpaidDueReminders = functions.pubsub
+  .schedule('every 24 hours')
+  .onRun(() => sendFeeUnpaidDueReminders());
+
 function detectMentionedUids(text, members) {
   if (!text) return [];
   const mentioned = new Set();
@@ -3657,6 +3777,22 @@ function detectMentionedUids(text, members) {
     }
   }
   return [...mentioned];
+}
+
+async function getMutedUserIdsForTeam(teamId, userIds) {
+  if (!userIds.length) return new Set();
+  const snaps = await Promise.all(
+    userIds.map((uid) => firestore.doc(`users/${uid}`).get().catch(() => null))
+  );
+  const muted = new Set();
+  snaps.forEach((snap, index) => {
+    if (!snap || !snap.exists) return;
+    const chatMuted = snap.data()?.chatMuted;
+    if (chatMuted && chatMuted[teamId]) {
+      muted.add(userIds[index]);
+    }
+  });
+  return muted;
 }
 
 exports.notifyTeamChatMessageCreated = functions.firestore
@@ -3716,14 +3852,24 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       }
     }
 
-    // liveChat push — skip users who already got a mentions push
+    const liveChatTargets = await getTargetsForCategory(teamId, 'liveChat', actorUid);
+    if (!liveChatTargets.length) {
+      return results.length ? results : null;
+    }
+
+    const mutedUids = await getMutedUserIdsForTeam(
+      teamId,
+      [...new Set(liveChatTargets.map((target) => target.uid))]
+    );
+
+    // liveChat push — skip users who already got a mentions push or muted this conversation
     results.push(await sendCategoryNotification({
       teamId,
       category: 'liveChat',
       title: `${senderName}: Team Chat`,
       body,
       actorUid,
-      excludeUids: mentionedUids
+      excludeUids: [...new Set([...mentionedUids, ...mutedUids])]
     }));
 
     return results;
@@ -4003,6 +4149,149 @@ exports.notifyGameUpdated = functions.firestore
       body: payload.body,
       actorUid
     });
+  });
+
+exports.notifyGameCreated = functions.firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onCreate(async (snapshot, context) => {
+    const game = snapshot.data() || {};
+    const teamId = context.params.teamId;
+    const gameId = context.params.gameId;
+
+    const status = String(game.status || '').trim().toLowerCase();
+    if (status === 'draft') return null;
+    if (game.source || game.sourceMetadata) return null;
+
+    const isPractice = String(game.type || '').toLowerCase() === 'practice';
+    const category = isPractice ? 'practice' : 'schedule';
+    const eventTitle = getEventTitle(game);
+    const dateValue = coerceDate(game.date);
+    const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
+    const dateLabel = dateValue ? formatScheduleUpdateDate(dateValue, timeZone) : '';
+    const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;
+    const body = dateLabel || (isPractice ? 'Practice scheduled' : 'Game scheduled');
+
+    return sendCategoryNotification({
+      teamId,
+      gameId,
+      category,
+      title,
+      body,
+      actorUid: game.createdBy || null
+    });
+  });
+
+exports.notifyFeeMarkedPaid = functions.firestore
+  .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
+  .onWrite(async (change, context) => {
+    const before = change.before.exists ? change.before.data() : null;
+    const after = change.after.exists ? change.after.data() : null;
+    if (!after) return null;
+    if (String(after.status || '').trim().toLowerCase() !== 'paid') return null;
+    if (String(before?.status || '').trim().toLowerCase() === 'paid') return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('fees')) {
+      functions.logger.error('notifyFeeMarkedPaid requires the fees notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
+
+    const { teamId } = context.params;
+    const title = String(after.feeTitle || after.title || 'Team fee').trim();
+    const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
+
+    const [allFeeTargets, candidateUsers] = await Promise.all([
+      getTargetsForCategory(teamId, 'fees', null),
+      getCandidateUsersForTeam(teamId)
+    ]);
+    const staffUserIds = new Set(
+      candidateUsers
+        .filter((user) => Array.isArray(user?.roles) && user.roles.includes('staff'))
+        .map((user) => user.uid)
+    );
+
+    const promises = [];
+    if (payerUserId) {
+      const payerTargets = allFeeTargets.filter((target) => target.uid === payerUserId);
+      if (payerTargets.length) {
+        promises.push(sendDirectTargetsNotification({
+          targets: payerTargets,
+          category: 'fees',
+          title: `Fee paid: ${title}`,
+          body: 'Your payment has been received. Thank you!',
+          teamId
+        }));
+      }
+    }
+
+    const staffTargets = allFeeTargets.filter((target) => staffUserIds.has(target.uid) && target.uid !== payerUserId);
+    if (staffTargets.length) {
+      promises.push(sendDirectTargetsNotification({
+        targets: staffTargets,
+        category: 'fees',
+        title: `Fee marked paid: ${title}`,
+        body: 'A team fee has been marked as paid.',
+        teamId
+      }));
+    } else {
+      functions.logger.warn('notifyFeeMarkedPaid found no staff notification targets.', {
+        teamId,
+        recipientId: context.params?.recipientId || null,
+        payerUserId,
+        totalFeeTargets: allFeeTargets.length
+      });
+    }
+
+    await Promise.allSettled(promises);
+    return null;
+  });
+
+exports.notifyFeeAssigned = functions.firestore
+  .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data();
+    if (!data) return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('fees')) {
+      functions.logger.error('notifyFeeAssigned requires the fees notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
+
+    const { teamId } = context.params;
+    const playerId = String(data.playerId || '').trim();
+    const playerRef = playerId ? firestore.doc(`teams/${teamId}/players/${playerId}`) : null;
+    const playerSnap = playerRef ? await playerRef.get() : null;
+    const playerData = playerSnap?.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : {};
+    let privateProfileData = {};
+    if (playerRef) {
+      const privateProfileSnap = await playerRef.collection('private').doc('profile').get();
+      privateProfileData = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
+    }
+
+    const payerUserIds = getTeamFeeRecipientTargetUserIds(data, playerData, privateProfileData);
+    if (!payerUserIds.length) return null;
+
+    const payerTargets = (await getTargetsForCategory(teamId, 'fees', null))
+      .filter((target) => payerUserIds.includes(target.uid));
+    if (!payerTargets.length) return null;
+
+    const title = String(data.feeTitle || data.title || 'Team fee').trim();
+    const amountCents = Number(data.amountCents || data.feeAmountCents || 0);
+    const amountDisplay = amountCents > 0 ? ` ($${(amountCents / 100).toFixed(2)})` : '';
+
+    await sendDirectTargetsNotification({
+      targets: payerTargets,
+      category: 'fees',
+      title: `New fee assigned: ${title}${amountDisplay}`,
+      body: 'A new team fee has been assigned to your account.',
+      teamId,
+    });
+    return null;
   });
 
 const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;

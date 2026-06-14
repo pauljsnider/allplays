@@ -78,3 +78,4 @@ packages.microsoft.gpg
 
 # Generated React app assets
 apps/app/dist/
+apps/app/bundle-visualizer.html

@@ -29,8 +29,8 @@ const helpMocks = vi.hoisted(() => ({
 
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/firebase.js', () => firebaseMocks);
-vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
-vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
+vi.mock('../../apps/app/src/lib/homeService', () => homeMocks);
+vi.mock('../../apps/app/src/lib/helpKnowledgeService', () => helpMocks);
 
 import {
     buildAppSearchActions,
@@ -91,13 +91,20 @@ beforeEach(() => {
 
 describe('React app search service', () => {
     it('builds current-site style actions for signed out, signed in, and admin users', () => {
-        expect(buildAppSearchActions({ user: null, isAdmin: false, isPlatformAdmin: false }).map((item) => item.id)).toEqual([
+        const signedOutActions = buildAppSearchActions({ user: null, isAdmin: false, isPlatformAdmin: false });
+        expect(signedOutActions.map((item) => item.id)).toEqual([
             'browse-teams',
             'sign-in',
             'get-started'
         ]);
+        expect(signedOutActions[0]).toMatchObject({
+            id: 'browse-teams',
+            href: 'https://allplays.ai/teams.html'
+        });
+        expect(signedOutActions[0].route).toBeUndefined();
 
-        expect(buildAppSearchActions(auth).map((item) => item.id)).toEqual([
+        const signedInActions = buildAppSearchActions(auth);
+        expect(signedInActions.map((item) => item.id)).toEqual([
             'browse-teams',
             'dashboard',
             'my-teams',
@@ -108,6 +115,11 @@ describe('React app search service', () => {
             'create-social-post',
             'profile'
         ]);
+        expect(signedInActions[0]).toMatchObject({
+            id: 'browse-teams',
+            route: '/teams/browse'
+        });
+        expect(signedInActions[0].href).toBeUndefined();
 
         expect(buildAppSearchActions({ ...auth, isAdmin: true }).map((item) => item.id)).toContain('admin-dashboard');
     });
@@ -936,5 +948,87 @@ describe('React app search service', () => {
         firebaseMocks.getDocs.mockRejectedValue(error);
 
         await expect(searchAppPlayers('pat', visibleTeams, auth.user)).rejects.toThrow('permission denied');
+    });
+
+    it('caps team-scoped player queries at 8 teams to prevent unbounded Firestore reads', async () => {
+        const manyTeams = new Map(
+            Array.from({ length: 12 }, (_, i) => [
+                `team-${i}`,
+                { id: `team-${i}`, name: `Team ${i}`, sport: 'Basketball', fromAppAccess: true }
+            ])
+        );
+
+        const queriedTeamIds = new Set();
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const ref = request.parts?.[0] || request || {};
+            const collectionName = ref.collectionName || '';
+            const match = collectionName.match(/^teams\/([^/]+)\/players$/);
+            if (match) {
+                queriedTeamIds.add(match[1]);
+            }
+            return { docs: [] };
+        });
+
+        await searchAppPlayers('pat', manyTeams, auth.user);
+
+        expect(queriedTeamIds.size).toBe(8);
+        expect(queriedTeamIds.size).toBeLessThan(manyTeams.size);
+    });
+
+    it('prioritizes private and query-matching teams before capping player search fanout', async () => {
+        const prioritizedTeams = [
+            { id: 'team-private', name: 'Private Team', sport: 'Basketball', isPublic: false, fromAppAccess: true },
+            ...Array.from({ length: 8 }, (_, index) => ({
+                id: `team-public-${index}`,
+                name: `Alpha Team ${index}`,
+                sport: 'Basketball',
+                isPublic: true,
+                fromAppAccess: true
+            })),
+            { id: 'team-match', name: 'Patriots', sport: 'Basketball', isPublic: true, fromAppAccess: true }
+        ];
+        const visibleTeams = new Map(prioritizedTeams.map((team) => [team.id, team]));
+        homeMocks.loadParentHome.mockResolvedValue({ teams: [] });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] });
+
+        await loadAppSearchTeams({
+            ...auth.user,
+            parentOf: prioritizedTeams.map((team) => ({ teamId: team.id, teamName: team.name, sport: team.sport, active: true }))
+        });
+
+        const queriedTeamIds = new Set();
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const ref = request.parts?.[0] || request || {};
+            const collectionName = ref.collectionName || '';
+            const match = collectionName.match(/^teams\/([^/]+)\/players$/);
+            if (match) {
+                queriedTeamIds.add(match[1]);
+                if (match[1] === 'team-match') {
+                    return {
+                        docs: [firestorePlayer('teams/team-match/players/player-1', { name: 'Pat Forward', number: '3' })]
+                    };
+                }
+            }
+            return { docs: [] };
+        });
+
+        const players = await searchAppPlayers('pat', visibleTeams, auth.user);
+
+        expect(queriedTeamIds.has('team-private')).toBe(true);
+        expect(queriedTeamIds.has('team-match')).toBe(true);
+        expect(queriedTeamIds.has('team-public-7')).toBe(false);
+        expect(players).toEqual([{
+            id: 'player:team-match:player-1',
+            kind: 'player',
+            title: '#3 Pat Forward',
+            subtitle: 'Patriots',
+            route: '/players/team-match/player-1',
+            teamId: 'team-match',
+            playerId: 'player-1'
+        }]);
     });
 });

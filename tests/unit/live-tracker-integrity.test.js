@@ -63,6 +63,30 @@ describe('live tracker integrity helpers', () => {
     expect(result.derived.away).toBe(2);
   });
 
+  it('counts run stats as scoring events for diamond sports', () => {
+    const log = [
+      { undoData: { type: 'stat', statKey: 'R', value: 1, isOpponent: false } },
+      { undoData: { type: 'stat', statKey: 'runs', value: 2, isOpponent: true } },
+      { undoData: { type: 'stat', statKey: 'H', value: 1, isOpponent: false } }
+    ];
+
+    expect(reconcileFinalScoreFromLog({
+      requestedHome: 0,
+      requestedAway: 0,
+      log
+    })).toMatchObject({
+      home: 1,
+      away: 2,
+      mismatch: true
+    });
+
+    expect(canTrustScoreLogForFinalization({
+      liveHome: 1,
+      liveAway: 2,
+      log
+    })).toBe(true);
+  });
+
   it('keeps requested final score when already aligned to event-derived score', () => {
     const log = [
       { undoData: { type: 'stat', statKey: 'PTS', value: 2, isOpponent: false } },

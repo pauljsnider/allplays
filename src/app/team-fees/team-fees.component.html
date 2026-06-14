@@ -10,17 +10,40 @@
 
 <ng-template #feesReady>
   <div *ngIf="teamFees.length > 0; else noFees">
-    <div *ngFor="let fee of teamFees" class="team-fee-item">
-      <h3>{{ fee.name }}</h3>
-      <p>Amount: {{ fee.amount | currency }}</p>
-      <p>Status: <span [class.paid]="fee.isPaid" [class.unpaid]="!fee.isPaid && fee.status !== 'canceled'">{{ fee.status === 'canceled' ? 'Canceled' : fee.isPaid ? 'Paid' : 'Unpaid' }}</span></p>
-      <p *ngIf="!fee.canPayOnline && !fee.isPaid && fee.status !== 'canceled' && fee.offlinePaymentInstructions" class="offline-payment-instructions">{{ fee.offlinePaymentInstructions }}</p>
+    <section *ngIf="outstandingFees.length > 0; else noOutstandingFees" class="team-fees-outstanding" aria-label="Outstanding team fees">
+      <div *ngFor="let fee of outstandingFees" class="team-fee-item">
+        <h3>{{ fee.name }}</h3>
+        <p>Amount: {{ fee.amount | currency }}</p>
+        <p>Status: <span [class.paid]="fee.isPaid" [class.unpaid]="!fee.isPaid && fee.status !== 'canceled'">{{ fee.status === 'canceled' ? 'Canceled' : fee.isPaid ? 'Paid' : 'Unpaid' }}</span></p>
+        <p *ngIf="!fee.canPayOnline && !fee.isPaid && fee.status !== 'canceled' && fee.offlinePaymentInstructions" class="offline-payment-instructions">{{ fee.offlinePaymentInstructions }}</p>
 
-      <button *ngIf="fee.canPayOnline" (click)="handlePayFee(fee)" [disabled]="isPaymentPending()">
-        <span *ngIf="!isPaymentLoading(fee.id)">Pay Team Fee</span>
-        <span *ngIf="isPaymentLoading(fee.id)">Initiating Payment...</span>
+        <button *ngIf="fee.canPayOnline" (click)="handlePayFee(fee)" [disabled]="isPaymentPending()">
+          <span *ngIf="!isPaymentLoading(fee.id)">Pay Team Fee</span>
+          <span *ngIf="isPaymentLoading(fee.id)">Initiating Payment...</span>
+        </button>
+      </div>
+    </section>
+
+    <ng-template #noOutstandingFees>
+      <div class="no-outstanding-fees">
+        <h3>No outstanding team fees</h3>
+        <p>Your current balances are paid or canceled. Payment history is still available below.</p>
+      </div>
+    </ng-template>
+
+    <section *ngIf="feeHistory.length > 0" class="team-fees-history" aria-label="Payment history">
+      <button type="button" class="payment-history-toggle" (click)="togglePaymentHistory()" [attr.aria-expanded]="paymentHistoryOpen">
+        {{ paymentHistoryOpen ? 'Hide payment history' : 'Show payment history' }} ({{ feeHistory.length }})
       </button>
-    </div>
+
+      <div *ngIf="paymentHistoryOpen" class="payment-history-list">
+        <div *ngFor="let fee of feeHistory" class="team-fee-item historical-fee-item">
+          <h3>{{ fee.name }}</h3>
+          <p>Amount: {{ fee.amount | currency }}</p>
+          <p>Status: <span [class.paid]="fee.isPaid" [class.unpaid]="!fee.isPaid && fee.status !== 'canceled'">{{ fee.status === 'canceled' ? 'Canceled' : fee.isPaid ? 'Paid' : 'Unpaid' }}</span></p>
+        </div>
+      </div>
+    </section>
   </div>
 </ng-template>
 

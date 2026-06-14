@@ -69,3 +69,14 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
 export function sanitizeErrorForLogging(error: unknown) {
     return sanitizeValue(error, new WeakSet<object>(), 0);
 }
+
+export type SanitizedRequestInitForLogging = Record<string, unknown>;
+
+export function sanitizeRequestInitForLogging(init: RequestInit): SanitizedRequestInitForLogging {
+    const sanitized = sanitizeValue(init, new WeakSet<object>(), 0);
+
+    return {
+        ...(sanitized as Record<string, unknown>),
+        headers: redactedValue
+    };
+}

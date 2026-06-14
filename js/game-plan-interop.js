@@ -72,7 +72,8 @@ export function buildRotationPlanFromGamePlan(gamePlan) {
     if (!Number.isFinite(periodNum)) return;
 
     const basePeriod = `${periodPrefix}${periodNum}`;
-    const period = timeLabel === 'full' ? basePeriod : `${basePeriod} ${timeLabel}'`;
+    const useWholePeriodLabel = periodPrefix === 'I' && (timeLabel === 'full' || String(timeLabel) === '1');
+    const period = useWholePeriodLabel ? basePeriod : (timeLabel === 'full' ? basePeriod : `${basePeriod} ${timeLabel}'`);
     if (!plan[period]) plan[period] = {};
     plan[period][posId] = playerId;
   });
