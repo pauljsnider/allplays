@@ -122,8 +122,7 @@ export function buildAppSearchActions(auth: Pick<AuthState, 'user' | 'isAdmin' |
       kind: 'action',
       title: 'Browse Teams',
       subtitle: 'Explore public teams on ALL PLAYS',
-      route: auth.user ? '/teams/browse' : undefined,
-      href: auth.user ? undefined : 'https://allplays.ai/teams.html'
+      ...(auth.user ? { route: '/teams/browse' } : { href: 'https://allplays.ai/teams.html' })
     }
   ];
 
