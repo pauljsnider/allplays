@@ -99,6 +99,7 @@ import { markTeamChatReadAndRefreshBadge, updateAppIconBadge } from '../lib/badg
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
+import { useChatSheets } from './messages/hooks/useChatSheets';
 
 type StatusTone = 'neutral' | 'success' | 'error';
 
@@ -477,12 +478,26 @@ function ChatWindow({
   const [aiThinking, setAiThinking] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(() => voiceRecognition.isNativeRuntime() || voiceRecognition.hasBrowserSupport());
-  const [showConversationSheet, setShowConversationSheet] = useState(false);
-  const [showAudienceSheet, setShowAudienceSheet] = useState(false);
-  const [showMediaGallery, setShowMediaGallery] = useState(false);
-  const [showAttachSheet, setShowAttachSheet] = useState(false);
-  const [showLinkSheet, setShowLinkSheet] = useState(false);
-  const [showEmailSheet, setShowEmailSheet] = useState(false);
+  const {
+    showConversationSheet,
+    showAudienceSheet,
+    showMediaGallery,
+    showAttachSheet,
+    showLinkSheet,
+    showEmailSheet,
+    openConversationSheet,
+    closeConversationSheet,
+    openAudienceSheet,
+    closeAudienceSheet,
+    openMediaGallery,
+    closeMediaGallery,
+    openAttachSheet,
+    closeAttachSheet,
+    openLinkSheet,
+    closeLinkSheet,
+    openEmailSheet: openTeamEmailSheet,
+    closeEmailSheet: closeTeamEmailSheet
+  } = useChatSheets();
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
   const [emailTemplateName, setEmailTemplateName] = useState('');
@@ -948,7 +963,7 @@ function ChatWindow({
     setSelectedRecipientIds([]);
     setReactionMessageId('');
     setActionMessageId('');
-    setShowConversationSheet(false);
+    closeConversationSheet();
   };
 
   const handleAudienceTargetChange = async (target: ChatTargetType) => {
@@ -961,7 +976,7 @@ function ChatWindow({
       if (!isDefaultTeamConversation(selectedConversationId)) {
         switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
       }
-      setShowAudienceSheet(false);
+      closeAudienceSheet();
       return;
     }
 
@@ -977,7 +992,7 @@ function ChatWindow({
         if (selectedConversationId !== staffConversation.id) {
           switchConversation(staffConversation.id);
         }
-        setShowAudienceSheet(false);
+        closeAudienceSheet();
       } catch (staffError: any) {
         setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
       }
@@ -1032,7 +1047,7 @@ function ChatWindow({
       ...selectedFiles.map((file) => ({ file, url: URL.createObjectURL(file) }))
     ]);
     event.target.value = '';
-    setShowAttachSheet(false);
+    closeAttachSheet();
   };
 
   const removeFile = (index: number) => {
@@ -1043,10 +1058,9 @@ function ChatWindow({
     });
   };
 
-  const openLinkSheet = () => {
-    setShowAttachSheet(false);
+  const handleOpenLinkSheet = () => {
     setLinkDraft('');
-    setShowLinkSheet(true);
+    openLinkSheet();
   };
 
   const addLinkToComposer = () => {
@@ -1058,7 +1072,7 @@ function ChatWindow({
       return;
     }
     setText((current) => `${current.trim()}${current.trim() ? ' ' : ''}${href}`);
-    setShowLinkSheet(false);
+    closeLinkSheet();
     setLinkDraft('');
   };
 
@@ -1073,7 +1087,7 @@ function ChatWindow({
       && selectedRecipientIds.map((id) => String(id || '').trim()).filter(Boolean).length === 0;
     if (hasEmptySelectedAudience) {
       setStatus({ tone: 'error', message: 'Choose at least one selected member before sending.' });
-      setShowAudienceSheet(true);
+      openAudienceSheet();
       return;
     }
 
@@ -1200,7 +1214,7 @@ function ChatWindow({
 
   const openEmailSheet = () => {
     if (!canModerate) return;
-    setShowEmailSheet(true);
+    openTeamEmailSheet();
     setEmailTemplateName('');
     setEmailStatus(null);
     setEmailHistoryStatus(null);
@@ -1557,7 +1571,7 @@ function ChatWindow({
             <button
               type="button"
               className="mt-0.5 flex max-w-full items-center gap-1 text-left text-xs font-bold text-gray-500"
-              onClick={() => setShowConversationSheet(true)}
+              onClick={openConversationSheet}
             >
               <span className="truncate">{getConversationDisplayName(selectedConversation, team || {})}</span>
               <ChevronDown className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
@@ -1578,7 +1592,7 @@ function ChatWindow({
           >
             <BellOff className="h-5 w-5" aria-hidden="true" />
           </button>
-          <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={() => setShowMediaGallery(true)} aria-label="Open photos and videos">
+          <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={openMediaGallery} aria-label="Open photos and videos">
             <ImageIcon className="h-5 w-5" aria-hidden="true" />
             {mediaEntries.length ? <span className="sr-only">{mediaEntries.length} shared media items</span> : null}
           </button>
@@ -1672,11 +1686,11 @@ function ChatWindow({
         audienceSummary={audienceSummary}
         onTextChange={setText}
         onSubmit={handleSend}
-        onAttach={() => setShowAttachSheet(true)}
+        onAttach={openAttachSheet}
         onRemoveFile={removeFile}
         onVoice={toggleVoiceCapture}
         onAudience={() => {
-          setShowAudienceSheet(true);
+          openAudienceSheet();
           void ensureRecipientOptionsLoaded().catch(() => undefined);
         }}
         onTeamEmail={openEmailSheet}
@@ -1692,7 +1706,7 @@ function ChatWindow({
           team={team || {}}
           selectedConversationId={selectedConversationId}
           onSelect={switchConversation}
-          onClose={() => setShowConversationSheet(false)}
+          onClose={closeConversationSheet}
         />
       ) : null}
 
@@ -1708,7 +1722,7 @@ function ChatWindow({
           onRetryRecipientOptions={() => {
             void ensureRecipientOptionsLoaded().catch(() => undefined);
           }}
-          onClose={() => setShowAudienceSheet(false)}
+          onClose={closeAudienceSheet}
         />
       ) : null}
 
@@ -1716,9 +1730,9 @@ function ChatWindow({
         <AttachSheet
           onPhoto={() => photoInputRef.current?.click()}
           onVideo={() => videoInputRef.current?.click()}
-          onLink={openLinkSheet}
+          onLink={handleOpenLinkSheet}
           onMention={insertAllPlaysMention}
-          onClose={() => setShowAttachSheet(false)}
+          onClose={closeAttachSheet}
         />
       ) : null}
 
@@ -1727,7 +1741,7 @@ function ChatWindow({
           value={linkDraft}
           onChange={setLinkDraft}
           onAdd={addLinkToComposer}
-          onClose={() => setShowLinkSheet(false)}
+          onClose={closeLinkSheet}
         />
       ) : null}
 
@@ -1768,12 +1782,12 @@ function ChatWindow({
           }}
           onStatusClose={() => setEmailStatus(null)}
           onHistoryStatusClose={() => setEmailHistoryStatus(null)}
-          onClose={() => setShowEmailSheet(false)}
+          onClose={closeTeamEmailSheet}
         />
       ) : null}
 
       {showMediaGallery ? (
-        <MediaGallerySheet mediaEntries={mediaEntries} onClose={() => setShowMediaGallery(false)} onStatus={setStatus} />
+        <MediaGallerySheet mediaEntries={mediaEntries} onClose={closeMediaGallery} onStatus={setStatus} />
       ) : null}
 
       {editingMessage ? (
