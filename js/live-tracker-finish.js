@@ -121,7 +121,7 @@ export function buildFinishCompletionPlan({
     const baseData = {
       playerName: player.name,
       playerNumber: player.num,
-      timeMs: safeStatsByPlayerId[player.id]?.timeMs || 0,
+      timeMs: safeStatsByPlayerId[player.id]?.time || 0,
       participated: actuallyParticipated,
       participationStatus: actuallyParticipated ? 'appeared' : 'did-not-appear',
       participationSource: 'live-tracker-finish',

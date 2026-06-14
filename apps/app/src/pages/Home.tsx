@@ -63,6 +63,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import {
   emptySocialHome,
   filterSocialFeedItems,
@@ -134,43 +135,63 @@ export function Home({ auth }: { auth: AuthState }) {
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [social, setSocial] = useState<SocialHomeModel>(() => emptySocialHome());
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
-  const [loading, setLoading] = useState(true);
-  const [socialLoading, setSocialLoading] = useState(false);
   const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number } | null>(null);
-  const [error, setError] = useState('');
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [loadedHomeUserId, setLoadedHomeUserId] = useState<string | null>(null);
+  const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
+  const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
+
+  const authUserId = auth.user?.uid || null;
+  const hasLoadedHome = Boolean(authUserId) && authUserId === loadedHomeUserId;
 
   const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
-    if (!auth.user) return;
-    setLoading(true);
-    setSocialLoading(true);
-    setError('');
+    const user = auth.user;
+    if (!user) return;
+    const hasExistingHome = loadedHomeUserId === user.uid;
+    clearError();
     setSocialStatus(null);
-    try {
-      const { home: nextHome, schedule } = await loadParentHomeSummaryBootstrap(auth.user, { force });
-      setHome(nextHome);
-      setLoading(false);
+    return runPrimaryLoad(
+      async () => {
+        const summary = await loadParentHomeSummaryBootstrap(user, { force });
+        setHome(summary.home);
+        setLoadedHomeUserId(user.uid);
 
-      void loadParentHomeWithSecondaryData(auth.user, { force, schedule })
-        .then(async (secondaryHome) => {
-          setHome(secondaryHome);
-          setSocial(await loadSocialHome(auth.user, secondaryHome));
-        })
-        .catch((secondaryError: any) => {
-          setSocialStatus({ tone: 'error', message: secondaryError?.message || 'Unable to refresh Home details.' });
-        })
-        .finally(() => {
-          setSocialLoading(false);
-        });
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load Home.');
-      setHome(emptyHome());
-      setSocial(emptySocialHome());
-      setSocialLoading(false);
-      setLoading(false);
-    }
+        void runSecondaryLoad(
+          async () => {
+            const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
+            setHome(secondaryHome);
+            setSocial(await loadSocialHome(user, secondaryHome));
+          },
+          {
+            errorMessage: 'Unable to refresh Home details.',
+            rethrow: false,
+            onError: (secondaryError) => {
+              setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(secondaryError, 'Unable to refresh Home details.') });
+            }
+          }
+        );
+
+        return summary;
+      },
+      {
+        getErrorMessage: (loadError) => {
+          if (hasExistingHome) {
+            return 'Unable to refresh Home. Showing the last loaded Home. Try again.';
+          }
+          return getAsyncErrorMessage(loadError, 'Unable to load Home. Try again.');
+        },
+        rethrow: false,
+        onError: () => {
+          if (!hasExistingHome) {
+            setHome(emptyHome());
+            setSocial(emptySocialHome());
+            setLoadedHomeUserId(null);
+          }
+        }
+      }
+    );
   };
 
   useEffect(() => {
@@ -211,6 +232,7 @@ export function Home({ auth }: { auth: AuthState }) {
   }, [searchParams]);
 
   const topAction = home.actionItems[0] || null;
+  const showBlockingErrorState = !loading && !hasLoadedHome && Boolean(error);
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
   const today = new Date();
@@ -243,15 +265,21 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   const refreshSocial = async (nextHome = home) => {
-    if (!auth.user) return;
-    setSocialLoading(true);
-    try {
-      setSocial(await loadSocialHome(auth.user, nextHome));
-    } catch (loadError: any) {
-      setSocialStatus({ tone: 'error', message: loadError?.message || 'Unable to refresh Feed.' });
-    } finally {
-      setSocialLoading(false);
-    }
+    const user = auth.user;
+    if (!user) return;
+    setSocialStatus(null);
+    await runSecondaryLoad(
+      async () => {
+        setSocial(await loadSocialHome(user, nextHome));
+      },
+      {
+        getErrorMessage: (loadError) => getAsyncErrorMessage(loadError, 'Unable to refresh Feed.'),
+        rethrow: false,
+        onError: (loadError) => {
+          setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(loadError, 'Unable to refresh Feed.') });
+        }
+      }
+    );
   };
 
   const handleCreatePost = async (input: CreateSocialPostInput) => {
@@ -335,8 +363,10 @@ export function Home({ auth }: { auth: AuthState }) {
 
       {loading ? <HomePageSkeleton /> : null}
 
-      {!loading && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} officialsAccess={officialsAccess} /> : null}
-      {!loading && activeSection === 'feed' ? (
+      {showBlockingErrorState ? <HomeLoadErrorState onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
+
+      {!loading && !showBlockingErrorState && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} officialsAccess={officialsAccess} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'feed' ? (
         <FeedSection
           social={social}
           loading={socialLoading}
@@ -347,9 +377,9 @@ export function Home({ auth }: { auth: AuthState }) {
           onStatus={setSocialStatus}
         />
       ) : null}
-      {!loading && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
-      {!loading && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
-      {!loading && activeSection === 'friends' ? (
+      {!loading && !showBlockingErrorState && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'friends' ? (
         <FriendsSection
           auth={auth}
           home={home}
@@ -1264,6 +1294,7 @@ function SocialComposerModal({
   const [visibility, setVisibility] = useState<SocialVisibility>(activePreset.defaultVisibility);
   const [teamId, setTeamId] = useState(home.teams[0]?.teamId || '');
   const [playerKey, setPlayerKey] = useState(initialPreset.prefersPlayer && home.players[0] ? `${home.players[0].teamId}::${home.players[0].playerId}` : '');
+  const [playerTaggingEnabled, setPlayerTaggingEnabled] = useState(initialPreset.prefersPlayer);
   const [caption, setCaption] = useState('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -1271,17 +1302,20 @@ function SocialComposerModal({
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState('');
 
-  const selectedPlayer = activePreset.prefersPlayer
-    ? home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || home.players[0] || null
-    : home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || null;
-  const selectedTeam = selectedPlayer
+  const supportsOptionalPlayerTagging = type === 'game_recap' || type === 'team_media' || type === 'practice_packet';
+  const playerSelectionEnabled = activePreset.prefersPlayer || playerTaggingEnabled;
+  const fallbackPlayer = home.players.find((player) => player.teamId === teamId) || home.players[0] || null;
+  const selectedPlayer = playerSelectionEnabled
+    ? home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || (activePreset.prefersPlayer ? fallbackPlayer : null)
+    : null;
+  const selectedTeam = playerSelectionEnabled && selectedPlayer
     ? home.teams.find((team) => team.teamId === selectedPlayer.teamId) || home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null
     : home.teams.find((team) => team.teamId === teamId) || home.teams[0] || null;
   const suggestedTitle = getComposerSuggestedTitle(type, selectedTeam, selectedPlayer);
   const visibleUserIds = visibility === 'friends' || visibility === 'friends_and_team'
     ? social.friends.map((friend) => friend.userId)
     : [];
-  const subjectLabel = selectedPlayer
+  const subjectLabel = playerSelectionEnabled && selectedPlayer
     ? `${selectedPlayer.playerName} · ${selectedPlayer.teamName}`
     : selectedTeam?.teamName || 'Choose team';
 
@@ -1291,12 +1325,13 @@ function SocialComposerModal({
     setPresetId(nextPreset.id);
     setVisibility(nextPreset.defaultVisibility);
     setLocalError('');
-    if (nextPreset.prefersPlayer && !playerKey && home.players[0]) {
-      setPlayerKey(`${home.players[0].teamId}::${home.players[0].playerId}`);
-      setTeamId(home.players[0].teamId);
-    }
-    if (!nextPreset.prefersPlayer) {
-      setPlayerKey('');
+    setPlayerTaggingEnabled(nextPreset.prefersPlayer);
+    if (nextPreset.prefersPlayer) {
+      const nextPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === playerKey) || home.players[0] || null;
+      if (nextPlayer) {
+        setPlayerKey(`${nextPlayer.teamId}::${nextPlayer.playerId}`);
+        setTeamId(nextPlayer.teamId);
+      }
     }
   };
 
@@ -1410,22 +1445,55 @@ function SocialComposerModal({
                   {home.teams.length ? home.teams.map((team) => <option key={team.teamId} value={team.teamId}>{team.teamName}</option>) : <option value="">No team linked</option>}
                 </select>
               </label>
-              <label className="block sm:col-span-2">
-                <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player</span>
-                <select
-                  value={playerKey}
-                  onChange={(event) => {
-                    const nextKey = event.target.value;
-                    setPlayerKey(nextKey);
-                    const nextPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === nextKey);
-                    if (nextPlayer?.teamId) setTeamId(nextPlayer.teamId);
-                  }}
-                  className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-                >
-                  <option value="">Team post</option>
-                  {home.players.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
-                </select>
-              </label>
+              {supportsOptionalPlayerTagging ? (
+                <div className="block sm:col-span-2">
+                  <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Optional</span>
+                  <div className="mt-1 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-sm font-black text-gray-950">Tag a player</div>
+                        <div className="mt-0.5 text-xs font-semibold text-gray-500">Keep this team-first unless you explicitly want to tag one player.</div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`rounded-full px-3 py-1.5 text-xs font-black ${playerTaggingEnabled ? 'bg-primary-600 text-white' : 'bg-white text-primary-700 ring-1 ring-primary-100'}`}
+                        onClick={() => {
+                          if (playerTaggingEnabled) {
+                            setPlayerTaggingEnabled(false);
+                            return;
+                          }
+                          const nextPlayer = home.players.find((player) => player.teamId === (selectedTeam?.teamId || teamId)) || home.players[0] || null;
+                          if (nextPlayer) {
+                            setPlayerKey(`${nextPlayer.teamId}::${nextPlayer.playerId}`);
+                            setTeamId(nextPlayer.teamId);
+                          }
+                          setPlayerTaggingEnabled(true);
+                        }}
+                      >
+                        {playerTaggingEnabled ? 'Remove player tag' : 'Tag a player'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+              {playerSelectionEnabled ? (
+                <label className="block sm:col-span-2">
+                  <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player</span>
+                  <select
+                    value={playerKey}
+                    onChange={(event) => {
+                      const nextKey = event.target.value;
+                      setPlayerKey(nextKey);
+                      const nextPlayer = home.players.find((player) => `${player.teamId}::${player.playerId}` === nextKey);
+                      if (nextPlayer?.teamId) setTeamId(nextPlayer.teamId);
+                    }}
+                    className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-bold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                  >
+                    {activePreset.prefersPlayer ? null : <option value="">Choose player</option>}
+                    {home.players.map((player) => <option key={`${player.teamId}-${player.playerId}`} value={`${player.teamId}::${player.playerId}`}>{player.playerName} · {player.teamName}</option>)}
+                  </select>
+                </label>
+              ) : null}
             </div>
           ) : null}
 
@@ -1669,6 +1737,20 @@ function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: str
   );
 }
 
+function HomeLoadErrorState({ onRetry, retrying }: { onRetry: () => void; retrying: boolean }) {
+  return (
+    <section className="app-card p-5 text-center">
+      <AlertCircle className="mx-auto h-8 w-8 text-rose-400" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">Home could not load</div>
+      <div className="mt-1 text-xs font-semibold text-gray-500">Try loading Home again to restore your dashboard.</div>
+      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry loading Home">
+        {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+        Retry
+      </button>
+    </section>
+  );
+}
+
 function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const isError = tone === 'error';
   return (
@@ -1677,4 +1759,11 @@ function Status({ tone, message }: { tone: 'error' | 'success'; message: string 
       {message}
     </div>
   );
+}
+
+function getAsyncErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
 }

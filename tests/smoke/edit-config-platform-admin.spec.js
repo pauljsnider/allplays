@@ -197,7 +197,7 @@ async function mockDependencies(page) {
         contentType: 'application/javascript',
         body: ''
     }));
-    await page.route('**/js/db.js?v=43', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
+    await page.route('**/js/db.js?v=48', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route('**/js/auth.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/edit-config-access.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: EDIT_CONFIG_ACCESS_STUB }));

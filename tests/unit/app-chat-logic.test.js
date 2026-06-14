@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    __chatHtmlTestUtils,
     DEFAULT_TEAM_CONVERSATION_ID,
     buildChatAudienceMetadata,
     buildEmailAudienceMetadata,
@@ -25,6 +26,32 @@ describe('React app chat logic', () => {
         expect(html).toContain('href="https://allplays.ai/game.html"');
         expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
         expect(html).not.toContain('<script>');
+    });
+
+    it('sanitizes formatted chat html as a backstop against hostile input', () => {
+        const html = formatChatMessageHtml([
+            '<img src=x onerror=alert(1)>',
+            '<a href="javascript:alert(1)">bad</a>',
+            'https://safe.example.test/path?x=&quot; onclick=&quot;alert(1)',
+            '`<svg onload=alert(1)>`',
+            '@ALL PLAYS'
+        ].join(' '));
+
+        expect(html).not.toContain('<img');
+        expect(html).not.toContain('<svg');
+        expect(html).not.toMatch(/<[^>]+\sonerror=/i);
+        expect(html).not.toMatch(/<[^>]+\sonclick=/i);
+        expect(html).not.toContain('href="javascript:');
+        expect(html).toContain('<code>&lt;svg onload=alert(1)&gt;</code>');
+        expect(html).toContain('<span class="chat-mention">@ALL PLAYS</span>');
+        expect(html).toContain('target="_blank"');
+        expect(html).toContain('rel="noopener noreferrer"');
+    });
+
+    it('strips malformed or unsafe anchors in the fallback chat sanitizer', () => {
+        expect(__chatHtmlTestUtils.sanitizeFormattedChatHtmlFallback('<a href="javascript:alert(1)">bad</a>')).toBe('bad');
+        expect(__chatHtmlTestUtils.sanitizeFormattedChatHtmlFallback('<a href="https://safe.example.test" onload="alert(1)">safe</a>')).toBe('safe');
+        expect(__chatHtmlTestUtils.sanitizeFormattedChatHtmlFallback('<a href="https://safe.example.test">safe</a>')).toBe('<a href="https://safe.example.test" target="_blank" rel="noopener noreferrer">safe</a>');
     });
 
     it('accepts only explicit http links from the composer link action', () => {

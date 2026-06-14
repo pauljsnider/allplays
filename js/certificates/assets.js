@@ -7,7 +7,7 @@ import {
     ref,
     uploadBytes,
     getDownloadURL
-} from '../firebase.js?v=17';
+} from '../firebase.js?v=18';
 
 const MAX_CERTIFICATE_ASSET_BYTES = 5 * 1024 * 1024;
 const ALLOWED_CERTIFICATE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);

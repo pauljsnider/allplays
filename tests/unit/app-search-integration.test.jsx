@@ -529,14 +529,14 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('No Member help articles match this search');
     });
 
-    it('opens website-only search actions through the public URL adapter', async () => {
+    it('navigates to the in-app browse teams route when Browse Teams is clicked', async () => {
         const { container } = await renderShell();
 
         await clickButton(container, 'Search');
         await clickButton(container, 'Browse Teams');
 
-        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/teams.html');
-        expect(routePreloadMocks.preloadSearchRoute).not.toHaveBeenCalled();
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/teams/browse');
+        expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
     it('preloads a highlighted app route before Enter and does not preload it twice on selection', async () => {

@@ -38,7 +38,7 @@ const mockStorage = () => {
 Object.defineProperty(window, 'localStorage', { value: mockStorage() });
 Object.defineProperty(window, 'sessionStorage', { value: mockStorage() });
 
-vi.mock('../../js/firebase.js?v=17', () => {
+vi.mock('../../js/firebase.js?v=18', () => {
     return {
         auth: firebaseMocks.auth,
         onAuthStateChanged: firebaseMocks.onAuthStateChanged

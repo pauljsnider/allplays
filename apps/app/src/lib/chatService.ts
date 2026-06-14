@@ -27,6 +27,8 @@ import {
   subscribeToChatMessages,
   toggleChatReaction,
   updateChatLastRead,
+  updateChatMuted,
+  clearChatMuted,
   uploadChatImage,
   upsertChatConversation
 } from '../../../../js/db.js';
@@ -72,6 +74,7 @@ export type ChatTeam = {
   unreadCount: number;
   lastMessage: ChatMessage | null;
   preferredConversationId?: string | null;
+  isMuted?: boolean;
 };
 
 export type ChatConversation = {
@@ -627,6 +630,8 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     };
   }));
 
+  const chatMuted = profile.chatMuted && typeof profile.chatMuted === 'object' ? profile.chatMuted : {};
+
   return {
     teams: previews.map(({ team, canModerate, preview }) => ({
       id: team.id,
@@ -640,7 +645,8 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       lastMessage: preview.message,
       preferredConversationId: preview.conversationId && !isDefaultTeamConversation(preview.conversationId)
         ? preview.conversationId
-        : null
+        : null,
+      isMuted: Boolean(chatMuted[team.id])
     })).sort((a, b) => {
       const activityDiff = getMessageTime(b.lastMessage) - getMessageTime(a.lastMessage);
       if (activityDiff) return activityDiff;
@@ -1258,6 +1264,43 @@ export async function markTeamChatRead(userId: string, teamId: string) {
       }
     });
     return null;
+  }
+}
+
+export async function muteTeamChat(uid: string, teamId: string): Promise<void> {
+  try {
+    await withTimeout(Promise.resolve(updateChatMuted(uid, teamId)), 'Chat mute update', 2500);
+  } catch (error) {
+    if (!isNativeRuntime()) {
+      console.warn('[chat-service] Failed to mute team chat:', sanitizeErrorForLogging(error));
+      throw error;
+    }
+    console.warn('[chat-service] Falling back to REST chat mute update:', sanitizeErrorForLogging(error));
+    const userPath = `users/${encodeURIComponent(uid)}`;
+    const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
+    await nativePatchDocument(userPath, {
+      chatMuted: {
+        ...(profile.chatMuted || {}),
+        [teamId]: new Date()
+      }
+    });
+  }
+}
+
+export async function unmuteTeamChat(uid: string, teamId: string): Promise<void> {
+  try {
+    await withTimeout(Promise.resolve(clearChatMuted(uid, teamId)), 'Chat unmute update', 2500);
+  } catch (error) {
+    if (!isNativeRuntime()) {
+      console.warn('[chat-service] Failed to unmute team chat:', sanitizeErrorForLogging(error));
+      throw error;
+    }
+    console.warn('[chat-service] Falling back to REST chat unmute update:', sanitizeErrorForLogging(error));
+    const userPath = `users/${encodeURIComponent(uid)}`;
+    const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
+    const chatMuted = { ...(profile.chatMuted || {}) };
+    delete chatMuted[teamId];
+    await nativePatchDocument(userPath, { chatMuted });
   }
 }
 

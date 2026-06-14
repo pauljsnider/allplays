@@ -1,6 +1,6 @@
 function isPointsKey(statKey) {
   const key = (statKey || '').toString().toUpperCase();
-  return key === 'PTS' || key === 'POINTS' || key === 'GOALS';
+  return key === 'PTS' || key === 'POINTS' || key === 'GOALS' || key === 'R' || key === 'RUN' || key === 'RUNS';
 }
 
 export function hasUniquePlayerIds(ids = []) {

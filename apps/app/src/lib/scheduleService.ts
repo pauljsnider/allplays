@@ -31,6 +31,7 @@ import {
   updatePracticeAttendance,
   updateTeam,
   upsertPracticePacketCompletion,
+  postChatMessage,
   postSharedGameCancellationNotification,
   cancelOccurrence
 } from '../../../../js/db.js';
@@ -103,7 +104,7 @@ import {
 } from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData } from './appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import type { AuthUser } from './types';
 
@@ -2134,7 +2135,7 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
 
   const timer = startUxTimer('parent game route resolve');
   const expandStaffPlayers = options.expandStaffPlayers === true;
-  const cachedSchedule = getCachedAppData<ParentScheduleLoadResult>(`app-schedule-summary:${user.uid}`);
+  const cachedSchedule = getCachedAppData<ParentScheduleLoadResult>(getParentScheduleSummaryCacheKey(user.uid));
   const cachedMatch = (cachedSchedule?.events || []).find((event) => (
     compactString(event?.id) === requestedGameId
     && event?.type === 'game'
@@ -3388,7 +3389,6 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   }
 
   const notificationFailures: string[] = [];
-  const { postChatMessage } = await import('../../../../js/db.js');
   const senderName = user.displayName || user.email;
   const senderEmail = user.email;
   const counterpartTeamId = compactString(event.opponentTeamId || event.sharedScheduleOpponentTeamId) || null;

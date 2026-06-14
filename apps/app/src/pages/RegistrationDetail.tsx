@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type SyntheticEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import * as parentToolsService from '../lib/parentToolsService';
 import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Send, Ticket, UserPlus, XCircle, type LucideIcon } from 'lucide-react';
@@ -21,6 +21,7 @@ import type { AuthState } from '../lib/types';
 
 type FieldErrors = Record<string, string>;
 type FeeSummaryLine = { label: string; amountCents: number; strong?: boolean };
+type FieldInputHints = Pick<InputHTMLAttributes<HTMLInputElement>, 'inputMode' | 'autoComplete' | 'enterKeyHint'>;
 
 export function selectInitialRegistrationOption(form: ParentRegistrationCard | null, options: any[]) {
   if (!form || !Array.isArray(options) || !options.length) return '';
@@ -67,6 +68,8 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [queue, setQueue] = useState<TeamRegistrationQueueModel | null>(null);
   const [selectedReviewId, setSelectedReviewId] = useState('');
   const [selectedMergePlayerId, setSelectedMergePlayerId] = useState('');
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const cancelledCheckoutReleaseKeyRef = useRef('');
@@ -91,13 +94,21 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         }
         setForm(nextForm);
         if (staffReview) {
-          const nextQueue = await (parentToolsService as any).loadTeamRegistrationQueue(auth.user, teamId, formId) as TeamRegistrationQueueModel;
+          const [nextPage, rosterPlayers] = await Promise.all([
+            (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
+            (parentToolsService as any).loadTeamRegistrationRosterPlayers(auth.user, teamId).catch(() => [])
+          ]);
           if (cancelled) return;
+          const nextQueue: TeamRegistrationQueueModel = { reviews: nextPage.reviews, rosterPlayers };
           setQueue(nextQueue);
+          setLastDoc(nextPage.lastDoc);
+          setHasMore(nextPage.hasMore);
           const firstReviewId = nextQueue.reviews[0]?.id || '';
           setSelectedReviewId((current) => current && nextQueue.reviews.some((review) => review.id === current) ? current : firstReviewId);
         } else {
           setQueue(null);
+          setLastDoc(null);
+          setHasMore(false);
         }
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         const initialOptionId = selectInitialRegistrationOption(nextForm, initialOptions);
@@ -299,6 +310,22 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     }
   };
 
+  const handleLoadMore = async () => {
+    if (!lastDoc || !hasMore || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const nextPage = await (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId, { afterDoc: lastDoc }) as { reviews: any[]; lastDoc: any; hasMore: boolean };
+      setQueue((current: TeamRegistrationQueueModel | null) => current ? { ...current, reviews: [...current.reviews, ...nextPage.reviews] } : { reviews: nextPage.reviews, rosterPlayers: [] });
+      setLastDoc(nextPage.lastDoc);
+      setHasMore(nextPage.hasMore);
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load more registrations.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <LoadingBlock label="Loading registration" />;
   if (!form) return <EmptyState icon={Ticket} title="Registration unavailable" detail={error || 'This registration form could not be loaded.'} actionLabel={error ? 'Retry' : ''} onAction={error ? () => setReloadKey((current) => current + 1) : undefined} />;
 
@@ -354,6 +381,12 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
                   <div className="mt-2 text-xs font-semibold text-gray-500">{review.selectedOptionLabel || 'No option selected'} · {review.paymentLabel}</div>
                 </button>
               )) : <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No applications are available for this form yet.</div>}
+              {hasMore ? (
+                <button type="button" className="secondary-button w-full text-xs" onClick={handleLoadMore} disabled={saving}>
+                  {saving ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : null}
+                  Load more
+                </button>
+              ) : null}
             </div>
           </div>
 
@@ -464,7 +497,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
           {hasQuantityDiscount ? (
             <label className="min-w-0">
               <span className="app-label">Quantity</span>
-              <input className="auth-input mt-1" data-quantity-field type="number" min="1" value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} disabled={saving} />
+              <input className="auth-input mt-1" data-quantity-field type="number" inputMode="numeric" enterKeyHint="next" min="1" value={quantity} onChange={(event) => setQuantity(Math.max(1, Number(event.target.value) || 1))} disabled={saving} />
               {fieldErrors.quantity ? <InlineError message={fieldErrors.quantity} /> : null}
             </label>
           ) : null}
@@ -622,14 +655,14 @@ function FieldGroup({ title, fields, values, errors, prefix, onChange, disabled 
           <label key={field.id} htmlFor={`${prefix}-${field.id}`} className="min-w-0">
             <span className="app-label">{field.label}{field.required ? ' *' : ''}</span>
             {field.type === 'textarea' ? (
-              <textarea id={`${prefix}-${field.id}`} className="auth-input mt-1 min-h-24" data-field-group={prefix} data-field-id={field.id} value={values[field.id] || ''} onChange={(event) => onChange(field.id, event.target.value)} disabled={disabled} />
+              <textarea id={`${prefix}-${field.id}`} className="auth-input mt-1 min-h-24" data-field-group={prefix} data-field-id={field.id} value={values[field.id] || ''} onChange={(event) => onChange(field.id, event.target.value)} disabled={disabled} enterKeyHint="next" />
             ) : field.type === 'select' ? (
               <select id={`${prefix}-${field.id}`} className="auth-input mt-1" data-field-group={prefix} data-field-id={field.id} value={values[field.id] || ''} onChange={(event) => onChange(field.id, event.target.value)} disabled={disabled}>
                 <option value="">Select</option>
                 {(field.options || []).map((option: string) => <option key={option} value={option}>{option}</option>)}
               </select>
             ) : (
-              <input id={`${prefix}-${field.id}`} className="auth-input mt-1" data-field-group={prefix} data-field-id={field.id} type={field.type || 'text'} value={values[field.id] || ''} onChange={(event) => onChange(field.id, event.target.value)} disabled={disabled} />
+              <input id={`${prefix}-${field.id}`} className="auth-input mt-1" data-field-group={prefix} data-field-id={field.id} type={field.type || 'text'} {...getFieldInputHints(field.type)} value={values[field.id] || ''} onChange={(event) => onChange(field.id, event.target.value)} disabled={disabled} />
             )}
             {errors[errorKey] ? <InlineError message={errors[errorKey]} /> : null}
           </label>
@@ -637,6 +670,13 @@ function FieldGroup({ title, fields, values, errors, prefix, onChange, disabled 
       })}
     </div>
   );
+}
+
+function getFieldInputHints(type?: string): FieldInputHints {
+  if (type === 'email') return { inputMode: 'email', autoComplete: 'email', enterKeyHint: 'next' };
+  if (type === 'tel') return { inputMode: 'tel', autoComplete: 'tel', enterKeyHint: 'next' };
+  if (type === 'number') return { inputMode: 'numeric', enterKeyHint: 'next' };
+  return { enterKeyHint: 'next' };
 }
 
 function InlineError({ message }: { message: string }) {

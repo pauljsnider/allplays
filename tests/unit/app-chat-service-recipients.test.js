@@ -29,6 +29,8 @@ const dbMocks = vi.hoisted(() => ({
     subscribeToChatMessages: vi.fn(),
     toggleChatReaction: vi.fn(),
     updateChatLastRead: vi.fn(),
+    updateChatMuted: vi.fn(),
+    clearChatMuted: vi.fn(),
     uploadChatImage: vi.fn(),
     upsertChatConversation: vi.fn()
 }));
@@ -155,7 +157,7 @@ describe('React app chat recipient service', () => {
                 id: `last-${teamId}`,
                 text: teamId === 'team-parent' ? 'Need RSVP' : 'Staff note',
                 senderName: teamId === 'team-parent' ? 'Coach Morgan' : 'Director',
-                createdAt: new Date('2026-05-21T12:00:00Z')
+                createdAt: new Date(teamId === 'team-parent' ? '2026-05-21T13:00:00Z' : '2026-05-21T12:00:00Z')
             }
         ]);
 
@@ -626,6 +628,86 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.sendTeamEmail).not.toHaveBeenCalled();
     });
 
+    describe('loadChatInbox sort order', () => {
+        it('puts the team with a newer lastMessage first', async () => {
+            dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+            dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+                { id: 'team-a', name: 'Alpha', sport: 'Soccer' },
+                { id: 'team-b', name: 'Beta', sport: 'Soccer' }
+            ]);
+            dbMocks.getParentTeams.mockResolvedValue([]);
+            dbMocks.getChatMessages.mockImplementation(async (teamId) => [
+                {
+                    id: `msg-${teamId}`,
+                    text: 'hello',
+                    senderName: 'Coach',
+                    createdAt: new Date(teamId === 'team-b' ? '2026-05-21T14:00:00Z' : '2026-05-21T12:00:00Z')
+                }
+            ]);
+
+            const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+            const inbox = await loadChatInbox({
+                uid: 'user-1',
+                email: 'coach@example.com',
+                displayName: 'Coach',
+                roles: ['coach']
+            });
+
+            expect(inbox.teams.map((t) => t.id)).toEqual(['team-b', 'team-a']);
+        });
+
+        it('puts teams with no lastMessage after teams that have messages', async () => {
+            dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+            dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+                { id: 'team-a', name: 'Alpha', sport: 'Soccer' },
+                { id: 'team-b', name: 'Beta', sport: 'Soccer' },
+                { id: 'team-c', name: 'Gamma', sport: 'Soccer' }
+            ]);
+            dbMocks.getParentTeams.mockResolvedValue([]);
+            dbMocks.getChatMessages.mockImplementation(async (teamId) => {
+                if (teamId === 'team-c') return [];
+                return [
+                    {
+                        id: `msg-${teamId}`,
+                        text: 'hello',
+                        senderName: 'Coach',
+                        createdAt: new Date(teamId === 'team-b' ? '2026-05-21T14:00:00Z' : '2026-05-21T12:00:00Z')
+                    }
+                ];
+            });
+
+            const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+            const inbox = await loadChatInbox({
+                uid: 'user-1',
+                email: 'coach@example.com',
+                displayName: 'Coach',
+                roles: ['coach']
+            });
+
+            expect(inbox.teams.map((t) => t.id)).toEqual(['team-b', 'team-a', 'team-c']);
+        });
+
+        it('sorts alphabetically when two teams have no messages', async () => {
+            dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+            dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+                { id: 'team-z', name: 'Zebras', sport: 'Soccer' },
+                { id: 'team-a', name: 'Antelopes', sport: 'Soccer' }
+            ]);
+            dbMocks.getParentTeams.mockResolvedValue([]);
+            dbMocks.getChatMessages.mockResolvedValue([]);
+
+            const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+            const inbox = await loadChatInbox({
+                uid: 'user-1',
+                email: 'coach@example.com',
+                displayName: 'Coach',
+                roles: ['coach']
+            });
+
+            expect(inbox.teams.map((t) => t.id)).toEqual(['team-a', 'team-z']);
+        });
+    });
+
     it('cleans uploaded chat media if the message write fails', async () => {
         const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
         const uploadedPhoto = {
@@ -657,5 +739,62 @@ describe('React app chat recipient service', () => {
         })).rejects.toThrow('Firestore unavailable');
 
         expect(dbMocks.deleteUploadedChatAttachments).toHaveBeenCalledWith([uploadedPhoto]);
+    });
+
+    it('muteTeamChat sets mutedAt via updateChatMuted', async () => {
+        dbMocks.updateChatMuted.mockResolvedValue(undefined);
+
+        const { muteTeamChat } = await import('../../apps/app/src/lib/chatService.ts');
+        await muteTeamChat('user-1', 'team-1');
+
+        expect(dbMocks.updateChatMuted).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(dbMocks.clearChatMuted).not.toHaveBeenCalled();
+    });
+
+    it('unmuteTeamChat deletes mutedAt via clearChatMuted', async () => {
+        dbMocks.clearChatMuted.mockResolvedValue(undefined);
+
+        const { unmuteTeamChat } = await import('../../apps/app/src/lib/chatService.ts');
+        await unmuteTeamChat('user-1', 'team-1');
+
+        expect(dbMocks.clearChatMuted).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(dbMocks.updateChatMuted).not.toHaveBeenCalled();
+    });
+
+    it('rethrows failed web mute writes so callers can roll back optimistic state', async () => {
+        dbMocks.updateChatMuted.mockRejectedValueOnce(new Error('offline'));
+        dbMocks.clearChatMuted.mockRejectedValueOnce(new Error('permission-denied'));
+
+        const { muteTeamChat, unmuteTeamChat } = await import('../../apps/app/src/lib/chatService.ts');
+
+        await expect(muteTeamChat('user-1', 'team-1')).rejects.toThrow('offline');
+        await expect(unmuteTeamChat('user-1', 'team-1')).rejects.toThrow('permission-denied');
+    });
+
+    it('loadChatInbox sets isMuted from chatMuted profile field', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            parentOf: [],
+            chatMuted: { 'team-parent': new Date('2026-06-01T12:00:00Z') }
+        });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([]);
+        dbMocks.getParentTeams.mockResolvedValue([
+            { id: 'team-parent', name: 'Zebras', sport: 'Soccer' }
+        ]);
+        dbMocks.getUnreadChatCounts.mockResolvedValue({});
+        dbMocks.getChatMessages.mockResolvedValue([]);
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'parent@example.com',
+            displayName: 'Pat Parent',
+            roles: ['parent']
+        });
+
+        expect(inbox.teams[0]).toEqual(expect.objectContaining({
+            id: 'team-parent',
+            isMuted: true
+        }));
     });
 });
