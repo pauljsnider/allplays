@@ -11,7 +11,6 @@ import {
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
-  getAllUsers,
   updateTeam,
   grantScorekeeperAccess,
   grantVideographerAccess,
@@ -27,7 +26,7 @@ import {
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
-import { collection, db, getDocs, query, where } from '../../../../js/firebase.js';
+import { collection, db, doc, getDoc, getDocs, query, where } from '../../../../js/firebase.js';
 import { normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility, validateRosterProfileValues } from '../../../../js/roster-profile-fields.js';
 import { describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
@@ -544,6 +543,102 @@ async function loadPendingParentInvites(teamId: string) {
     .filter(isPendingParentInvite));
 }
 
+async function loadUserById(userId: string) {
+  const normalizedUserId = cleanString(userId);
+  if (!normalizedUserId) return null;
+
+  return readWithNativeFallback(
+    `user ${normalizedUserId}`,
+    async () => {
+      const snapshot = await getDoc(doc(db, 'users', normalizedUserId));
+      return snapshot.exists() ? { id: snapshot.id, ...(snapshot.data() || {}) } : null;
+    },
+    async () => nativeGetDocument(`users/${encodeURIComponent(normalizedUserId)}`)
+  );
+}
+
+async function loadUsersByEmail(email: string) {
+  const normalizedEmail = cleanString(email).toLowerCase();
+  if (!normalizedEmail) return [] as any[];
+
+  return readWithNativeFallback(
+    `users by email ${normalizedEmail}`,
+    async () => {
+      const snapshot = await getDocs(query(collection(db, 'users'), where('email', '==', normalizedEmail)));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    async () => nativeRunQuery('users', 'email', 'EQUAL', normalizedEmail)
+  );
+}
+
+function collectRelevantTeamMemberUserIds(team: any, players: any[] = []) {
+  const userIds = new Set<string>();
+  const addUserId = (value: any) => {
+    const normalizedValue = cleanString(value);
+    if (normalizedValue) userIds.add(normalizedValue);
+  };
+
+  addUserId(team?.ownerId);
+  getSelectedPermissionIds(team, 'scorekeeping').forEach(addUserId);
+  getSelectedPermissionIds(team, 'videography').forEach(addUserId);
+
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    getPlayerLinkedUserIds(player).forEach(addUserId);
+  });
+
+  return [...userIds];
+}
+
+function collectRelevantTeamMemberEmails(team: any, players: any[] = [], invites: any[] = []) {
+  const emails = new Set<string>();
+  const addEmail = (value: any) => {
+    const normalizedValue = cleanString(value).toLowerCase();
+    if (normalizedValue.includes('@')) emails.add(normalizedValue);
+  };
+
+  addEmail(team?.ownerEmail);
+  normalizeAdminEmailList(team?.adminEmails).forEach(addEmail);
+  (Array.isArray(invites) ? invites : []).forEach((invite) => addEmail(invite?.email));
+
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    (Array.isArray(player?.parents) ? player.parents : []).forEach((parent: any) => {
+      addEmail(parent?.email);
+    });
+  });
+
+  return [...emails];
+}
+
+async function loadRelevantTeamMembers({
+  team,
+  players = [],
+  pendingAdminInvites = [],
+  pendingParentInvites = []
+}: {
+  team: any;
+  players?: any[];
+  pendingAdminInvites?: any[];
+  pendingParentInvites?: any[];
+}) {
+  const userIds = collectRelevantTeamMemberUserIds(team, players);
+  const emails = collectRelevantTeamMemberEmails(team, players, [...pendingAdminInvites, ...pendingParentInvites]);
+
+  const [usersById, usersByEmail] = await Promise.all([
+    Promise.all(userIds.map((userId) => loadUserById(userId).catch(() => null))),
+    Promise.all(emails.map((email) => loadUsersByEmail(email).catch(() => [])))
+  ]);
+
+  const membersById = new Map<string, any>();
+  const membersByEmail = new Map<string, any>();
+  [...usersById.filter(Boolean), ...usersByEmail.flat()].forEach((member) => {
+    const normalizedUserId = cleanString(member?.id || member?.uid);
+    const normalizedEmail = cleanString(member?.email).toLowerCase();
+    if (normalizedUserId && !membersById.has(normalizedUserId)) membersById.set(normalizedUserId, member);
+    if (normalizedEmail && !membersByEmail.has(normalizedEmail)) membersByEmail.set(normalizedEmail, member);
+  });
+
+  return Array.from(new Set([...membersById.values(), ...membersByEmail.values()]));
+}
 
 export async function inviteTeamAdminForApp(teamId: string, email: string, user: AuthUser | null = null): Promise<InviteTeamAdminForAppResult> {
   const normalizedTeamId = cleanString(teamId);
@@ -914,10 +1009,12 @@ export async function loadTeamStaffPermissions(teamId: string, user: AuthUser | 
 
   if (!team || !hasFullTeamAccess(user, team)) return null;
 
-  const [pendingAdminInvites, confirmedTeamMembers] = await Promise.all([
-    loadPendingAdminInvites(teamId).catch(() => []),
-    Promise.resolve(getAllUsers()).catch(() => [])
-  ]);
+  const pendingAdminInvites = await loadPendingAdminInvites(teamId).catch(() => []);
+  const confirmedTeamMembers = await loadRelevantTeamMembers({
+    team,
+    players,
+    pendingAdminInvites
+  });
 
   return buildTeamStaffPermissionsSummary({
     teamId,
@@ -933,10 +1030,12 @@ export async function loadTeamRosterParentInvites(teamId: string, user: AuthUser
 
   if (!team || !hasFullTeamAccess(user, team)) return [];
 
-  const [pendingParentInvites, confirmedTeamMembers] = await Promise.all([
-    loadPendingParentInvites(teamId).catch(() => []),
-    Promise.resolve(getAllUsers()).catch(() => [])
-  ]);
+  const pendingParentInvites = await loadPendingParentInvites(teamId).catch(() => []);
+  const confirmedTeamMembers = await loadRelevantTeamMembers({
+    team,
+    players,
+    pendingParentInvites
+  });
 
   return buildRosterParentInviteSummaries({
     teamId,
