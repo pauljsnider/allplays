@@ -420,6 +420,84 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
     });
 }
 
+async function mockPublicTeamsBrowseModule(page) {
+    await page.addInitScript(() => {
+        window.__publicTeamSearchCalls = [];
+    });
+
+    await page.route(/\/src\/lib\/publicTeamsService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                const firstPage = [
+                    {
+                        teamId: 'search-atl-1',
+                        teamName: 'Atlanta Fire',
+                        photoUrl: '',
+                        role: 'Public',
+                        sport: 'Soccer',
+                        location: 'Atlanta, GA',
+                        players: [],
+                        eventCount: 0,
+                        unreadCount: 0,
+                        openActions: 0,
+                        nextEvent: null,
+                        appAccess: true,
+                        webAccess: true,
+                        isPublic: true,
+                    }
+                ];
+                const secondPage = [
+                    {
+                        teamId: 'search-atl-2',
+                        teamName: 'Atlanta United 2',
+                        photoUrl: '',
+                        role: 'Public',
+                        sport: 'Soccer',
+                        location: 'Atlanta, GA',
+                        players: [],
+                        eventCount: 0,
+                        unreadCount: 0,
+                        openActions: 0,
+                        nextEvent: null,
+                        appAccess: true,
+                        webAccess: true,
+                        isPublic: true,
+                    },
+                    {
+                        teamId: 'search-kc-1',
+                        teamName: 'Kansas City Current',
+                        photoUrl: '',
+                        role: 'Public',
+                        sport: 'Soccer',
+                        location: 'Kansas City, MO',
+                        players: [],
+                        eventCount: 0,
+                        unreadCount: 0,
+                        openActions: 0,
+                        nextEvent: null,
+                        appAccess: true,
+                        webAccess: true,
+                        isPublic: true,
+                    }
+                ];
+
+                export async function getPublicTeamsPage({ searchText, cursor = null } = {}) {
+                    window.__publicTeamSearchCalls.push({ searchText, cursor });
+                    if (searchText === 'atlanta' && cursor === null) {
+                        return { teams: firstPage, nextCursor: 'search-page-2' };
+                    }
+                    if (searchText === 'atlanta' && cursor === 'search-page-2') {
+                        return { teams: secondPage, nextCursor: null };
+                    }
+                    return { teams: [], nextCursor: null };
+                }
+            `
+        });
+    });
+}
+
 test.describe('mobile My Teams', () => {
     test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
@@ -482,6 +560,32 @@ test.describe('mobile My Teams', () => {
         await expect(page).toHaveURL(/#\/teams\/browse$/);
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
         await expect(page.getByText(/^Loading teams$/)).toHaveCount(0);
+    });
+
+    test('browse teams paginates searched results on mobile without clearing the query', async ({ page, baseURL }) => {
+        await mockTeamsModules(page, { scenario: 'empty' });
+        await mockPublicTeamsBrowseModule(page);
+        await page.goto(appUrl(baseURL, '/teams/browse'), { waitUntil: 'domcontentloaded' });
+
+        await expect(page.getByRole('heading', { name: 'Discover Public Teams' })).toBeVisible();
+        const searchInput = page.getByPlaceholder('Search by team, city, state, or zip');
+        await searchInput.fill('atlanta');
+        await page.getByRole('button', { name: /Search/i }).click();
+
+        await expect(page.getByText('Atlanta Fire')).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__publicTeamSearchCalls.at(-1))).toEqual({ searchText: 'atlanta', cursor: null });
+
+        await page.getByRole('button', { name: 'Load more teams' }).click();
+
+        await expect(page.getByText('Atlanta United 2')).toBeVisible();
+        await expect(page.getByText('Kansas City Current')).toBeVisible();
+        await expect(searchInput).toHaveValue('atlanta');
+        await expect(page.getByRole('heading', { level: 3 })).toHaveCount(2);
+        await expect(page.getByRole('button', { name: 'Load more teams' })).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => window.__publicTeamSearchCalls.at(-1))).toEqual({ searchText: 'atlanta', cursor: 'search-page-2' });
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        await expect(page).toHaveURL(/#\/teams\/browse$/);
     });
 
     test('shows load failures without trapping the user in loading state', async ({ page, baseURL }) => {

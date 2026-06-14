@@ -48,8 +48,8 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   };
 
   const handleLoadMore = () => {
-    if (!nextCursor || activeSearchQuery) return;
-    void fetchPublicTeams({ cursor: nextCursor, append: true });
+    if (!nextCursor) return;
+    void fetchPublicTeams({ searchText: activeSearchQuery || undefined, cursor: nextCursor, append: true });
   };
 
   const handleClear = () => {
@@ -179,7 +179,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
               </div>
             </div>
           ))}
-          {nextCursor && !activeSearchQuery ? (
+          {nextCursor ? (
             <div className="flex justify-center">
               <button
                 type="button"
