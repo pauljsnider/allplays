@@ -44,8 +44,9 @@ describe('admin invite signup cache busting', () => {
         const allAuthImports = utilsSource.match(/await import\('\.\/auth\.js\?v=\d+'\);/g) || [];
         const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=21'\);/g) || [];
 
-        expect(allAuthImports).toEqual(["await import('./auth.js?v=22');"]);
+        expect(allAuthImports).toEqual(["await import('./auth.js?v=21');"]);
         expect(logoutImportMatches).toHaveLength(1);
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=22');");
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=23');");
     });
 });
