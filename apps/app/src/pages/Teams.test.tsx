@@ -139,14 +139,15 @@ describe('Teams empty state', () => {
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
-  it('shows the load error while keeping the empty-state recovery actions available', async () => {
+  it('shows retryable blocking error UI instead of the empty state when the first team load fails', async () => {
     homeServiceMocks.loadParentTeamsSummary.mockRejectedValueOnce(new Error('Team service down'));
 
     renderTeams();
 
-    expect(await screen.findByText('Team service down')).toBeTruthy();
-    expect(screen.getByText('No teams available')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Accept invite' })).toBeTruthy();
+    expect(await screen.findByText('Teams could not load')).toBeTruthy();
+    expect(screen.getByText('Try loading teams again to restore your team dashboard.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry loading teams' })).toBeTruthy();
+    expect(screen.queryByText('No teams available')).toBeNull();
     expect(screen.queryByText('Loading teams')).toBeNull();
   });
 });

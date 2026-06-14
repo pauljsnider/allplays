@@ -64,8 +64,11 @@ export function Teams({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [teamsLoadError, setTeamsLoadError] = useState<AppServiceError | null>(null);
   const [loadedTeamUserId, setLoadedTeamUserId] = useState<string | null>(null);
   const selectedTeamId = searchParams.get('selectedTeamId') || '';
+  const authUserId = auth.user?.uid || null;
+  const hasLoadedTeamDetails = Boolean(authUserId) && authUserId === loadedTeamUserId;
 
   const loadTeams = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
     const user = auth.user;
@@ -77,20 +80,24 @@ export function Teams({ auth }: { auth: AuthState }) {
       setRefreshing(true);
     }
     setError('');
+    setTeamsLoadError(null);
     try {
       const fastHome = await loadParentTeamsSummary(user, { force: !showLoading });
       setHome(fastHome);
+      setTeamsLoadError(null);
       setLoading(false);
       setRefreshing(true);
       try {
         const enrichedHome = await loadParentHomeSummary(user, { force: !showLoading });
         setHome((current) => mergeTeamSummary(current, enrichedHome));
         setLoadedTeamUserId(user.uid);
+        setTeamsLoadError(null);
       } catch (enrichError) {
         const appError = toAppServiceError(enrichError, 'Unable to load teams.');
         if (!hasExistingTeams) {
           setHome(emptyHome());
           setLoadedTeamUserId(null);
+          setTeamsLoadError(appError);
         } else {
           setError(getTeamsLoadErrorMessage(appError, true));
         }
@@ -98,6 +105,7 @@ export function Teams({ auth }: { auth: AuthState }) {
     } catch (loadError: any) {
       const appError = toAppServiceError(loadError, 'Unable to load teams.');
       setError(getTeamsLoadErrorMessage(appError, hasExistingTeams));
+      setTeamsLoadError(appError);
       if (!hasExistingTeams) {
         setHome(emptyHome());
         setLoadedTeamUserId(null);
@@ -119,6 +127,8 @@ export function Teams({ auth }: { auth: AuthState }) {
       navigate(`/teams/${encodeURIComponent(home.teams[0].teamId)}`, { replace: true });
     }
   }, [loading, home.teams, navigate, selectedTeamId]);
+
+  const showBlockingErrorState = !loading && !hasLoadedTeamDetails && Boolean(teamsLoadError);
 
   const selectedTeam = useMemo(() => (
     home.teams.find((team) => team.teamId === selectedTeamId) || home.teams[0] || null
@@ -153,6 +163,8 @@ export function Teams({ auth }: { auth: AuthState }) {
           <div className="mt-3 text-sm font-black text-gray-900">Loading teams</div>
           <div className="mt-1 text-xs font-semibold text-gray-500">Pulling team access, linked players, schedule, and chat counts.</div>
         </section>
+      ) : showBlockingErrorState && teamsLoadError ? (
+        <TeamsLoadErrorState error={teamsLoadError} onRetry={() => loadTeams({ showLoading: true })} retrying={loading || refreshing} />
       ) : home.teams.length ? (
         isDesktopWeb ? (
           <div className="teams-web-workbench">
