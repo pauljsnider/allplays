@@ -122,4 +122,23 @@ describe('TeamCertificates', () => {
       expect(certificateDraftServiceMocks.loadCertificateDraftComposer).toHaveBeenCalledTimes(2);
     });
   });
+
+  it('shows a save error when draft creation fails', async () => {
+    certificateDraftServiceMocks.saveCertificateDraftsForApp.mockRejectedValueOnce(new Error('Unable to create certificate drafts.'));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/certificates']}>
+        <Routes>
+          <Route path="/teams/:teamId/certificates" element={<TeamCertificates auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Awards drafts' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create drafts' }));
+
+    expect(await screen.findByText('Unable to create certificate drafts.')).toBeTruthy();
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
 });

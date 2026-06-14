@@ -14,7 +14,7 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [previewPlayerId, setPreviewPlayerId] = useState('');
   const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(false);
-  const { loading, error, run: runPrimaryLoad } = useAsyncOperation();
+  const { loading, error, setError, run: runPrimaryLoad } = useAsyncOperation();
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
   const previewRef = useRef<HTMLDivElement | null>(null);
