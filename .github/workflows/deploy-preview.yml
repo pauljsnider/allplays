@@ -64,7 +64,7 @@ jobs:
         run: npm run ci:firebase-rules
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Start local static server
         run: python3 -m http.server 4173 >/tmp/allplays-preview-regression-guards.log 2>&1 &
