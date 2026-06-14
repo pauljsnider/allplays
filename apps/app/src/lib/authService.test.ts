@@ -69,7 +69,9 @@ vi.mock('../../../../js/parent-membership-utils.js', () => ({
   mergeApprovedParentMembershipRequests: vi.fn(() => ({ changed: false, userUpdate: {} }))
 }));
 
-const authServicePath = resolve(dirname(fileURLToPath(import.meta.url)), 'authService.ts');
+const libDir = dirname(fileURLToPath(import.meta.url));
+const authServicePath = resolve(libDir, 'authService.ts');
+const appTsconfigPath = resolve(libDir, '../../tsconfig.json');
 
 function createGoogleUser(overrides: Record<string, unknown> = {}) {
   return {
@@ -113,6 +115,14 @@ describe('app auth invite activation', () => {
     expect(authServiceSource).not.toContain("import * as authDb from '../../../../js/db.js';");
     expect(authServiceSource).toContain("authDbPromise ||= import('../../../../js/db.js');");
     expect(authServiceSource).not.toContain('return Promise.resolve(authDb);');
+  });
+
+  it('includes node types in the app tsconfig for source-inspection auth tests', () => {
+    const tsconfig = JSON.parse(readFileSync(appTsconfigPath, 'utf8')) as {
+      compilerOptions?: { types?: string[] };
+    };
+
+    expect(tsconfig.compilerOptions?.types).toContain('node');
   });
 
   it('redeems a Google parent invite using generic pre-auth validation state', async () => {
