@@ -65,14 +65,45 @@ vi.mock('lucide-react', () => {
 });
 
 const baseHome = {
-  players: [],
-  teams: [],
+  players: [
+    {
+      teamId: 'team-1',
+      teamName: 'Bears',
+      playerId: 'player-1',
+      playerName: 'Pat Player',
+      nextEvent: null,
+      rsvpNeeded: 0,
+      packetsReady: 0,
+      openAssignments: 0,
+      unreadCount: 0
+    }
+  ],
+  teams: [
+    {
+      teamId: 'team-1',
+      teamName: 'Bears',
+      role: 'Parent',
+      sport: 'Basketball',
+      players: [
+        {
+          teamId: 'team-1',
+          teamName: 'Bears',
+          playerId: 'player-1',
+          playerName: 'Pat Player'
+        }
+      ],
+      nextEvent: null,
+      eventCount: 0,
+      unreadCount: 0,
+      openActions: 0
+    }
+  ],
   upcomingEvents: [],
   actionItems: [],
   fees: [],
   metrics: {
-    players: 0,
-    teams: 0,
+    players: 1,
+    teams: 1,
     rsvpNeeded: 0,
     unreadMessages: 0,
     packetsReady: 0
@@ -154,7 +185,7 @@ describe('Home', () => {
   it('renders the feed for signed-out users without crashing', async () => {
     renderHome(signedOutAuth, '/home?section=feed');
 
-    expect(await screen.findByRole('heading', { name: 'Feed' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
     expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
   });
 
@@ -169,6 +200,63 @@ describe('Home', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh feed' }));
 
     await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('refreshes the social feed after creating a post', async () => {
+    socialServiceMocks.createSocialPost.mockResolvedValueOnce('post-1');
+    renderHome(signedInAuth, '/home?section=feed&social=create');
+
+    await screen.findByRole('dialog', { name: 'Create social post' });
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'Big team win today.' }
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Post' }).at(-1)!);
+
+    await waitFor(() => {
+      expect(socialServiceMocks.createSocialPost).toHaveBeenCalledTimes(1);
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('refreshes the social feed after responding to a friend request', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      incomingRequests: [
+        {
+          id: 'friendship-1',
+          userId: 'friend-1',
+          name: 'Jamie Friend',
+          email: 'jamie@example.com',
+          photoUrl: null,
+          sharedTeamIds: ['team-1'],
+          sharedTeamNames: ['Bears'],
+          status: 'pending',
+          requesterId: 'friend-1',
+          recipientId: 'parent-1'
+        }
+      ],
+      metrics: {
+        ...baseSocial.metrics,
+        incomingRequests: 1
+      }
+    });
+    renderHome(signedInAuth, '/home?section=friends');
+
+    await screen.findByRole('heading', { name: 'Friends' });
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.respondToFriendRequest).toHaveBeenCalledWith('friendship-1', 'accepted');
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
   });
