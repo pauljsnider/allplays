@@ -299,11 +299,15 @@ describe('PublicTeamSearch', () => {
 
         await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: 'atlanta', cursor: null }));
 
-        resolveSearch?.({ teams: [atlantaSearchResult], nextCursor: 'search-cursor-2' });
+        if (!resolveSearch || !resolveBrowseAll) {
+            throw new Error('Expected both public team requests to be captured before resolving them.');
+        }
+
+        (resolveSearch as (value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void)({ teams: [atlantaSearchResult], nextCursor: 'search-cursor-2' });
         await waitFor(() => expect(screen.getByText('Atlanta Fire')).toBeTruthy());
         expect(screen.getByRole('button', { name: /Load more teams/i })).toBeTruthy();
 
-        resolveBrowseAll?.({ teams: [], nextCursor: null });
+        (resolveBrowseAll as (value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void)({ teams: [], nextCursor: null });
         await waitFor(() => expect(screen.getByText('Atlanta Fire')).toBeTruthy());
         expect(searchInput.value).toBe('atlanta');
     });
