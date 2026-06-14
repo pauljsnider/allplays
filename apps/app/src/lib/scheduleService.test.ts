@@ -92,7 +92,12 @@ vi.mock('./authService', () => ({ firebaseAuth: {}, getNativeAuthIdToken: vi.fn(
 vi.mock('./uxTiming', () => ({ startUxTimer: vi.fn(() => ({ end: vi.fn() })) }));
 vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
-vi.mock('./appDataCache', () => ({ getCachedAppData: vi.fn(), loadCachedAppData: vi.fn(), clearAppDataCache: vi.fn() }));
+vi.mock('./appDataCache', () => ({
+  getCachedAppData: vi.fn(),
+  loadCachedAppData: vi.fn(),
+  clearAppDataCache: vi.fn(),
+  getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
+}));
 
 import { broadcastLiveEvent, claimOpenOfficiatingSlot, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance } from '../../../../js/db.js';
 import { getDocs } from '../../../../js/firebase.js';

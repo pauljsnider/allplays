@@ -311,7 +311,7 @@ describe('React app auth/profile capability parity', () => {
         const turnOnGameDayAlerts = profilePage.slice(turnOnStart, turnOnEnd);
 
         expect(profilePage).toContain("const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && loadedNotificationTeamId === selectedTeamId;");
-        expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}");
+        expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || (!nativePushBlocked && (!selectedTeamId || !selectedTeamPreferencesHydrated))}");
         expect(turnOnGameDayAlerts).toContain('const teamId = selectedTeamId;');
         expect(turnOnGameDayAlerts).toContain('const currentPreferences = loadedNotificationTeamId === teamId');
         expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
@@ -438,6 +438,18 @@ describe('React app auth/profile capability parity', () => {
             'Projected playing time',
             'Writes rotationPlan, rotationActual, and coachingNotes'
         ]);
+    });
+
+    it('keeps the live broadcast tracker capability scoped to shipped app features', () => {
+        const capabilities = readProjectFile('apps/app/src/data/capabilities.ts');
+        const trackLiveLine = capabilities
+            .split('\n')
+            .find((line) => line.includes("capability('track-live'"));
+
+        expect(trackLiveLine).toContain("'native-shell'");
+        expect(trackLiveLine).toContain('Score updates');
+        expect(trackLiveLine).toContain('Live play-by-play publish');
+        expect(trackLiveLine).not.toMatch(/'Chat'|'Game log'|'Notes'|'Replay data'/);
     });
 
     it('covers parent-dashboard.html schedule capabilities and filters in the React app schedule', () => {

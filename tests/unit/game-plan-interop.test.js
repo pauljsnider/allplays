@@ -123,12 +123,14 @@ describe('game plan interop helpers', () => {
       lineups: {
         'I1-pitcher': 'p1',
         'I7-catcher': 'p2',
-        '2-full-first-base': 'p3'
+        '2-full-first-base': 'p3',
+        '3-1-shortstop': 'p4'
       }
     })).toEqual({
       I1: { pitcher: 'p1' },
       I7: { catcher: 'p2' },
-      I2: { 'first-base': 'p3' }
+      I2: { 'first-base': 'p3' },
+      I3: { shortstop: 'p4' }
     });
   });
 
@@ -166,6 +168,31 @@ describe('game plan interop helpers', () => {
       "H1 10'": { F: 'playerA' },
       "H1 15'": { G: 'playerD' },
       "H1 20'": { F: 'playerB' },
+    });
+  });
+
+  it('uses inning prefixes for baseball and softball legacy plans', () => {
+    const baseballPlan = buildRotationPlanFromGamePlan({
+      formationId: 'baseball-9',
+      numPeriods: 7,
+      lineups: {
+        '1-1-p': 'p1',
+        '2-1-ss': 'p2'
+      }
+    });
+    expect(baseballPlan).toEqual({
+      I1: { p: 'p1' },
+      I2: { ss: 'p2' }
+    });
+
+    const softballPlan = buildRotationPlanFromGamePlan({
+      formationId: 'softball-10',
+      lineups: {
+        'I1-lcf': 'p3'
+      }
+    });
+    expect(softballPlan).toEqual({
+      I1: { lcf: 'p3' }
     });
   });
 });

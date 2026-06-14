@@ -7,7 +7,7 @@ import {
   type ParentHomeInboxTeam,
   type ParentHomeModel
 } from './homeLogic';
-import { loadCachedAppData } from './appDataCache';
+import { getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
 import {
   hydrateParentScheduleDetails,
   loadParentSchedule,
@@ -144,7 +144,7 @@ export async function loadParentHomeWithSecondaryData(
 export async function loadParentScheduleSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
   return loadCachedAppData(
-    `schedule-summary:${user.uid}`,
+    getParentScheduleSummaryCacheKey(user.uid),
     () => loadParentSchedule(user, { hydrateDetails: false, expandStaffPlayers: false }),
     { ttlMs: homeSummaryTtlMs, force: options.force }
   );

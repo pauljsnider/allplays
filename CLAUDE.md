@@ -58,6 +58,8 @@ Read HTML and JS files via `readFileSync`; mock Firebase with `vi.fn()`. Cover:
 
 Run one file: `npx vitest run tests/unit/my-feature.test.js --reporter=verbose`
 
+React app colocated tests also run on Vitest from `apps/app`: `cd apps/app && npx vitest run src/lib/utils.test.ts --reporter=verbose`
+
 ### Smoke tests — `tests/smoke/`
 Playwright tests against a live static server. Cover page boot, interactive flows (search, filters, modals), and navigation. Use `assertPageBootsWithoutFatalErrors` from `helpers/boot-path.js`; register new public pages in `page-registry.js`.
 
@@ -95,6 +97,8 @@ Playwright tests against a live static server. Cover page boot, interactive flow
 - `capacitor.config.json` - Uses `apps/app/dist` as the native WebView bundle
 
 Keep app feature logic shared across web/iOS/Android. Use thin Capacitor adapters for native auth, push, share, media, and dictation behavior.
+
+Build hygiene: `npm run app:build` writes `apps/app/bundle-visualizer.html`; open it after build to inspect large modules and shared chunks. `npm run app:check-bundle-size` enforces the app entry chunk budget used by CI.
 
 ### Two Firebase Projects
 1. **Main project** (`game-flow-c6311`): Auth, Firestore, business logic

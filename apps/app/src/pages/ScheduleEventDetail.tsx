@@ -254,6 +254,20 @@ const rsvpBadgeClasses: Record<RsvpResponse, string> = {
   not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
 };
 
+export function getAvailabilityNoteSaveState(rsvp: RsvpResponse, availabilityNote: string, savedAvailabilityNote: string) {
+  const trimmedAvailabilityNote = String(availabilityNote || '').trim();
+  const trimmedSavedAvailabilityNote = String(savedAvailabilityNote || '').trim();
+  const isDirty = trimmedAvailabilityNote !== trimmedSavedAvailabilityNote;
+  const canSaveNote = rsvp !== 'not_responded' && isDirty;
+
+  return {
+    isDirty,
+    canSaveNote,
+    trimmedAvailabilityNote,
+    trimmedSavedAvailabilityNote
+  };
+}
+
 type AttentionItem = {
   title: string;
   detail: string;
@@ -285,7 +299,7 @@ export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<stri
 
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [selectedChildId, setSelectedChildId] = useState(searchParams.get('childId') || '');
   const [loading, setLoading] = useState(true);
@@ -305,11 +319,31 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
 
+  const replaceEventRouteParams = (updates: { section?: EventDetailSectionId; childId?: string }) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (updates.section) nextParams.set('section', updates.section);
+    if (Object.prototype.hasOwnProperty.call(updates, 'childId')) {
+      const nextChildId = String(updates.childId || '').trim();
+      if (nextChildId) {
+        nextParams.set('childId', nextChildId);
+      } else {
+        nextParams.delete('childId');
+      }
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const selectSection = (sectionId: EventDetailSectionId) => {
     setActiveSection(sectionId);
+    replaceEventRouteParams({ section: sectionId });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
+  };
+
+  const selectChild = (childId: string) => {
+    setSelectedChildId(childId);
+    replaceEventRouteParams({ childId });
   };
 
   const loadEvent = async () => {
@@ -338,6 +372,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     setActiveSection(parseEventDetailSection(searchParams.get('section')));
+    const routeChildId = searchParams.get('childId') || '';
+    if (routeChildId) {
+      setSelectedChildId(routeChildId);
+    }
   }, [searchParams]);
 
   const selectedEvent = useMemo(() => {
@@ -479,6 +517,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     setError(null);
     setStatusMessage(null);
     try {
+      const previousRsvp = normalizeRsvpResponse(selectedEvent.myRsvp);
+      const previousNote = String(selectedEvent.myRsvpNote || '').trim();
       const note = availabilityNote.trim();
       const summary = await submitParentScheduleRsvp(selectedEvent, auth.user, response, note);
       setEvents((current) => current.map((event) => {
@@ -491,7 +531,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           rsvpSummary: summary || event.rsvpSummary
         };
       }));
-      setStatusMessage(`${selectedEvent.childName} marked ${rsvpLabels[response].toLowerCase()}.`);
+      const noteOnlySave = previousRsvp === response && previousNote !== note;
+      setStatusMessage(noteOnlySave
+        ? `${selectedEvent.childName} availability note saved.`
+        : `${selectedEvent.childName} marked ${rsvpLabels[response].toLowerCase()}.`);
     } catch (submitError: any) {
       setError(submitError?.message || 'Unable to submit availability.');
     } finally {
@@ -607,7 +650,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               <div className="min-w-0 flex-1">
                 {events.length > 1 ? (
                   <>
-                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} compact />
+                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />
                     <div className="mt-1 truncate text-xs font-bold text-gray-600">{selectedEvent.childName} · {selectedEvent.teamName}</div>
                   </>
                 ) : (
@@ -695,7 +738,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {activeSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
     </div>
   );
@@ -772,13 +815,15 @@ function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availa
   onSubmit: (response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
 }) {
   const needsResponse = rsvp === 'not_responded';
+  const noteSaveState = getAvailabilityNoteSaveState(rsvp, availabilityNote, event.myRsvpNote || '');
+  const showDirtyState = rsvp !== 'not_responded' && noteSaveState.isDirty;
   return (
     <div className={`border-b px-3 py-2.5 sm:px-4 sm:py-3 ${needsResponse ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
       <div className="flex items-center gap-2.5 sm:items-start sm:gap-3">
         <PlayerInitials name={event.childName} />
         <div className="min-w-0 flex-1">
-          <div className={`text-[11px] font-black uppercase tracking-[0.06em] ${needsResponse ? 'text-amber-800' : 'text-gray-500'}`}>
-            {needsResponse ? 'Availability needed' : 'Availability saved'}
+          <div className={`text-[11px] font-black uppercase tracking-[0.06em] ${needsResponse ? 'text-amber-800' : showDirtyState ? 'text-amber-800' : 'text-gray-500'}`}>
+            {needsResponse ? 'Availability needed' : showDirtyState ? 'Unsaved note changes' : 'Availability saved'}
           </div>
           <div className="mt-0.5 text-sm font-black leading-tight text-gray-950 sm:mt-1 sm:text-base">Is {event.childName} going?</div>
           <div className="mt-2 grid grid-cols-3 gap-1.5">
@@ -812,6 +857,19 @@ function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availa
           <div className="mt-1 text-[11px] font-semibold text-gray-500">
             {event.availabilityNotesVisible ? 'Team note sharing is on for this team.' : 'Notes are visible to team staff unless sharing is enabled.'}
           </div>
+          {noteSaveState.canSaveNote ? (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+              <div className="text-xs font-black text-amber-900">Note edited but not saved yet.</div>
+              <button
+                type="button"
+                className="min-h-8 rounded-full border border-primary-200 bg-white px-3 text-xs font-black text-primary-700 transition hover:border-primary-300 hover:bg-primary-50"
+                disabled={!canSubmitRsvp || submitting === rsvp}
+                onClick={() => onSubmit(rsvp as Exclude<RsvpResponse, 'not_responded'>)}
+              >
+                {submitting === rsvp ? 'Saving' : 'Save note'}
+              </button>
+            </div>
+          ) : null}
           {!canSubmitRsvp ? <div className="mt-2 text-xs font-semibold text-gray-500">Availability is not open for this event.</div> : null}
         </div>
       </div>
@@ -2076,10 +2134,47 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   );
 }
 
+function LazyGameHubPanel({
+  panelId,
+  title,
+  description,
+  open,
+  onToggle,
+  children
+}: {
+  panelId: string;
+  title: string;
+  description: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-left transition hover:border-primary-200 hover:bg-primary-50"
+        onClick={onToggle}
+        aria-label={title}
+        aria-expanded={open}
+        aria-controls={panelId}
+      >
+        <div className="min-w-0">
+          <div className="text-sm font-black text-gray-950">{title}</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">{description}</div>
+        </div>
+        <ChevronDown className={`h-4 w-4 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {open ? <div id={panelId}>{children}</div> : null}
+    </div>
+  );
+}
+
 function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
   const [liveClockNow, setLiveClockNow] = useState(() => new Date());
@@ -2099,6 +2194,17 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
     const intervalId = window.setInterval(() => setLiveClockNow(new Date()), 1000);
     return () => window.clearInterval(intervalId);
   }, [event.eventKey, event.liveClockRunning, event.liveClockMs, event.liveClockUpdatedAt]);
+
+  useEffect(() => {
+    setOpenPanels({});
+  }, [event.eventKey]);
+
+  const togglePanel = useCallback((panelId: string) => {
+    setOpenPanels((current) => ({
+      ...current,
+      [panelId]: !current[panelId]
+    }));
+  }, []);
 
   const cancelGame = async () => {
     if (!auth.user) return;
@@ -2197,19 +2303,76 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
           {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
           {canUpdateScore ? <GameDayFoulTrackerPanel auth={auth} event={event} /> : null}
-          {!isPractice ? <LiveGameReactionsPanel auth={auth} event={event} /> : null}
-          {!isPractice ? <LiveGameChatPanel auth={auth} event={event} /> : null}
 
-          {canWrapup ? <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} /> : null}
+          {!isPractice ? (
+            <LazyGameHubPanel
+              panelId="game-hub-reactions-panel"
+              title="Live reactions"
+              description="Start the shared reaction stream only when you need it."
+              open={Boolean(openPanels.reactions)}
+              onToggle={() => togglePanel('reactions')}
+            >
+              <LiveGameReactionsPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
+          ) : null}
+          {!isPractice ? (
+            <LazyGameHubPanel
+              panelId="game-hub-chat-panel"
+              title="Live chat"
+              description="Open chat on demand instead of subscribing during first paint."
+              open={Boolean(openPanels.chat)}
+              onToggle={() => togglePanel('chat')}
+            >
+              <LiveGameChatPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
+          ) : null}
 
-          {canWrapup ? <StatsheetImportPanel event={event} onImported={onStatsheetImported} /> : null}
+          {canWrapup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-wrapup-panel"
+              title="Post-game wrap-up"
+              description="Load wrap-up tools only when staff is ready to finish the game."
+              open={Boolean(openPanels.wrapup)}
+              onToggle={() => togglePanel('wrapup')}
+            >
+              <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} />
+            </LazyGameHubPanel>
+          ) : null}
 
-          {canPublishLineup ? (
-            <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
+          {canWrapup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-statsheet-panel"
+              title="Statsheet import"
+              description="Defer photo analysis and roster context until someone opens import."
+              open={Boolean(openPanels.statsheet)}
+              onToggle={() => togglePanel('statsheet')}
+            >
+              <StatsheetImportPanel event={event} onImported={onStatsheetImported} />
+            </LazyGameHubPanel>
           ) : null}
 
           {canPublishLineup ? (
-            <GameDaySubstitutionPanel auth={auth} event={event} />
+            <LazyGameHubPanel
+              panelId="game-hub-lineup-panel"
+              title="Lineup builder"
+              description="Only load lineup preview data after staff opens lineup tools."
+              open={Boolean(openPanels.lineup)}
+              onToggle={() => togglePanel('lineup')}
+            >
+              <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
+            </LazyGameHubPanel>
+          ) : null}
+
+          {canPublishLineup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-substitutions-panel"
+              title="Live substitutions"
+              description="Keep substitution planning idle until the bench actually needs it."
+              open={Boolean(openPanels.substitutions)}
+              onToggle={() => togglePanel('substitutions')}
+            >
+              <GameDaySubstitutionPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
           ) : null}
 
           {canCancelGame ? (
@@ -2269,7 +2432,17 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
 
       {shareStatus ? <Status tone={shareStatus.startsWith('Unable') ? 'error' : 'success'} message={shareStatus} /> : null}
       {cancelStatus ? <Status tone={cancelStatus.tone} message={cancelStatus.message} /> : null}
-      {!isPractice ? <GameReportSections event={event} /> : null}
+      {!isPractice ? (
+        <LazyGameHubPanel
+          panelId="game-hub-report-panel"
+          title="Report sections"
+          description="Load reports and live play refreshes only when someone opens reports."
+          open={Boolean(openPanels.report)}
+          onToggle={() => togglePanel('report')}
+        >
+          <GameReportSections event={event} />
+        </LazyGameHubPanel>
+      ) : null}
     </section>
   );
 }

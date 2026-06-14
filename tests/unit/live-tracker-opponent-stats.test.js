@@ -17,13 +17,29 @@ class MockClassList {
     this.tokens = new Set();
   }
 
+  add(...tokens) {
+    tokens.forEach(token => this.tokens.add(token));
+  }
+
+  remove(...tokens) {
+    tokens.forEach(token => this.tokens.delete(token));
+  }
+
   toggle(token, force) {
-    if (force) {
+    if (force === true) {
       this.tokens.add(token);
       return true;
     }
-    this.tokens.delete(token);
-    return false;
+    if (force === false) {
+      this.tokens.delete(token);
+      return false;
+    }
+    if (this.tokens.has(token)) {
+      this.tokens.delete(token);
+      return false;
+    }
+    this.tokens.add(token);
+    return true;
   }
 }
 
@@ -386,12 +402,17 @@ async function bootLiveTracker({ updateGame }) {
       runSaveAndCompleteWorkflow: async () => ({})
     }
   };
+  const localStorageData = new Map();
   const window = {
     location: { href: '' },
     localStorage: {
-      getItem: () => null,
-      setItem: () => {},
-      removeItem: () => {}
+      getItem: (key) => (localStorageData.has(key) ? localStorageData.get(key) : null),
+      setItem: (key, value) => {
+        localStorageData.set(key, String(value));
+      },
+      removeItem: (key) => {
+        localStorageData.delete(key);
+      }
     },
     navigator: { onLine: true },
     addEventListener: () => {}
@@ -427,7 +448,10 @@ async function bootLiveTracker({ updateGame }) {
 
   return {
     ...page,
-    flushTimers
+    flushTimers,
+    readPersistedState(teamId, gameId) {
+      return readPersistedLiveTrackerState(window.localStorage, teamId, gameId);
+    }
   };
 }
 
@@ -435,12 +459,12 @@ describe('live tracker opponent stats harness', () => {
   it('rewrites module imports when cache-buster versions and formatting change', () => {
     const source = readFileSync(new URL('../../js/live-tracker.js', import.meta.url), 'utf8')
       .replace(
-        "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=42';",
-        "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=42';"
+        "import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=48';",
+        "import {\n  getTeam,\n  getTeams,\n  getGame,\n  getPlayers,\n  getConfigs,\n  updateGame,\n  collection,\n  getDocs,\n  deleteDoc,\n  query,\n  broadcastLiveEvent,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  setGameLiveStatus\n} from './db.js?v=48';"
       )
       .replace('./firebase.js?v=15', './firebase.js?v=15')
       .replace('./utils.js?v=9', './utils.js?v=123')
-      .replace('./auth.js?v=20', './auth.js?v=460');
+      .replace('./auth.js?v=23', './auth.js?v=461');
 
     const rewritten = buildModuleSource(source);
 
@@ -528,7 +552,7 @@ describe('live tracker opponent stats hydration', () => {
     expect(hydrated.fouls).toBe(0);
   });
 
-  it('persists opponent removals so resume does not restore deleted cards', async () => {
+  it('reverses removed opponent scoring and clears that player\'s stat log entries', async () => {
     const updateCalls = [];
     const page = await bootLiveTracker({
       updateGame: async (_teamId, _gameId, payload) => {
@@ -542,6 +566,7 @@ describe('live tracker opponent stats hydration', () => {
       config: { columns: ['PTS'] },
       game: { liveHasData: false }
     });
+    page.state.away = 11;
     page.state.opp = [
       {
         id: 'opp1',
@@ -560,12 +585,55 @@ describe('live tracker opponent stats hydration', () => {
         stats: { pts: 7, fouls: 0, time: 0 }
       }
     ];
+    page.state.log = [
+      {
+        text: 'Opp Remaining Player PTS +7',
+        undoData: { type: 'stat', playerId: 'opp2', statKey: 'pts', value: 7, isOpponent: true }
+      },
+      {
+        text: 'Opp Removed Player PTS +4',
+        undoData: { type: 'stat', playerId: 'opp1', statKey: 'pts', value: 4, isOpponent: true }
+      },
+      {
+        text: 'Opp Removed Player FOULS +1',
+        undoData: { type: 'stat', playerId: 'opp1', statKey: 'fouls', value: 1, isOpponent: true }
+      }
+    ];
 
     page.renderOpponents();
     page.els.oppCards.querySelectorAll('[data-opp-del]')[0].click();
     await page.flushTimers();
 
     expect(page.state.opp.map((opp) => opp.id)).toEqual(['opp2']);
+    expect(page.state.away).toBe(7);
+    expect(page.state.log).toEqual([
+      {
+        text: 'Opp Remaining Player PTS +7',
+        undoData: { type: 'stat', playerId: 'opp2', statKey: 'pts', value: 7, isOpponent: true }
+      }
+    ]);
+    expect(page.state.history).toHaveLength(1);
+    expect(page.readPersistedState('team-1', 'game-1')).toMatchObject({
+      state: {
+        away: 7,
+        opp: [
+          {
+            id: 'opp2',
+            name: 'Remaining Player',
+            number: '12',
+            playerId: null,
+            photoUrl: '',
+            stats: { pts: 7, fouls: 0, time: 0 }
+          }
+        ],
+        log: [
+          {
+            text: 'Opp Remaining Player PTS +7',
+            undoData: { type: 'stat', playerId: 'opp2', statKey: 'pts', value: 7, isOpponent: true }
+          }
+        ]
+      }
+    });
     expect(updateCalls).toContainEqual({
       opponentStats: {
         opp2: {
