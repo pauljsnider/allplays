@@ -4571,6 +4571,31 @@ function sanitizeTeamFeeRecipientValue(value, { topLevel = false } = {}) {
         .map(([key, childValue]) => [key, sanitizeTeamFeeRecipientValue(childValue)]));
 }
 
+function deriveTeamFeeAdminBillingPayload(recipientUpdates = {}, ledgerEntries = []) {
+    const canceled = recipientUpdates?.canceled && typeof recipientUpdates.canceled === 'object'
+        ? recipientUpdates.canceled
+        : null;
+    const cancellationEntry = Array.isArray(ledgerEntries)
+        ? ledgerEntries.find((entry) => entry?.type === 'cancellation')
+        : null;
+
+    if ((recipientUpdates?.status || '') !== 'canceled' && !canceled && !cancellationEntry) {
+        return null;
+    }
+
+    const reason = String(canceled?.note || cancellationEntry?.reason || '').trim();
+    const canceledBy = canceled?.canceledBy || cancellationEntry?.canceledBy || null;
+    if (!reason && !canceledBy) {
+        return null;
+    }
+
+    return {
+        type: 'cancellation',
+        ...(reason ? { reason } : {}),
+        ...(canceledBy ? { canceledBy } : {})
+    };
+}
+
 export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updates = {}) {
     if (!teamId || !batchId || !recipientId) {
         throw new Error('Missing fee recipient context.');
@@ -4583,7 +4608,11 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     const safeLedgerEntries = Array.isArray(ledgerEntries) ? sanitizeTeamFeeRecipientValue(ledgerEntries) : [];
     const isManualPaymentUpdate = Object.prototype.hasOwnProperty.call(recipientUpdates, 'manualPayment')
         || safeLedgerEntries.some((entry) => entry?.type === 'offline_payment');
-    const hasAdminBilling = Boolean(adminBilling && typeof adminBilling === 'object' && !Array.isArray(adminBilling));
+    const explicitAdminBilling = adminBilling && typeof adminBilling === 'object' && !Array.isArray(adminBilling)
+        ? adminBilling
+        : null;
+    const adminBillingDetails = explicitAdminBilling || deriveTeamFeeAdminBillingPayload(unsafeRecipientUpdates, ledgerEntries);
+    const hasAdminBilling = Boolean(adminBillingDetails);
 
     const updatePayload = {
         ...recipientUpdates,
@@ -4594,7 +4623,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     };
 
     const adminBillingPayload = hasAdminBilling ? {
-        ...adminBilling,
+        ...adminBillingDetails,
         teamId,
         batchId,
         recipientId,

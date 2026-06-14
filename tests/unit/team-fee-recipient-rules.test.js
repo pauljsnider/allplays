@@ -13,9 +13,12 @@ describe('team fee recipient Firestore rules', () => {
 
     it('blocks private billing fields on parent-readable fee recipient documents while keeping adminBilling admin-only', () => {
         expect(rules).toContain('function hasNoPrivateTeamFeeBillingFields(data)');
+        expect(rules).toContain('function hasNoIntroducedPrivateTeamFeeBillingFields()');
         expect(rules).toContain("'stripePaymentIntentId'");
         expect(rules).toContain("'recordedBy'");
         expect(rules).toContain('hasNoPrivateTeamFeeBillingFields(request.resource.data)');
+        expect(rules).toContain('hasNoIntroducedPrivateTeamFeeBillingFields()');
+        expect(rules).toContain("request.resource.data.get('stripePaymentIntentId', null) == null");
         expect(rules).toContain('match /adminBilling/{billingId} {');
         expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);');
     });

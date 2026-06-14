@@ -431,6 +431,23 @@ service cloud.firestore {
              ]);
     }
 
+    function hasNoIntroducedPrivateTeamFeeBillingFields() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return (!affectedKeys.hasAny(['stripeCheckoutSessionId']) || request.resource.data.get('stripeCheckoutSessionId', null) == null) &&
+             (!affectedKeys.hasAny(['stripePaymentIntentId']) || request.resource.data.get('stripePaymentIntentId', null) == null) &&
+             (!affectedKeys.hasAny(['stripeCustomerId']) || request.resource.data.get('stripeCustomerId', null) == null) &&
+             (!affectedKeys.hasAny(['stripeChargeId']) || request.resource.data.get('stripeChargeId', null) == null) &&
+             (!affectedKeys.hasAny(['stripeRefundId']) || request.resource.data.get('stripeRefundId', null) == null) &&
+             (!affectedKeys.hasAny(['stripeLastRefundId']) || request.resource.data.get('stripeLastRefundId', null) == null) &&
+             (!affectedKeys.hasAny(['stripeEventId']) || request.resource.data.get('stripeEventId', null) == null) &&
+             (!affectedKeys.hasAny(['receiptEmail']) || request.resource.data.get('receiptEmail', null) == null) &&
+             (!affectedKeys.hasAny(['refundedBy']) || request.resource.data.get('refundedBy', null) == null) &&
+             (!affectedKeys.hasAny(['recordedBy']) || request.resource.data.get('recordedBy', null) == null) &&
+             (!affectedKeys.hasAny(['internalNote']) || request.resource.data.get('internalNote', null) == null) &&
+             (!affectedKeys.hasAny(['adminNote']) || request.resource.data.get('adminNote', null) == null) &&
+             (!affectedKeys.hasAny(['reason']) || request.resource.data.get('reason', null) == null);
+    }
+
     function isPublishedSponsor(data) {
       return data.get('status', '') == 'published' ||
              data.get('published', false) == true ||
@@ -1488,7 +1505,7 @@ service cloud.firestore {
                        request.resource.data.keys().hasAll(['teamId']) &&
                        resource.data.teamId is string &&
                        request.resource.data.teamId == resource.data.teamId &&
-                       hasNoPrivateTeamFeeBillingFields(request.resource.data) &&
+                       hasNoIntroducedPrivateTeamFeeBillingFields() &&
                        isTeamOwnerOrAdmin(resource.data.teamId);
       allow delete: if resource.data.keys().hasAll(['teamId']) &&
                        resource.data.teamId is string &&
@@ -1506,7 +1523,7 @@ service cloud.firestore {
                        isTeamOwnerOrAdmin(request.resource.data.get('teamId', ''));
       allow update: if resource.data.get('teamId', '') is string &&
                        request.resource.data.get('teamId', '') == resource.data.get('teamId', '') &&
-                       hasNoPrivateTeamFeeBillingFields(request.resource.data) &&
+                       hasNoIntroducedPrivateTeamFeeBillingFields() &&
                        isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
       allow delete: if resource.data.get('teamId', '') is string &&
                        isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
@@ -2106,7 +2123,7 @@ service cloud.firestore {
                            resource.data.teamId == teamId &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
-                           hasNoPrivateTeamFeeBillingFields(request.resource.data);
+                           hasNoIntroducedPrivateTeamFeeBillingFields();
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
                            resource.data.teamId == teamId;
 

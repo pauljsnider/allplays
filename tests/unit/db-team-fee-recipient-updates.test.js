@@ -253,4 +253,66 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         expect(payload.paymentLedger[0]).not.toHaveProperty('refundedBy');
         expect(payload.paymentLedger[0]).not.toHaveProperty('stripeRefundId');
     });
+
+    it('preserves cancellation reasons in admin billing metadata before sanitizing parent-readable fields', async () => {
+        const updateDoc = vi.fn(async () => undefined);
+        const setDoc = vi.fn(async () => undefined);
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc,
+            setDoc,
+            runTransaction: vi.fn(),
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted')
+        });
+
+        await updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            status: 'canceled',
+            amountDueCents: 0,
+            remainingBalanceCents: 0,
+            canceled: {
+                note: 'Family moved away',
+                canceledBy: 'coach-7'
+            },
+            ledgerEntries: [{
+                type: 'cancellation',
+                amountCents: 0,
+                reason: 'Family moved away',
+                canceledBy: 'coach-7'
+            }]
+        });
+
+        expect(updateDoc).toHaveBeenCalledWith(
+            { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1' },
+            expect.objectContaining({
+                status: 'canceled',
+                amountDueCents: 0,
+                remainingBalanceCents: 0,
+                canceled: {},
+                hasAdminBilling: true,
+                paymentLedger: [{
+                    type: 'cancellation',
+                    amountCents: 0
+                }]
+            })
+        );
+        const payload = updateDoc.mock.calls[0][1];
+        expect(payload.canceled).not.toHaveProperty('note');
+        expect(payload.paymentLedger[0]).not.toHaveProperty('reason');
+        expect(payload.paymentLedger[0]).not.toHaveProperty('canceledBy');
+        expect(setDoc).toHaveBeenCalledWith(
+            { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1/adminBilling/latest' },
+            expect.objectContaining({
+                type: 'cancellation',
+                reason: 'Family moved away',
+                canceledBy: 'coach-7',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
+                updatedAt: 'server-ts'
+            }),
+            { merge: true }
+        );
+    });
 });
