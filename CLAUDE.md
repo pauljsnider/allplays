@@ -58,6 +58,8 @@ Read HTML and JS files via `readFileSync`; mock Firebase with `vi.fn()`. Cover:
 
 Run one file: `npx vitest run tests/unit/my-feature.test.js --reporter=verbose`
 
+React app colocated tests also run on Vitest from `apps/app`: `cd apps/app && npx vitest run src/lib/utils.test.ts --reporter=verbose`
+
 ### Smoke tests — `tests/smoke/`
 Playwright tests against a live static server. Cover page boot, interactive flows (search, filters, modals), and navigation. Use `assertPageBootsWithoutFatalErrors` from `helpers/boot-path.js`; register new public pages in `page-registry.js`.
 

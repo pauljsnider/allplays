@@ -6,8 +6,12 @@ import { AppShell } from './AppShell';
 import type { AuthState } from '../lib/types';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 
+const { useShellLayoutMock } = vi.hoisted(() => ({
+  useShellLayoutMock: vi.fn(() => ({ isDesktopWeb: true })),
+}));
+
 vi.mock('../lib/useShellLayout', () => ({
-  useShellLayout: () => ({ isDesktopWeb: true }),
+  useShellLayout: useShellLayoutMock,
 }));
 
 vi.mock('../lib/uxTiming', () => ({
@@ -39,6 +43,7 @@ describe('AppShell', () => {
       return 1;
     });
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: true });
   });
 
   afterEach(() => {
@@ -55,7 +60,23 @@ describe('AppShell', () => {
     );
 
     const searchButton = screen.getByRole('button', { name: 'Search' });
-    expect(searchButton.getAttribute('aria-label')).toBe('Search');
+    expect(searchButton).toHaveAttribute('aria-label', 'Search');
+    expect(searchButton).toHaveAttribute('data-testid', 'app-shell-search-trigger');
+  });
+
+  it('keeps the mobile search trigger discoverable with a stable selector', () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={auth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const searchButton = screen.getByTestId('app-shell-search-trigger');
+    expect(searchButton).toHaveAttribute('aria-label', 'Search');
   });
 
   it('opens the search dialog immediately when the desktop search button is clicked', () => {
