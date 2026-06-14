@@ -519,6 +519,11 @@ service cloud.firestore {
              (exists(teamPath) && canReadPublicGameDocument(get(teamPath).data, data));
     }
 
+    function canReadGameSubcollectionDocument(teamId, gameId) {
+      let gamePath = /databases/$(database)/documents/teams/$(teamId)/games/$(gameId);
+      return exists(gamePath) && canReadGameDocument(teamId, gameId, get(gamePath).data);
+    }
+
     function canReadCollectionGroupGameDocument(teamPath, data) {
       return exists(/databases/$(database)/documents/$(teamPath)) &&
              (
@@ -1863,14 +1868,14 @@ service cloud.firestore {
 
         // Events subcollection
         match /events/{eventId} {
-          allow read: if true;
+          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }
 
         // Aggregated stats subcollection
         match /aggregatedStats/{statId} {
-          allow read: if true;
+          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }
