@@ -53,7 +53,7 @@ import {
   type LineupDraftPreviewResult
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
-import { buildRotationPlanFromGamePlan } from '../../../../js/game-plan-interop.js';
+import { buildRotationPlanFromGamePlan } from '../lib/adapters/legacyScheduleHelpers';
 import {
   assignLineupPlayer,
   buildLineupAiPrompt,
@@ -68,7 +68,7 @@ import {
   moveLineupPlayer,
   parseAiLineupPlan
 } from '../lib/gameDayLineupBuilder';
-import { applyLiveSubstitution, getSubstitutionOptions } from '../../../../js/game-day-live-substitutions.js';
+import { applyLiveSubstitution, getSubstitutionOptions } from '../lib/adapters/legacyScheduleHelpers';
 import {
   buildAppWrapupCompletionPayload,
   buildGameWrapupEmailDraft,
