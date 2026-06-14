@@ -499,7 +499,9 @@ function toRosterPlayer(player: any): TeamFeeRosterPlayer {
 }
 
 function normalizeRosterPlayerParentContact(player: any) {
-  const parentRecords = Array.isArray(player?.parents) ? player.parents : [];
+  const privateParents = Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : [];
+  const publicParents = Array.isArray(player?.parents) ? player.parents : [];
+  const parentRecords = privateParents.length > 0 ? privateParents : publicParents;
   const primaryParent = parentRecords.find((parent: any) => normalizeString(parent?.email || parent?.parentEmail || parent?.guardianEmail))
     || parentRecords[0]
     || {};

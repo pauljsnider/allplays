@@ -339,10 +339,19 @@ describe('React app team fee offline payment service', () => {
         ], expect.objectContaining({ uid: 'coach-1' }));
     });
 
-    it('creates a whole-roster fee batch from active players only', async () => {
+    it('creates a whole-roster fee batch from active players only and uses private-profile parent contacts', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.getPlayers.mockResolvedValue([
-            { id: 'player-1', name: 'Pat Star', active: true },
+            {
+                id: 'player-1',
+                name: 'Pat Star',
+                active: true,
+                privateProfileParents: [{
+                    name: 'Pat Parent',
+                    email: 'Pat.Parent@Example.com',
+                    userId: 'parent-1'
+                }]
+            },
             { id: 'player-2', name: 'Chris Doe', active: true },
             { id: 'player-3', name: 'Inactive Player', active: false }
         ]);
@@ -358,7 +367,7 @@ describe('React app team fee offline payment service', () => {
         });
 
         expect(dbMocks.createTeamFeeBatch).toHaveBeenCalledWith('team-1', expect.any(Object), [
-            expect.objectContaining({ playerId: 'player-1', parentName: '', parentEmail: '' }),
+            expect.objectContaining({ playerId: 'player-1', parentName: 'Pat Parent', parentEmail: 'pat.parent@example.com' }),
             expect.objectContaining({ playerId: 'player-2', parentName: '', parentEmail: '' })
         ], expect.any(Object));
     });
