@@ -5,6 +5,15 @@ import { resolve } from 'node:path';
 const source = readFileSync(resolve(process.cwd(), 'js/global-search.js'), 'utf8');
 
 describe('legacy global player search scoping', () => {
+    it('uses bounded public team discovery instead of bootstrapping the full catalog', () => {
+        expect(source).toContain("import { discoverPublicTeams } from './db.js?v=48';");
+        expect(source).not.toContain('import { getTeams }');
+        expect(source).toContain('const teamSearchQueryLimit = 20;');
+        expect(source).toContain('if (q.length < 2) {');
+        expect(source).toContain("const result = await discoverPublicTeams({ searchText: q, pageSize: teamSearchQueryLimit });");
+        expect(source).not.toContain('const teams = await getTeams();');
+    });
+
     it('queries only accessible team player collections for normal searches', () => {
         expect(source).toContain('async function loadPlayerSearchDocsByTeam(');
         expect(source).toContain('async function loadPlayerSearchDocs(prefixes, rawQuery, isNumeric, teamsById)');
@@ -19,5 +28,12 @@ describe('legacy global player search scoping', () => {
         expect(source).toContain('filterSearchableTeams(Array.from(teamsById.values()), currentUser)');
         expect(source).toContain('.slice(0, playerSearchTeamLimit)');
         expect(source).toContain('const teamIds = getPlayerSearchTeamIds(rawQuery, teamsById);');
+    });
+
+    it('avoids unreadable stream-only team queries when loading accessible teams', () => {
+        expect(source).toContain("teamQueries.push(getDocs(query(teamsRef, where('ownerId', '==', uid))));");
+        expect(source).toContain("teamQueries.push(getDocs(query(teamsRef, where('adminEmails', 'array-contains', email))));");
+        expect(source).not.toContain("teamPermissions.streaming.memberIds");
+        expect(source).not.toContain("streamVolunteerEmails");
     });
 });

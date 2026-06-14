@@ -1,19 +1,24 @@
 import { escapeHtml } from './utils.js?v=8';
-import { getTeams } from './db.js?v=48';
+import { discoverPublicTeams } from './db.js?v=48';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=2';
+import { isTeamActive } from './team-visibility.js?v=2';
 import {
     db,
     collection,
     getDocs,
+    getDoc,
+    doc,
     query,
     where,
     orderBy,
     limit
 } from './firebase.js?v=18';
 
-let cachedTeams = null;
-let cachedTeamsLoadedAt = 0;
+let cachedAccessibleTeams = null;
+let cachedAccessibleTeamsLoadedAt = 0;
+let cachedAccessibleTeamsUserKey = '';
 const playerSearchTeamLimit = 8;
+const teamSearchQueryLimit = 20;
 
 let currentUser = null;
 let keyHandlerInstalled = false;
@@ -94,12 +99,88 @@ function buildActions(user) {
 
 async function loadTeamsOnce() {
     const ttlMs = 10 * 60 * 1000;
-    if (cachedTeams && (nowMs() - cachedTeamsLoadedAt) < ttlMs) return cachedTeams;
+    const userKey = buildAccessibleTeamsCacheKey(currentUser);
+    if (cachedAccessibleTeams && cachedAccessibleTeamsUserKey === userKey && (nowMs() - cachedAccessibleTeamsLoadedAt) < ttlMs) {
+        return cachedAccessibleTeams;
+    }
 
-    const teams = await getTeams();
-    cachedTeams = Array.isArray(teams) ? teams : [];
-    cachedTeamsLoadedAt = nowMs();
-    return cachedTeams;
+    const teams = await loadAccessibleTeams(currentUser);
+    cachedAccessibleTeams = Array.isArray(teams) ? teams : [];
+    cachedAccessibleTeamsLoadedAt = nowMs();
+    cachedAccessibleTeamsUserKey = userKey;
+    return cachedAccessibleTeams;
+}
+
+function buildAccessibleTeamsCacheKey(user) {
+    if (!user) return 'anon';
+
+    const parentTeamIds = Array.from(new Set([
+        ...(Array.isArray(user.parentOf) ? user.parentOf.map((link) => String(link?.teamId || '').trim()) : []),
+        ...(Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys.map((key) => String(key || '').split('::')[0] || '') : [])
+    ].filter(Boolean))).sort();
+
+    return JSON.stringify({
+        uid: String(user.uid || '').trim(),
+        email: String(user.email || user.profileEmail || '').trim().toLowerCase(),
+        isAdmin: user.isAdmin === true,
+        parentTeamIds
+    });
+}
+
+function getParentTeamIds(user) {
+    return Array.from(new Set([
+        ...(Array.isArray(user?.parentOf) ? user.parentOf.map((link) => String(link?.teamId || '').trim()) : []),
+        ...(Array.isArray(user?.parentPlayerKeys) ? user.parentPlayerKeys.map((key) => String(key || '').split('::')[0] || '') : [])
+    ].filter(Boolean)));
+}
+
+function normalizeAccessibleTeams(teams) {
+    return filterSearchableTeams((Array.isArray(teams) ? teams : []).filter(isTeamActive), currentUser)
+        .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
+}
+
+async function loadAccessibleTeams(user) {
+    if (!user) return [];
+
+    const uid = String(user.uid || '').trim();
+    const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
+    const teamsRef = collection(db, 'teams');
+    const teamQueries = [];
+
+    if (uid) {
+        teamQueries.push(getDocs(query(teamsRef, where('ownerId', '==', uid))));
+    }
+    if (email) {
+        teamQueries.push(getDocs(query(teamsRef, where('adminEmails', 'array-contains', email))));
+    }
+
+    const [queryResults, parentTeamResults] = await Promise.all([
+        Promise.allSettled(teamQueries),
+        Promise.allSettled(getParentTeamIds(user).map((teamId) => getDoc(doc(db, 'teams', teamId))))
+    ]);
+
+    const teamsById = new Map();
+    queryResults.forEach((result) => {
+        if (result.status !== 'fulfilled') return;
+        (result.value?.docs || []).forEach((teamDoc) => {
+            teamsById.set(teamDoc.id, { id: teamDoc.id, ...(teamDoc.data() || {}) });
+        });
+    });
+    parentTeamResults.forEach((result, index) => {
+        if (result.status !== 'fulfilled') return;
+        const teamDoc = result.value;
+        if (!teamDoc?.exists?.()) return;
+        const teamId = getParentTeamIds(user)[index];
+        teamsById.set(teamDoc.id || teamId, { id: teamDoc.id || teamId, ...(teamDoc.data() || {}) });
+    });
+
+    if (!teamsById.size) {
+        const firstError = [...queryResults, ...parentTeamResults]
+            .find((result) => result.status === 'rejected')?.reason;
+        if (firstError) throw firstError;
+    }
+
+    return normalizeAccessibleTeams(Array.from(teamsById.values()));
 }
 
 function parseTeamAndPlayerIdFromPath(path) {
@@ -292,14 +373,18 @@ function openModal({ initialQuery = '' } = {}) {
         activeIndex: 0,
         flatResults: [],
         teams: [],
+        publicTeams: [],
         loadingTeams: true,
         teamsError: '',
+        loadingPublicTeams: false,
+        publicTeamsError: '',
+        publicTeamsReqId: 0,
         players: [],
         loadingPlayers: false,
         playersError: '',
         lastPlayersQuery: '',
         playersReqId: 0,
-        playersDebounce: null,
+        searchDebounce: null,
         teamsById: new Map()
     };
 
@@ -372,7 +457,7 @@ function openModal({ initialQuery = '' } = {}) {
         if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest' });
     };
 
-    const computeResults = (q, teams, players) => {
+    const computeResults = (q, teams, publicTeams, players) => {
         const tokens = splitTokens(q);
         const actions = buildActions(currentUser);
 
@@ -386,7 +471,16 @@ function openModal({ initialQuery = '' } = {}) {
 
         const playerItems = (players || []);
 
-        const teamItems = filterSearchableTeams(teams, currentUser).map(t => ({
+        const visibleTeams = [];
+        const seenTeamIds = new Set();
+        filterSearchableTeams([...(teams || []), ...(publicTeams || [])], currentUser).forEach((team) => {
+            const teamId = String(team?.id || '').trim();
+            if (!teamId || seenTeamIds.has(teamId)) return;
+            seenTeamIds.add(teamId);
+            visibleTeams.push(team);
+        });
+
+        const teamItems = visibleTeams.map(t => ({
             kind: 'team',
             title: t.name || 'Team',
             subtitle: [t.sport, t.zip].filter(Boolean).join(' • '),
@@ -410,8 +504,9 @@ function openModal({ initialQuery = '' } = {}) {
 
         const q = modalState.input.value || '';
         const teams = modalState.teams || [];
+        const publicTeams = modalState.publicTeams || [];
         const players = modalState.players || [];
-        const { matchedActions, matchedPlayers, matchedTeams } = computeResults(q, teams, players);
+        const { matchedActions, matchedPlayers, matchedTeams } = computeResults(q, teams, publicTeams, players);
 
         // Order: Actions, Teams, Players
         modalState.flatResults = [...matchedActions, ...matchedTeams, ...matchedPlayers];
@@ -424,7 +519,15 @@ function openModal({ initialQuery = '' } = {}) {
             ? `<div class="text-sm text-gray-500 px-1 py-2">Loading teams...</div>`
             : modalState.teamsError
                 ? `<div class="text-sm text-red-600 px-1 py-2">${escapeHtml(modalState.teamsError)}</div>`
-                : (matchedTeams.length === 0 ? `<div class="text-sm text-gray-500 px-1 py-2">No matching teams</div>` : '');
+                : modalState.loadingPublicTeams
+                    ? `<div class="text-sm text-gray-500 px-1 py-2">Searching teams...</div>`
+                    : modalState.publicTeamsError
+                        ? `<div class="text-sm text-red-600 px-1 py-2">${escapeHtml(modalState.publicTeamsError)}</div>`
+                        : (matchedTeams.length === 0
+                            ? (q.trim().length < 2
+                                ? `<div class="text-sm text-gray-500 px-1 py-2">Type at least 2 characters to search public teams</div>`
+                                : `<div class="text-sm text-gray-500 px-1 py-2">No matching teams</div>`)
+                            : '');
 
         const teamsHtml = `
             <div>
@@ -466,6 +569,41 @@ function openModal({ initialQuery = '' } = {}) {
                 ${emptyHtml}
             </div>
         `;
+    };
+
+    const runTeamSearch = async (rawQuery) => {
+        const q = (rawQuery || '').trim();
+        if (!modalState) return;
+
+        if (q.length < 2) {
+            modalState.publicTeams = [];
+            modalState.loadingPublicTeams = false;
+            modalState.publicTeamsError = '';
+            renderResults();
+            return;
+        }
+
+        const reqId = ++modalState.publicTeamsReqId;
+        modalState.loadingPublicTeams = true;
+        modalState.publicTeamsError = '';
+        renderResults();
+
+        try {
+            const result = await discoverPublicTeams({ searchText: q, pageSize: teamSearchQueryLimit });
+            if (!modalState || reqId !== modalState.publicTeamsReqId) return;
+            const publicTeams = (result?.teams || []).filter((team) => isTeamActive(team) && !modalState.teamsById.has(team.id));
+            modalState.publicTeams = publicTeams;
+            modalState.loadingPublicTeams = false;
+            modalState.publicTeamsError = '';
+            renderResults();
+        } catch (e) {
+            console.error('[GlobalSearch] Team search failed:', e);
+            if (!modalState || reqId !== modalState.publicTeamsReqId) return;
+            modalState.publicTeams = [];
+            modalState.loadingPublicTeams = false;
+            modalState.publicTeamsError = 'Public team search unavailable.';
+            renderResults();
+        }
     };
 
     const runPlayerSearch = async (rawQuery) => {
@@ -556,18 +694,19 @@ function openModal({ initialQuery = '' } = {}) {
         }
     };
 
-    const schedulePlayerSearch = () => {
+    const scheduleSearches = () => {
         if (!modalState) return;
-        if (modalState.playersDebounce) clearTimeout(modalState.playersDebounce);
-        modalState.playersDebounce = setTimeout(() => {
+        if (modalState.searchDebounce) clearTimeout(modalState.searchDebounce);
+        modalState.searchDebounce = setTimeout(() => {
             if (!modalState) return;
+            runTeamSearch(modalState.input.value || '');
             runPlayerSearch(modalState.input.value || '');
         }, 180);
     };
 
     input.addEventListener('input', () => {
         modalState.activeIndex = 0;
-        schedulePlayerSearch();
+        scheduleSearches();
         renderResults();
     });
 
@@ -581,12 +720,14 @@ function openModal({ initialQuery = '' } = {}) {
             const teams = await loadTeamsOnce();
             if (!modalState) return;
             modalState.teams = teams;
+            modalState.publicTeams = [];
             modalState.loadingTeams = false;
             modalState.teamsError = '';
             modalState.teamsById = new Map((teams || []).map(t => [t.id, t]));
             modalState.activeIndex = 0;
             renderResults();
             if ((modalState.input.value || '').trim().length >= 2) {
+                runTeamSearch(modalState.input.value);
                 runPlayerSearch(modalState.input.value);
             }
         } catch (e) {
