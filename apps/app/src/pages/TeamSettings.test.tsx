@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamSettings } from './TeamSettings';
 import type { AuthState } from '../lib/types';
@@ -29,6 +29,16 @@ const auth: AuthState = {
   refresh: vi.fn(),
   signOut: vi.fn()
 };
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const managedModel = {
   team: {
@@ -214,5 +224,52 @@ describe('TeamSettings', () => {
       isPublic: true,
       photoFile: null
     }));
+  });
+
+  it('ignores stale team settings responses after navigating to a different team', async () => {
+    const teamOneLoad = createDeferred<typeof managedModel>();
+    const teamTwoLoad = createDeferred<typeof managedModel>();
+
+    teamDetailServiceMocks.loadParentTeamDetail.mockImplementation((requestedTeamId: string) => {
+      if (requestedTeamId === 'team-1') return teamOneLoad.promise;
+      if (requestedTeamId === 'team-2') return teamTwoLoad.promise;
+      throw new Error(`Unexpected team id: ${requestedTeamId}`);
+    });
+
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/teams/:teamId/edit',
+          element: <TeamSettings auth={auth} />
+        }
+      ],
+      { initialEntries: ['/teams/team-1/edit'] }
+    );
+
+    render(<RouterProvider router={router} />);
+
+    await act(async () => {
+      await router.navigate('/teams/team-2/edit');
+    });
+
+    teamTwoLoad.resolve({
+      ...managedModel,
+      team: {
+        ...managedModel.team,
+        id: 'team-2',
+        name: 'Wolves',
+        sport: 'Soccer'
+      }
+    });
+
+    expect(await screen.findByDisplayValue('Wolves')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Basketball')).toHaveValue('Soccer');
+
+    teamOneLoad.resolve(managedModel);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Team name')).toHaveValue('Wolves');
+      expect(screen.getByPlaceholderText('Basketball')).toHaveValue('Soccer');
+    });
   });
 });

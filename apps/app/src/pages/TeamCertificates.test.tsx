@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamCertificates } from './TeamCertificates';
 import type { AuthState } from '../lib/types';
@@ -41,6 +41,16 @@ const auth: AuthState = {
   refresh: vi.fn(),
   signOut: vi.fn()
 };
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const composerModel = {
   team: {
@@ -140,5 +150,65 @@ describe('TeamCertificates', () => {
 
     expect(await screen.findByText('Unable to create certificate drafts.')).toBeTruthy();
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it('ignores stale certificate loads after navigating to a different team', async () => {
+    const teamOneLoad = createDeferred<typeof composerModel>();
+    const teamTwoLoad = createDeferred<typeof composerModel>();
+
+    certificateDraftServiceMocks.loadCertificateDraftComposer.mockImplementation((requestedTeamId: string) => {
+      if (requestedTeamId === 'team-1') return teamOneLoad.promise;
+      if (requestedTeamId === 'team-2') return teamTwoLoad.promise;
+      throw new Error(`Unexpected team id: ${requestedTeamId}`);
+    });
+
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/teams/:teamId/certificates',
+          element: <TeamCertificates auth={auth} />
+        }
+      ],
+      { initialEntries: ['/teams/team-1/certificates'] }
+    );
+
+    render(<RouterProvider router={router} />);
+
+    await act(async () => {
+      await router.navigate('/teams/team-2/certificates');
+    });
+
+    teamTwoLoad.resolve({
+      ...composerModel,
+      team: {
+        ...composerModel.team,
+        id: 'team-2',
+        name: 'Wolves'
+      },
+      players: [
+        {
+          id: 'player-2',
+          name: 'Wade Wolf',
+          number: '7',
+          photoUrl: null,
+          active: true
+        }
+      ],
+      shared: {
+        ...composerModel.shared,
+        awardTitle: 'Team Two Award'
+      }
+    });
+
+    expect(await screen.findByDisplayValue('Team Two Award')).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Wade Wolf' })).toBeTruthy();
+
+    teamOneLoad.resolve(composerModel);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Team Two Award')).toBeTruthy();
+      expect(screen.getByRole('option', { name: 'Wade Wolf' })).toBeTruthy();
+      expect(screen.queryByRole('option', { name: 'Pat Player' })).toBeNull();
+    });
   });
 });

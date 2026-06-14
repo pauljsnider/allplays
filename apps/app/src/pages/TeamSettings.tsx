@@ -10,6 +10,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const photoPreviewUrlRef = useRef('');
+  const activeLoadIdRef = useRef(0);
   const { loading, error, run: runPrimaryLoad } = useAsyncOperation();
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -34,12 +35,16 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
   const loadSettings = useCallback(async () => {
     if (!teamId) return null;
 
+    const loadId = activeLoadIdRef.current + 1;
+    activeLoadIdRef.current = loadId;
+
     return runPrimaryLoad(
       () => loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false }),
       {
         errorMessage: 'Unable to load team settings.',
         rethrow: false,
         onSuccess: (model) => {
+          if (loadId !== activeLoadIdRef.current) return;
           setCanManageTeam(model.canManageTeam);
           setTeamName(model.team.name || 'Team');
           setForm({
@@ -52,6 +57,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
           setPhotoPreviewUrl(model.team.photoUrl || '');
         },
         onError: () => {
+          if (loadId !== activeLoadIdRef.current) return;
           setCanManageTeam(false);
           setTeamName('Team');
           setForm({
@@ -65,6 +71,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
           setPhotoPreviewUrl('');
         },
         onFinally: () => {
+          if (loadId !== activeLoadIdRef.current) return;
           setHasResolvedInitialLoad(true);
         }
       }
@@ -76,6 +83,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
     void loadSettings();
 
     return () => {
+      activeLoadIdRef.current += 1;
       if (photoPreviewUrlRef.current.startsWith('blob:')) {
         URL.revokeObjectURL(photoPreviewUrlRef.current);
       }

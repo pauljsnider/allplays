@@ -18,10 +18,13 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const activeLoadIdRef = useRef(0);
 
   const loadComposer = useCallback(async () => {
     if (!teamId) return null;
 
+    const loadId = activeLoadIdRef.current + 1;
+    activeLoadIdRef.current = loadId;
     setSuccess('');
 
     return runPrimaryLoad(
@@ -30,18 +33,21 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
         errorMessage: 'Unable to load certificate drafting.',
         rethrow: false,
         onSuccess: (nextModel) => {
+          if (loadId !== activeLoadIdRef.current) return;
           setModel(nextModel);
           setShared(nextModel.shared);
           setSelectedPlayerIds(nextModel.players.map((player) => player.id));
           setPreviewPlayerId(nextModel.players[0]?.id || '');
         },
         onError: () => {
+          if (loadId !== activeLoadIdRef.current) return;
           setModel(null);
           setShared(null);
           setSelectedPlayerIds([]);
           setPreviewPlayerId('');
         },
         onFinally: () => {
+          if (loadId !== activeLoadIdRef.current) return;
           setHasResolvedInitialLoad(true);
         }
       }
@@ -51,6 +57,10 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
   useEffect(() => {
     setHasResolvedInitialLoad(false);
     void loadComposer();
+
+    return () => {
+      activeLoadIdRef.current += 1;
+    };
   }, [loadComposer]);
 
   const selectedPlayers = useMemo(() => {
