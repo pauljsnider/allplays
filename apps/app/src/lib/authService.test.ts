@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const capacitorMocks = vi.hoisted(() => ({
@@ -66,6 +69,8 @@ vi.mock('../../../../js/parent-membership-utils.js', () => ({
   mergeApprovedParentMembershipRequests: vi.fn(() => ({ changed: false, userUpdate: {} }))
 }));
 
+const authServicePath = resolve(dirname(fileURLToPath(import.meta.url)), 'authService.ts');
+
 function createGoogleUser(overrides: Record<string, unknown> = {}) {
   return {
     uid: 'google-user-1',
@@ -100,6 +105,14 @@ describe('app auth invite activation', () => {
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
     dbMocks.getUserProfile.mockResolvedValue({ email: 'parent@example.com' });
     adminInviteMocks.redeemAdminInviteAcceptance.mockResolvedValue({ id: 'team-1', name: 'Bears' });
+  });
+
+  it('keeps the legacy auth db graph lazy until an auth db flow is needed', () => {
+    const authServiceSource = readFileSync(authServicePath, 'utf8');
+
+    expect(authServiceSource).not.toContain("import * as authDb from '../../../../js/db.js';");
+    expect(authServiceSource).toContain("authDbPromise ||= import('../../../../js/db.js');");
+    expect(authServiceSource).not.toContain('return Promise.resolve(authDb);');
   });
 
   it('redeems a Google parent invite using generic pre-auth validation state', async () => {

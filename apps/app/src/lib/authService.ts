@@ -19,7 +19,6 @@ import {
   updatePassword,
   verifyPasswordResetCode
 } from './firebaseAuthRuntime';
-import * as authDb from '../../../../js/db.js';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -35,19 +34,21 @@ const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
 const nativeAuthSessionStorageKey = 'allplays-native-auth-session';
 
-type AuthDbModule = typeof authDb;
+type AuthDbModule = typeof import('../../../../js/db.js');
 type AdminInviteModule = typeof import('../../../../js/admin-invite.js');
 type InviteFlowModule = typeof import('../../../../js/accept-invite-flow.js');
 type SignupFlowModule = typeof import('../../../../js/signup-flow.js');
 type ParentMembershipUtilsModule = typeof import('../../../../js/parent-membership-utils.js');
 
+let authDbPromise: Promise<AuthDbModule> | null = null;
 let adminInvitePromise: Promise<AdminInviteModule> | null = null;
 let inviteFlowPromise: Promise<InviteFlowModule> | null = null;
 let signupFlowPromise: Promise<SignupFlowModule> | null = null;
 let parentMembershipUtilsPromise: Promise<ParentMembershipUtilsModule> | null = null;
 
 function loadAuthDb() {
-  return Promise.resolve(authDb);
+  authDbPromise ||= import('../../../../js/db.js');
+  return authDbPromise;
 }
 
 function loadAdminInvite() {
