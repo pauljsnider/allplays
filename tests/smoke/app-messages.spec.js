@@ -534,6 +534,7 @@ test('messages defer offscreen media requests until scroll or video interaction'
 
     await thread.evaluate((element) => {
         element.scrollTop = 0;
+        element.dispatchEvent(new Event('scroll', { bubbles: true }));
     });
     await expect(page.getByAltText('Deferred lineup 1')).toBeVisible();
     await expect.poll(() => mediaRequests.filter((path) => path.endsWith('.jpg')).sort()).toEqual([
