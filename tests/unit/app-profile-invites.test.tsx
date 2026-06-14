@@ -280,7 +280,7 @@ describe('Profile invites', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second.png');
   });
 
-  it('revokes temporary blob previews after save and on unmount without touching remote urls', async () => {
+  it('uploads a newly selected profile photo even when save is clicked immediately after selection', async () => {
     profileServiceMocks.loadProfileDocument
       .mockResolvedValueOnce({
         fullName: 'Pat Parent',
