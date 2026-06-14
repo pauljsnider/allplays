@@ -30,7 +30,7 @@ describe('access code Firestore rules', () => {
 
     it('blocks self-minted admin invites unless the caller already administers the target team', () => {
         expect(rules).toContain('function isAdminInvitePayloadValid(data)');
-        expect(accessCodeRules).toContain("request.resource.data.get('type', null) != 'admin_invite' ||");
+        expect(accessCodeRules).toContain("request.resource.data.get('type', null) == 'admin_invite'");
         expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
         expect(accessCodeRules).toContain('isAdminInvitePayloadValid(request.resource.data)');
         expect(accessCodeRules).toContain('request.resource.data.code == codeId');
@@ -43,6 +43,25 @@ describe('access code Firestore rules', () => {
         expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
         expect(accessCodeRules).toContain('isAdminInvitePayloadValid(request.resource.data)');
         expect(accessCodeRules).toContain('request.resource.data.code == codeId');
+    });
+
+    it('requires team-admin authorization and an explicit schema for parent_invite creation', () => {
+        expect(rules).toContain('function isParentInvitePayloadValid(data)');
+        expect(accessCodeRules).toContain("request.resource.data.get('type', null) == 'parent_invite'");
+        expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
+        expect(accessCodeRules).toContain('isParentInvitePayloadValid(request.resource.data)');
+        expect(accessCodeRules).toContain('request.resource.data.code == codeId');
+        expect(rules).toContain("'code', 'type', 'teamId', 'playerId', 'playerNum', 'playerName'");
+        expect(rules).toContain("'teamName', 'relation', 'email', 'generatedBy', 'createdAt'");
+    });
+
+    it('locks parent_invite targeting to redemption and revoke-only updates', () => {
+        expect(rules).toContain('function isParentInviteRedemptionUpdate()');
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
+        expect(rules).toContain('function isParentInviteRevocationUpdate()');
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'updatedAt'])");
+        expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) != 'parent_invite'");
+        expect(accessCodeRules).toContain("resource.data.type != 'parent_invite'");
     });
 
     it('validates the allowed admin_invite payload fields before redemption can trust the record', () => {
