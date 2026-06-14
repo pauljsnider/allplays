@@ -54,19 +54,23 @@ describe('React app team fee offline payment service', () => {
             paidAt: null,
             manualPayment: {
                 amountPaidCents: 2500,
-                paidAt: '2026-05-28',
-                note: 'Check 1001',
-                recordedBy: 'coach-1'
+                paidAt: '2026-05-28'
             }
         });
         expect(update.ledgerEntries).toEqual([
             expect.objectContaining({
                 type: 'offline_payment',
                 amountCents: 2500,
-                paymentDate: '2026-05-28',
-                recordedBy: 'coach-1'
+                paymentDate: '2026-05-28'
             })
         ]);
+        expect(update.adminBilling).toEqual(expect.objectContaining({
+            type: 'offline_payment',
+            amountPaidCents: 2500,
+            paidAt: '2026-05-28',
+            note: 'Check 1001',
+            recordedBy: 'coach-1'
+        }));
     });
 
     it('builds a paid update when payment exactly covers the remaining balance', () => {
@@ -122,9 +126,7 @@ describe('React app team fee offline payment service', () => {
             adjustment: {
                 amountCents: 2000,
                 previousAmountDueCents: 15000,
-                amountDueCents: 13000,
-                note: 'Scholarship credit',
-                adjustedBy: 'coach-1'
+                amountDueCents: 13000
             }
         });
         expect(update.ledgerEntries).toEqual([
@@ -132,10 +134,17 @@ describe('React app team fee offline payment service', () => {
                 type: 'balance_adjustment',
                 amountCents: 2000,
                 previousAmountDueCents: 15000,
-                amountDueCents: 13000,
-                reason: 'Scholarship credit'
+                amountDueCents: 13000
             })
         ]);
+        expect(update.adminBilling).toEqual(expect.objectContaining({
+            type: 'balance_adjustment',
+            amountCents: 2000,
+            previousAmountDueCents: 15000,
+            amountDueCents: 13000,
+            reason: 'Scholarship credit',
+            adjustedBy: 'coach-1'
+        }));
     });
 
     it('treats negative adjustments as charges that increase the amount owed', () => {
@@ -178,9 +187,7 @@ describe('React app team fee offline payment service', () => {
             refunded: {
                 amountCents: 1500,
                 refundType: 'partial',
-                refundMethod: 'check',
-                note: 'Parent returned duplicate cash payment',
-                recordedBy: 'coach-1'
+                refundMethod: 'check'
             }
         });
         expect(update.ledgerEntries).toEqual([
@@ -193,6 +200,15 @@ describe('React app team fee offline payment service', () => {
                 methodLabel: 'Check'
             })
         ]);
+        expect(update.adminBilling).toEqual(expect.objectContaining({
+            type: 'offline_refund',
+            refundAmountCents: 1500,
+            refundType: 'partial',
+            refundMethod: 'check',
+            methodLabel: 'Check',
+            note: 'Parent returned duplicate cash payment',
+            recordedBy: 'coach-1'
+        }));
     });
 
     it('builds full offline refunds back to unpaid', () => {
@@ -422,8 +438,9 @@ describe('React app team fee offline payment service', () => {
             amountPaidCents: 10000,
             remainingBalanceCents: 0,
             paidAt: '2026-05-28',
-            manualPayment: expect.objectContaining({ amountPaidCents: 10000, note: 'Cash' }),
-            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 10000 })]
+            manualPayment: expect.objectContaining({ amountPaidCents: 10000 }),
+            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 10000 })],
+            adminBilling: expect.objectContaining({ type: 'offline_payment', note: 'Cash' })
         }));
     });
 
@@ -456,8 +473,9 @@ describe('React app team fee offline payment service', () => {
             amountPaidCents: 7000,
             remainingBalanceCents: 3000,
             paidAt: null,
-            manualPayment: expect.objectContaining({ amountPaidCents: 1000, note: 'Cash' }),
-            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 1000 })]
+            manualPayment: expect.objectContaining({ amountPaidCents: 1000 }),
+            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 1000 })],
+            adminBilling: expect.objectContaining({ type: 'offline_payment', note: 'Cash' })
         }));
     });
 
@@ -488,8 +506,9 @@ describe('React app team fee offline payment service', () => {
             status: 'partial',
             amountDueCents: 11000,
             remainingBalanceCents: 1000,
-            adjustment: expect.objectContaining({ amountCents: -1000, note: 'Late fee' }),
-            ledgerEntries: [expect.objectContaining({ type: 'balance_adjustment', amountCents: -1000, reason: 'Late fee' })]
+            adjustment: expect.objectContaining({ amountCents: -1000 }),
+            ledgerEntries: [expect.objectContaining({ type: 'balance_adjustment', amountCents: -1000 })],
+            adminBilling: expect.objectContaining({ type: 'balance_adjustment', reason: 'Late fee' })
         }));
     });
 
@@ -522,8 +541,9 @@ describe('React app team fee offline payment service', () => {
             status: 'partial',
             amountPaidCents: 7500,
             remainingBalanceCents: 2500,
-            refunded: expect.objectContaining({ amountCents: 2500, refundMethod: 'cash', note: 'Refunded at the field' }),
-            ledgerEntries: [expect.objectContaining({ type: 'offline_refund', amountCents: -2500, refundAmountCents: 2500 })]
+            refunded: expect.objectContaining({ amountCents: 2500, refundMethod: 'cash' }),
+            ledgerEntries: [expect.objectContaining({ type: 'offline_refund', amountCents: -2500, refundAmountCents: 2500 })],
+            adminBilling: expect.objectContaining({ type: 'offline_refund', note: 'Refunded at the field' })
         }));
     });
 
