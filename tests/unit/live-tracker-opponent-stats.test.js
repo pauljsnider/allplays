@@ -17,13 +17,29 @@ class MockClassList {
     this.tokens = new Set();
   }
 
+  add(...tokens) {
+    tokens.forEach(token => this.tokens.add(token));
+  }
+
+  remove(...tokens) {
+    tokens.forEach(token => this.tokens.delete(token));
+  }
+
   toggle(token, force) {
-    if (force) {
+    if (force === true) {
       this.tokens.add(token);
       return true;
     }
-    this.tokens.delete(token);
-    return false;
+    if (force === false) {
+      this.tokens.delete(token);
+      return false;
+    }
+    if (this.tokens.has(token)) {
+      this.tokens.delete(token);
+      return false;
+    }
+    this.tokens.add(token);
+    return true;
   }
 }
 
@@ -528,7 +544,7 @@ describe('live tracker opponent stats hydration', () => {
     expect(hydrated.fouls).toBe(0);
   });
 
-  it('persists opponent removals so resume does not restore deleted cards', async () => {
+  it('reverses removed opponent scoring and clears that player\'s stat log entries', async () => {
     const updateCalls = [];
     const page = await bootLiveTracker({
       updateGame: async (_teamId, _gameId, payload) => {
@@ -542,6 +558,7 @@ describe('live tracker opponent stats hydration', () => {
       config: { columns: ['PTS'] },
       game: { liveHasData: false }
     });
+    page.state.away = 11;
     page.state.opp = [
       {
         id: 'opp1',
@@ -560,12 +577,34 @@ describe('live tracker opponent stats hydration', () => {
         stats: { pts: 7, fouls: 0, time: 0 }
       }
     ];
+    page.state.log = [
+      {
+        text: 'Opp Remaining Player PTS +7',
+        undoData: { type: 'stat', playerId: 'opp2', statKey: 'pts', value: 7, isOpponent: true }
+      },
+      {
+        text: 'Opp Removed Player PTS +4',
+        undoData: { type: 'stat', playerId: 'opp1', statKey: 'pts', value: 4, isOpponent: true }
+      },
+      {
+        text: 'Opp Removed Player FOULS +1',
+        undoData: { type: 'stat', playerId: 'opp1', statKey: 'fouls', value: 1, isOpponent: true }
+      }
+    ];
 
     page.renderOpponents();
     page.els.oppCards.querySelectorAll('[data-opp-del]')[0].click();
     await page.flushTimers();
 
     expect(page.state.opp.map((opp) => opp.id)).toEqual(['opp2']);
+    expect(page.state.away).toBe(7);
+    expect(page.state.log).toEqual([
+      {
+        text: 'Opp Remaining Player PTS +7',
+        undoData: { type: 'stat', playerId: 'opp2', statKey: 'pts', value: 7, isOpponent: true }
+      }
+    ]);
+    expect(page.state.history).toHaveLength(1);
     expect(updateCalls).toContainEqual({
       opponentStats: {
         opp2: {

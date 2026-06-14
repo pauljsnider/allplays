@@ -834,10 +834,7 @@ function renderOpponents() {
   });
   els.oppCards.querySelectorAll('[data-opp-del]').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.opp = state.opp.filter(o => o.id !== btn.dataset.oppDel);
-      scheduleOpponentStatsSync();
-      scheduleLiveHasData();
-      renderOpponents();
+      removeOpponentEntry(btn.dataset.oppDel);
     });
   });
   els.oppCards.querySelectorAll('[data-opp-stat]').forEach(btn => {
@@ -867,6 +864,35 @@ function updateOpponentLinkVisibility() {
   const isLinked = !!currentGame?.opponentTeamId;
   const shouldHide = isLinked && hasOppPlayers;
   els.oppTeamSection.classList.toggle('hidden', shouldHide);
+}
+
+function getOpponentRecordedPoints(opp) {
+  if (!opp?.stats) return 0;
+  return Object.entries(opp.stats).reduce((total, [key, value]) => {
+    if (!isPointsColumn(key)) return total;
+    return total + Number(value || 0);
+  }, 0);
+}
+
+function removeOpponentEntry(opponentId) {
+  const opp = state.opp.find(entry => entry.id === opponentId);
+  if (!opp) return;
+
+  saveHistory(`Remove opponent ${opp.name || opp.number || 'player'}`);
+
+  const awayBefore = state.away;
+  state.opp = state.opp.filter(entry => entry.id !== opponentId);
+  state.away = safeDecrement(state.away, getOpponentRecordedPoints(opp));
+  state.log = state.log.filter(entry => entry?.undoData?.playerId !== opponentId || !entry.undoData?.isOpponent);
+
+  if (state.away !== awayBefore) {
+    scheduleScoreSync();
+  }
+  scheduleOpponentStatsSync();
+  scheduleLiveHasData();
+  renderHeader();
+  renderOpponents();
+  renderLog();
 }
 
 async function ensureTeamsCache() {
