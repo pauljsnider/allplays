@@ -81,6 +81,7 @@ describe('QuickAvailabilityPanel', () => {
     expect(screen.getByText('Availability needed')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Going' })).toBeDisabled();
     expect(screen.getByLabelText('Availability note')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
     expect(screen.getByText('Availability is not open for this event.')).toBeTruthy();
   });
 });
