@@ -10,9 +10,10 @@ function appUrl(baseURL, hashPath) {
 
 async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true } = {}) {
     const searchInput = page.getByPlaceholder('Search teams or players');
+    const teamsLoadingState = page.getByText(/^Loading teams$/);
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
-        await expect(page.getByText('Loading teams')).toHaveCount(0, { timeout: 3000 });
+        await expect(teamsLoadingState).toHaveCount(0, { timeout: 3000 });
         if (requireSearchInput) {
             await expect(searchInput).toBeVisible({ timeout: 3000 });
         }
@@ -480,17 +481,19 @@ test.describe('mobile My Teams', () => {
         await emptyState.getByRole('link', { name: 'Browse teams' }).click();
         await expect(page).toHaveURL(/#\/teams\/browse$/);
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
-        await expect(page.getByText('Loading teams')).toHaveCount(0);
+        await expect(page.getByText(/^Loading teams$/)).toHaveCount(0);
     });
 
     test('shows load failures without trapping the user in loading state', async ({ page, baseURL }) => {
         await mockTeamsModules(page, { scenario: 'error' });
         await page.goto(appUrl(baseURL, '/teams?scenario=error'), { waitUntil: 'domcontentloaded' });
 
-        await waitForTeamsRoute(page, page.getByText('Team service down'), { requireSearchInput: false });
-        await expect(page.getByText('Team service down')).toBeVisible();
-        await expect(page.getByText('No teams available')).toBeVisible();
-        await expect(page.getByText('Loading teams')).toHaveCount(0);
+        await waitForTeamsRoute(page, page.getByText('Teams could not load'), { requireSearchInput: false });
+        await expect(page.getByText('Teams could not load')).toBeVisible();
+        await expect(page.getByText('Try loading teams again to restore your team dashboard.')).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Retry team load' })).toBeVisible();
+        await expect(page.getByText(/^Loading teams$/)).toHaveCount(0);
+        await expect(page.getByText('No teams available')).toHaveCount(0);
     });
 
     test('team detail tabs expose parent-facing team page features', async ({ page, baseURL }) => {

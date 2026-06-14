@@ -83,7 +83,9 @@ export async function loadParentTeamsSummary(user: AuthUser | null, options: { f
     async () => {
       const timer = startUxTimer('teams summary load');
       try {
-        const chatInbox = await loadChatInbox(user, { includeLastMessages: false }).catch(() => ({ teams: [] }));
+        const chatInbox = await loadChatInbox(user, { includeLastMessages: false }).catch((error) => {
+          throw toAppServiceError(error, 'Unable to load teams.');
+        });
         const children = normalizeChildLinks(user, { parentOf: user.parentOf || [] });
         const model = buildParentHomeModel({
           children,

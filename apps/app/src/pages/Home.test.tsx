@@ -199,6 +199,16 @@ describe('Home', () => {
     expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
   });
 
+  it('shows retryable Home error UI when the initial secondary load fails', async () => {
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Home could not connect')).toBeTruthy();
+    expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+  });
+
   it('refreshes the social feed with the async loading helper', async () => {
     renderHome(signedInAuth, '/home?section=feed');
 
