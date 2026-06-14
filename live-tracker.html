@@ -88,17 +88,16 @@
         </div>
       </div>
       <!-- Periods row (compact) -->
-      <div class="grid grid-cols-4 gap-1 text-center text-[11px]">
+      <div id="period-buttons" class="grid grid-cols-4 gap-1 text-center text-[11px]">
         <button class="pill px-2 py-1.5 bg-teal text-ink border border-teal period-btn font-bold" data-period="Q1">Q1</button>
         <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="Q2">Q2</button>
         <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="Q3">Q3</button>
         <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="Q4">Q4</button>
       </div>
       <!-- Actions row -->
-      <div class="grid grid-cols-3 gap-2 text-center text-[11px]">
-        <button class="pill px-2 py-1.5 bg-white border border-slate/10 period-btn font-semibold" data-period="OT">OT</button>
+      <div class="grid grid-cols-2 gap-2 text-center text-[11px]">
         <button class="pill px-2 py-1.5 bg-purple-600 text-white border border-purple-700 font-bold" id="sub-open">Subs</button>
-        <button class="pill px-2 py-1.5 bg-white border border-slate/10 font-semibold" id="full-line-swap">Swap 5</button>
+        <button class="pill px-2 py-1.5 bg-white border border-slate/10 font-semibold" id="full-line-swap">Swap active</button>
       </div>
       <!-- Quick apply queue button (only visible when queue exists) -->
       <div id="queue-quick-apply" class="hidden rounded-xl bg-teal/10 border border-teal p-2">
@@ -120,7 +119,7 @@
         </div>
       </div>
       <div class="flex items-center justify-between text-xs text-white bg-slate rounded-xl px-3 py-2">
-        <span class="font-semibold">On court: <span id="on-court-count-mobile">0/5</span></span>
+        <span class="font-semibold">Active: <span id="on-court-count-mobile">0/5</span></span>
         <span id="fairness-mobile" class="pill px-2 py-1 bg-white/10 text-white font-semibold text-xs">Needs data</span>
         <span class="font-mono" id="clock-mobile">00:00</span>
       </div>
@@ -129,7 +128,7 @@
     <!-- Lineup -->
     <section id="panel-lineup" class="card mx-3 p-3 rounded-2xl shadow-lg space-y-3 hidden">
       <div class="flex items-center justify-between text-sm font-semibold">
-        <span>Pick starters (max 5)</span>
+        <span id="lineup-limit-label">Pick starters</span>
         <button id="clear-lineup-mobile" class="text-xs underline">Clear</button>
       </div>
       <div id="lineup-starters" class="grid grid-cols-5 gap-2 text-center text-xs"></div>
@@ -144,9 +143,9 @@
       <div id="starter-helper" class="hidden rounded-xl bg-sand border border-slate/10 p-2 text-xs space-y-1">
         <div class="flex items-center justify-between">
           <span class="font-semibold text-ink">Add starters</span>
-          <button id="auto-fill-mobile" class="pill px-2 py-1 bg-teal text-ink font-semibold">Auto-fill 5</button>
+          <button id="auto-fill-mobile" class="pill px-2 py-1 bg-teal text-ink font-semibold">Auto-fill</button>
         </div>
-        <p class="text-slate-600">Tap below to move players on court.</p>
+        <p class="text-slate-600">Tap below to move players into the active group.</p>
       </div>
       <div id="live-players" class="grid grid-cols-2 gap-2"></div>
       <button id="toggle-bench-mobile" class="w-full text-xs font-semibold pill px-3 py-2 bg-white border border-slate/10">Bench / Add starters</button>
@@ -351,7 +350,7 @@
       </div>
 
       <div class="space-y-2">
-        <div id="sub-hint-mobile" class="text-xs text-center py-2 rounded-lg bg-sand text-slate-600 font-medium">Tap player on court, then tap replacement</div>
+        <div id="sub-hint-mobile" class="text-xs text-center py-2 rounded-lg bg-sand text-slate-600 font-medium">Tap active player, then tap replacement</div>
         <div class="grid grid-cols-2 gap-2">
           <button id="save-queue-later" class="hidden pill px-3 py-2 bg-white border-2 border-teal text-teal font-bold text-sm">Save for Later</button>
           <button id="confirm-sub-mobile" class="w-full pill px-4 py-3 bg-teal text-ink font-bold text-sm" disabled>Make Swap</button>

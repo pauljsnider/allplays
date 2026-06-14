@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { sanitizeErrorForLogging } from '../../apps/app/src/lib/nativeRestLogging.ts';
+import { sanitizeErrorForLogging, sanitizeRequestInitForLogging } from '../../apps/app/src/lib/nativeRestLogging.ts';
 
 describe('native REST logging sanitizer', () => {
     it('redacts bearer auth and token fields from nested log payloads', () => {
@@ -48,6 +48,45 @@ describe('native REST logging sanitizer', () => {
                     Authorization: '[REDACTED]',
                     authorization: '[REDACTED]'
                 }
+            }
+        });
+    });
+
+    it('redacts bearer token appearing in an error message string', () => {
+        const error = new Error('Request failed: Bearer sometoken123 was rejected');
+        const sanitized = sanitizeErrorForLogging(error) as { message: string };
+        expect(sanitized.message).not.toContain('sometoken123');
+        expect(sanitized.message).toContain('Bearer [REDACTED]');
+    });
+
+    it('sanitizeRequestInitForLogging redacts headers and nested body secrets', () => {
+        const init = {
+            method: 'POST',
+            headers: { Authorization: 'Bearer abc123', 'Content-Type': 'application/json' },
+            body: {
+                idToken: 'id-token-123',
+                refreshToken: 'refresh-token-456',
+                nested: {
+                    authorization: 'Bearer nested-token-789'
+                }
+            } as unknown as BodyInit
+        } as RequestInit;
+
+        const sanitized = sanitizeRequestInitForLogging(init);
+        const serialized = JSON.stringify(sanitized);
+
+        expect(sanitized.headers).toBe('[REDACTED]');
+        expect(sanitized.method).toBe('POST');
+        expect(serialized).not.toContain('abc123');
+        expect(serialized).not.toContain('Authorization');
+        expect(serialized).not.toContain('id-token-123');
+        expect(serialized).not.toContain('refresh-token-456');
+        expect(serialized).not.toContain('nested-token-789');
+        expect(sanitized.body).toEqual({
+            idToken: '[REDACTED]',
+            refreshToken: '[REDACTED]',
+            nested: {
+                authorization: '[REDACTED]'
             }
         });
     });

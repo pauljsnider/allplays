@@ -311,6 +311,22 @@ function buildPreviewRow({ status, sourcePlayer = {}, payload = null, existingPl
     };
 }
 
+export function hasConfiguredRegistrationProviderMetadata(team = {}) {
+    const source = firstNonEmptyObject(team.registrationSource, team.registrationProvider);
+    return !!(
+        team.registrationSourceId ||
+        team.externalRegistrationTeamId ||
+        source.provider ||
+        source.providerId ||
+        source.providerName ||
+        source.externalTeamId ||
+        source.teamId ||
+        source.connectionStatus ||
+        source.lastSyncStatus ||
+        source.syncStatus
+    );
+}
+
 export function isExternallyLinkedRosterTeam(team = {}) {
     return !!(
         team.registrationSourceSnapshot ||
@@ -430,19 +446,22 @@ export function planRegistrationRosterImport({ sourcePlayers = [], existingPlaye
             }
         }
 
-        const sourceContacts = [...(payload.guardians || []), ...(payload.contacts || [])];
-        const contactConflict = findContactConflict(sourceContacts, existingContactOwners, existing);
-        if (contactConflict) {
-            const conflictDetail = {
-                externalPlayerId,
-                existingPlayerId: contactConflict.existingPlayerId,
-                conflictType: 'contact',
-                contact: contactConflict.contact
-            };
-            results.conflicted += 1;
-            results.conflicts.push(conflictDetail);
-            previewRows.push(buildPreviewRow({ status: 'conflict', sourcePlayer, payload, existingPlayer: existing, conflict: conflictDetail }));
-            return;
+        // Only check for contact conflicts on updates (not new additions) — siblings share parent contacts
+        if (existing) {
+            const sourceContacts = [...(payload.guardians || []), ...(payload.contacts || [])];
+            const contactConflict = findContactConflict(sourceContacts, existingContactOwners, existing);
+            if (contactConflict) {
+                const conflictDetail = {
+                    externalPlayerId,
+                    existingPlayerId: contactConflict.existingPlayerId,
+                    conflictType: 'contact',
+                    contact: contactConflict.contact
+                };
+                results.conflicted += 1;
+                results.conflicts.push(conflictDetail);
+                previewRows.push(buildPreviewRow({ status: 'conflict', sourcePlayer, payload, existingPlayer: existing, conflict: conflictDetail }));
+                return;
+            }
         }
 
         const fieldValues = collectRegistrationRosterFieldValues(sourcePlayer, fields, results);

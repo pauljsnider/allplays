@@ -4,6 +4,8 @@ export type ScheduleTimeRange = 'week' | 'month' | 'quarter' | 'all';
 export type ScheduleEventType = 'game' | 'practice';
 export type RsvpResponse = 'going' | 'maybe' | 'not_going' | 'not_responded';
 export type ScheduleSourceType = 'db' | 'calendar' | 'practice-session' | 'unknown';
+export type ScheduleEventDetailSection = 'availability' | 'rideshare' | 'assignments' | 'game';
+export const PRACTICE_PACKET_DETAIL_SECTION: ScheduleEventDetailSection = 'game';
 
 export type ScheduleRsvpSummary = {
   going?: number;
@@ -495,6 +497,27 @@ export function getOpenScheduleAssignments(assignments: Array<Partial<ScheduleAs
   return (Array.isArray(assignments) ? assignments : [])
     .map((assignment) => normalizeScheduleAssignment(assignment))
     .filter(isScheduleAssignmentOpen);
+}
+
+export function getScheduleTaskDetailSection(event: Pick<ParentScheduleEvent, 'type' | 'practiceHomePacketSummary' | 'assignments' | 'rideshareSummary' | 'isDbGame' | 'isCancelled' | 'myRsvp'>): ScheduleEventDetailSection | '' {
+  if (event.type === 'game' && event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded') return 'availability';
+  // Practice packets render in the shared game/report tab inside ScheduleEventDetail.
+  if (event.type === 'practice' && event.practiceHomePacketSummary) return PRACTICE_PACKET_DETAIL_SECTION;
+  if (getOpenScheduleAssignments(event.assignments).length > 0) return 'assignments';
+  const rideSummary = event.rideshareSummary;
+  if (rideSummary && (rideSummary.requests > 0 || rideSummary.pending > 0 || rideSummary.seatsLeft > 0)) return 'rideshare';
+  return '';
+}
+
+export function getScheduleEventDetailPath(
+  event: Pick<ParentScheduleEvent, 'teamId' | 'id' | 'childId'>,
+  section: ScheduleEventDetailSection | '' = ''
+) {
+  const params = new URLSearchParams();
+  if (event.childId) params.set('childId', event.childId);
+  if (section) params.set('section', section);
+  const query = params.toString();
+  return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${query ? `?${query}` : ''}`;
 }
 
 export function getScheduleAssignmentStatus(assignment: Partial<ScheduleAssignment>, userId = '') {

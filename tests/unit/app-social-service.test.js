@@ -26,8 +26,8 @@ const chatMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js', () => firebaseMocks);
-vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
-vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
+vi.mock(import('../../apps/app/src/lib/homeService.ts'), () => homeMocks);
+vi.mock(import('../../apps/app/src/lib/chatService.ts'), () => chatMocks);
 
 const user = {
     uid: 'user-1',

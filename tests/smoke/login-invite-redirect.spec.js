@@ -127,6 +127,29 @@ test('email/password login from a type-less invite link redirects existing users
     await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34$/);
 });
 
+test('email/password login from a household invite link redirects existing users to accept-invite', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        profile: {
+            parentOf: [{ teamId: 'team-1' }]
+        },
+        defaultRedirect: 'parent-dashboard.html'
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html?code=ab12cd34&type=household'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await page.locator('#toggle-btn').click();
+    await expect(page.locator('#form-title')).toHaveText('Login');
+
+    await page.locator('#email').fill('household@example.com');
+    await page.locator('#password').fill('secret123');
+    await page.locator('#login-form').dispatchEvent('submit');
+
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34&type=household$/);
+});
+
 test('google redirect login mode keeps existing admin invites on accept-invite', async ({ page, baseURL }) => {
     await page.addInitScript(() => {
         window.sessionStorage.setItem('postGoogleAuthMode', 'login');

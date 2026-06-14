@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
 
 function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
 }
+
+const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+const { getEventTitle, coerceDate, formatScheduleUpdateDate } = require('../../functions/schedule-notification-utils.cjs');
 
 describe('edit schedule notification wiring', () => {
     it('includes team-level reminder settings controls', () => {
@@ -54,6 +61,13 @@ describe('edit schedule notification wiring', () => {
         expect(source.match(/bg-emerald-50 border border-emerald-200 rounded-lg p-3/g)).toHaveLength(3);
         expect(source).toContain('id="csv-import-notify-team"');
         expect(source).toContain('Notify the team in chat after import');
+    });
+
+    it('marks CSV-imported events with import source metadata', () => {
+        const source = readEditSchedule();
+
+        expect(source).toContain("source: 'csv_import'");
+        expect(source).toContain("importedFrom: 'edit-schedule-csv'");
     });
 
     it('wires the schedule notification helper and RSVP reminder action', () => {
@@ -117,5 +131,85 @@ describe('edit schedule notification wiring', () => {
 
         expect(source).toContain("const counterpartTeamId = gameData.opponentTeamId || null;");
         expect(source).not.toContain('gamesCache[editingGameId]?.sharedScheduleOpponentTeamId');
+    });
+});
+
+describe('notifyGameCreated Cloud Function trigger', () => {
+    it('is wired as an onCreate trigger on the games subcollection', () => {
+        const triggerBody = functionsSource.slice(functionsSource.indexOf('exports.notifyGameCreated'));
+
+        expect(triggerBody).toContain(".document('teams/{teamId}/games/{gameId}')");
+        expect(triggerBody).toContain('.onCreate(');
+        expect(triggerBody).toContain("sendCategoryNotification({");
+        expect(triggerBody).toContain('actorUid: game.createdBy || null');
+    });
+
+    it('sends a schedule category notification for a new game', () => {
+        const triggerBody = functionsSource.slice(
+            functionsSource.indexOf('exports.notifyGameCreated'),
+            functionsSource.indexOf('const PUBLIC_RSVP_TOKEN_TTL_DAYS')
+        );
+
+        expect(triggerBody).toContain("isPractice ? 'practice' : 'schedule'");
+        expect(triggerBody).toContain("New game: ");
+        expect(triggerBody).toContain("New practice: ");
+    });
+
+    it('skips draft events and returns null', () => {
+        const triggerBody = functionsSource.slice(
+            functionsSource.indexOf('exports.notifyGameCreated'),
+            functionsSource.indexOf('const PUBLIC_RSVP_TOKEN_TTL_DAYS')
+        );
+
+        expect(triggerBody).toContain("if (status === 'draft') return null;");
+    });
+
+    it('skips imported events and returns null', () => {
+        const triggerBody = functionsSource.slice(
+            functionsSource.indexOf('exports.notifyGameCreated'),
+            functionsSource.indexOf('const PUBLIC_RSVP_TOKEN_TTL_DAYS')
+        );
+
+        expect(triggerBody).toContain('if (game.source || game.sourceMetadata) return null;');
+    });
+
+    it('stamps createdBy in db helpers so creators are excluded from create pushes', () => {
+        expect(dbSource).toContain('gameData.createdBy = gameData.createdBy || auth.currentUser?.uid || null;');
+        expect(dbSource).toContain('eventData.createdBy = eventData.createdBy || auth.currentUser?.uid || null;');
+    });
+
+    it('getEventTitle returns practice title for practice type', () => {
+        expect(getEventTitle({ type: 'practice', title: 'Morning Drills' })).toBe('Morning Drills');
+        expect(getEventTitle({ type: 'practice' })).toBe('Practice');
+    });
+
+    it('getEventTitle returns vs. opponent for game type', () => {
+        expect(getEventTitle({ opponent: 'Wildcats' })).toBe('vs. Wildcats');
+        expect(getEventTitle({ title: 'Championship' })).toBe('Championship');
+        expect(getEventTitle({})).toBe('Game');
+    });
+
+    it('coerceDate parses ISO date strings', () => {
+        const result = coerceDate('2026-06-15T18:00:00.000Z');
+        expect(result).toBeInstanceOf(Date);
+        expect(result.getFullYear()).toBe(2026);
+    });
+
+    it('coerceDate returns null for falsy values', () => {
+        expect(coerceDate(null)).toBeNull();
+        expect(coerceDate('')).toBeNull();
+        expect(coerceDate(undefined)).toBeNull();
+    });
+
+    it('formatScheduleUpdateDate formats a date with a timezone', () => {
+        const label = formatScheduleUpdateDate('2026-06-15T23:00:00.000Z', 'America/Chicago');
+        expect(label).toContain('Mon');
+        expect(label).toContain('Jun');
+        expect(label).toContain('15');
+    });
+
+    it('formatScheduleUpdateDate returns empty string when timezone is missing', () => {
+        expect(formatScheduleUpdateDate('2026-06-15T23:00:00.000Z', '')).toBe('');
+        expect(formatScheduleUpdateDate('2026-06-15T23:00:00.000Z', null)).toBe('');
     });
 });

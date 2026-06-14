@@ -610,6 +610,8 @@ function AddPlayerCard({ teamId, authUser, onCreated }: {
             <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Jersey number</span>
             <input
               type="text"
+              inputMode="numeric"
+              enterKeyHint="next"
               value={number}
               onChange={(event) => setNumber(event.target.value)}
               className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
@@ -1358,6 +1360,9 @@ function StaffPermissionsCard({ model, auth, onInviteSuccess }: { model: TeamDet
             <input
               id="team-admin-invite-email"
               type="email"
+              inputMode="email"
+              autoComplete="email"
+              enterKeyHint="send"
               value={email}
               onChange={(event) => {
                 setEmail(event.target.value);
