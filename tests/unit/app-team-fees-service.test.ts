@@ -84,6 +84,7 @@ describe('React app team fee offline payment service', () => {
     });
 
     it('rejects invalid amount and missing payment date', () => {
+        expect(() => buildManualPaymentUpdate({ amount: '-0.01', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '0', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '-1.00', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '5.00', date: '' })).toThrow('payment date');
@@ -337,6 +338,26 @@ describe('React app team fee offline payment service', () => {
                 status: 'unpaid'
             })
         ], expect.objectContaining({ uid: 'coach-1' }));
+    });
+
+    it('rejects fee batch recipients that are not active roster players', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star', active: true },
+            { id: 'player-2', name: 'Inactive Player', active: false }
+        ]);
+
+        await expect(createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Tournament dues',
+            amount: '25.00',
+            dueDate: '2026-06-15',
+            applyToWholeRoster: false,
+            recipientIds: ['player-1', 'missing-player', 'player-2'],
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        })).rejects.toThrow('missing-player, player-2');
+
+        expect(dbMocks.createTeamFeeBatch).not.toHaveBeenCalled();
     });
 
     it('creates a whole-roster fee batch from active players only and uses private-profile parent contacts', async () => {
