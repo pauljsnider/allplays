@@ -4685,10 +4685,13 @@ function MatchSummarySection({ report }: { report: GameReportData }) {
 function PlayerPerformanceSection({ report }: { report: GameReportData }) {
   const [showFullRoster, setShowFullRoster] = useState(false);
   const statKeys = report.statKeys.slice(0, 4);
-  const visiblePlayers = report.visiblePlayerRows.length ? report.visiblePlayerRows : report.playerRows;
-  const deferredPlayers = report.deferredPlayerRows || [];
+  const playerRows = Array.isArray(report.playerRows) ? report.playerRows : [];
+  const visiblePlayerRows = Array.isArray(report.visiblePlayerRows) ? report.visiblePlayerRows : [];
+  const deferredPlayerRows = Array.isArray(report.deferredPlayerRows) ? report.deferredPlayerRows : [];
+  const visiblePlayers = visiblePlayerRows.length ? visiblePlayerRows : playerRows;
+  const deferredPlayers = deferredPlayerRows;
 
-  if (!report.playerRows.length) {
+  if (!playerRows.length) {
     return <EmptyReportState title="No players found" detail="Player performance will appear after roster and stats load." />;
   }
 
