@@ -95,6 +95,7 @@ type AggregatedStatsResult = {
   participatedMap: Record<string, boolean>;
   participationStatusMap: Record<string, string>;
   participationSourceMap: Record<string, string>;
+  recordedPlayerIds: Set<string>;
 };
 
 function toNumber(value: unknown) {
@@ -125,9 +126,11 @@ async function loadAggregatedStats(teamId: string, gameId: string): Promise<Aggr
   const participatedMap: Record<string, boolean> = {};
   const participationStatusMap: Record<string, string> = {};
   const participationSourceMap: Record<string, string> = {};
+  const recordedPlayerIds = new Set<string>();
 
   snapshot.forEach((docSnap: any) => {
     const data = docSnap.data() || {};
+    recordedPlayerIds.add(String(docSnap.id || ''));
     statsMap[docSnap.id] = data.stats || {};
     timeMap[docSnap.id] = toNumber(data.timeMs);
     didNotPlayMap[docSnap.id] = data.didNotPlay === true;
@@ -136,7 +139,7 @@ async function loadAggregatedStats(teamId: string, gameId: string): Promise<Aggr
     participationSourceMap[docSnap.id] = String(data.participationSource || '');
   });
 
-  return { statsMap, timeMap, didNotPlayMap, participatedMap, participationStatusMap, participationSourceMap };
+  return { statsMap, timeMap, didNotPlayMap, participatedMap, participationStatusMap, participationSourceMap, recordedPlayerIds };
 }
 
 function normalizePlay(entry: any): GameReportPlay {
@@ -205,7 +208,8 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
       didNotPlayMap: {},
       participatedMap: {},
       participationStatusMap: {},
-      participationSourceMap: {}
+      participationSourceMap: {},
+      recordedPlayerIds: new Set<string>()
     })),
     getGameEvents(teamId, gameId, { limit: 100 }).catch(() => []),
     getTeamStatsForGame(teamId, gameId).catch(() => ({}))
@@ -216,7 +220,15 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     game,
     team
   });
-  const { statsMap, timeMap, didNotPlayMap, participatedMap, participationStatusMap, participationSourceMap } = aggregateResult;
+  const {
+    statsMap,
+    timeMap,
+    didNotPlayMap,
+    participatedMap,
+    participationStatusMap,
+    participationSourceMap,
+    recordedPlayerIds
+  } = aggregateResult;
   const { statKeys, statLabels } = resolveReportStatColumns({
     statsMap,
     resolvedConfig
@@ -261,7 +273,11 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     participationStatus: participationStatusMap[player.id] || '',
     participationSource: participationSourceMap[player.id] || ''
   }));
-  const visiblePlayerRows = playerRows.filter((player) => hasPlayerProfileParticipation(player) || player.didNotPlay);
+  const visiblePlayerRows = playerRows.filter((player) => (
+    hasPlayerProfileParticipation(player)
+    || player.didNotPlay
+    || (recordedPlayerIds.has(player.playerId) && player.didNotPlay !== true)
+  ));
   const deferredPlayerRows = playerRows.filter((player) => !visiblePlayerRows.includes(player));
   const playerLookup = new Map(playerRows.map((player) => [player.playerId, player]));
   const playerInsightRows = Object.entries(insights.playerInsightsById || {}).map(([playerId, playerInsights]) => ({

@@ -64,7 +64,7 @@ beforeEach(() => {
     dbMocks.getTeamStatsForGame.mockResolvedValue({ turnovers: 6, assists: 11 });
     firebaseMocks.getDocs.mockResolvedValue(snapshot([
         { id: 'player-1', data: { stats: { pts: 12, reb: 5, fouls: 1 }, timeMs: 1200000 } },
-        { id: 'player-2', data: { stats: {}, timeMs: 0, participated: true, participationStatus: 'appeared', participationSource: 'app-stat-tracker' } },
+        { id: 'player-2', data: { stats: {}, timeMs: 0, didNotPlay: false } },
         { id: 'player-3', data: { stats: {}, timeMs: 0, didNotPlay: true, participationStatus: 'did-not-appear' } }
     ]));
 });
@@ -92,9 +92,10 @@ describe('React app game report service', () => {
         expect(report.deferredPlayerRows.map((player) => player.playerId)).toEqual(['player-4']);
         expect(report.visiblePlayerRows[1]).toMatchObject({
             playerId: 'player-2',
-            participated: true,
-            participationStatus: 'appeared',
-            participationSource: 'app-stat-tracker'
+            didNotPlay: false,
+            participated: false,
+            participationStatus: '',
+            participationSource: ''
         });
         expect(report.visiblePlayerRows[2]).toMatchObject({
             playerId: 'player-3',
