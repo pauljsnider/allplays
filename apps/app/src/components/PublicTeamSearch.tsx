@@ -135,7 +135,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           type="button"
           className="primary-button !min-h-10 !px-3 text-sm"
           onClick={handleSearch}
-          disabled={loading}
+          disabled={loading && !searchQuery.trim()}
         >
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
