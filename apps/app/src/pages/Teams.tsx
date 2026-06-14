@@ -87,6 +87,7 @@ export function Teams({ auth }: { auth: AuthState }) {
     try {
       const fastHome = await loadParentTeamsSummary(user, { force: !showLoading });
       if (loadId !== activeLoadIdRef.current) return;
+      const hasFastTeams = fastHome.teams.length > 0;
       setHome(fastHome);
       setTeamsLoadError(null);
       setLoading(false);
@@ -100,7 +101,7 @@ export function Teams({ auth }: { auth: AuthState }) {
       } catch (enrichError) {
         if (loadId !== activeLoadIdRef.current) return;
         const appError = toAppServiceError(enrichError, 'Unable to load teams.');
-        if (!hasExistingTeams) {
+        if (!hasExistingTeams && !hasFastTeams) {
           setHome(emptyHome());
           setLoadedTeamUserId(null);
           setTeamsLoadError(appError);

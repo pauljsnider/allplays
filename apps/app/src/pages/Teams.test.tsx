@@ -164,6 +164,39 @@ describe('Teams empty state', () => {
     expect(screen.queryByText('Loading teams')).toBeNull();
   });
 
+  it('keeps the fast team launcher visible when enrichment fails after the initial team summary loads', async () => {
+    const fastTeamHome = {
+      players: [],
+      teams: [{
+        teamId: 'team-fast',
+        teamName: 'Fast Falcons',
+        role: 'Parent' as const,
+        sport: 'Basketball',
+        photoUrl: null,
+        players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+        nextEvent: null,
+        eventCount: 2,
+        unreadCount: 1,
+        openActions: 0
+      }],
+      upcomingEvents: [],
+      actionItems: [],
+      fees: [],
+      metrics: { players: 1, teams: 1, rsvpNeeded: 0, unreadMessages: 1, packetsReady: 0 }
+    };
+    homeServiceMocks.loadParentTeamsSummary.mockResolvedValueOnce(fastTeamHome);
+    homeServiceMocks.loadParentHomeSummary.mockRejectedValueOnce(new Error('Enrichment outage'));
+
+    renderTeams();
+
+    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
+    expect(screen.getByText('Choose a team')).toBeInTheDocument();
+    expect(screen.getByText('Unable to refresh teams. Showing the last loaded teams. Try again.')).toBeInTheDocument();
+    expect(screen.getByText('Fast Falcons')).toBeInTheDocument();
+    expect(screen.queryByText('Teams could not load')).toBeNull();
+    expect(screen.queryByText('No teams available')).toBeNull();
+  });
+
   it('keeps the loading state bound to the latest initial request under StrictMode before showing the retryable error UI', async () => {
     const firstLoad = deferred<typeof emptyHome>();
     const secondLoad = deferred<typeof emptyHome>();
