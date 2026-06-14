@@ -31,6 +31,7 @@ import {
   updatePracticeAttendance,
   updateTeam,
   upsertPracticePacketCompletion,
+  postChatMessage,
   postSharedGameCancellationNotification,
   cancelOccurrence
 } from '../../../../js/db.js';
@@ -3388,7 +3389,6 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   }
 
   const notificationFailures: string[] = [];
-  const { postChatMessage } = await import('../../../../js/db.js');
   const senderName = user.displayName || user.email;
   const senderEmail = user.email;
   const counterpartTeamId = compactString(event.opponentTeamId || event.sharedScheduleOpponentTeamId) || null;
