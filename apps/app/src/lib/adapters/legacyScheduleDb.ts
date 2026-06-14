@@ -92,7 +92,7 @@ export async function getPracticeSessions(teamId: string) {
 }
 
 export async function getPlayers(teamId: string, options?: { includeInactive?: boolean }) {
-    return await Promise.resolve(legacyGetPlayers(teamId, options));
+    return await Promise.resolve(options === undefined ? legacyGetPlayers(teamId) : legacyGetPlayers(teamId, options));
 }
 
 export async function getRsvps(teamId: string, gameId: string) {
@@ -108,11 +108,11 @@ export async function getRsvpSummaries(teamId: string, gameIds: string[]) {
 }
 
 export async function getTeam(teamId: string, options?: { includeInactive?: boolean }) {
-    return await Promise.resolve(legacyGetTeam(teamId, options));
+    return await Promise.resolve(options === undefined ? legacyGetTeam(teamId) : legacyGetTeam(teamId, options));
 }
 
 export async function getTeams(options?: { includePrivate?: boolean }) {
-    return await Promise.resolve(legacyGetTeams(options));
+    return await Promise.resolve(options === undefined ? legacyGetTeams() : legacyGetTeams(options));
 }
 
 export async function addGame(teamId: string, payload: Record<string, unknown>) {
@@ -140,7 +140,7 @@ export async function requestRideSpot(teamId: string, gameId: string, offerId: s
 }
 
 export async function listRideOffersForEvent(teamId: string, gameId: string, options?: { fallbackGameIds?: string[] }) {
-    return await Promise.resolve(legacyListRideOffersForEvent(teamId, gameId, options));
+    return await Promise.resolve(options === undefined ? legacyListRideOffersForEvent(teamId, gameId) : legacyListRideOffersForEvent(teamId, gameId, options));
 }
 
 export async function updateRideRequestStatus(teamId: string, gameId: string, offerId: string, requestId: string, status: string) {
@@ -148,7 +148,9 @@ export async function updateRideRequestStatus(teamId: string, gameId: string, of
 }
 
 export async function closeRideOffer(teamId: string, gameId: string, offerId: string, status?: string) {
-    return await Promise.resolve((legacyCloseRideOffer as any)(teamId, gameId, offerId, status));
+    return await Promise.resolve(status === undefined
+        ? (legacyCloseRideOffer as any)(teamId, gameId, offerId)
+        : (legacyCloseRideOffer as any)(teamId, gameId, offerId, status));
 }
 
 export async function cancelRideRequest(teamId: string, gameId: string, offerId: string, requestId: string) {
@@ -195,6 +197,8 @@ export async function postSharedGameCancellationNotification(teamId: string, gam
     return await Promise.resolve(legacyPostSharedGameCancellationNotification(teamId, gameId, payload));
 }
 
-export async function cancelOccurrence(teamId: string, masterId: string, instanceDate: string, payload: Record<string, unknown>) {
-    return await Promise.resolve(legacyCancelOccurrence(teamId, masterId, instanceDate, payload));
+export async function cancelOccurrence(teamId: string, masterId: string, instanceDate: string, payload?: Record<string, unknown>) {
+    return await Promise.resolve(payload === undefined
+        ? legacyCancelOccurrence(teamId, masterId, instanceDate)
+        : legacyCancelOccurrence(teamId, masterId, instanceDate, payload));
 }
