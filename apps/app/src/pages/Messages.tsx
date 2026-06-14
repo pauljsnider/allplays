@@ -1278,8 +1278,10 @@ function ChatWindow({
         authorEmail: auth.user?.email || null,
         authorName: profile?.fullName || auth.user?.displayName || null
       });
-      emailDispatch({ type: 'saveDraft', draft: savedDraft });
-      setEmailStatus({ tone: 'success', message: `Saved draft “${savedDraft.subject || 'Untitled draft'}”. No email was sent.` });
+      if (savedDraft?.id) {
+        emailDispatch({ type: 'saveDraft', draft: savedDraft });
+      }
+      setEmailStatus({ tone: 'success', message: `Saved draft “${savedDraft?.subject || emailState.subject || 'Untitled draft'}”. No email was sent.` });
       void reloadEmailDrafts({ suppressErrorStatus: true });
     } catch (saveError: any) {
       setEmailStatus({ tone: 'error', message: saveError?.message || 'Could not save team email draft.' });
