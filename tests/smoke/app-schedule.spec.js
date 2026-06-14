@@ -803,7 +803,7 @@ test('app schedule loads agenda filters, player select, calendar, export, and ga
     await expect(page.getByText('For Pat · Bears')).not.toBeVisible();
 
     const detailLink = page.getByRole('link', { name: 'Game details' }).first();
-    await expect(detailLink).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-2&section=availability$/);
+    await expect(detailLink).toHaveAttribute('href', /#\/schedule\/team-1\/game-1\?childId=player-2&section=assignments$/);
     expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([]);
 
     await page.getByRole('button', { name: 'Calendar', exact: true }).click();
