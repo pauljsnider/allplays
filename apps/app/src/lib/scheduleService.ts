@@ -33,30 +33,41 @@ import {
   upsertPracticePacketCompletion,
   postChatMessage,
   postSharedGameCancellationNotification,
-  cancelOccurrence
-} from '../../../../js/db.js';
-import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
-import { db, doc, collection, collectionGroup, getDocs, query, runTransaction, where, increment, serverTimestamp } from '../../../../js/firebase.js';
-import { normalizeOfficialLinkEmail, normalizeOfficialLinkPhone } from '../../../../js/admin-user-official-links.js';
-import { getAssignedOfficiatingSlots, getOpenOfficiatingSlots } from '../../../../js/officiating-utils.js';
+  cancelOccurrence,
+  db,
+  doc,
+  collection,
+  collectionGroup,
+  getDocs,
+  query,
+  runTransaction,
+  where,
+  increment,
+  serverTimestamp
+} from './adapters/legacyScheduleDb';
 import {
+  sendPublicRsvpReminderEmails,
+  normalizeOfficialLinkEmail,
+  normalizeOfficialLinkPhone,
+  getAssignedOfficiatingSlots,
+  getOpenOfficiatingSlots,
   expandRecurrence,
   extractOpponent,
   fetchAndParseCalendar,
   getCalendarEventTrackingId,
   isPracticeEvent,
-  isTrackedCalendarEvent
-} from '../../../../js/utils.js';
-import { filterVisiblePracticeSessions } from '../../../../js/parent-dashboard-practice-sessions.js';
-import { buildPracticePacketCompletionPayload as buildPracticePacketCompletionPayloadBase } from '../../../../js/parent-dashboard-packets.js';
-import { resolveMyRsvpByChildForGame } from '../../../../js/parent-dashboard-rsvp.js';
-import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from '../../../../js/availability-preferences.js';
-import { buildGameDayRsvpBreakdown } from '../../../../js/game-day-rsvp-breakdown.js';
-import { getPeriodsForFormation } from '../../../../js/game-day-periods.js';
-import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
-import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
-import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
-import { isTeamActive } from '../../../../js/team-visibility.js';
+  isTrackedCalendarEvent,
+  filterVisiblePracticeSessions,
+  buildPracticePacketCompletionPayload,
+  resolveMyRsvpByChildForGame,
+  buildGameDayRsvpBreakdown,
+  getPeriodsForFormation,
+  getEventRideshareSummary,
+  mergeAssignmentsWithClaims,
+  hasScorekeepingTeamAccess,
+  isTeamActive
+} from './adapters/legacyScheduleHelpers';
+import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './adapters/legacyAvailability';
 import { buildTrackerEventDocument } from './statTrackingService';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
@@ -108,6 +119,8 @@ import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCac
 import { toAppServiceError } from './appErrors';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import type { AuthUser } from './types';
+
+const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
 
 const primaryDataTimeoutMs = 5000;
 const parentScheduleTeamConcurrency = 3;
