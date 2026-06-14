@@ -885,6 +885,7 @@ function removeOpponentEntry(opponentId) {
   state.away = safeDecrement(state.away, getOpponentRecordedPoints(opp));
   state.log = state.log.filter(entry => entry?.undoData?.playerId !== opponentId || !entry.undoData?.isOpponent);
 
+  persistLocalTrackerState();
   if (state.away !== awayBefore) {
     scheduleScoreSync();
   }

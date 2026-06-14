@@ -402,12 +402,17 @@ async function bootLiveTracker({ updateGame }) {
       runSaveAndCompleteWorkflow: async () => ({})
     }
   };
+  const localStorageData = new Map();
   const window = {
     location: { href: '' },
     localStorage: {
-      getItem: () => null,
-      setItem: () => {},
-      removeItem: () => {}
+      getItem: (key) => (localStorageData.has(key) ? localStorageData.get(key) : null),
+      setItem: (key, value) => {
+        localStorageData.set(key, String(value));
+      },
+      removeItem: (key) => {
+        localStorageData.delete(key);
+      }
     },
     navigator: { onLine: true },
     addEventListener: () => {}
@@ -443,7 +448,10 @@ async function bootLiveTracker({ updateGame }) {
 
   return {
     ...page,
-    flushTimers
+    flushTimers,
+    readPersistedState(teamId, gameId) {
+      return readPersistedLiveTrackerState(window.localStorage, teamId, gameId);
+    }
   };
 }
 
@@ -605,6 +613,27 @@ describe('live tracker opponent stats hydration', () => {
       }
     ]);
     expect(page.state.history).toHaveLength(1);
+    expect(page.readPersistedState('team-1', 'game-1')).toMatchObject({
+      state: {
+        away: 7,
+        opp: [
+          {
+            id: 'opp2',
+            name: 'Remaining Player',
+            number: '12',
+            playerId: null,
+            photoUrl: '',
+            stats: { pts: 7, fouls: 0, time: 0 }
+          }
+        ],
+        log: [
+          {
+            text: 'Opp Remaining Player PTS +7',
+            undoData: { type: 'stat', playerId: 'opp2', statKey: 'pts', value: 7, isOpponent: true }
+          }
+        ]
+      }
+    });
     expect(updateCalls).toContainEqual({
       opponentStats: {
         opp2: {
