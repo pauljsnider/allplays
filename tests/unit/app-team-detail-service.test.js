@@ -57,6 +57,23 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
+vi.mock('../../js/stat-leaderboards.js', async () => {
+    const actual = await vi.importActual('../../js/stat-leaderboards.js');
+    return {
+        ...actual,
+        buildPlayerLeaderboardSnapshot: vi.fn(actual.buildPlayerLeaderboardSnapshot),
+        selectAnalyticsConfig: vi.fn(actual.selectAnalyticsConfig)
+    };
+});
+
+vi.mock('../../js/player-tracking-summary.js', async () => {
+    const actual = await vi.importActual('../../js/player-tracking-summary.js');
+    return {
+        ...actual,
+        getVisiblePlayerTrackingSummary: vi.fn(actual.getVisiblePlayerTrackingSummary)
+    };
+});
+
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
@@ -66,6 +83,8 @@ import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buil
 import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
 import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
+import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
+import { getVisiblePlayerTrackingSummary } from '../../js/player-tracking-summary.js';
 
 beforeEach(() => {
     __resetTeamDetailBaseSnapshotCacheForTests();
@@ -964,6 +983,8 @@ describe('React app team detail model', () => {
         expect(getPlayerTrackingStatuses).not.toHaveBeenCalled();
         expect(getLocalAttractionSponsors).not.toHaveBeenCalled();
         expect(getAdSpaceSponsors).not.toHaveBeenCalled();
+        expect(buildPlayerLeaderboardSnapshot).not.toHaveBeenCalled();
+        expect(getVisiblePlayerTrackingSummary).not.toHaveBeenCalled();
 
         getDocs.mockClear();
         getAllUsers.mockClear();
@@ -971,6 +992,8 @@ describe('React app team detail model', () => {
         expect(parentModel.staffPermissions).toBeNull();
         expect(getDocs).not.toHaveBeenCalled();
         expect(getAllUsers).not.toHaveBeenCalled();
+        expect(buildPlayerLeaderboardSnapshot).not.toHaveBeenCalled();
+        expect(getVisiblePlayerTrackingSummary).not.toHaveBeenCalled();
     });
 
     it('reuses the initial base snapshot for deferred insights and staff permissions', async () => {
@@ -1025,6 +1048,8 @@ describe('React app team detail model', () => {
         expect(getPublicTrackingItems).toHaveBeenCalledWith('team-1');
         expect(getPlayerTrackingStatuses).toHaveBeenCalledWith('team-1', ['player-1']);
         expect(insights.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
+        expect(buildPlayerLeaderboardSnapshot).toHaveBeenCalledTimes(1);
+        expect(getVisiblePlayerTrackingSummary).toHaveBeenCalledTimes(1);
         expect(staffPermissions.pendingInvites).toEqual(['pending@example.com']);
         expect(staffPermissions.videographerGrantTargets).toEqual([
             { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: true }
