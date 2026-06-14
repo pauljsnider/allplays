@@ -381,6 +381,7 @@ describe('React app desktop Schedule controls', () => {
         await clickButton(container, 'Refresh');
         await waitForText(container, 'Unable to refresh schedule. Showing the last loaded schedule. Try again.');
 
+        expect(container.textContent).not.toContain('network down');
         expect(container.textContent).toContain('Main Gym');
         expect(container.textContent).toContain('Falcons');
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);

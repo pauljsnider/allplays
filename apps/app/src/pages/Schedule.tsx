@@ -195,12 +195,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
       ),
       {
         getErrorMessage: (loadError) => {
+          if (hasExistingSchedule) {
+            return 'Unable to refresh schedule. Showing the last loaded schedule. Try again.';
+          }
           if (loadError && typeof loadError === 'object' && 'message' in loadError && typeof loadError.message === 'string' && loadError.message.trim()) {
             return loadError.message;
           }
-          return hasExistingSchedule
-            ? 'Unable to refresh schedule. Showing the last loaded schedule. Try again.'
-            : 'Unable to load schedule. Try again.';
+          return 'Unable to load schedule. Try again.';
         },
         rethrow: false,
         onSuccess: (result) => {
