@@ -446,7 +446,8 @@ test.describe('desktop app global search', () => {
 
         await openDesktopSearch(page);
         await page.getByRole('button', { name: /Browse Teams/ }).click();
-        await expect(page).toHaveURL(/#\/teams\/browse$/);
+        await expect(page).toHaveURL(/#\/teams\/browse$/, { timeout: 1000 });
+        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
     });
 
     test('desktop search filters help results by selected role', async ({ page, baseURL }) => {
