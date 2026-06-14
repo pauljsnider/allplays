@@ -345,7 +345,45 @@ describe('React app desktop Schedule controls', () => {
 
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
         expect(second.container.textContent).not.toContain('Loading schedule');
+    });
 
+    it('forces a fresh schedule reload when the user taps Refresh', async () => {
+        scheduleMocks.loadParentSchedule
+            .mockResolvedValueOnce({
+                children: [
+                    { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+                ],
+                events: [event({ location: 'Main Gym' })]
+            })
+            .mockResolvedValueOnce({
+                children: [
+                    { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+                ],
+                events: [event({ location: 'Fresh Field', opponent: 'Hawks' })]
+            });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Main Gym');
+
+        await clickButton(container, 'Refresh');
+        await waitForText(container, 'Fresh Field');
+
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(container.textContent).toContain('Hawks');
+    });
+
+    it('keeps the last loaded schedule visible when refresh fails', async () => {
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Main Gym');
+
+        scheduleMocks.loadParentSchedule.mockRejectedValueOnce(new Error('network down'));
+
+        await clickButton(container, 'Refresh');
+        await waitForText(container, 'Unable to refresh schedule. Showing the last loaded schedule. Try again.');
+
+        expect(container.textContent).toContain('Main Gym');
+        expect(container.textContent).toContain('Falcons');
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
     });
 
     it('shows saved staff calendar links and removes one after confirmation', async () => {
