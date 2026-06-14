@@ -212,7 +212,7 @@ export function Home({ auth }: { auth: AuthState }) {
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && typeof window !== 'undefined') {
           setOfficialsAccess({ hasAccess: false, teamCount: 0 });
         }
       });
