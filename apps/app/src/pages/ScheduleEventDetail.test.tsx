@@ -861,10 +861,10 @@ describe('ScheduleEventDetail assignments', () => {
       children: []
     }));
     scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
-    gameReportServiceMocks.loadGameReportSections.mockImplementation(async (event) => ({
-      game: { id: event.id, liveStatus: 'completed', status: 'completed', homeScore: 42, awayScore: 38 },
+    gameReportServiceMocks.loadGameReportSections.mockImplementation(async (_teamId, eventId) => ({
+      game: { id: eventId, liveStatus: 'completed', status: 'completed', homeScore: 42, awayScore: 38 },
       plays: [],
-      summary: event.id === 'game-2' ? 'Second game report.' : 'First game report.',
+      summary: eventId === 'game-2' ? 'Second game report.' : 'First game report.',
       opponentRows: [],
       opponentStatKeys: [],
       teamInsights: [],
@@ -877,7 +877,7 @@ describe('ScheduleEventDetail assignments', () => {
       playerRows: [],
       statLabels: {},
       hasPlayingTime: false,
-      team: { id: event.teamId }
+      team: { id: _teamId }
     }));
 
     renderScheduleEventDetailWithRouteControls();
