@@ -11,6 +11,10 @@ type DrillTab = 'community' | 'favorites';
 const drillTypeOptions = DRILL_TYPES as string[];
 const drillLevelOptions = DRILL_LEVELS as string[];
 
+function mergeUniqueDrills(drills: TeamDrillSummary[]) {
+  return Array.from(new Map(drills.map((drill) => [drill.id, drill])).values());
+}
+
 export function TeamDrills({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
   const [teamName, setTeamName] = useState('Team');
@@ -118,7 +122,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
         level: levelFilter,
         cursor: nextCursor
       });
-      setCommunityDrills((current) => [...current, ...page.drills]);
+      setCommunityDrills((current) => mergeUniqueDrills([...current, ...page.drills]));
       setFavoriteIds(page.favoriteIds);
       setNextCursor(page.nextCursor);
     } catch (loadError: any) {
