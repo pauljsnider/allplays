@@ -269,6 +269,45 @@ describe('PublicTeamSearch', () => {
         expect(within(hiddenCard as HTMLElement).getByText('Team page is not available in the app yet.')).toBeTruthy();
     });
 
+    it('preserves a typed search when the initial auto-browse request resolves later', async () => {
+        const atlantaSearchResult = {
+            ...mockTeams[0],
+            teamId: 'team-atl-search-1',
+            teamName: 'Atlanta Fire',
+        };
+
+        let resolveBrowseAll: ((value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void) | null = null;
+        let resolveSearch: ((value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void) | null = null;
+        (getPublicTeamsPage as import('vitest').Mock).mockImplementation(({ searchText }: { searchText?: string; cursor?: unknown | null; pageSize?: number } = {}) => {
+            if (searchText === 'atlanta') {
+                return new Promise((resolve) => {
+                    resolveSearch = resolve;
+                });
+            }
+            return new Promise((resolve) => {
+                resolveBrowseAll = resolve;
+            });
+        });
+
+        renderSearch({ autoBrowseOnMount: true }, '/teams/browse');
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(1, { searchText: undefined, cursor: null }));
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        fireEvent.change(searchInput, { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: /Search/i }));
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: 'atlanta', cursor: null }));
+
+        resolveSearch?.({ teams: [atlantaSearchResult], nextCursor: 'search-cursor-2' });
+        await waitFor(() => expect(screen.getByText('Atlanta Fire')).toBeTruthy());
+        expect(screen.getByRole('button', { name: /Load more teams/i })).toBeTruthy();
+
+        resolveBrowseAll?.({ teams: [], nextCursor: null });
+        await waitFor(() => expect(screen.getByText('Atlanta Fire')).toBeTruthy());
+        expect(searchInput.value).toBe('atlanta');
+    });
+
     it('can auto-browse on mount for the dedicated discovery route', async () => {
         renderSearch({ autoBrowseOnMount: true }, '/teams/browse');
 

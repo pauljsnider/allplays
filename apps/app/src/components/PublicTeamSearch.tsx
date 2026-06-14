@@ -16,8 +16,12 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [nextCursor, setNextCursor] = useState<unknown | null>(null);
   const autoBrowseTriggeredRef = useRef(false);
+  const latestRequestIdRef = useRef(0);
 
   const fetchPublicTeams = useCallback(async ({ searchText, cursor = null, append = false }: { searchText?: string; cursor?: unknown | null; append?: boolean } = {}) => {
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+
     setLoading(true);
     if (!append) {
       setError('');
@@ -25,17 +29,25 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     setHasSearched(true);
     try {
       const result = await getPublicTeamsPage({ searchText, cursor });
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
       setPublicTeams((current) => append ? [...current, ...result.teams] : result.teams);
       setNextCursor(result.nextCursor);
       setActiveSearchQuery(searchText || null);
     } catch (err: any) {
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
       if (!append) {
         setError(err?.message || 'Failed to fetch public teams.');
         setPublicTeams([]);
         setNextCursor(null);
       }
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
