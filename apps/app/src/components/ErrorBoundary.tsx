@@ -47,8 +47,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     reportReactErrorBoundary(report);
   }
 
-  componentDidUpdate(previousProps: ErrorBoundaryProps) {
-    if (this.state.error && previousProps.resetKey !== this.props.resetKey) {
+  componentDidUpdate(previousProps: ErrorBoundaryProps, previousState: ErrorBoundaryState) {
+    if (this.state.error && previousState.error && previousProps.resetKey !== this.props.resetKey) {
       this.setState({ error: null });
     }
   }

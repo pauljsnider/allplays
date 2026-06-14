@@ -65,4 +65,26 @@ describe('ErrorBoundary', () => {
 
     expect(screen.getByText('Recovered screen')).toBeTruthy();
   });
+
+  it('does not clear a newly captured route error when the reset key changed in the same update', () => {
+    const onError = vi.fn();
+    const reportHook = vi.fn();
+    window.__ALLPLAYS_REPORT_REACT_ERROR__ = reportHook;
+
+    const { rerender } = render(
+      <ErrorBoundary name="test-boundary" resetKey="/healthy" onError={onError}>
+        <div>Healthy screen</div>
+      </ErrorBoundary>
+    );
+
+    rerender(
+      <ErrorBoundary name="test-boundary" resetKey="/broken" onError={onError}>
+        <BrokenScreen />
+      </ErrorBoundary>
+    );
+
+    expect(screen.getByRole('alert', { name: 'Screen error' })).toBeTruthy();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(reportHook).toHaveBeenCalledTimes(1);
+  });
 });
