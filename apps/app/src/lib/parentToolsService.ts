@@ -104,6 +104,9 @@ export type ParentFeeAppRecord = Record<string, any> & {
   feeNotes?: string;
   offlinePaymentInstructions?: string;
   paymentInstructions?: string;
+  collectionMode?: string;
+  checkoutUrl?: string;
+  checkoutStatus?: string;
   canPay: boolean;
   checkoutInitiatable: boolean;
   paymentAction: 'checkoutUrl' | 'createCheckout' | '';
@@ -927,13 +930,22 @@ function normalizeAccessRequest(request: any): ParentAccessRequest {
 
 function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
   const normalized = normalizeParentFeeRecord(fee);
-  const meta = getParentFeeStatusMeta(normalized.status);
-  const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(normalized) && Boolean(normalized.checkoutUrl);
-  const checkoutInitiatable = canInitiateParentTeamFeeCheckout(normalized);
-  return {
+  const collectionMode = compactString(normalized.collectionMode);
+  const checkoutUrl = compactString(normalized.checkoutUrl);
+  const checkoutStatus = compactString(normalized.checkoutStatus);
+  const parentFee = {
     ...normalized,
-    amountLabel: formatParentFeeAmount(normalized),
-    dueLabel: formatParentFeeDueDate(normalized.dueDate),
+    collectionMode,
+    checkoutUrl,
+    checkoutStatus
+  };
+  const meta = getParentFeeStatusMeta(normalized.status);
+  const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(parentFee) && hasReusableParentTeamFeeCheckoutUrl(parentFee);
+  const checkoutInitiatable = canInitiateParentTeamFeeCheckout(parentFee);
+  return {
+    ...parentFee,
+    amountLabel: formatParentFeeAmount(parentFee),
+    dueLabel: formatParentFeeDueDate(parentFee.dueDate),
     statusLabel: meta.label,
     canPay: canOpenCheckoutUrl || checkoutInitiatable,
     checkoutInitiatable,
@@ -944,7 +956,25 @@ function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
   };
 }
 
+function isOnlineParentTeamFeeCollection(fee: any) {
+  const collectionMode = compactString(fee?.collectionMode).toLowerCase();
+  if (!collectionMode) {
+    return Boolean(compactString(fee?.checkoutUrl));
+  }
+
+  return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
+}
+
+function hasReusableParentTeamFeeCheckoutUrl(fee: any) {
+  if (!compactString(fee?.checkoutUrl)) return false;
+
+  const checkoutStatus = compactString(fee?.checkoutStatus).toLowerCase();
+  return !checkoutStatus || checkoutStatus === 'open';
+}
+
 export function isParentTeamFeePayActionAllowed(fee: any) {
+  if (!isOnlineParentTeamFeeCollection(fee)) return false;
+
   const status = compactString(fee?.status).toLowerCase();
   if (status === 'paid' || status === 'canceled' || status === 'cancelled') return false;
 
@@ -957,7 +987,7 @@ export function isParentTeamFeePayActionAllowed(fee: any) {
 export function canInitiateParentTeamFeeCheckout(fee: any) {
   return Boolean(
     isParentTeamFeePayActionAllowed(fee)
-    && !fee?.checkoutUrl
+    && !hasReusableParentTeamFeeCheckoutUrl(fee)
     && compactString(fee?.teamId)
     && compactString(fee?.batchId)
     && compactString(fee?.recipientId)
