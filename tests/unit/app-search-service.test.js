@@ -44,6 +44,10 @@ import {
     searchAppPlayers,
     splitSearchTokens
 } from '../../apps/app/src/lib/searchService.ts';
+import {
+    preloadSearchRoute,
+    resolveSearchRoutePreloader
+} from '../../apps/app/src/lib/searchRoutePreload.ts';
 
 const auth = {
     user: {
@@ -101,7 +105,7 @@ describe('React app search service', () => {
             id: 'browse-teams',
             href: 'https://allplays.ai/teams.html'
         });
-        expect(signedOutActions[0].route).toBeUndefined();
+        expect(signedOutActions[0]).not.toHaveProperty('route');
 
         const signedInActions = buildAppSearchActions(auth);
         expect(signedInActions.map((item) => item.id)).toEqual([
@@ -119,9 +123,14 @@ describe('React app search service', () => {
             id: 'browse-teams',
             route: '/teams/browse'
         });
-        expect(signedInActions[0].href).toBeUndefined();
+        expect(signedInActions[0]).not.toHaveProperty('href');
 
         expect(buildAppSearchActions({ ...auth, isAdmin: true }).map((item) => item.id)).toContain('admin-dashboard');
+    });
+
+    it('preloads the native Browse Teams route', async () => {
+        expect(resolveSearchRoutePreloader('/teams/browse')).toBeTypeOf('function');
+        await expect(preloadSearchRoute('/teams/browse')).resolves.toBe(true);
     });
 
     it('scores and filters actions, teams, and players with the same token rules as website search', () => {
