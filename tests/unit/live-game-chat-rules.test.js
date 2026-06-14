@@ -8,7 +8,7 @@ describe('live game chat Firestore rules', () => {
     it('requires authenticated, attributed live chat and reaction creates', () => {
         expect(rules).toContain('function isLiveChatMessageCreate(data)');
         expect(rules).toContain('data.senderId == request.auth.uid');
-        expect(rules).toContain('data.text.size() <= 500');
+        expect(rules).toContain('data.text.size() <= 2000');
         expect(rules).toContain("data.get('isAnonymous', false) == false");
         expect(rules).toContain('allow create: if isLiveChatMessageCreate(request.resource.data)');
 

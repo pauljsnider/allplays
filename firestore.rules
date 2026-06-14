@@ -1035,7 +1035,7 @@ service cloud.firestore {
              data.keys().hasOnly(['text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous', 'createdAt']) &&
              data.text is string &&
              data.text.size() > 0 &&
-             data.text.size() <= 500 &&
+             data.text.size() <= 2000 &&
              data.senderId == request.auth.uid &&
              data.senderName is string &&
              data.senderName.size() > 0 &&
@@ -1875,8 +1875,14 @@ service cloud.firestore {
         // Live Chat subcollection - game-specific chat for live viewers
         match /liveChat/{messageId} {
           allow read: if true;  // Public read for all viewers
-          allow create: if isLiveChatMessageCreate(request.resource.data)
-            && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
+          allow create: if isSignedIn() &&
+            request.resource.data.keys().hasAll(['text', 'senderId']) &&
+            request.resource.data.senderId == request.auth.uid &&
+            request.resource.data.text is string &&
+            request.resource.data.text.size() > 0 &&
+            request.resource.data.text.size() <= 2000 &&
+            isLiveChatMessageCreate(request.resource.data) &&
+            (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
                  isShareableGameDocument(
                    get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data
@@ -1888,8 +1894,11 @@ service cloud.firestore {
         // Live Reactions subcollection - ephemeral reactions during live games
         match /liveReactions/{reactionId} {
           allow read: if true;  // Public read
-          allow create: if isLiveReactionCreate(request.resource.data)
-            && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
+          allow create: if isSignedIn() &&
+            request.resource.data.keys().hasAll(['type', 'senderId']) &&
+            request.resource.data.senderId == request.auth.uid &&
+            isLiveReactionCreate(request.resource.data) &&
+            (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
                  isShareableGameDocument(
                    get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data
