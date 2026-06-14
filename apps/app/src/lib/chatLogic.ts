@@ -1,3 +1,4 @@
+import DOMPurifyModule from 'dompurify';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
   buildDefaultTeamConversation,
@@ -69,6 +70,29 @@ export const chatReactionKeys = new Set(chatReactions.map((reaction) => reaction
 
 const aiMentionRegex = /@all\s*plays/ig;
 const urlRegex = /(\bhttps?:\/\/[^\s<]+[^\s<.,;:!?"'\])>]|\bwww\.[^\s<]+[^\s<.,;:!?"'\])>])/gi;
+const allowedChatHtmlTags = new Set(['strong', 'em', 'del', 'code', 'a', 'span']);
+const chatHtmlSanitizeConfig = {
+  ALLOWED_TAGS: ['strong', 'em', 'del', 'code', 'a', 'span'],
+  ALLOWED_ATTR: ['href', 'target', 'rel', 'class'],
+  ALLOW_DATA_ATTR: false
+};
+
+type DomPurifyInstance = {
+  sanitize: (html: string, config?: Record<string, unknown>) => string;
+};
+
+type DomPurifyFactory = (window: Window) => DomPurifyInstance;
+
+function getDomPurify(): DomPurifyInstance | null {
+  const candidate = DOMPurifyModule as unknown as DomPurifyInstance | DomPurifyFactory;
+  if (typeof (candidate as DomPurifyInstance).sanitize === 'function') {
+    return candidate as DomPurifyInstance;
+  }
+  if (typeof candidate === 'function' && typeof window !== 'undefined') {
+    return (candidate as DomPurifyFactory)(window);
+  }
+  return null;
+}
 
 export function toChatDate(value: any): Date | null {
   if (!value) return null;
@@ -341,6 +365,54 @@ function escapeHtml(value: string) {
     .replace(/'/g, '&#039;');
 }
 
+function sanitizeFormattedChatHtml(html: string) {
+  const purifier = getDomPurify();
+  if (purifier) {
+    return purifier.sanitize(html, chatHtmlSanitizeConfig);
+  }
+
+  return sanitizeFormattedChatHtmlFallback(html);
+}
+
+function sanitizeFormattedChatHtmlFallback(html: string) {
+  let safeAnchorDepth = 0;
+
+  return String(html || '').replace(/<\/?([a-z][a-z0-9-]*)(\s[^>]*)?>/gi, (tag, rawTagName, rawAttributes = '') => {
+    const tagName = String(rawTagName || '').toLowerCase();
+    if (!allowedChatHtmlTags.has(tagName)) return '';
+    if (tag.startsWith('</')) {
+      if (tagName === 'a') {
+        if (safeAnchorDepth < 1) return '';
+        safeAnchorDepth -= 1;
+      }
+      return `</${tagName}>`;
+    }
+    if (tagName === 'a') {
+      const sanitizedAnchorTag = sanitizeChatAnchorTag(rawAttributes);
+      if (sanitizedAnchorTag) {
+        safeAnchorDepth += 1;
+      }
+      return sanitizedAnchorTag;
+    }
+    if (tagName === 'span') {
+      return /\bclass=(["'])chat-mention\1/i.test(rawAttributes) ? '<span class="chat-mention">' : '<span>';
+    }
+    return `<${tagName}>`;
+  });
+}
+
+function sanitizeChatAnchorTag(rawAttributes: string) {
+  const attributes = String(rawAttributes || '');
+  const hrefMatch = attributes.match(/^\s*href=(["'])([^"'\s>]+)\1(?:\s+target=(["'])_blank\3)?(?:\s+rel=(["'])noopener noreferrer\4)?\s*$/i);
+  const href = hrefMatch ? hrefMatch[2] : '';
+  if (!isChatUrlSafe(href)) return '';
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">`;
+}
+
+export const __chatHtmlTestUtils = {
+  sanitizeFormattedChatHtmlFallback
+};
+
 export function formatChatMessageHtml(text: string) {
   let formatted = escapeHtml(text || '');
 
@@ -360,7 +432,7 @@ export function formatChatMessageHtml(text: string) {
   formatted = formatted.replace(/\b_([^_]+)_\b/g, '<em>$1</em>');
   formatted = formatted.replace(/~([^~]+)~/g, '<del>$1</del>');
 
-  return formatted;
+  return sanitizeFormattedChatHtml(formatted);
 }
 
 export function getSortedChatMessages(messages: any[] = []) {

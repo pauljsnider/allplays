@@ -236,13 +236,13 @@
     </div>
 
     <script type="module">
-        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=45';
+        import { getTeam, getGame, getPlayers, getGames, getConfigs, updatePlayerProfile, updatePlayerPrivateProfile, getPlayerPrivateProfile, uploadPlayerPhoto, getUnreadChatCounts, getUserProfile, getRosterFieldDefinitions } from './js/db.js?v=48';
         import { collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=2';
         import { generatePlayerGameInsights } from './js/post-game-insights.js?v=1';
         import { hasPlayerProfileParticipation, collectPlayerVideoClips } from './js/player-profile-stats.js?v=3';
         import { buildPlayerLeaderboardSnapshot, selectAnalyticsConfig, summarizePlayerTopStats } from './js/stat-leaderboards.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=22';
+        import { checkAuth } from './js/auth.js?v=23';
         import { collection, getDocs, doc, getDoc, query, orderBy } from "./js/firebase.js?v=17";
         import { db } from './js/firebase.js?v=17';
         import { renderTeamAdminBanner, getTeamAccessInfo } from './js/team-admin-banner.js';
@@ -420,6 +420,65 @@
             `;
         }
 
+
+        async function loadPlayerGameData(teamId, games, playerId, playerName) {
+            return Promise.all(games.map(async (game) => {
+                const gameId = game.id;
+                const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+                const teamStatsByPlayerId = {};
+                let selectedPlayerStats = null;
+
+                statsSnapshot.forEach((docSnap) => {
+                    const statData = docSnap.data() || {};
+                    const playerStats = statData.stats || {};
+                    teamStatsByPlayerId[docSnap.id] = playerStats;
+
+                    if (docSnap.id === playerId && hasPlayerProfileParticipation(statData)) {
+                        selectedPlayerStats = {
+                            stats: playerStats,
+                            timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
+                        };
+                    }
+                });
+
+                if (!selectedPlayerStats) {
+                    return {
+                        gameId,
+                        statsByPlayerId: teamStatsByPlayerId,
+                        playerGameStats: null,
+                        events: []
+                    };
+                }
+
+                const eventsQuery = query(
+                    collection(db, `teams/${teamId}/games/${gameId}/events`),
+                    orderBy('timestamp', 'asc')
+                );
+                const eventsSnapshot = await getDocs(eventsQuery);
+                const events = eventsSnapshot.docs
+                    .map((docSnap) => docSnap.data())
+                    .filter((event) => event.playerId === playerId || (event.text && event.text.includes(playerName)))
+                    .map((event) => ({
+                        ...event,
+                        gameId,
+                        opponent: game.opponent || 'Opponent'
+                    }));
+
+                return {
+                    gameId,
+                    statsByPlayerId: teamStatsByPlayerId,
+                    playerGameStats: {
+                        gameId,
+                        date: game.date.toDate ? game.date.toDate() : new Date(game.date),
+                        opponent: game.opponent || 'Opponent',
+                        stats: selectedPlayerStats.stats,
+                        timeMs: selectedPlayerStats.timeMs
+                    },
+                    events
+                };
+            }));
+        }
+
         async function loadPlayerDetails() {
             const { teamId, gameId, playerId } = getUrlParams();
             if (!teamId || !playerId) {
@@ -495,30 +554,20 @@
                 const allEvents = [];
                 let totalTimeMs = 0;
                 let gamesWithTime = 0;
+                const gameLoadResults = await loadPlayerGameData(teamId, games, playerId, player.name);
 
-                for (const game of games) {
-                    const gameIdIter = game.id;
-                    const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameIdIter}/aggregatedStats`));
-                    let selectedPlayerStats = null;
-                    statsSnapshot.forEach((docSnap) => {
-                        const statData = docSnap.data() || {};
-                        const playerStats = statData.stats || {};
-                        if (!seasonStatsByPlayerId[docSnap.id]) {
-                            seasonStatsByPlayerId[docSnap.id] = {};
+                gameLoadResults.forEach(({ playerGameStats, statsByPlayerId, events }) => {
+                    Object.entries(statsByPlayerId || {}).forEach(([statsPlayerId, playerStats]) => {
+                        if (!seasonStatsByPlayerId[statsPlayerId]) {
+                            seasonStatsByPlayerId[statsPlayerId] = {};
                         }
-                        Object.entries(playerStats).forEach(([stat, value]) => {
-                            seasonStatsByPlayerId[docSnap.id][stat] = (seasonStatsByPlayerId[docSnap.id][stat] || 0) + (Number(value) || 0);
+                        Object.entries(playerStats || {}).forEach(([stat, value]) => {
+                            seasonStatsByPlayerId[statsPlayerId][stat] = (seasonStatsByPlayerId[statsPlayerId][stat] || 0) + (Number(value) || 0);
                         });
-                        if (docSnap.id === playerId && hasPlayerProfileParticipation(statData)) {
-                            selectedPlayerStats = {
-                                stats: playerStats,
-                                timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
-                            };
-                        }
                     });
 
-                    if (selectedPlayerStats) {
-                        const { stats, timeMs } = selectedPlayerStats;
+                    if (playerGameStats) {
+                        const { stats, timeMs } = playerGameStats;
                         gamesPlayed++;
                         Object.entries(stats).forEach(([stat, value]) => {
                             seasonTotals[stat] = (seasonTotals[stat] || 0) + value;
@@ -527,32 +576,11 @@
                             totalTimeMs += timeMs;
                             gamesWithTime++;
                         }
-                        perGameStats.push({
-                            gameId: gameIdIter,
-                            date: game.date.toDate ? game.date.toDate() : new Date(game.date),
-                            opponent: game.opponent || 'Opponent',
-                            stats,
-                            timeMs
-                        });
-
-                        // Collect events for this game
-                        const eventsQuery = query(
-                            collection(db, `teams/${teamId}/games/${gameIdIter}/events`),
-                            orderBy('timestamp', 'asc')
-                        );
-                        const eventsSnapshot = await getDocs(eventsQuery);
-                        eventsSnapshot.docs.forEach(docSnap => {
-                            const ev = docSnap.data();
-                            if (ev.playerId === playerId || (ev.text && ev.text.includes(player.name))) {
-                                allEvents.push({
-                                    ...ev,
-                                    gameId: gameIdIter,
-                                    opponent: game.opponent || 'Opponent'
-                                });
-                            }
-                        });
+                        perGameStats.push(playerGameStats);
                     }
-                }
+
+                    allEvents.push(...events);
+                });
 
                 // Choose a primary game for back link and insights. Honor a requested game
                 // even when the player has a filtered DNP/zero-stat entry for that game.
@@ -649,11 +677,7 @@
 
                 if (gameId && selectedGame) {
                     const selectedStats = perGameStats.find((entry) => entry.gameId === selectedGameId) || null;
-                    const teamStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${selectedGameId}/aggregatedStats`));
-                    const gameTeamStats = {};
-                    teamStatsSnapshot.forEach((docSnap) => {
-                        gameTeamStats[docSnap.id] = docSnap.data().stats || {};
-                    });
+                    const gameTeamStats = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
                     const selectedEvents = allEvents
                         .filter((event) => event.gameId === selectedGameId)
                         .map((event) => ({

@@ -95,6 +95,7 @@ import {
   type ChatTargetType
 } from '../lib/chatLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { markTeamChatReadAndRefreshBadge, updateAppIconBadge } from '../lib/badgeService';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
@@ -135,6 +136,8 @@ export function Messages({ auth }: { auth: AuthState }) {
     try {
       const result = await loadChatInbox(auth.user);
       setTeams(result.teams);
+      const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
+      void updateAppIconBadge(totalUnread);
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load messages.');
       setTeams([]);
@@ -148,6 +151,10 @@ export function Messages({ auth }: { auth: AuthState }) {
       setLoading(false);
       setError(null);
       setTeams([]);
+      return;
+    }
+    if (!auth.user) {
+      void updateAppIconBadge(0);
       return;
     }
     refreshInbox();
@@ -289,6 +296,7 @@ function InboxSearch({ query, onChange }: { query: string; onChange: (value: str
         onChange={(event) => onChange(event.target.value)}
         className="min-w-0 flex-1 border-0 bg-transparent text-base font-semibold text-gray-900 outline-none placeholder:text-gray-400"
         placeholder="Search team chats"
+        enterKeyHint="search"
       />
     </label>
   );
@@ -815,7 +823,7 @@ function ChatWindow({
           setShowJumpToLatest(true);
         }
         initialSnapshotLoadedRef.current = true;
-        maybeMarkRead(currentUser.uid, teamId, true);
+        maybeMarkRead(currentUser, teamId, true, !isDesktopWeb && !embedded);
       },
       (subscribeError) => {
         setError(subscribeError.message || 'Unable to load chat messages.');
@@ -899,7 +907,7 @@ function ChatWindow({
         hasMessages: messages.length > 0,
         hasLoadedSnapshot: initialSnapshotLoadedRef.current
       })) {
-        void markTeamChatRead(auth.user.uid, teamId);
+        maybeMarkRead(auth.user, teamId, true, !isDesktopWeb && !embedded);
       }
     };
     document.addEventListener('visibilitychange', handleReturn);
@@ -1807,16 +1815,22 @@ function resolveMutedState(teamId: string, inboxTeam?: ChatTeam, profile: Record
   return Boolean(chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]);
 }
 
-function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {
+function maybeMarkRead(user: AuthState['user'] | null | undefined, teamId: string, hasTeamId: boolean, shouldRefreshBadge = false) {
   const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
   const isWindowFocused = document.hasFocus();
   if (shouldUpdateChatLastRead({
-    hasCurrentUser: Boolean(userId),
+    hasCurrentUser: Boolean(user?.uid),
     hasTeamId,
     isPageVisible,
     isWindowFocused
   })) {
-    void markTeamChatRead(userId, teamId);
+    if (shouldRefreshBadge) {
+      void markTeamChatReadAndRefreshBadge(user || null, teamId);
+      return;
+    }
+    if (user?.uid) {
+      void markTeamChatRead(user.uid, teamId);
+    }
   }
 }
 
@@ -2052,6 +2066,7 @@ function TeamEmailSheet({
                 className="min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
                 placeholder="Weekly reminder"
                 maxLength={120}
+                enterKeyHint="next"
               />
               <button type="button" className="secondary-button sm:min-w-[148px]" disabled={!canSaveTemplate} onClick={onSaveTemplate}>
                 {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
@@ -2068,6 +2083,7 @@ function TeamEmailSheet({
             className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
             placeholder="Team update"
             maxLength={160}
+            enterKeyHint="next"
           />
         </label>
         <label className="block">
@@ -2078,6 +2094,7 @@ function TeamEmailSheet({
             className="mt-1 min-h-36 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
             placeholder="Write the email body..."
             maxLength={5000}
+            enterKeyHint="send"
           />
         </label>
         <button type="submit" className="primary-button w-full" disabled={!canSendEmail}>
@@ -2586,6 +2603,7 @@ function Composer({
           maxLength={2000}
           className="chat-composer-textarea"
           placeholder={placeholder}
+          enterKeyHint="send"
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();

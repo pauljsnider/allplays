@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const signInWithPopupMock = vi.fn();
 const signInWithRedirectMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=17', () => ({
+vi.mock('../../js/firebase.js?v=18', () => ({
     auth: { currentUser: null },
     signInWithEmailAndPassword: vi.fn(),
     createUserWithEmailAndPassword: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock('../../js/firebase.js?v=17', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=45', () => ({
+vi.mock('../../js/db.js?v=48', () => ({
     validateAccessCode: vi.fn(),
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),

@@ -9,6 +9,13 @@ describe('Schedule lazy-load guards', () => {
         expect(scheduleSource).not.toContain("from '../lib/scheduleCsvImport'");
     });
 
+    it('loads the summary workflow through the shared async operation hook', () => {
+        expect(scheduleSource).toContain("import { useAsyncOperation } from '../lib/useAsyncOperation'");
+        expect(scheduleSource).toContain('const { loading, error, clearError, run: runAsyncOperation } = useAsyncOperation();');
+        expect(scheduleSource).toContain('return runAsyncOperation(');
+        expect(scheduleSource).not.toContain('const [loading, setLoading] = useState(true);');
+    });
+
     it('loads staff AI and CSV helpers through on-demand dynamic imports', () => {
         expect(scheduleSource).toContain("scheduleCsvImportModulePromise = import('../lib/scheduleCsvImport')");
         expect(scheduleSource).toContain("scheduleAiImportModulePromise = import('../lib/scheduleAiImport')");

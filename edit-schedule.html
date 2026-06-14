@@ -919,10 +919,10 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=45';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=48';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=11';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
-        import { checkAuth } from './js/auth.js?v=22';
+        import { checkAuth } from './js/auth.js?v=23';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { computeOfficiatingCoverageStatus, flagRescheduledOfficiatingSlots, getOfficiatingAssignmentConflictWarnings, normalizeOfficiatingSlots as normalizeAssignmentOfficiatingSlots } from './js/officiating-utils.js?v=3';
         import { buildOfficiatingAssignmentNotificationRecords } from './js/officiating-notifications.js?v=2';
@@ -3416,6 +3416,13 @@
             editingSeriesId = practice.seriesId || null;
             switchTab('tab-add-practice');
 
+            const recurrenceEndInputs = Array.from(document.querySelectorAll('input[name="recurrenceEnd"]'));
+            const setRecurrenceEnd = (value) => {
+                recurrenceEndInputs.forEach((input) => {
+                    input.checked = input.value === value;
+                });
+            };
+
             document.getElementById('practiceTitle').value = practice.title || 'Practice';
             document.getElementById('practiceStart').value = formatIsoForInput(practice.date);
 
@@ -3442,14 +3449,14 @@
 
                 // Set end condition
                 if (practice.recurrence.until) {
-                    document.querySelector('input[name="recurrenceEnd"][value="until"]').checked = true;
+                    setRecurrenceEnd('until');
                     const untilDate = practice.recurrence.until?.toDate ? practice.recurrence.until.toDate() : new Date(practice.recurrence.until);
                     document.getElementById('recurrenceUntil').value = untilDate.toISOString().split('T')[0];
                 } else if (practice.recurrence.count) {
-                    document.querySelector('input[name="recurrenceEnd"][value="count"]').checked = true;
+                    setRecurrenceEnd('count');
                     document.getElementById('recurrenceCount').value = practice.recurrence.count;
                 } else {
-                    document.querySelector('input[name="recurrenceEnd"][value="never"]').checked = true;
+                    setRecurrenceEnd('never');
                 }
             } else {
                 resetPracticeRecurrenceFields();
