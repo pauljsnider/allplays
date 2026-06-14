@@ -27,7 +27,7 @@ vi.mock('../../js/firebase.js?v=18', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=47', () => ({
+vi.mock('../../js/db.js?v=48', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
