@@ -16,6 +16,35 @@
   margin-bottom: 5px;
 }
 
+.team-fees-history {
+  margin-top: 20px;
+}
+
+.payment-history-toggle {
+  background-color: #444;
+}
+
+.payment-history-list {
+  margin-top: 12px;
+}
+
+.historical-fee-item {
+  background-color: #f7f7f7;
+}
+
+.no-outstanding-fees {
+  border: 1px solid #b7dfc0;
+  background-color: #f0fff4;
+  padding: 15px;
+  margin-bottom: 15px;
+  border-radius: 5px;
+}
+
+.no-outstanding-fees h3 {
+  margin-top: 0;
+  color: #246b36;
+}
+
 .paid {
   color: green;
   font-weight: bold;

@@ -126,6 +126,9 @@ export function Profile({ auth }: { auth: AuthState }) {
   const ownedPhotoPreviewUrlRef = useRef<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const photoSelectionIdRef = useRef(0);
+  const photoFileRef = useRef<File | null>(null);
+  const photoUrlRef = useRef('');
+  const photoChangedRef = useRef(false);
 
   const revokeOwnedPhotoPreviewUrl = () => {
     const activePreviewUrl = ownedPhotoPreviewUrlRef.current;
@@ -239,6 +242,9 @@ export function Profile({ auth }: { auth: AuthState }) {
         setProfile(loadedProfile);
         setFullName(loadedProfile.fullName || user.displayName || '');
         setPhone(loadedProfile.phone || '');
+        photoUrlRef.current = loadedProfile.photoUrl || '';
+        photoFileRef.current = null;
+        photoChangedRef.current = false;
         setPhotoUrl(loadedProfile.photoUrl || '');
         setPhotoPreview(loadedProfile.photoUrl || '');
         setPhotoFile(null);
@@ -453,6 +459,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     const nextPhotoPreviewUrl = URL.createObjectURL(file);
     revokeOwnedPhotoPreviewUrl();
     ownedPhotoPreviewUrlRef.current = nextPhotoPreviewUrl;
+    photoFileRef.current = file;
+    photoChangedRef.current = true;
     setPhotoFile(file);
     setPhotoPreview(nextPhotoPreviewUrl);
     setPhotoChanged(true);
@@ -527,6 +535,9 @@ export function Profile({ auth }: { auth: AuthState }) {
   const removePhoto = () => {
     photoSelectionIdRef.current += 1;
     revokeOwnedPhotoPreviewUrl();
+    photoFileRef.current = null;
+    photoUrlRef.current = '';
+    photoChangedRef.current = true;
     setPhotoFile(null);
     setPhotoUrl('');
     setPhotoPreview('');
@@ -546,10 +557,12 @@ export function Profile({ auth }: { auth: AuthState }) {
     try {
       const trimmedFullName = fullName.trim();
       const trimmedPhone = phone.trim();
-      let nextPhotoUrl = photoUrl || '';
-      if (photoChanged && photoFile) {
+      const selectedPhotoFile = photoFileRef.current;
+      const selectedPhotoChanged = photoChangedRef.current;
+      let nextPhotoUrl = photoUrlRef.current || '';
+      if (selectedPhotoChanged && selectedPhotoFile) {
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
-        nextPhotoUrl = await uploadProfilePhoto(photoFile);
+        nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile);
       }
 
       await saveProfileDocument(user.uid, {
@@ -570,6 +583,9 @@ export function Profile({ auth }: { auth: AuthState }) {
       };
       revokeOwnedPhotoPreviewUrl();
       setProfile(nextProfile);
+      photoUrlRef.current = nextProfile.photoUrl || nextPhotoUrl || '';
+      photoFileRef.current = null;
+      photoChangedRef.current = false;
       setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');
       setPhotoPreview(nextProfile.photoUrl || nextPhotoUrl || '');
       setPhotoFile(null);

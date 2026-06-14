@@ -23,9 +23,30 @@ vi.mock('../lib/useShellLayout', () => ({
 }));
 vi.mock('lucide-react', () => {
   const Icon = () => null;
-  return new Proxy({}, {
-    get: () => Icon
-  });
+  return {
+    BarChart3: Icon,
+    CalendarDays: Icon,
+    CheckCircle2: Icon,
+    ChevronDown: Icon,
+    ChevronRight: Icon,
+    ClipboardCheck: Icon,
+    ClipboardList: Icon,
+    Dumbbell: Icon,
+    ExternalLink: Icon,
+    FileText: Icon,
+    Images: Icon,
+    Loader2: Icon,
+    MessageCircle: Icon,
+    Radio: Icon,
+    RefreshCw: Icon,
+    Settings: Icon,
+    Shield: Icon,
+    SlidersHorizontal: Icon,
+    Ticket: Icon,
+    UserRound: Icon,
+    Users: Icon,
+    WalletCards: Icon
+  };
 });
 
 const auth: AuthState = {
@@ -69,6 +90,7 @@ function renderTeams() {
       <Routes>
         <Route path="/teams" element={<Teams auth={auth} />} />
         <Route path="/accept-invite" element={<div>Accept invite route</div>} />
+        <Route path="/teams/browse" element={<div>Browse public teams route</div>} />
       </Routes>
     </MemoryRouter>
   );
@@ -105,15 +127,16 @@ describe('Teams empty state', () => {
     cleanup();
   });
 
-  it('opens the public browse teams page from the empty state recovery action', async () => {
+  it('opens the native Browse Teams route from the empty state recovery action', async () => {
     renderTeams();
 
     await screen.findByRole('heading', { name: 'No teams linked yet' });
-    const browseLink = screen.getByRole('link', { name: 'Browse teams' });
-    expect(browseLink).toHaveAttribute('href', 'https://allplays.ai/teams.html');
+    const browseLink = screen.getAllByRole('link', { name: 'Browse teams' })[0];
+    expect(browseLink).toHaveAttribute('href', '/teams/browse');
     fireEvent.click(browseLink);
 
-    expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/teams.html');
+    expect(await screen.findByText('Browse public teams route')).toBeTruthy();
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 });
 
