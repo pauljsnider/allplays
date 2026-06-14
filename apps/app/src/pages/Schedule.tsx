@@ -162,13 +162,15 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
   const [mobileStaffToolsOpen, setMobileStaffToolsOpen] = useState(false);
-  const eventsRef = useRef<ParentScheduleEvent[]>([]);
+  const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
+  const hasLoadedScheduleRef = useRef(false);
 
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
-    eventsRef.current = data.events;
     setChildren(data.children);
     setEvents(data.events);
   };
+
+  const isInitialScheduleLoad = Boolean(auth.user?.uid) && loadedScheduleUserId !== auth.user?.uid;
 
   const clearAiPreview = () => {
     if (scheduleImportPreviewSource === 'ai') {
@@ -182,7 +184,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     clearError();
     setStatusMessage(null);
     const timer = startUxTimer('schedule summary load');
-    const hasExistingSchedule = eventsRef.current.length > 0;
+    const hasExistingSchedule = hasLoadedScheduleRef.current;
     const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);
     const scheduleCacheTtlMs = 60 * 1000 * 5;
     const cached = getCachedAppData(cacheKey);
@@ -205,6 +207,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
         },
         rethrow: false,
         onSuccess: (result) => {
+          hasLoadedScheduleRef.current = true;
+          setLoadedScheduleUserId(auth.user?.uid || null);
           applyScheduleResult(result);
 
           if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
@@ -230,6 +234,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           if (!hasExistingSchedule) {
             applyScheduleResult({ children: [], events: [] });
           }
+          setLoadedScheduleUserId(auth.user?.uid || null);
           timer.end({
             force,
             error: loadError && typeof loadError === 'object' && 'message' in loadError && typeof loadError.message === 'string'
@@ -242,6 +247,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    hasLoadedScheduleRef.current = false;
+    if (!auth.user?.uid) {
+      setLoadedScheduleUserId(null);
+      applyScheduleResult({ children: [], events: [] });
+      return;
+    }
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
@@ -820,7 +831,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
           {error ? <Status tone="error" message={error} /> : null}
 
-          {loading ? (
+          {loading || isInitialScheduleLoad ? (
             <LoadingSchedule />
           ) : view === 'calendar' ? (
             <CalendarSchedule

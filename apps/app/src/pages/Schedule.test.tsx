@@ -81,6 +81,7 @@ describe('Schedule', () => {
     renderSchedule();
 
     expect(screen.getByRole('status', { name: 'Loading schedule' })).toBeTruthy();
+    expect(screen.queryByText('No events in this filter')).toBeNull();
     expect(await screen.findByText('Schedule unavailable.')).toBeTruthy();
     await waitFor(() => {
       expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull();
@@ -89,5 +90,30 @@ describe('Schedule', () => {
       hydrateDetails: false,
       expandStaffPlayers: false
     });
+  });
+
+  it('keeps team and player filters after an empty schedule refresh fails', async () => {
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce({
+        children: [
+          { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+        ],
+        events: []
+      })
+      .mockRejectedValueOnce(new Error('Refresh failed.'));
+
+    renderSchedule();
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    const teamFilter = screen.getByLabelText('Team filter') as HTMLSelectElement;
+    const playerFilter = screen.getByLabelText('Player filter') as HTMLSelectElement;
+    expect(teamFilter.innerHTML).toContain('Bears');
+    expect(playerFilter.innerHTML).toContain('Pat');
+
+    screen.getByRole('button', { name: 'Refresh schedule' }).click();
+
+    expect(await screen.findByText('Unable to refresh schedule. Showing the last loaded schedule. Try again.')).toBeTruthy();
+    expect(teamFilter.innerHTML).toContain('Bears');
+    expect(playerFilter.innerHTML).toContain('Pat');
   });
 });
