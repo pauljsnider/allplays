@@ -476,6 +476,10 @@ describe('React app desktop Schedule controls', () => {
         const parentOnly = await renderSchedule();
         await waitForText(parentOnly.container, 'Main Gym');
         expect(parentOnly.container.textContent).not.toContain('Draft schedule with AI');
+        await act(async () => {
+            parentOnly.root.unmount();
+        });
+        parentOnly.container.remove();
 
         const aiRow = {
             rowNumber: 1,
