@@ -332,6 +332,33 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
     });
 
+    it('loads calendar tools with cached defaults across remounts and forces refresh on demand', async () => {
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [
+                {
+                    id: 'event-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    type: 'game',
+                    date: new Date('2100-06-01T18:00:00Z')
+                }
+            ],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+
+        const firstRender = renderParentTools(['/parent-tools/calendar']);
+        expect(await screen.findByText('Bears')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, auth.user, {});
+        firstRender.unmount();
+
+        renderParentTools(['/parent-tools/calendar']);
+        expect(await screen.findByText('Bears')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, auth.user, {});
+
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(3, auth.user, { force: true }));
+    });
+
     it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {

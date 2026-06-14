@@ -574,12 +574,12 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const refresh = async () => {
+  const refresh = async (options: { force?: boolean } = {}) => {
     setLoading(true);
     setError('');
     setMessage('');
     try {
-      const model = await loadParentCalendarTools(auth.user);
+      const model = await loadParentCalendarTools(auth.user, options);
       setEvents(model.events);
       setTeams(model.teams);
     } catch (loadError: any) {
@@ -643,7 +643,7 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
   return (
     <div className="space-y-3">
       <section className="app-card p-4">
-        <ToolHeader icon={CalendarDays} title="Calendar tools" detail="Download your family schedule or subscribe by team." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
+        <ToolHeader icon={CalendarDays} title="Calendar tools" detail="Download your family schedule or subscribe by team." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={() => { void refresh({ force: true }); }} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
         {error ? <Status tone="error" message={error} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
