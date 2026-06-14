@@ -145,7 +145,7 @@ describe('teamDrillsService', () => {
       limitCount: 12
     });
     expect(result.favoriteIds).toEqual(['drill-2']);
-    expect(result.nextCursor).toEqual({ id: 'cursor-1' });
+    expect(result.nextCursor).toEqual({ communityCursor: { id: 'cursor-1' }, pendingDrills: [] });
     expect(result.drills.map((drill) => drill.id)).toEqual(['drill-3', 'drill-1']);
   });
 
@@ -184,7 +184,7 @@ describe('teamDrillsService', () => {
       searchText: 'rondo',
       type: 'Technical',
       level: 'Intermediate',
-      cursor: { id: 'cursor-1' }
+      cursor: { communityCursor: { id: 'cursor-1' }, pendingDrills: [] }
     });
 
     expect(dbMocks.getDrills).toHaveBeenCalledWith({
@@ -197,6 +197,68 @@ describe('teamDrillsService', () => {
     });
     expect(dbMocks.getPublishedDrills).not.toHaveBeenCalled();
     expect(result.drills.map((drill) => drill.id)).toEqual(['community-2']);
+    expect(result.nextCursor).toEqual({ communityCursor: { id: 'cursor-2' }, pendingDrills: [] });
+  });
+
+  it('carries overflow drills into the next page so published drills are not dropped', async () => {
+    dbMocks.getPublishedDrills.mockResolvedValue([
+      {
+        id: 'published-1',
+        title: 'Zulu finishing',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'Intermediate',
+        skills: ['finishing'],
+        description: 'Published by a coach.',
+        instructions: 'Rotate every rep.',
+        setup: { duration: 10, players: '6-8', cones: 4 }
+      }
+    ]);
+    dbMocks.getDrills.mockResolvedValueOnce({
+      drills: Array.from({ length: 12 }, (_, index) => ({
+        id: `community-${index + 1}`,
+        title: `Community drill ${String(index + 1).padStart(2, '0')}`,
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'Intermediate',
+        skills: ['passing'],
+        description: 'Community result.',
+        instructions: 'Keep moving.',
+        setup: { duration: 12, players: '8-10', cones: 6 }
+      })),
+      lastDoc: { id: 'cursor-1' }
+    });
+    dbMocks.getDrills.mockResolvedValueOnce({
+      drills: [
+        {
+          id: 'community-13',
+          title: 'Community drill 13',
+          sport: 'Soccer',
+          type: 'Technical',
+          level: 'Intermediate',
+          skills: ['support'],
+          description: 'Next page result.',
+          instructions: 'Stay connected.',
+          setup: { duration: 12, players: '8-10', cones: 6 }
+        }
+      ],
+      lastDoc: null
+    });
+
+    const firstPage = await loadTeamDrillLibraryPage('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, {
+      type: 'Technical',
+      level: 'Intermediate'
+    });
+    const secondPage = await loadTeamDrillLibraryPage('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, {
+      type: 'Technical',
+      level: 'Intermediate',
+      cursor: firstPage.nextCursor
+    });
+
+    expect(firstPage.drills).toHaveLength(12);
+    expect(firstPage.drills.map((drill) => drill.id)).not.toContain('published-1');
+    expect(secondPage.drills.map((drill) => drill.id)).toContain('published-1');
+    expect(secondPage.nextCursor).toBeNull();
   });
 
   it('does not return the same published drill twice across sequential page loads', async () => {
@@ -260,6 +322,32 @@ describe('teamDrillsService', () => {
     const combinedIds = [...firstPage.drills, ...secondPage.drills].map((drill) => drill.id);
     expect(new Set(combinedIds)).toEqual(new Set(['published-1', 'community-1', 'community-2']));
     expect(new Set(combinedIds).size).toBe(combinedIds.length);
+  });
+
+  it('replays overflow drills without refetching community pages when only pending results remain', async () => {
+    const result = await loadTeamDrillLibraryPage('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }, {
+      cursor: {
+        communityCursor: null,
+        pendingDrills: [
+          {
+            id: 'published-1',
+            title: 'Published finishing',
+            sport: 'Soccer',
+            type: 'Technical',
+            level: 'Intermediate',
+            skills: ['finishing'],
+            description: 'Published by a coach.',
+            instructions: 'Rotate every rep.',
+            setup: { duration: 10, players: '6-8', cones: 4 }
+          }
+        ]
+      }
+    });
+
+    expect(dbMocks.getDrills).not.toHaveBeenCalled();
+    expect(dbMocks.getPublishedDrills).not.toHaveBeenCalled();
+    expect(result.drills.map((drill) => drill.id)).toEqual(['published-1']);
+    expect(result.nextCursor).toBeNull();
   });
 
   it('loads favorite drill details from the shared team favorites store and skips missing drills', async () => {
