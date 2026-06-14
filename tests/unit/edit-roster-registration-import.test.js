@@ -365,6 +365,11 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('Registration provider metadata saved');
         expect(source).toContain('This page does not fetch provider data live.');
         expect(source).toContain('save or load a registration roster snapshot for this team');
+        expect(source).toContain('previewButton.setAttribute(\'aria-disabled\', String(previewButton.disabled));');
+        expect(source).toContain('importButton.setAttribute(\'aria-disabled\', \'true\');');
+        expect(source).toContain('importButton.setAttribute(\'aria-disabled\', String(importButton.disabled));');
+        expect(source).toContain('button.setAttribute(\'aria-disabled\', String(button.disabled));');
+        expect(source).toContain('No stored registration roster snapshot is available yet.');
         expect(source).toContain('planRegistrationRosterImport({');
         expect(source).toContain('renderRegistrationRosterImportPreview');
         expect(source).toContain('registration-roster-import-row');
