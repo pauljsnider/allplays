@@ -63,6 +63,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import {
   emptySocialHome,
   filterSocialFeedItems,
@@ -134,43 +135,61 @@ export function Home({ auth }: { auth: AuthState }) {
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [social, setSocial] = useState<SocialHomeModel>(() => emptySocialHome());
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
-  const [loading, setLoading] = useState(true);
-  const [socialLoading, setSocialLoading] = useState(false);
   const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number } | null>(null);
-  const [error, setError] = useState('');
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [loadedHomeUserId, setLoadedHomeUserId] = useState<string | null>(null);
+  const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
+  const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
+
+  const hasLoadedHome = Boolean(auth.user?.uid) && auth.user.uid === loadedHomeUserId;
 
   const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
     if (!auth.user) return;
-    setLoading(true);
-    setSocialLoading(true);
-    setError('');
+    const hasExistingHome = loadedHomeUserId === auth.user.uid;
+    clearError();
     setSocialStatus(null);
-    try {
-      const { home: nextHome, schedule } = await loadParentHomeSummaryBootstrap(auth.user, { force });
-      setHome(nextHome);
-      setLoading(false);
+    return runPrimaryLoad(
+      async () => {
+        const summary = await loadParentHomeSummaryBootstrap(auth.user, { force });
+        setHome(summary.home);
+        setLoadedHomeUserId(auth.user?.uid || null);
 
-      void loadParentHomeWithSecondaryData(auth.user, { force, schedule })
-        .then(async (secondaryHome) => {
-          setHome(secondaryHome);
-          setSocial(await loadSocialHome(auth.user, secondaryHome));
-        })
-        .catch((secondaryError: any) => {
-          setSocialStatus({ tone: 'error', message: secondaryError?.message || 'Unable to refresh Home details.' });
-        })
-        .finally(() => {
-          setSocialLoading(false);
-        });
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load Home.');
-      setHome(emptyHome());
-      setSocial(emptySocialHome());
-      setSocialLoading(false);
-      setLoading(false);
-    }
+        void runSecondaryLoad(
+          async () => {
+            const secondaryHome = await loadParentHomeWithSecondaryData(auth.user, { force, schedule: summary.schedule });
+            setHome(secondaryHome);
+            setSocial(await loadSocialHome(auth.user, secondaryHome));
+          },
+          {
+            errorMessage: 'Unable to refresh Home details.',
+            rethrow: false,
+            onError: (secondaryError) => {
+              setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(secondaryError, 'Unable to refresh Home details.') });
+            }
+          }
+        );
+
+        return summary;
+      },
+      {
+        getErrorMessage: (loadError) => {
+          if (hasExistingHome) {
+            return 'Unable to refresh Home. Showing the last loaded Home. Try again.';
+          }
+          return getAsyncErrorMessage(loadError, 'Unable to load Home. Try again.');
+        },
+        rethrow: false,
+        onError: () => {
+          if (!hasExistingHome) {
+            setHome(emptyHome());
+            setSocial(emptySocialHome());
+            setLoadedHomeUserId(null);
+          }
+        }
+      }
+    );
   };
 
   useEffect(() => {
@@ -211,6 +230,7 @@ export function Home({ auth }: { auth: AuthState }) {
   }, [searchParams]);
 
   const topAction = home.actionItems[0] || null;
+  const showBlockingErrorState = !loading && !hasLoadedHome && Boolean(error);
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
   const today = new Date();
@@ -335,8 +355,10 @@ export function Home({ auth }: { auth: AuthState }) {
 
       {loading ? <HomePageSkeleton /> : null}
 
-      {!loading && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} officialsAccess={officialsAccess} /> : null}
-      {!loading && activeSection === 'feed' ? (
+      {showBlockingErrorState ? <HomeLoadErrorState onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
+
+      {!loading && !showBlockingErrorState && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} officialsAccess={officialsAccess} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'feed' ? (
         <FeedSection
           social={social}
           loading={socialLoading}
@@ -347,9 +369,9 @@ export function Home({ auth }: { auth: AuthState }) {
           onStatus={setSocialStatus}
         />
       ) : null}
-      {!loading && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
-      {!loading && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
-      {!loading && activeSection === 'friends' ? (
+      {!loading && !showBlockingErrorState && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'friends' ? (
         <FriendsSection
           auth={auth}
           home={home}
@@ -1707,6 +1729,20 @@ function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: str
   );
 }
 
+function HomeLoadErrorState({ onRetry, retrying }: { onRetry: () => void; retrying: boolean }) {
+  return (
+    <section className="app-card p-5 text-center">
+      <AlertCircle className="mx-auto h-8 w-8 text-rose-400" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">Home could not load</div>
+      <div className="mt-1 text-xs font-semibold text-gray-500">Try loading Home again to restore your dashboard.</div>
+      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry loading Home">
+        {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+        Retry
+      </button>
+    </section>
+  );
+}
+
 function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const isError = tone === 'error';
   return (
@@ -1715,4 +1751,11 @@ function Status({ tone, message }: { tone: 'error' | 'success'; message: string 
       {message}
     </div>
   );
+}
+
+function getAsyncErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
 }
