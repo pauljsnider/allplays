@@ -88,7 +88,7 @@ const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
         .replace(
-            "import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } from './js/db.js?v=45';",
+            "import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } from './js/db.js?v=47';",
             'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } = deps.db;'
         )
         .replace(

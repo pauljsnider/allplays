@@ -7,6 +7,7 @@ import {
   createTeamMediaLink,
   discoverPublicTeams,
   getPlayers,
+  getTeamRegistrationForm,
   getTeam,
   getTeamMediaFolders,
   getTeamMediaItems,
@@ -1172,12 +1173,11 @@ async function loadRegistrationDetailModel(teamId: string, formId: string): Prom
   if (!teamId || !formId) {
     throw new Error('Team and form are required.');
   }
-  const [team, forms] = await Promise.all([
+  const [team, form] = await Promise.all([
     Promise.resolve(getTeam(teamId)).catch(() => null),
-    Promise.resolve(listTeamRegistrationForms(teamId)).catch(() => [])
+    Promise.resolve(getTeamRegistrationForm(teamId, formId)).catch(() => null)
   ]);
 
-  const form = forms.find((candidate: any) => candidate.id === formId);
   if (!form) throw new Error('Registration form not found.');
   if (!team) throw new Error('Team not found.');
 
