@@ -31,12 +31,18 @@ export const initialEmailComposerState: EmailComposerState = {
   templates: []
 };
 
+function getDraftContent(draft: TeamEmailDraft | undefined | null) {
+  return {
+    subject: draft?.subject || '',
+    body: draft?.body || ''
+  };
+}
+
 function applyDraftSelection(state: EmailComposerState, draft: TeamEmailDraft): EmailComposerState {
   return {
     ...state,
     selectedDraftId: draft.id,
-    subject: draft.subject || '',
-    body: draft.body || ''
+    ...getDraftContent(draft)
   };
 }
 
@@ -60,6 +66,12 @@ export function emailReducer(state: EmailComposerState, action: EmailComposerAct
       const selectedDraft = drafts.find((draft) => draft.id === state.selectedDraftId);
       if (!selectedDraft) {
         return clearDraftComposer(state, drafts);
+      }
+      const previousSelectedDraft = state.drafts.find((draft) => draft.id === state.selectedDraftId);
+      const previousContent = getDraftContent(previousSelectedDraft);
+      const hasUnsavedEdits = state.subject !== previousContent.subject || state.body !== previousContent.body;
+      if (hasUnsavedEdits) {
+        return { ...state, drafts };
       }
       return applyDraftSelection({ ...state, drafts }, selectedDraft);
     }

@@ -77,6 +77,43 @@ describe('emailReducer', () => {
     });
   });
 
+  it('preserves unsaved draft edits when refreshed drafts still include the selected draft', () => {
+    const selected = emailReducer(
+      emailReducer(initialEmailComposerState, { type: 'setDrafts', drafts: [draft()] }),
+      { type: 'selectDraft', draftId: 'draft-1' }
+    );
+    const edited = emailReducer(
+      emailReducer(selected, { type: 'updateSubject', subject: 'Edited subject' }),
+      { type: 'updateBody', body: 'Edited body' }
+    );
+
+    expect(emailReducer(edited, {
+      type: 'setDrafts',
+      drafts: [draft({ subject: 'Server subject', body: 'Server body' })]
+    })).toMatchObject({
+      drafts: [draft({ subject: 'Server subject', body: 'Server body' })],
+      selectedDraftId: 'draft-1',
+      subject: 'Edited subject',
+      body: 'Edited body'
+    });
+  });
+
+  it('refreshes selected draft content when there are no unsaved edits', () => {
+    const selected = emailReducer(
+      emailReducer(initialEmailComposerState, { type: 'setDrafts', drafts: [draft()] }),
+      { type: 'selectDraft', draftId: 'draft-1' }
+    );
+
+    expect(emailReducer(selected, {
+      type: 'setDrafts',
+      drafts: [draft({ subject: 'Server subject', body: 'Server body' })]
+    })).toMatchObject({
+      selectedDraftId: 'draft-1',
+      subject: 'Server subject',
+      body: 'Server body'
+    });
+  });
+
   it('clears stale composer content when refreshed drafts no longer include the selected draft', () => {
     const selected = emailReducer(
       emailReducer(initialEmailComposerState, { type: 'setDrafts', drafts: [draft()] }),
