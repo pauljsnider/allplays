@@ -104,6 +104,10 @@ async function mockHomePlayerModules(page) {
                     return loadParentHome(...args);
                 }
 
+                export async function loadParentScheduleSummary() {
+                    return [];
+                }
+
                 export async function loadParentHomeWithSecondaryData(...args) {
                     return loadParentHome(...args);
                 }
