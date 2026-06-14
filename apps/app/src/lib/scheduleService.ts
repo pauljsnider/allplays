@@ -105,6 +105,7 @@ import {
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
+import { toAppServiceError } from './appErrors';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import type { AuthUser } from './types';
 
@@ -2204,7 +2205,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
         return await buildTeamSchedule(teamId, teamChildren, user);
       } catch (error) {
         console.warn('[schedule-service] Failed to load team schedule:', teamId, sanitizeErrorForLogging(error));
-        return [];
+        throw toAppServiceError(error, 'Unable to load schedule.');
       }
     });
 
