@@ -355,10 +355,11 @@ describe('Profile invites', () => {
     refreshDeferred.resolve();
   });
 
-  it('shows a loading state until alert teams resolve and only then renders team controls', async () => {
+  it('keeps alerts in the loading state until the first team preferences hydrate', async () => {
     const deferredTeams = createDeferred<Array<{ id: string; name: string }>>();
+    const deferredPreferences = createDeferred<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
     profileServiceMocks.loadNotificationTeams.mockReturnValue(deferredTeams.promise);
-    profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
+    profileServiceMocks.loadNotificationPreferences.mockReturnValue(deferredPreferences.promise);
 
     renderProfile();
 
@@ -371,6 +372,14 @@ describe('Profile invites', () => {
     expect(screen.queryByRole('button', { name: 'Save preferences' })).toBeNull();
 
     deferredTeams.resolve([{ id: 'team-1', name: 'Blue Team' }]);
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Loading your alert teams…')).toBeTruthy();
+    expect(screen.queryByLabelText('Team')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Turn on game-day alerts' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save preferences' })).toBeNull();
+
+    deferredPreferences.resolve({ liveChat: true, liveScore: false, schedule: true });
 
     await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
     expect(await screen.findByRole('button', { name: 'Turn on game-day alerts' })).toBeTruthy();

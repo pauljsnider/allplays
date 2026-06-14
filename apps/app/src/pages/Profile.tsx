@@ -300,14 +300,37 @@ export function Profile({ auth }: { auth: AuthState }) {
           return;
         }
 
+        const initialTeamId = teams[0]?.id || '';
+
         setNotificationTeams(teams);
         setSelectedTeamId((current) => {
           if (current && teams.some((team) => team.id === current)) {
             return current;
           }
-          return teams[0]?.id || '';
+          return initialTeamId;
         });
-        setNotificationTeamsLoaded(true);
+
+        if (!initialTeamId) {
+          setNotificationTeamsLoaded(true);
+          return;
+        }
+
+        try {
+          const firstPrefs = await loadNotificationPreferences(user.uid, initialTeamId);
+          if (!cancelled) {
+            setNotificationPreferences(firstPrefs);
+            setLoadedNotificationTeamId(initialTeamId);
+          }
+        } catch {
+          // Don't set loadedNotificationTeamId on error so loadPreferences effect can retry
+          if (!cancelled) {
+            setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
+          }
+        } finally {
+          if (!cancelled) {
+            setNotificationTeamsLoaded(true);
+          }
+        }
       } catch {
         // no-op: handled inline above
       }
@@ -323,7 +346,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     let cancelled = false;
 
     async function loadPreferences() {
-      if (!user || activeProfileSection !== 'alerts') {
+      if (!user || activeProfileSection !== 'alerts' || !notificationTeamsLoaded) {
         return;
       }
       if (!selectedTeamId) {
@@ -355,7 +378,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, loadedNotificationTeamId, selectedTeamId, user]);
+  }, [activeProfileSection, loadedNotificationTeamId, notificationTeamsLoaded, selectedTeamId, user]);
 
   useEffect(() => {
     let cancelled = false;
