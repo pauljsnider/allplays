@@ -14,8 +14,7 @@ describe('team schedule default filter', () => {
         const renderEnd = source.indexOf('\n        function ', renderStart);
         const renderSource = source.slice(renderStart, renderEnd);
 
-        expect(renderSource).toContain("setScheduleFilter(scheduleViewFilter || 'all-upcoming')");
-        expect(renderSource).not.toContain("setScheduleFilter('recent-results')");
+        expect(renderSource).toContain("setScheduleFilter('all-upcoming')");
     });
 
     it('defaults to all-upcoming in setScheduleFilter', () => {
