@@ -21,7 +21,7 @@ describe('team media entry point', () => {
         const pageJs = readRepoFile('js/team-media.js');
         const rules = readRepoFile('firestore.rules');
 
-        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=6"></script>');
+        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=7"></script>');
         expect(pageHtml).toContain('id="team-media-upload-panel"');
         expect(pageHtml).toContain('id="team-media-admin-panel"');
         expect(pageHtml).toContain('id="bulk-actions"');
