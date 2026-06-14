@@ -590,7 +590,7 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
   };
 
   useEffect(() => {
-    void refresh();
+    void refresh(refreshVersion > 0 ? { force: true } : {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, refreshVersion]);
 

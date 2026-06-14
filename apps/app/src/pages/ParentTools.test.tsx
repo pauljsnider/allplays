@@ -544,6 +544,44 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(2);
     });
 
+    it('forces a calendar reload after access changes update linked players', async () => {
+        parentToolsServiceMocks.loadParentCalendarTools
+            .mockResolvedValueOnce({
+                events: [],
+                teams: []
+            })
+            .mockResolvedValueOnce({
+                events: [
+                    {
+                        id: 'event-1',
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        type: 'game',
+                        date: new Date('2100-06-01T18:00:00Z')
+                    }
+                ],
+                teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+            });
+
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        await screen.findByText('No team schedules');
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, auth.user, {});
+
+        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        await screen.findByText('Request player access');
+        fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
+        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        expect(await screen.findByText('Bears')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, auth.user, { force: true });
+    });
+
     it('refreshes the currently viewed dependent tab when access changes finish after navigation', async () => {
         let resolveRedeem: ((value: { code: string; redirectPath: string; message: string }) => void) | undefined;
         inviteRedemptionMocks.redeemSignedInInvite.mockImplementationOnce(() => new Promise<{ code: string; redirectPath: string; message: string }>((resolve) => {
