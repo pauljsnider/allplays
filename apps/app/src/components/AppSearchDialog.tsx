@@ -91,6 +91,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     if (!open) return;
     const trimmedQuery = query.trim();
     const requestId = ++searchRequestId.current;
+    let latestPhaseId = 0;
 
     if (trimmedQuery.length < 2) {
       setTeams(baseTeams);
@@ -109,13 +110,14 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
       const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
+        const phaseId = ++latestPhaseId;
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
         const [teamsResult, playersResult] = await Promise.allSettled([
           searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
           searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
         ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
 
-        if (requestId !== searchRequestId.current) return;
+        if (requestId !== searchRequestId.current || phaseId !== latestPhaseId) return;
 
         if (teamsResult.status === 'fulfilled') {
           setTeams(teamsResult.value);
@@ -133,25 +135,30 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           setPlayersError(getPlayerSearchError(playersResult.reason));
         }
 
-        if (requestId === searchRequestId.current) {
+        if (requestId === searchRequestId.current && phaseId === latestPhaseId) {
           setTeamsLoading(false);
           setPlayersLoading(false);
         }
       };
 
-      void (hydratedTeamsPromiseRef.current || loadAppSearchTeams(auth.user)
+      const hydrationPromise = hydratedTeamsPromiseRef.current || loadAppSearchTeams(auth.user)
         .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams))
-        .catch(() => initialAccessibleTeams))
-        .then((hydratedTeams) => {
-          if (requestId !== searchRequestId.current) return;
-          return runSearch(hasSameTeamScope(initialAccessibleTeams, hydratedTeams) ? initialAccessibleTeams : hydratedTeams);
-        })
-        .catch(() => {
-          if (requestId === searchRequestId.current) {
-            setTeamsLoading(false);
-            setPlayersLoading(false);
-          }
-        });
+        .catch(() => initialAccessibleTeams);
+
+      void runSearch(initialAccessibleTeams);
+
+      void hydrationPromise.then((hydratedTeams) => {
+        if (requestId !== searchRequestId.current) return;
+        if (hasSameTeamScope(initialAccessibleTeams, hydratedTeams)) return;
+        setTeamsLoading(true);
+        setPlayersLoading(true);
+        return runSearch(hydratedTeams);
+      }).catch(() => {
+        if (requestId === searchRequestId.current && latestPhaseId === 0) {
+          setTeamsLoading(false);
+          setPlayersLoading(false);
+        }
+      });
     }, 180);
 
     return () => window.clearTimeout(timeoutId);

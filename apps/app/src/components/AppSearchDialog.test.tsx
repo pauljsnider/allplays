@@ -208,7 +208,7 @@ describe('AppSearchDialog', () => {
     expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1);
   });
 
-  it('waits for pending hydration before launching one remote search burst for a query', async () => {
+  it('starts search with known access and reruns after hydration expands the scope', async () => {
     const onClose = vi.fn();
     const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
     let releaseHydration!: (teams: AppSearchTeam[] | PromiseLike<AppSearchTeam[]>) => void;
@@ -226,15 +226,16 @@ describe('AppSearchDialog', () => {
 
     fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'be' } });
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    expect(searchAppTeamsMock).not.toHaveBeenCalled();
-    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'be', initialTeams, null);
+    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
 
     releaseHydration([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
 
-    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
-    expect(searchAppTeamsMock).toHaveBeenCalledWith('be', expect.arrayContaining([
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(2));
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'be', expect.arrayContaining([
       expect.objectContaining({ id: 'team-1', name: 'Bears' }),
       expect.objectContaining({ id: 'team-2', name: 'Rockets' })
     ]), null);
@@ -287,7 +288,7 @@ describe('AppSearchDialog', () => {
     await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
   });
 
-  it('uses the hydrated team scope for the single remote search when access expands', async () => {
+  it('reruns search with the hydrated team scope when access expands', async () => {
     const onClose = vi.fn();
     const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
     const hydratedTeams: AppSearchTeam[] = [
@@ -306,11 +307,12 @@ describe('AppSearchDialog', () => {
 
     fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
 
-    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
-    expect(searchAppTeamsMock).toHaveBeenCalledWith('ro', hydratedTeams, null);
-    expect(searchAppPlayersMock).toHaveBeenCalledWith('ro', expect.any(Map), null);
-    const teamsById = searchAppPlayersMock.mock.calls[0]?.[1];
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(2));
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'ro', initialTeams, null);
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'ro', hydratedTeams, null);
+    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(2, 'ro', expect.any(Map), null);
+    const teamsById = searchAppPlayersMock.mock.calls[1]?.[1];
     expect(teamsById instanceof Map).toBe(true);
     expect(Array.from((teamsById as Map<string, AppSearchTeam>).keys())).toEqual(['team-1', 'team-2']);
   });
