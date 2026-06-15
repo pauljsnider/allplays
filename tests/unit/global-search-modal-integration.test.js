@@ -17,7 +17,7 @@ const firebaseMocks = vi.hoisted(() => ({
     limit: vi.fn((count) => ({ type: 'limit', count }))
 }));
 
-vi.mock('../../js/db.js?v=49', () => dbMocks);
+vi.mock('../../js/db.js?v=50', () => dbMocks);
 vi.mock('../../js/firebase.js?v=18', () => firebaseMocks);
 vi.mock('../../js/utils.js?v=8', () => ({
     escapeHtml: (value) => String(value || '')
