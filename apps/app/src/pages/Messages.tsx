@@ -54,6 +54,7 @@ import {
   subscribeToTeamChatMessages,
   toggleTeamChatReaction,
   type ChatConversation,
+  type ChatInboxPreviewUpdate,
   type ChatMessage,
   type SentTeamEmail,
   type TeamEmailDraft,
@@ -135,6 +136,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   const refreshInbox = useCallback(async () => {
     if (!auth.user) return;
     const requestId = inboxRequestIdRef.current + 1;
+    const previewUpdates = new Map<string, ChatInboxPreviewUpdate>();
     inboxRequestIdRef.current = requestId;
     setLoading(true);
     setError(null);
@@ -143,11 +145,12 @@ export function Messages({ auth }: { auth: AuthState }) {
         includeLastMessages: false,
         onPreview: (previewUpdate) => {
           if (inboxRequestIdRef.current !== requestId) return;
+          previewUpdates.set(previewUpdate.teamId, previewUpdate);
           setTeams((current) => mergeInboxPreview(current, previewUpdate));
         }
       });
       if (inboxRequestIdRef.current !== requestId) return;
-      setTeams((current) => mergeInboxTeams(current, result.teams));
+      setTeams(mergeInboxTeams(result.teams, previewUpdates));
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
       void updateAppIconBadge(totalUnread);
     } catch (loadError: any) {
@@ -1827,18 +1830,16 @@ function buildMessagesRoute(teamId: string, preferredConversationId?: string | n
   return `${route}?conversationId=${encodeURIComponent(normalizedConversationId)}`;
 }
 
-function mergeInboxTeams(currentTeams: ChatTeam[], nextTeams: ChatTeam[]) {
-  const currentById = new Map(currentTeams.map((team) => [team.id, team]));
-  return nextTeams.map((team) => {
-    if (team.lastMessage) return team;
-    const currentTeam = currentById.get(team.id);
-    if (!currentTeam?.lastMessage) return team;
+export function mergeInboxTeams(nextTeams: ChatTeam[], previewUpdates: Map<string, ChatInboxPreviewUpdate>) {
+  return sortInboxTeams(nextTeams.map((team) => {
+    const previewUpdate = previewUpdates.get(team.id);
+    if (!previewUpdate) return team;
     return {
       ...team,
-      lastMessage: currentTeam.lastMessage,
-      preferredConversationId: currentTeam.preferredConversationId
+      lastMessage: previewUpdate.lastMessage,
+      preferredConversationId: previewUpdate.preferredConversationId
     };
-  });
+  }));
 }
 
 function mergeInboxPreview(
