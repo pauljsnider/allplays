@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
+import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Officials } from './Officials';
-import type { OfficialAssignmentItem } from '../lib/scheduleService';
-import type { AuthState } from '../lib/types';
+import { Officials } from '../../apps/app/src/pages/Officials';
+import type { OfficialAssignmentItem } from '../../apps/app/src/lib/scheduleService';
+import type { AuthState } from '../../apps/app/src/lib/types';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
     loadOfficialAssignments: vi.fn(),
@@ -22,11 +23,11 @@ vi.mock('react-router-dom', async () => {
     };
 });
 
-vi.mock('../lib/homeLogic', () => ({
+vi.mock('../../apps/app/src/lib/homeLogic', () => ({
     getEventDetailPath: vi.fn(() => '/schedule/team-1/game-1')
 }));
 
-vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
+vi.mock('../../apps/app/src/lib/scheduleService', () => scheduleServiceMocks);
 
 const auth: AuthState = {
     user: {
