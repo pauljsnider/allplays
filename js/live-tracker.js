@@ -389,6 +389,7 @@ const els = {
   onCourtCount: q('#on-court-count-mobile'),
   startStop: q('#start-stop'),
   undoMini: q('#undo-mini'),
+  periodButtons: q('#period-buttons'),
   preTab: q('#pre-game-tab'),
   liveTab: q('#live-tab'),
   oppTab: q('#opponents-tab'),
@@ -2215,12 +2216,22 @@ function setPeriod(p) {
 }
 
 function applyPeriodButtons() {
-  const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig }).slice(0, 5);
-  const fallbackLabel = labels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
-  document.querySelectorAll('.period-btn').forEach((button, index) => {
-    const label = labels[index] || fallbackLabel;
-    button.dataset.period = label;
-    button.textContent = label;
+  if (!els.periodButtons) return;
+
+  const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig });
+  const fallbackLabel = getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
+  const resolvedLabels = labels.length ? labels : [fallbackLabel];
+  const activePeriod = resolvedLabels.includes(state.period) ? state.period : resolvedLabels[0];
+
+  els.periodButtons.innerHTML = resolvedLabels.map((label) => `
+    <button
+      class="pill px-2 py-1.5 border period-btn ${label === activePeriod ? 'bg-teal text-ink border-teal font-bold' : 'bg-white border-slate/10 font-semibold'}"
+      data-period="${escapeHtml(label)}"
+    >${escapeHtml(label)}</button>
+  `).join('');
+
+  els.periodButtons.querySelectorAll('.period-btn').forEach((button) => {
+    button.addEventListener('click', () => setPeriod(button.dataset.period));
   });
 }
 
@@ -2316,7 +2327,6 @@ function attachEvents() {
     persistLocalTrackerState();
     broadcastLineupUpdate('Lineup cleared');
   });
-  document.querySelectorAll('.period-btn').forEach(b => b.addEventListener('click', () => setPeriod(b.dataset.period)));
   els.livePlayers.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-stat]');
     if (!btn) return;
