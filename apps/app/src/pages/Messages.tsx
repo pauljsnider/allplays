@@ -35,11 +35,8 @@ import {
   editTeamChatMessage,
   ensureStaffChatConversation,
   getChatInboxPreview,
-  loadChatConversations,
   loadChatInbox,
   loadChatRecipientOptions,
-  loadChatTeamContext,
-  loadOlderTeamChatMessages,
   loadSentTeamEmails,
   loadTeamEmailDrafts,
   loadTeamEmailTemplates,
@@ -51,7 +48,6 @@ import {
   sendAllPlaysChatAnswer,
   sendTeamChatMessage,
   sendTeamEmailMessage,
-  subscribeToTeamChatMessages,
   toggleTeamChatReaction,
   type ChatConversation,
   type ChatInboxPreviewUpdate,
@@ -81,13 +77,11 @@ import {
   getMessageAttachments,
   getMessageSenderLabel,
   getReactionNames,
-  getSortedChatMessages,
   hasAllPlaysMention,
   isChatComposerLinkSafe,
   isDefaultTeamConversation,
   isStaffConversation,
   isSafeChatMediaUrl,
-  mergeChatMessageLists,
   normalizeChatReactions,
   shouldRetryChatLastReadOnViewReturn,
   shouldUpdateChatLastRead,
@@ -101,6 +95,8 @@ import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
 import { useChatSheets } from './messages/hooks/useChatSheets';
+import { useChatTeam } from './messages/hooks/useChatTeam';
+import { useChatMessages } from './messages/hooks/useChatMessages';
 import { emailReducer, initialEmailComposerState } from './messages/state/emailReducer';
 
 type StatusTone = 'neutral' | 'success' | 'error';
@@ -468,25 +464,12 @@ function ChatWindow({
 }) {
   const navigate = useNavigate();
   const { isDesktopWeb } = useShellLayout();
-  const [team, setTeam] = useState<Record<string, any> | null>(inboxTeam || null);
-  const [profile, setProfile] = useState<Record<string, any>>({});
-  const [canModerate, setCanModerate] = useState(inboxTeam?.canModerate || false);
-  const [conversations, setConversations] = useState<ChatConversation[]>([]);
-  const [selectedConversationId, setSelectedConversationId] = useState(DEFAULT_TEAM_CONVERSATION_ID);
   const [recipientOptions, setRecipientOptions] = useState<ChatRecipientOption[]>([]);
   const [recipientOptionsLoading, setRecipientOptionsLoading] = useState(false);
   const [recipientOptionsLoaded, setRecipientOptionsLoaded] = useState(false);
   const [recipientOptionsError, setRecipientOptionsError] = useState<string | null>(null);
   const [selectedRecipientTarget, setSelectedRecipientTarget] = useState<ChatTargetType>('full_team');
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
-  const [liveMessages, setLiveMessages] = useState<ChatMessage[]>([]);
-  const [olderMessages, setOlderMessages] = useState<ChatMessage[]>([]);
-  const [liveOldestDoc, setLiveOldestDoc] = useState<unknown | null>(null);
-  const [hasMoreMessages, setHasMoreMessages] = useState(false);
-  const [loadingContext, setLoadingContext] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(true);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<ChatStatus | null>(null);
   const [composerNotice, setComposerNotice] = useState('');
   const [text, setText] = useState('');
@@ -543,7 +526,6 @@ function ChatWindow({
   const voicePartialRef = useRef('');
   const nativeVoiceListeningRef = useRef(false);
   const voiceStopRequestedRef = useRef(false);
-  const initialSnapshotLoadedRef = useRef(false);
   const pendingScrollRef = useRef(false);
   const stickToLatestRef = useRef(true);
   const recipientOptionsPromiseRef = useRef<Promise<ChatRecipientOption[]> | null>(null);
@@ -556,7 +538,81 @@ function ChatWindow({
   const scheduledScrollForceRef = useRef(false);
   const scheduledScrollTimeoutsRef = useRef<number[]>([]);
   const lastObservedViewportSignatureRef = useRef('');
-  const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
+
+  const resetChatSelectionState = useCallback(() => {
+    setStatus(null);
+    recipientOptionsPromiseRef.current = null;
+    recipientOptionsRequestIdRef.current += 1;
+    setRecipientOptions([]);
+    setRecipientOptionsLoading(false);
+    setRecipientOptionsLoaded(false);
+    setRecipientOptionsError(null);
+    pendingScrollRef.current = true;
+    stickToLatestRef.current = true;
+    setShowJumpToLatest(false);
+  }, []);
+
+  const {
+    team,
+    profile,
+    canModerate,
+    conversations,
+    setConversations,
+    selectedConversationId,
+    setSelectedConversationId,
+    loadingContext,
+    error: teamError,
+    reloadConversations,
+    switchConversation: switchChatConversation
+  } = useChatTeam({
+    teamId,
+    user: auth.user,
+    inboxTeam,
+    preferredConversationId,
+    onTeamReset: resetChatSelectionState
+  });
+
+  const handleBeforeLiveUpdate = useCallback(() => isNearBottom(messagesRef.current), []);
+  const handleLiveUpdateState = useCallback(({ isInitialSnapshot, wasNearBottom }: { isInitialSnapshot: boolean; wasNearBottom: boolean }) => {
+    if (isInitialSnapshot || pendingScrollRef.current || wasNearBottom) {
+      pendingScrollRef.current = true;
+      stickToLatestRef.current = true;
+      setShowJumpToLatest(false);
+    } else {
+      stickToLatestRef.current = false;
+      setShowJumpToLatest(true);
+    }
+  }, []);
+  const handleMessagesReset = useCallback(() => {
+    pendingScrollRef.current = true;
+    stickToLatestRef.current = true;
+    setShowJumpToLatest(false);
+  }, []);
+  const handleMarkRead = useCallback(() => {
+    maybeMarkRead(auth.user, teamId, true, !isDesktopWeb && !embedded);
+  }, [auth.user, embedded, isDesktopWeb, teamId]);
+
+  const {
+    messages,
+    olderMessages,
+    hasMoreMessages,
+    loadingMessages,
+    loadingOlder,
+    error: messagesError,
+    loadOlderMessages: loadOlderChatMessages,
+    initialSnapshotLoadedRef
+  } = useChatMessages({
+    teamId,
+    team,
+    user: auth.user,
+    selectedConversationId,
+    onBeforeLiveUpdate: handleBeforeLiveUpdate,
+    onLiveUpdateState: handleLiveUpdateState,
+    onMessagesReset: handleMessagesReset,
+    onMarkRead: handleMarkRead
+  });
+  const error = teamError || messagesError;
+
   const selectedConversation = useMemo(() => (
     conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null
   ), [conversations, selectedConversationId]);
@@ -758,112 +814,6 @@ function ChatWindow({
     setIsMuted(resolveMutedState(teamId, inboxTeam, profile));
   }, [inboxTeam, profile, teamId]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadContext() {
-      if (!auth.user) return;
-      setLoadingContext(true);
-      setError(null);
-      setStatus(null);
-      setSelectedConversationId(preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID);
-      setOlderMessages([]);
-      setLiveMessages([]);
-      recipientOptionsPromiseRef.current = null;
-      recipientOptionsRequestIdRef.current += 1;
-      setRecipientOptions([]);
-      setRecipientOptionsLoading(false);
-      setRecipientOptionsLoaded(false);
-      setRecipientOptionsError(null);
-      initialSnapshotLoadedRef.current = false;
-      pendingScrollRef.current = true;
-      stickToLatestRef.current = true;
-      setShowJumpToLatest(false);
-
-      try {
-        const context = await loadChatTeamContext(teamId, auth.user);
-        if (cancelled) return;
-        setTeam(context.team);
-        setProfile(context.profile);
-        setCanModerate(context.canModerate);
-        const loadedConversations = await loadChatConversations(teamId, auth.user, context.team, context.canModerate);
-        if (cancelled) return;
-        setConversations(loadedConversations);
-        setSelectedConversationId((current: string) => {
-          if (loadedConversations.some((conversation) => conversation.id === current)) {
-            return current;
-          }
-          if (preferredConversationId && loadedConversations.some((conversation) => conversation.id === preferredConversationId)) {
-            return preferredConversationId;
-          }
-          return DEFAULT_TEAM_CONVERSATION_ID;
-        });
-        if (!context.canModerate) {
-          setRecipientOptionsLoaded(true);
-        }
-      } catch (loadError: any) {
-        if (!cancelled) {
-          setError(loadError?.message || 'Unable to load team chat.');
-        }
-      } finally {
-        if (!cancelled) setLoadingContext(false);
-      }
-    }
-
-    loadContext();
-    return () => {
-      cancelled = true;
-    };
-  }, [auth.user?.uid, preferredConversationId, teamId]);
-
-  useEffect(() => {
-    if (!team || !auth.user) return undefined;
-    const currentUser = auth.user;
-
-    setLoadingMessages(true);
-    setError(null);
-    setOlderMessages([]);
-    setLiveMessages([]);
-    setLiveOldestDoc(null);
-    setHasMoreMessages(false);
-    initialSnapshotLoadedRef.current = false;
-    pendingScrollRef.current = true;
-    stickToLatestRef.current = true;
-    setShowJumpToLatest(false);
-
-    const subscription = subscribeToTeamChatMessages(
-      teamId,
-      selectedConversationId,
-      (incomingMessages, oldestDoc) => {
-        const isInitialSnapshot = !initialSnapshotLoadedRef.current;
-        const wasNearBottom = isNearBottom(messagesRef.current);
-        setLiveOldestDoc(oldestDoc || incomingMessages[incomingMessages.length - 1]?._doc || null);
-        setLiveMessages(getSortedChatMessages(incomingMessages));
-        setHasMoreMessages(incomingMessages.length >= 50);
-        setLoadingMessages(false);
-        if (isInitialSnapshot || pendingScrollRef.current || wasNearBottom) {
-          pendingScrollRef.current = true;
-          stickToLatestRef.current = true;
-          setShowJumpToLatest(false);
-        } else {
-          stickToLatestRef.current = false;
-          setShowJumpToLatest(true);
-        }
-        initialSnapshotLoadedRef.current = true;
-        maybeMarkRead(currentUser, teamId, true, !isDesktopWeb && !embedded);
-      },
-      (subscribeError) => {
-        setError(subscribeError.message || 'Unable to load chat messages.');
-        setLoadingMessages(false);
-      }
-    );
-
-    return () => {
-      subscription.unsubscribe();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, selectedConversationId, team, teamId]);
-
   useLayoutEffect(() => {
     if (!pendingScrollRef.current) return;
     scrollToLatest('auto');
@@ -958,19 +908,12 @@ function ChatWindow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearScheduledScrollToLatest]);
 
-  const reloadConversations = async () => {
-    if (!auth.user || !team) return;
-    const loadedConversations = await loadChatConversations(teamId, auth.user, team, canModerate);
-    setConversations(loadedConversations);
-    return loadedConversations;
-  };
-
   const switchConversation = (conversationId: string) => {
     if (!conversationId || conversationId === selectedConversationId) return;
     pendingScrollRef.current = true;
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);
-    setSelectedConversationId(conversationId);
+    if (!switchChatConversation(conversationId)) return;
     setSelectedRecipientTarget('full_team');
     setSelectedRecipientIds([]);
     setReactionMessageId('');
@@ -1012,18 +955,10 @@ function ChatWindow({
   };
 
   const loadOlderMessages = async () => {
-    if (loadingOlder || !hasMoreMessages) return;
-    const cursor = olderMessages[0]?._doc || liveOldestDoc;
-    if (!cursor) return;
-    setLoadingOlder(true);
     try {
-      const batch = await loadOlderTeamChatMessages(teamId, selectedConversationId, cursor);
-      if (batch.length < 50) setHasMoreMessages(false);
-      setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(batch), current));
+      await loadOlderChatMessages();
     } catch (loadError: any) {
       setStatus({ tone: 'error', message: loadError?.message || 'Unable to load older messages.' });
-    } finally {
-      setLoadingOlder(false);
     }
   };
 
