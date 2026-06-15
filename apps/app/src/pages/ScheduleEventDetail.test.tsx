@@ -1610,7 +1610,10 @@ describe('ScheduleEventDetail practice timeline', () => {
     const packetPanel = container.querySelector('#practice-packet-panel');
     const practiceHubTitle = screen.getByText('Practice hub');
     expect(packetPanel).toBeTruthy();
-    expect(packetPanel?.compareDocumentPosition(practiceHubTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    if (!packetPanel) {
+      throw new Error('Expected practice packet panel to be rendered');
+    }
+    expect(packetPanel.compareDocumentPosition(practiceHubTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText('Packet ready')).toBeTruthy();
     expect(screen.queryByText('Practice timeline')).toBeNull();
     expect(screen.queryByText('No practice timeline yet. Add drills above to build this practice plan.')).toBeNull();
