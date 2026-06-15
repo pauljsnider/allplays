@@ -960,6 +960,12 @@ export async function getTeamMediaItems(teamId, folderId = null) {
         if (!item.storagePath) return item;
         try {
             const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
+            updateDoc(doc(db, `teams/${teamId}/mediaItems`, item.id), {
+                downloadUrl,
+                updatedAt: serverTimestamp()
+            }).catch((error) => {
+                console.warn('Unable to backfill cached team media download URL:', error);
+            });
             return { ...item, downloadUrl };
         } catch (error) {
             console.warn('Unable to resolve team media download URL:', error);
@@ -1100,12 +1106,14 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
+    const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
         type: 'photo',
         storagePath,
+        downloadUrl,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type || 'image/jpeg',
@@ -1144,6 +1152,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
+    const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
@@ -1151,6 +1160,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         fileName: String(file.name || '').trim(),
         type: 'file',
         storagePath,
+        downloadUrl,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type,
