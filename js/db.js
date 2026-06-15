@@ -786,7 +786,7 @@ export async function discoverPublicTeams(options = {}) {
         };
     }
 
-    const strategies = buildPublicTeamSearchStrategies(searchText);
+    let strategies = buildPublicTeamSearchStrategies(searchText);
     if (!strategies.length) {
         return { teams: [], nextCursor: null };
     }
@@ -801,20 +801,21 @@ export async function discoverPublicTeams(options = {}) {
         };
     }
 
-    const snapshots = await Promise.all(strategies.map((strategy, index) => {
-        const constraints = [
-            where('isPublic', '==', true),
-            where(strategy.field, '>=', strategy.start),
-            where(strategy.field, '<=', strategy.end),
-            orderBy(strategy.field)
-        ];
-        const strategyCursor = previousPageCursor.strategyCursors[index];
-        if (strategyCursor) {
-            constraints.push(startAfterQuery(strategyCursor));
-        }
-        constraints.push(limitQuery(pageSize));
-        return getDocs(query(teamsRef, ...constraints));
+    strategies = strategies.map((strategy, index) => ({
+        ...strategy,
+        startAfterConstraint: previousPageCursor.strategyCursors[index]
+            ? [startAfterQuery(previousPageCursor.strategyCursors[index])]
+            : []
     }));
+    const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
+        teamsRef,
+        where('isPublic', '==', true),
+        where(strategy.field, '>=', strategy.start),
+        where(strategy.field, '<=', strategy.end),
+        orderBy(strategy.field),
+        ...strategy.startAfterConstraint,
+        limitQuery(pageSize)
+    ))));
 
     const teamsById = new Map(previousPageCursor.bufferedTeams
         .filter((team) => team?.id)
