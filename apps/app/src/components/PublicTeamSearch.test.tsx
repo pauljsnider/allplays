@@ -293,10 +293,11 @@ describe('PublicTeamSearch', () => {
 
         await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(1, { searchText: undefined, cursor: null }));
 
+        expect(screen.getByRole('button', { name: 'Search public teams' })).toBeTruthy();
+
         const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
-        expect(screen.getByRole('button', { name: /Search/i }).hasAttribute('disabled')).toBe(false);
-        fireEvent.click(screen.getByRole('button', { name: /Search/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
         await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: 'atlanta', cursor: null }));
 

@@ -136,6 +136,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           className="primary-button !min-h-10 !px-3 text-sm"
           onClick={handleSearch}
           disabled={loading && !searchQuery.trim()}
+          aria-label="Search public teams"
         >
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -150,6 +151,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
             className="ghost-button !min-h-10 !px-3 text-sm"
             onClick={handleClear}
             disabled={loading}
+            aria-label="Clear public team search"
           >
             <XCircle className="h-4 w-4" aria-hidden="true" />
             <span className="hidden sm:inline">Clear</span>

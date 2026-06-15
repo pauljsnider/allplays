@@ -570,7 +570,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByRole('heading', { name: 'Discover Public Teams' })).toBeVisible();
         const searchInput = page.getByPlaceholder('Search by team, city, state, or zip');
         await searchInput.fill('atlanta');
-        await page.getByRole('button', { name: /Search/i }).click();
+        await page.getByRole('button', { name: 'Search public teams' }).click();
 
         await expect(page.getByText('Atlanta Fire')).toBeVisible();
         await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
