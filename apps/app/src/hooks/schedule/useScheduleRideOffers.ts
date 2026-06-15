@@ -104,7 +104,7 @@ export function useScheduleRideOffers() {
     setSelectedChildByOffer({});
     setMessage(null);
     refreshOffers();
-  }, [refreshOffers]);
+  }, [event.teamId, event.id, refreshOffers]);
 
   const runRideAction = useCallback(async (actionKey: string, action: () => Promise<void>, successMessage: string) => {
     setSubmitting(actionKey);
