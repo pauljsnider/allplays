@@ -115,4 +115,26 @@ describe('useChatMessages', () => {
         await waitFor(() => expect(screen.getByTestId('message-ids').textContent?.startsWith('older-page')).toBe(true));
         expect(screen.getByTestId('has-more')).toHaveTextContent('false');
     });
+
+    it('does not resubscribe when the user object changes identity but keeps the same uid', async () => {
+        function MessagesProbeWithUser({ authUser }: { authUser: NonNullable<AuthState['user']> }) {
+            useChatMessages({
+                teamId: 'team-1',
+                team: probeTeam,
+                user: authUser,
+                selectedConversationId: 'team'
+            });
+            return null;
+        }
+
+        const firstUser = { ...user };
+        const secondUser = { ...user };
+
+        const { rerender } = render(<MessagesProbeWithUser authUser={firstUser} />);
+        await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(1));
+
+        rerender(<MessagesProbeWithUser authUser={secondUser} />);
+
+        await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(1));
+    });
 });

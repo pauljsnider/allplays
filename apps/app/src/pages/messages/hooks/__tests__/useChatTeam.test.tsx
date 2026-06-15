@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChatTeam } from '../useChatTeam';
 import { DEFAULT_TEAM_CONVERSATION_ID } from '../../../../lib/chatLogic';
@@ -106,5 +106,23 @@ describe('useChatTeam', () => {
         rerender(<TeamProbeWithUser authUser={secondUser} />);
 
         await waitFor(() => expect(loadChatTeamContext).toHaveBeenCalledTimes(1));
+    });
+
+    it('switches conversations immediately when the selected id changes', async () => {
+        vi.mocked(loadChatTeamContext).mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            profile: {},
+            canModerate: true
+        });
+        vi.mocked(loadChatConversations).mockResolvedValue([
+            { id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', isDefault: true },
+            { id: 'staff', type: 'group', name: 'Staff only' }
+        ]);
+
+        render(<TeamProbe teamId="team-1" />);
+
+        await waitFor(() => expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID));
+        fireEvent.click(screen.getByRole('button', { name: 'Open staff' }));
+        await waitFor(() => expect(screen.getByTestId('selected-conversation').textContent).toBe('staff'));
     });
 });

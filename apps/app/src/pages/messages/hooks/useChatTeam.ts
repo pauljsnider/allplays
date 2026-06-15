@@ -76,15 +76,10 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
   }, [canModerate, team, teamId, user]);
 
   const switchConversation = useCallback((conversationId: string) => {
-    if (!conversationId) return false;
-    let changed = false;
-    setSelectedConversationId((current: string) => {
-      if (current === conversationId) return current;
-      changed = true;
-      return conversationId;
-    });
-    return changed;
-  }, []);
+    if (!conversationId || selectedConversationId === conversationId) return false;
+    setSelectedConversationId(conversationId);
+    return true;
+  }, [selectedConversationId]);
 
   return {
     team,

@@ -74,7 +74,7 @@ export function useChatMessages({
     return () => {
       subscription.unsubscribe();
     };
-  }, [onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, selectedConversationId, team, teamId, user]);
+  }, [onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, selectedConversationId, team?.id, teamId, user?.uid]);
 
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlder || !hasMoreMessages) return;
