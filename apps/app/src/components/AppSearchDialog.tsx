@@ -108,12 +108,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
-      let hydratedResultsApplied = false;
-
-      const runSearch = async (
-        accessibleTeams: AppSearchTeam[],
-        options: { phase: 'initial' | 'hydrated'; teamsLoadingDone?: boolean; playersLoadingDone?: boolean }
-      ) => {
+      const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
         const [teamsResult, playersResult] = await Promise.allSettled([
           searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
@@ -121,8 +116,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
 
         if (requestId !== searchRequestId.current) return;
-        if (options.phase === 'initial' && hydratedResultsApplied) return;
-        if (options.phase === 'hydrated') hydratedResultsApplied = true;
 
         if (teamsResult.status === 'fulfilled') {
           setTeams(teamsResult.value);
@@ -140,30 +133,23 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           setPlayersError(getPlayerSearchError(playersResult.reason));
         }
 
-        if (options.teamsLoadingDone && requestId === searchRequestId.current) {
+        if (requestId === searchRequestId.current) {
           setTeamsLoading(false);
-        }
-        if (options.playersLoadingDone && requestId === searchRequestId.current) {
           setPlayersLoading(false);
         }
       };
-
-      void runSearch(initialAccessibleTeams, { phase: 'initial', teamsLoadingDone: false, playersLoadingDone: true });
 
       void (hydratedTeamsPromiseRef.current || loadAppSearchTeams(auth.user)
         .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams))
         .catch(() => initialAccessibleTeams))
         .then((hydratedTeams) => {
           if (requestId !== searchRequestId.current) return;
-          if (hasSameTeamScope(initialAccessibleTeams, hydratedTeams)) {
-            setTeamsLoading(false);
-            return;
-          }
-          return runSearch(hydratedTeams, { phase: 'hydrated', teamsLoadingDone: true, playersLoadingDone: true });
+          return runSearch(hasSameTeamScope(initialAccessibleTeams, hydratedTeams) ? initialAccessibleTeams : hydratedTeams);
         })
         .catch(() => {
           if (requestId === searchRequestId.current) {
             setTeamsLoading(false);
+            setPlayersLoading(false);
           }
         });
     }, 180);
