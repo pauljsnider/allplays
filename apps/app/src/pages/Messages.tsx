@@ -130,23 +130,36 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [query, setQuery] = useState('');
   const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
   const shouldLoadInbox = isDesktopWeb || !teamId;
+  const inboxRequestIdRef = useRef(0);
 
-  const refreshInbox = async () => {
+  const refreshInbox = useCallback(async () => {
     if (!auth.user) return;
+    const requestId = inboxRequestIdRef.current + 1;
+    inboxRequestIdRef.current = requestId;
     setLoading(true);
     setError(null);
     try {
-      const result = await loadChatInbox(auth.user);
-      setTeams(result.teams);
+      const result = await loadChatInbox(auth.user, {
+        includeLastMessages: false,
+        onPreview: (previewUpdate) => {
+          if (inboxRequestIdRef.current !== requestId) return;
+          setTeams((current) => mergeInboxPreview(current, previewUpdate));
+        }
+      });
+      if (inboxRequestIdRef.current !== requestId) return;
+      setTeams((current) => mergeInboxTeams(current, result.teams));
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
       void updateAppIconBadge(totalUnread);
     } catch (loadError: any) {
+      if (inboxRequestIdRef.current !== requestId) return;
       setError(loadError?.message || 'Unable to load messages.');
       setTeams([]);
     } finally {
-      setLoading(false);
+      if (inboxRequestIdRef.current === requestId) {
+        setLoading(false);
+      }
     }
-  };
+  }, [auth.user]);
 
   useEffect(() => {
     if (!shouldLoadInbox) {
@@ -327,7 +340,7 @@ function InboxList({
 }) {
   const trimmedQuery = searchQuery.trim();
 
-  if (loading) {
+  if (loading && !teams.length) {
     return <MessagesPageSkeleton />;
   }
 
@@ -1812,6 +1825,61 @@ function buildMessagesRoute(teamId: string, preferredConversationId?: string | n
   const normalizedConversationId = String(preferredConversationId || '').trim();
   if (!normalizedConversationId) return route;
   return `${route}?conversationId=${encodeURIComponent(normalizedConversationId)}`;
+}
+
+function mergeInboxTeams(currentTeams: ChatTeam[], nextTeams: ChatTeam[]) {
+  const currentById = new Map(currentTeams.map((team) => [team.id, team]));
+  return nextTeams.map((team) => {
+    if (team.lastMessage) return team;
+    const currentTeam = currentById.get(team.id);
+    if (!currentTeam?.lastMessage) return team;
+    return {
+      ...team,
+      lastMessage: currentTeam.lastMessage,
+      preferredConversationId: currentTeam.preferredConversationId
+    };
+  });
+}
+
+function mergeInboxPreview(
+  teams: ChatTeam[],
+  previewUpdate: { teamId: string; lastMessage: ChatMessage | null; preferredConversationId: string | null; }
+) {
+  let changed = false;
+  const nextTeams = teams.map((team) => {
+    if (team.id !== previewUpdate.teamId) return team;
+    changed = true;
+    return {
+      ...team,
+      lastMessage: previewUpdate.lastMessage,
+      preferredConversationId: previewUpdate.preferredConversationId
+    };
+  });
+  if (!changed) return teams;
+  return sortInboxTeams(nextTeams);
+}
+
+function sortInboxTeams(teams: ChatTeam[]) {
+  return [...teams].sort((a, b) => {
+    const aTime = toInboxSortTime(a.lastMessage);
+    const bTime = toInboxSortTime(b.lastMessage);
+    if (aTime !== bTime) return bTime - aTime;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function toInboxSortTime(message: ChatMessage | null | undefined) {
+  if (!message?.createdAt) return 0;
+  if (message.createdAt instanceof Date) return message.createdAt.getTime();
+  if (typeof (message.createdAt as any)?.toDate === 'function') {
+    const date = (message.createdAt as any).toDate();
+    return date instanceof Date ? date.getTime() : 0;
+  }
+  if (typeof (message.createdAt as any)?.seconds === 'number') {
+    return Number((message.createdAt as any).seconds || 0) * 1000;
+  }
+  const date = new Date(message.createdAt as any);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
 function resolveMutedState(teamId: string, inboxTeam?: ChatTeam, profile: Record<string, any> = {}) {
