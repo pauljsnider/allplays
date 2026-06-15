@@ -410,6 +410,30 @@ describe('ScheduleEventDetail rideshare permissions', () => {
     expect(screen.getByRole('button', { name: 'Waitlist' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Decline' })).toBeTruthy();
   });
+
+  it('shows a parent request action for an open rideshare offer', async () => {
+    renderScheduleEventDetail({
+      ...auth,
+      user: {
+        ...(auth.user as any),
+        uid: 'parent-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent'
+      } as any,
+      roles: ['parent'],
+      isParent: true,
+      isCoach: false,
+      isAdmin: false
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Rideshare' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Rideshare' })[0]);
+
+    expect(await screen.findByRole('button', { name: 'Request spot' })).toBeTruthy();
+  });
 });
 
 describe('ScheduleEventDetail assignments', () => {
