@@ -488,7 +488,7 @@ describe('React app auth/profile capability parity', () => {
             'getEventDetailPath'
         ]);
         expectContains(scheduleEventDetail, [
-            'submitParentScheduleRsvp',
+            'useScheduleEventRsvp',
             'Availability',
             'Rideshare',
             'Assignments',
