@@ -66,7 +66,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
     return () => {
       cancelled = true;
     };
-  }, [onTeamReset, preferredConversationId, teamId, user]);
+  }, [onTeamReset, preferredConversationId, teamId, user?.uid]);
 
   const reloadConversations = useCallback(async () => {
     if (!user || !team) return undefined;

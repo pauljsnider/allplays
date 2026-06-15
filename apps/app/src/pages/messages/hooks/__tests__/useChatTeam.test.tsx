@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChatTeam } from '../useChatTeam';
 import { DEFAULT_TEAM_CONVERSATION_ID } from '../../../../lib/chatLogic';
 import { loadChatConversations, loadChatTeamContext } from '../../../../lib/chatService';
@@ -38,6 +38,10 @@ describe('useChatTeam', () => {
         vi.clearAllMocks();
     });
 
+    afterEach(() => {
+        cleanup();
+    });
+
     it('loads team context, conversations, and preserves moderation state', async () => {
         vi.mocked(loadChatTeamContext).mockResolvedValue({
             team: { id: 'team-1', name: 'Bears' },
@@ -51,11 +55,11 @@ describe('useChatTeam', () => {
 
         render(<TeamProbe teamId="team-1" preferredConversationId="staff" />);
 
-        await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'));
-        expect(screen.getByTestId('team-name')).toHaveTextContent('Bears');
-        expect(screen.getByTestId('can-moderate')).toHaveTextContent('true');
-        expect(screen.getByTestId('selected-conversation')).toHaveTextContent('staff');
-        expect(screen.getByTestId('conversation-count')).toHaveTextContent('2');
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('team-name').textContent).toBe('Bears');
+        expect(screen.getByTestId('can-moderate').textContent).toBe('true');
+        expect(screen.getByTestId('selected-conversation').textContent).toBe('staff');
+        expect(screen.getByTestId('conversation-count').textContent).toBe('2');
         expect(loadChatConversations).toHaveBeenCalledWith('team-1', user, { id: 'team-1', name: 'Bears' }, true);
     });
 
@@ -68,13 +72,39 @@ describe('useChatTeam', () => {
             .mockResolvedValueOnce([{ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', isDefault: true }]);
 
         const { rerender } = render(<TeamProbe teamId="team-1" preferredConversationId="staff" />);
-        await waitFor(() => expect(screen.getByTestId('team-name')).toHaveTextContent('Bears'));
-        expect(screen.getByTestId('selected-conversation')).toHaveTextContent('staff');
+        await waitFor(() => expect(screen.getByTestId('team-name').textContent).toBe('Bears'));
+        expect(screen.getByTestId('selected-conversation').textContent).toBe('staff');
 
         rerender(<TeamProbe teamId="team-2" preferredConversationId="staff" />);
 
-        await waitFor(() => expect(screen.getByTestId('team-name')).toHaveTextContent('Hawks'));
-        expect(screen.getByTestId('can-moderate')).toHaveTextContent('false');
-        expect(screen.getByTestId('selected-conversation')).toHaveTextContent(DEFAULT_TEAM_CONVERSATION_ID);
+        await waitFor(() => expect(screen.getByTestId('team-name').textContent).toBe('Hawks'));
+        expect(screen.getByTestId('can-moderate').textContent).toBe('false');
+        expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID);
+    });
+
+    it('does not reload context when the user object changes identity but keeps the same uid', async () => {
+        vi.mocked(loadChatTeamContext).mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            profile: {},
+            canModerate: true
+        });
+        vi.mocked(loadChatConversations).mockResolvedValue([
+            { id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', isDefault: true }
+        ]);
+
+        function TeamProbeWithUser({ authUser }: { authUser: NonNullable<AuthState['user']> }) {
+            useChatTeam({ teamId: 'team-1', user: authUser });
+            return null;
+        }
+
+        const firstUser = { ...user };
+        const secondUser = { ...user };
+
+        const { rerender } = render(<TeamProbeWithUser authUser={firstUser} />);
+        await waitFor(() => expect(loadChatTeamContext).toHaveBeenCalledTimes(1));
+
+        rerender(<TeamProbeWithUser authUser={secondUser} />);
+
+        await waitFor(() => expect(loadChatTeamContext).toHaveBeenCalledTimes(1));
     });
 });
