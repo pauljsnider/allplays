@@ -200,6 +200,31 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+function buildPracticePacket(overrides: Record<string, unknown> = {}) {
+  return {
+    sessionId: 'session-1',
+    teamId: 'team-1',
+    eventId: 'practice-1',
+    title: 'Thursday Practice Packet',
+    date: new Date('2026-06-12T18:00:00.000Z'),
+    location: 'Home court',
+    homePacket: {
+      totalMinutes: 12,
+      blocks: [
+        {
+          title: 'Ball mastery',
+          type: 'Technical',
+          duration: 12,
+          description: '50 touches before dinner'
+        }
+      ]
+    },
+    completions: [],
+    children: [{ id: 'player-1', name: 'Avery Smith' }],
+    ...overrides
+  } as any;
+}
+
 function renderScheduleEventDetail(authOverride: AuthState = auth) {
   return render(
     <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1']}>
@@ -1556,13 +1581,52 @@ describe('ScheduleEventDetail practice timeline', () => {
     });
   });
 
-  it('hides practice timeline management for coach-only staff without admin write access', async () => {
+  it('shows the practice packet first and hides the timeline for non-admin practice viewers', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         id: 'practice-1',
         type: 'practice',
         title: 'Thursday Practice',
         isTeamStaff: true,
+        isTeamAdmin: false,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(buildPracticePacket());
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue(null);
+
+    const { container } = renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Practice packet')).toBeTruthy();
+    });
+
+    const packetPanel = container.querySelector('#practice-packet-panel');
+    const practiceHubTitle = screen.getByText('Practice hub');
+    expect(packetPanel).toBeTruthy();
+    if (!packetPanel) {
+      throw new Error('Expected practice packet panel to be rendered');
+    }
+    expect(packetPanel.compareDocumentPosition(practiceHubTitle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('Packet ready')).toBeTruthy();
+    expect(screen.queryByText('Practice timeline')).toBeNull();
+    expect(screen.queryByText('No practice timeline yet. Add drills above to build this practice plan.')).toBeNull();
+    expect(practiceTimelineServiceMocks.loadPracticeTimelineModel).not.toHaveBeenCalled();
+  });
+
+  it('shows a neutral packet empty state for non-admin practice viewers when no packet exists', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        type: 'practice',
+        title: 'Thursday Practice',
+        isTeamStaff: false,
         isTeamAdmin: false,
         practiceSessionId: 'session-1'
       })],
@@ -1579,10 +1643,12 @@ describe('ScheduleEventDetail practice timeline', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
 
     await waitFor(() => {
-      expect(screen.getByText('Practice timeline')).toBeTruthy();
+      expect(screen.getByText('No packet posted yet')).toBeTruthy();
     });
 
-    expect(screen.queryByRole('button', { name: 'Add drill' })).toBeNull();
+    expect(screen.getByText('Packets appear here when coaches publish home drills for this practice.')).toBeTruthy();
+    expect(screen.queryByText('Practice timeline')).toBeNull();
+    expect(screen.queryByText('No practice timeline yet. Add drills above to build this practice plan.')).toBeNull();
     expect(practiceTimelineServiceMocks.loadPracticeTimelineModel).not.toHaveBeenCalled();
   });
 });

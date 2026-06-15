@@ -2016,6 +2016,8 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const [liveClockNow, setLiveClockNow] = useState(() => new Date());
   const liveClockView = getLiveClockViewModel(event, liveClockNow);
   const isPractice = event.type === 'practice';
+  const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
+  const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canWrapup = canUpdateScore;
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
@@ -2102,8 +2104,9 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
 
   return (
     <section className="space-y-3">
-      {isPractice ? <PracticeTimelineSection auth={auth} event={event} /> : null}
-      {isPractice ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
+      {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
+      {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
+      {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       <div className="app-card overflow-hidden p-0">
         <div className="border-b border-gray-100 px-3 py-3 sm:px-4">
           <div className="flex items-start justify-between gap-3">
