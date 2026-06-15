@@ -119,6 +119,49 @@ describe('PublicTeamSearch', () => {
         expect(screen.getByText('New York Knicks')).toBeTruthy();
     });
 
+    it('paginates searched public teams with the active query and preserves grouped results', async () => {
+        const atlantaSearchResult = {
+            ...mockTeams[0],
+            teamId: 'team-atl-search-1',
+            teamName: 'Atlanta Fire',
+        };
+        const atlantaSecondPageResult = {
+            ...mockTeams[0],
+            teamId: 'team-atl-search-2',
+            teamName: 'Atlanta United 2',
+        };
+        const kansasSearchResult = {
+            ...mockTeams[1],
+            teamId: 'team-kc-search-1',
+            teamName: 'Kansas City Current',
+            location: 'Kansas City, MO',
+        };
+
+        (getPublicTeamsPage as import('vitest').Mock)
+            .mockResolvedValueOnce({ teams: [atlantaSearchResult], nextCursor: 'search-cursor-2' })
+            .mockResolvedValueOnce({ teams: [atlantaSecondPageResult, kansasSearchResult], nextCursor: null });
+
+        renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        fireEvent.change(searchInput, { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: /Search/i }));
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: 'atlanta', cursor: null }));
+        expect(screen.getByText('Atlanta Fire')).toBeTruthy();
+        expect(screen.getByRole('button', { name: /Load more teams/i })).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: /Load more teams/i }));
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenLastCalledWith({ searchText: 'atlanta', cursor: 'search-cursor-2' }));
+        expect(searchInput.value).toBe('atlanta');
+        expect(screen.getByText('Atlanta Fire')).toBeTruthy();
+        expect(screen.getByText('Atlanta United 2')).toBeTruthy();
+        expect(screen.getByText('Kansas City Current')).toBeTruthy();
+        expect(screen.getAllByRole('heading', { level: 3 }).length).toBe(2);
+        expect(screen.queryByRole('button', { name: /Load more teams/i })).toBeNull();
+    });
+
     it('clears a filtered search back to the empty state without browsing all', async () => {
         (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: null });
         renderSearch();
@@ -224,6 +267,51 @@ describe('PublicTeamSearch', () => {
         expect(hiddenCard).toBeTruthy();
         expect(within(hiddenCard as HTMLElement).queryByRole('button', { name: /View team/i })).toBeNull();
         expect(within(hiddenCard as HTMLElement).getByText('Team page is not available in the app yet.')).toBeTruthy();
+    });
+
+    it('preserves a typed search when the initial auto-browse request resolves later', async () => {
+        const atlantaSearchResult = {
+            ...mockTeams[0],
+            teamId: 'team-atl-search-1',
+            teamName: 'Atlanta Fire',
+        };
+
+        let resolveBrowseAll: ((value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void) | null = null;
+        let resolveSearch: ((value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void) | null = null;
+        (getPublicTeamsPage as import('vitest').Mock).mockImplementation(({ searchText }: { searchText?: string; cursor?: unknown | null; pageSize?: number } = {}) => {
+            if (searchText === 'atlanta') {
+                return new Promise((resolve) => {
+                    resolveSearch = resolve;
+                });
+            }
+            return new Promise((resolve) => {
+                resolveBrowseAll = resolve;
+            });
+        });
+
+        renderSearch({ autoBrowseOnMount: true }, '/teams/browse');
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(1, { searchText: undefined, cursor: null }));
+
+        expect(screen.getByRole('button', { name: 'Search public teams' })).toBeTruthy();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        fireEvent.change(searchInput, { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: 'atlanta', cursor: null }));
+
+        if (!resolveSearch || !resolveBrowseAll) {
+            throw new Error('Expected both public team requests to be captured before resolving them.');
+        }
+
+        (resolveSearch as (value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void)({ teams: [atlantaSearchResult], nextCursor: 'search-cursor-2' });
+        await waitFor(() => expect(screen.getByText('Atlanta Fire')).toBeTruthy());
+        expect(screen.getByRole('button', { name: /Load more teams/i })).toBeTruthy();
+
+        (resolveBrowseAll as (value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void)({ teams: [], nextCursor: null });
+        await waitFor(() => expect(screen.getByText('Atlanta Fire')).toBeTruthy());
+        expect(searchInput.value).toBe('atlanta');
     });
 
     it('can auto-browse on mount for the dedicated discovery route', async () => {
