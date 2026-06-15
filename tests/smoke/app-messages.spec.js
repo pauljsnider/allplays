@@ -454,10 +454,11 @@ test('messages inbox stays interactive while previews hydrate on inbox and deskt
     await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
 
     await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Team chats' }));
-    await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
-    await expect(page.getByText('No messages yet')).toBeVisible();
+    const bearsInboxRow = page.getByRole('link', { name: /Bears/ }).first();
+    await expect(bearsInboxRow).toBeVisible();
+    await expect(bearsInboxRow).toContainText('No messages yet');
     await expect(page.getByRole('button', { name: 'Refresh messages' })).toBeVisible();
-    await expect(page.getByText('Coach Jamie: Practice packet is posted.')).toBeVisible({ timeout: 5000 });
+    await expect(bearsInboxRow).toContainText('Coach Jamie: Practice packet is posted.', { timeout: 5000 });
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
