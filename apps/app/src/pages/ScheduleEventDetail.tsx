@@ -31,6 +31,7 @@ import {
   updateLiveGameClockState,
   buildLiveGameClockPeriods,
   resolveLiveGameClockSnapshot,
+  type RideRequestChildInput,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
   type ParentPracticePacket,
