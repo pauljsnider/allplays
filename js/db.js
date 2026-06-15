@@ -729,6 +729,40 @@ function sortTeamsByName(teams = []) {
     return [...teams].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 }
 
+function buildPublicTeamSearchPageCursor(searchText, strategyCursors = [], bufferedTeams = []) {
+    if (!bufferedTeams.length && !strategyCursors.some(Boolean)) {
+        return null;
+    }
+
+    return {
+        kind: 'public-team-search',
+        searchText,
+        strategyCursors,
+        bufferedTeams
+    };
+}
+
+function readPublicTeamSearchPageCursor(cursor, searchText, strategyCount) {
+    if (!cursor || typeof cursor !== 'object' || cursor.kind !== 'public-team-search') {
+        return {
+            strategyCursors: Array.from({ length: strategyCount }, () => null),
+            bufferedTeams: []
+        };
+    }
+
+    if (normalizePublicTeamSearchInput(cursor.searchText || '') !== searchText) {
+        return {
+            strategyCursors: Array.from({ length: strategyCount }, () => null),
+            bufferedTeams: []
+        };
+    }
+
+    return {
+        strategyCursors: Array.from({ length: strategyCount }, (_, index) => cursor.strategyCursors?.[index] || null),
+        bufferedTeams: Array.isArray(cursor.bufferedTeams) ? cursor.bufferedTeams : []
+    };
+}
+
 export async function discoverPublicTeams(options = {}) {
     const rawPageSize = Number(options.pageSize);
     const pageSize = Number.isFinite(rawPageSize)
@@ -757,16 +791,34 @@ export async function discoverPublicTeams(options = {}) {
         return { teams: [], nextCursor: null };
     }
 
-    const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
-        teamsRef,
-        where('isPublic', '==', true),
-        where(strategy.field, '>=', strategy.start),
-        where(strategy.field, '<=', strategy.end),
-        orderBy(strategy.field),
-        limitQuery(pageSize)
-    ))));
+    const previousPageCursor = readPublicTeamSearchPageCursor(cursor, searchText, strategies.length);
+    if (previousPageCursor.bufferedTeams.length >= pageSize) {
+        const teams = previousPageCursor.bufferedTeams.slice(0, pageSize);
+        const bufferedTeams = previousPageCursor.bufferedTeams.slice(pageSize);
+        return {
+            teams,
+            nextCursor: buildPublicTeamSearchPageCursor(searchText, previousPageCursor.strategyCursors, bufferedTeams)
+        };
+    }
 
-    const teamsById = new Map();
+    const snapshots = await Promise.all(strategies.map((strategy, index) => {
+        const constraints = [
+            where('isPublic', '==', true),
+            where(strategy.field, '>=', strategy.start),
+            where(strategy.field, '<=', strategy.end),
+            orderBy(strategy.field)
+        ];
+        const strategyCursor = previousPageCursor.strategyCursors[index];
+        if (strategyCursor) {
+            constraints.push(startAfterQuery(strategyCursor));
+        }
+        constraints.push(limitQuery(pageSize));
+        return getDocs(query(teamsRef, ...constraints));
+    }));
+
+    const teamsById = new Map(previousPageCursor.bufferedTeams
+        .filter((team) => team?.id)
+        .map((team) => [team.id, team]));
     snapshots.forEach((snapshot, index) => {
         const strategy = strategies[index];
         snapshot.docs.forEach((teamDoc) => {
@@ -778,9 +830,19 @@ export async function discoverPublicTeams(options = {}) {
         });
     });
 
+    const sortedTeams = filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())), false);
+    const teams = sortedTeams.slice(0, pageSize);
+    const bufferedTeams = sortedTeams.slice(pageSize);
+    const strategyCursors = snapshots.map((snapshot, index) => snapshot.docs.length
+        ? snapshot.docs[snapshot.docs.length - 1]
+        : previousPageCursor.strategyCursors[index] || null);
+    const hasMorePages = bufferedTeams.length > 0 || snapshots.some((snapshot) => snapshot.docs.length === pageSize);
+
     return {
-        teams: filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())).slice(0, pageSize), false),
-        nextCursor: null
+        teams,
+        nextCursor: hasMorePages
+            ? buildPublicTeamSearchPageCursor(searchText, strategyCursors, bufferedTeams)
+            : null
     };
 }
 
