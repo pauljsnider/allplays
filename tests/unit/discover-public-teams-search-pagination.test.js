@@ -128,4 +128,47 @@ describe('discoverPublicTeams search pagination', () => {
         expect(firebaseMocks.startAfter).toHaveBeenNthCalledWith(1, secondAtlantaDoc);
         expect(firebaseMocks.startAfter).toHaveBeenNthCalledWith(2, kansasDoc);
     });
+
+    it('serves the next page from buffered search teams before querying Firestore again', async () => {
+        const bufferedAtlantaTeam = {
+            id: 'team-atl-3',
+            name: 'Atlanta United 3',
+            isPublic: true,
+            publicSearchName: 'atlanta united 3'
+        };
+        const bufferedKansasTeam = {
+            id: 'team-kc-2',
+            name: 'Kansas City Wave',
+            isPublic: true,
+            publicSearchCity: 'atlanta'
+        };
+        const persistedCursorDoc = createTeamDoc('team-atl-2', {
+            name: 'Atlanta United 2',
+            isPublic: true,
+            publicSearchName: 'atlanta united 2'
+        });
+
+        const { discoverPublicTeams } = await import('../../js/db.js?v=48');
+
+        const page = await discoverPublicTeams({
+            searchText: 'atlanta',
+            pageSize: 2,
+            cursor: {
+                kind: 'public-team-search',
+                searchText: 'atlanta',
+                strategyCursors: [persistedCursorDoc, null, null, null],
+                bufferedTeams: [bufferedAtlantaTeam, bufferedKansasTeam]
+            }
+        });
+
+        expect(page.teams.map((team) => team.id)).toEqual(['team-atl-3', 'team-kc-2']);
+        expect(page.nextCursor).toMatchObject({
+            kind: 'public-team-search',
+            searchText: 'atlanta',
+            strategyCursors: [persistedCursorDoc, null, null, null],
+            bufferedTeams: []
+        });
+        expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
+        expect(firebaseMocks.startAfter).not.toHaveBeenCalled();
+    });
 });
