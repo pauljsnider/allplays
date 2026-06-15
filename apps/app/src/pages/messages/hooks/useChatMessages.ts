@@ -85,8 +85,6 @@ export function useChatMessages({
       const batch = await loadOlderTeamChatMessages(teamId, selectedConversationId, cursor);
       if (batch.length < 50) setHasMoreMessages(false);
       setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(batch), current));
-    } catch (loadError: any) {
-      throw loadError;
     } finally {
       setLoadingOlder(false);
     }

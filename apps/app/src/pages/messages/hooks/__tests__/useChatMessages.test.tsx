@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useCallback } from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChatMessages } from '../useChatMessages';
 import { loadOlderTeamChatMessages, subscribeToTeamChatMessages } from '../../../../lib/chatService';
 import type { AuthState } from '../../../../lib/types';
@@ -35,7 +35,15 @@ function message(id: string, seconds: number, doc: unknown = { id }): ChatMessag
 
 const probeTeam = { id: 'team-1', name: 'Bears' };
 
-function MessagesProbe({ conversationId = 'team', onMessagesReset }: { conversationId?: string; onMessagesReset?: () => void }) {
+function MessagesProbe({
+    conversationId = 'team',
+    onMessagesReset,
+    onLoadOlderError
+}: {
+    conversationId?: string;
+    onMessagesReset?: () => void;
+    onLoadOlderError?: (error: unknown) => void;
+}) {
     const handleBeforeLiveUpdate = useCallback(() => true, []);
     const state = useChatMessages({
         teamId: 'team-1',
@@ -52,7 +60,7 @@ function MessagesProbe({ conversationId = 'team', onMessagesReset }: { conversat
             <div data-testid="loading-older">{String(state.loadingOlder)}</div>
             <div data-testid="message-ids">{state.messages.map((item) => item.id).join(',')}</div>
             <div data-testid="has-more">{String(state.hasMoreMessages)}</div>
-            <button type="button" onClick={() => void state.loadOlderMessages()}>Load older</button>
+            <button type="button" onClick={() => void state.loadOlderMessages().catch(onLoadOlderError)}>Load older</button>
         </div>
     );
 }
@@ -60,6 +68,10 @@ function MessagesProbe({ conversationId = 'team', onMessagesReset }: { conversat
 describe('useChatMessages', () => {
     let liveCallback: ((messages: ChatMessage[], oldestDoc: unknown | null) => void) | undefined;
     let unsubscribe: () => void;
+
+    afterEach(() => {
+        cleanup();
+    });
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -79,9 +91,9 @@ describe('useChatMessages', () => {
             liveCallback?.([message('newer', 20), message('older', 10, { cursor: 'oldest' })], { cursor: 'oldest' });
         });
 
-        await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'));
-        expect(screen.getByTestId('message-ids')).toHaveTextContent('older,newer');
-        expect(screen.getByTestId('has-more')).toHaveTextContent('false');
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('message-ids').textContent).toBe('older,newer');
+        expect(screen.getByTestId('has-more').textContent).toBe('false');
     });
 
     it('resubscribes and clears messages when the selected conversation changes', async () => {
@@ -90,14 +102,14 @@ describe('useChatMessages', () => {
         act(() => {
             liveCallback?.([message('team-message', 20)], { cursor: 'team' });
         });
-        await waitFor(() => expect(screen.getByTestId('message-ids')).toHaveTextContent('team-message'));
+        await waitFor(() => expect(screen.getByTestId('message-ids').textContent).toBe('team-message'));
 
         rerender(<MessagesProbe conversationId="staff" onMessagesReset={onMessagesReset} />);
 
         expect(unsubscribe).toHaveBeenCalled();
         expect(onMessagesReset).toHaveBeenCalledTimes(2);
-        expect(screen.getByTestId('loading')).toHaveTextContent('true');
-        expect(screen.getByTestId('message-ids')).toHaveTextContent('');
+        expect(screen.getByTestId('loading').textContent).toBe('true');
+        expect(screen.getByTestId('message-ids').textContent).toBe('');
         expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('team-1', 'staff', expect.any(Function), expect.any(Function));
     });
 
@@ -108,12 +120,12 @@ describe('useChatMessages', () => {
             liveCallback?.(Array.from({ length: 50 }, (_, index) => message(`live-${index}`, index + 50, index === 49 ? { cursor: 'oldest' } : { id: index })), { cursor: 'oldest' });
         });
 
-        await waitFor(() => expect(screen.getByTestId('has-more')).toHaveTextContent('true'));
+        await waitFor(() => expect(screen.getByTestId('has-more').textContent).toBe('true'));
         fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
 
         await waitFor(() => expect(loadOlderTeamChatMessages).toHaveBeenCalledWith('team-1', 'team', { cursor: 'oldest' }));
         await waitFor(() => expect(screen.getByTestId('message-ids').textContent?.startsWith('older-page')).toBe(true));
-        expect(screen.getByTestId('has-more')).toHaveTextContent('false');
+        expect(screen.getByTestId('has-more').textContent).toBe('false');
     });
 
     it('does not resubscribe when the user object changes identity but keeps the same uid', async () => {
@@ -136,5 +148,21 @@ describe('useChatMessages', () => {
         rerender(<MessagesProbeWithUser authUser={secondUser} />);
 
         await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(1));
+    });
+
+    it('resets the loading state when loading older messages fails and still rejects to the caller', async () => {
+        const loadError = new Error('load failed');
+        const onLoadOlderError = vi.fn();
+        vi.mocked(loadOlderTeamChatMessages).mockRejectedValue(loadError);
+        render(<MessagesProbe conversationId="team" onLoadOlderError={onLoadOlderError} />);
+        act(() => {
+            liveCallback?.(Array.from({ length: 50 }, (_, index) => message(`live-${index}`, index + 50, index === 49 ? { cursor: 'oldest' } : { id: index })), { cursor: 'oldest' });
+        });
+
+        await waitFor(() => expect(screen.getByTestId('has-more').textContent).toBe('true'));
+        fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
+
+        await waitFor(() => expect(onLoadOlderError).toHaveBeenCalledWith(loadError));
+        await waitFor(() => expect(screen.getByTestId('loading-older').textContent).toBe('false'));
     });
 });
