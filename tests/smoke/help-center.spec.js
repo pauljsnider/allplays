@@ -131,7 +131,7 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expectReferenceRow(page, 'certificates.html', 'Parent, Coach, Admin');
     await expectReferenceRow(page, 'check-admin-status.html', 'Admin');
     await expectReferenceRow(page, 'registration.html', 'Parent');
-    await expectReferenceRow(page, 'team-fees.html', 'Parent, Coach, Admin');
+    await expectReferenceRow(page, 'team-fees.html', 'Coach, Admin');
     await expectReferenceRow(page, 'team-media.html', 'Parent, Coach, Admin');
 
     await page.getByRole('link', { name: '← Back to Help Portal' }).click();

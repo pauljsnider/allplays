@@ -18,6 +18,15 @@ function extractReferenceRows(html) {
     }));
 }
 
+function listTrackedShippedPages() {
+    return readdirSync(REPO_ROOT)
+        .filter((file) => file.endsWith('.html'))
+        .filter((file) => !file.startsWith('test-'))
+        .filter((file) => !file.startsWith('workflow-'))
+        .filter((file) => !file.startsWith('help-'))
+        .sort();
+}
+
 describe('help page reference integrity', () => {
     it('keeps the file-by-file page reference discoverable from help center', () => {
         const helpHtml = readRepoFile('help.html');
@@ -42,27 +51,13 @@ describe('help page reference integrity', () => {
             expect(existsSync(resolve(REPO_ROOT, file)), `${file} should exist in the repo`).toBe(true);
         });
 
-        const requiredUserFacingPages = new Set([
-            'certificates.html',
-            'check-admin-status.html',
-            'registration.html',
-            'team-fees.html',
-            'team-media.html'
-        ]);
-        const expectedUserFacingPages = readdirSync(REPO_ROOT)
-            .filter((file) => requiredUserFacingPages.has(file))
-            .sort();
+        const trackedShippedPages = listTrackedShippedPages();
+        const missingTrackedPages = trackedShippedPages.filter((file) => !referencedFiles.includes(file));
 
-        expect(expectedUserFacingPages).toEqual([
-            'certificates.html',
-            'check-admin-status.html',
-            'registration.html',
-            'team-fees.html',
-            'team-media.html'
-        ]);
-
-        expectedUserFacingPages.forEach((file) => {
-            expect(referencedFiles, `${file} should be listed in help-page-reference.html`).toContain(file);
+        expect(missingTrackedPages).toEqual([]);
+        expect(referenceRows.find((row) => row.file === 'team-fees.html')).toMatchObject({
+            features: 'Offline fee batch management, invoices, and payment tracking',
+            roles: 'Coach, Admin'
         });
     });
 
