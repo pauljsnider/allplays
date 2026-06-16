@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const dbMocks = vi.hoisted(() => ({
     approveTeamRegistration: vi.fn(),
@@ -226,6 +227,7 @@ const user = {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    clearAppDataCache();
     authMocks.firebaseAuth.currentUser.getIdToken.mockResolvedValue('firebase-token');
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
 });
@@ -622,7 +624,7 @@ describe('React app parent tools service', () => {
         expect(isParentTeamFeePayActionAllowed({ status: 'adjusted', collectionMode: 'online_stripe', balanceDueCents: 0 })).toBe(false);
     });
 
-    it('loads calendar tools with lightweight parent schedule options and builds escaped ICS content', async () => {
+    it('reuses the shared parent schedule summary cache for calendar tools and only bypasses it on force refresh', async () => {
         const event = {
             eventKey: 'team-1::event-1::player-1',
             id: 'event-1',
@@ -636,16 +638,33 @@ describe('React app parent tools service', () => {
             childName: 'Pat Star',
             notes: 'Bring water; arrive early'
         };
-        scheduleMocks.loadParentSchedule.mockResolvedValue({
-            children: [],
-            events: [event, { id: 'event-2', teamId: 'team-1', teamName: 'Bears', type: 'practice', date: new Date('2100-06-02T18:00:00Z') }]
-        });
+        scheduleMocks.loadParentSchedule
+            .mockResolvedValueOnce({
+                children: [],
+                events: [event, { id: 'event-2', teamId: 'team-1', teamName: 'Bears', type: 'practice', date: new Date('2100-06-02T18:00:00Z') }]
+            })
+            .mockResolvedValueOnce({
+                children: [],
+                events: [event]
+            });
 
         await expect(loadParentCalendarTools(user)).resolves.toMatchObject({
             events: [event, { id: 'event-2', teamId: 'team-1', teamName: 'Bears', type: 'practice', date: new Date('2100-06-02T18:00:00Z') }],
             teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 2 }]
         });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, {
+        await expect(loadParentCalendarTools(user)).resolves.toMatchObject({
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 2 }]
+        });
+        await expect(loadParentCalendarTools(user, { force: true })).resolves.toMatchObject({
+            events: [event],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, user, {
+            hydrateDetails: false,
+            expandStaffPlayers: false
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, user, {
             hydrateDetails: false,
             expandStaffPlayers: false
         });

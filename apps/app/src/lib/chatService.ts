@@ -179,8 +179,15 @@ export type ChatInboxLoadResult = {
   teams: ChatTeam[];
 };
 
+export type ChatInboxPreviewUpdate = {
+  teamId: string;
+  lastMessage: ChatMessage | null;
+  preferredConversationId: string | null;
+};
+
 export type ChatInboxLoadOptions = {
   includeLastMessages?: boolean;
+  onPreview?: (update: ChatInboxPreviewUpdate) => void;
 };
 
 export type ChatSubscribeResult = {
@@ -588,6 +595,7 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
 export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
   if (!user?.uid) return { teams: [] };
   const includeLastMessages = options.includeLastMessages !== false;
+  const onPreview = typeof options.onPreview === 'function' ? options.onPreview : null;
 
   const profile = await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load').catch(async (error) => {
     if (!isNativeRuntime()) throw error;
@@ -619,16 +627,42 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     3000
   ).catch(() => ({} as Record<string, number>));
 
-  const previews = await Promise.all(accessibleTeams.map(async (team) => {
+  const previewInputs = accessibleTeams.map((team) => {
     const canModerate = canModerateChat(userWithProfile, { ...team, id: team.id });
     return {
       team,
-      canModerate,
-      preview: includeLastMessages
-        ? await getLatestMessagePreview(team.id, userWithProfile, team, canModerate)
-        : { message: null, conversationId: null }
+      canModerate
     };
-  }));
+  });
+
+  const previews = includeLastMessages
+    ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({
+      team,
+      canModerate,
+      preview: await getLatestMessagePreview(team.id, userWithProfile, team, canModerate)
+    })))
+    : previewInputs.map(({ team, canModerate }) => ({
+      team,
+      canModerate,
+      preview: { message: null, conversationId: null }
+    }));
+
+  if (!includeLastMessages && onPreview && accessibleTeams.length > 0) {
+    void Promise.allSettled(previewInputs.map(async ({ team, canModerate }) => {
+      try {
+        const preview = await getLatestMessagePreview(team.id, userWithProfile, team, canModerate);
+        onPreview({
+          teamId: team.id,
+          lastMessage: preview.message,
+          preferredConversationId: preview.conversationId && !isDefaultTeamConversation(preview.conversationId)
+            ? preview.conversationId
+            : null
+        });
+      } catch (error) {
+        console.warn('[chat-service] Deferred inbox preview failed:', sanitizeErrorForLogging(error));
+      }
+    }));
+  }
 
   const chatMuted = profile.chatMuted && typeof profile.chatMuted === 'object' ? profile.chatMuted : {};
 

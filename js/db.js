@@ -729,6 +729,40 @@ function sortTeamsByName(teams = []) {
     return [...teams].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 }
 
+function buildPublicTeamSearchPageCursor(searchText, strategyCursors = [], bufferedTeams = []) {
+    if (!bufferedTeams.length && !strategyCursors.some(Boolean)) {
+        return null;
+    }
+
+    return {
+        kind: 'public-team-search',
+        searchText,
+        strategyCursors,
+        bufferedTeams
+    };
+}
+
+function readPublicTeamSearchPageCursor(cursor, searchText, strategyCount) {
+    if (!cursor || typeof cursor !== 'object' || cursor.kind !== 'public-team-search') {
+        return {
+            strategyCursors: Array.from({ length: strategyCount }, () => null),
+            bufferedTeams: []
+        };
+    }
+
+    if (normalizePublicTeamSearchInput(cursor.searchText || '') !== searchText) {
+        return {
+            strategyCursors: Array.from({ length: strategyCount }, () => null),
+            bufferedTeams: []
+        };
+    }
+
+    return {
+        strategyCursors: Array.from({ length: strategyCount }, (_, index) => cursor.strategyCursors?.[index] || null),
+        bufferedTeams: Array.isArray(cursor.bufferedTeams) ? cursor.bufferedTeams : []
+    };
+}
+
 export async function discoverPublicTeams(options = {}) {
     const rawPageSize = Number(options.pageSize);
     const pageSize = Number.isFinite(rawPageSize)
@@ -752,21 +786,40 @@ export async function discoverPublicTeams(options = {}) {
         };
     }
 
-    const strategies = buildPublicTeamSearchStrategies(searchText);
+    let strategies = buildPublicTeamSearchStrategies(searchText);
     if (!strategies.length) {
         return { teams: [], nextCursor: null };
     }
 
+    const previousPageCursor = readPublicTeamSearchPageCursor(cursor, searchText, strategies.length);
+    if (previousPageCursor.bufferedTeams.length >= pageSize) {
+        const teams = previousPageCursor.bufferedTeams.slice(0, pageSize);
+        const bufferedTeams = previousPageCursor.bufferedTeams.slice(pageSize);
+        return {
+            teams,
+            nextCursor: buildPublicTeamSearchPageCursor(searchText, previousPageCursor.strategyCursors, bufferedTeams)
+        };
+    }
+
+    strategies = strategies.map((strategy, index) => ({
+        ...strategy,
+        startAfterConstraint: previousPageCursor.strategyCursors[index]
+            ? [startAfterQuery(previousPageCursor.strategyCursors[index])]
+            : []
+    }));
     const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
         teamsRef,
         where('isPublic', '==', true),
         where(strategy.field, '>=', strategy.start),
         where(strategy.field, '<=', strategy.end),
         orderBy(strategy.field),
+        ...strategy.startAfterConstraint,
         limitQuery(pageSize)
     ))));
 
-    const teamsById = new Map();
+    const teamsById = new Map(previousPageCursor.bufferedTeams
+        .filter((team) => team?.id)
+        .map((team) => [team.id, team]));
     snapshots.forEach((snapshot, index) => {
         const strategy = strategies[index];
         snapshot.docs.forEach((teamDoc) => {
@@ -778,9 +831,19 @@ export async function discoverPublicTeams(options = {}) {
         });
     });
 
+    const sortedTeams = filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())), false);
+    const teams = sortedTeams.slice(0, pageSize);
+    const bufferedTeams = sortedTeams.slice(pageSize);
+    const strategyCursors = snapshots.map((snapshot, index) => snapshot.docs.length
+        ? snapshot.docs[snapshot.docs.length - 1]
+        : previousPageCursor.strategyCursors[index] || null);
+    const hasMorePages = bufferedTeams.length > 0 || snapshots.some((snapshot) => snapshot.docs.length === pageSize);
+
     return {
-        teams: filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())).slice(0, pageSize), false),
-        nextCursor: null
+        teams,
+        nextCursor: hasMorePages
+            ? buildPublicTeamSearchPageCursor(searchText, strategyCursors, bufferedTeams)
+            : null
     };
 }
 
@@ -897,6 +960,12 @@ export async function getTeamMediaItems(teamId, folderId = null) {
         if (!item.storagePath) return item;
         try {
             const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
+            updateDoc(doc(db, `teams/${teamId}/mediaItems`, item.id), {
+                downloadUrl,
+                updatedAt: serverTimestamp()
+            }).catch((error) => {
+                console.warn('Unable to backfill cached team media download URL:', error);
+            });
             return { ...item, downloadUrl };
         } catch (error) {
             console.warn('Unable to resolve team media download URL:', error);
@@ -1037,12 +1106,14 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
+    const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
         type: 'photo',
         storagePath,
+        downloadUrl,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type || 'image/jpeg',
@@ -1081,6 +1152,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
+    const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
@@ -1088,6 +1160,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         fileName: String(file.name || '').trim(),
         type: 'file',
         storagePath,
+        downloadUrl,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type,
@@ -4516,9 +4589,84 @@ export async function listTeamFeeRecipients(teamId, batchId) {
     if (!teamId || !batchId) return [];
     const recipientsRef = collection(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients');
     const snapshot = await getDocs(recipientsRef);
-    return snapshot.docs
-        .map((recipientDoc) => ({ id: recipientDoc.id, ...recipientDoc.data() }))
+    const recipients = await Promise.all(snapshot.docs.map(async (recipientDoc) => {
+        const recipient = { id: recipientDoc.id, ...recipientDoc.data() };
+        if (recipient?.hasAdminBilling !== true) return recipient;
+
+        try {
+            const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientDoc.id, 'adminBilling', 'latest');
+            const adminBillingSnap = await getDoc(adminBillingRef);
+            if (!adminBillingSnap.exists()) return recipient;
+            return {
+                ...recipient,
+                adminBilling: adminBillingSnap.data() || {}
+            };
+        } catch (error) {
+            console.warn('Unable to load team fee admin billing metadata:', error);
+            return recipient;
+        }
+    }));
+
+    return recipients
         .sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+}
+
+const PRIVATE_TEAM_FEE_RECIPIENT_FIELDS = new Set([
+    'stripeCheckoutSessionId',
+    'stripePaymentIntentId',
+    'stripeCustomerId',
+    'stripeChargeId',
+    'stripeRefundId',
+    'stripeLastRefundId',
+    'stripeEventId',
+    'checkoutSessionId',
+    'paymentIntentId',
+    'receiptEmail',
+    'eventId',
+    'refundedBy',
+    'recordedBy',
+    'adjustedBy',
+    'canceledBy',
+    'internalNote',
+    'adminNote',
+    'note',
+    'reason'
+]);
+
+function sanitizeTeamFeeRecipientValue(value, { topLevel = false } = {}) {
+    if (Array.isArray(value)) {
+        return value.map((item) => sanitizeTeamFeeRecipientValue(item));
+    }
+    if (!value || typeof value !== 'object') return value;
+
+    return Object.fromEntries(Object.entries(value)
+        .filter(([key]) => topLevel && key === 'notes' ? true : !PRIVATE_TEAM_FEE_RECIPIENT_FIELDS.has(key))
+        .map(([key, childValue]) => [key, sanitizeTeamFeeRecipientValue(childValue)]));
+}
+
+function deriveTeamFeeAdminBillingPayload(recipientUpdates = {}, ledgerEntries = []) {
+    const canceled = recipientUpdates?.canceled && typeof recipientUpdates.canceled === 'object'
+        ? recipientUpdates.canceled
+        : null;
+    const cancellationEntry = Array.isArray(ledgerEntries)
+        ? ledgerEntries.find((entry) => entry?.type === 'cancellation')
+        : null;
+
+    if ((recipientUpdates?.status || '') !== 'canceled' && !canceled && !cancellationEntry) {
+        return null;
+    }
+
+    const reason = String(canceled?.note || cancellationEntry?.reason || '').trim();
+    const canceledBy = canceled?.canceledBy || cancellationEntry?.canceledBy || null;
+    if (!reason && !canceledBy) {
+        return null;
+    }
+
+    return {
+        type: 'cancellation',
+        ...(reason ? { reason } : {}),
+        ...(canceledBy ? { canceledBy } : {})
+    };
 }
 
 export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updates = {}) {
@@ -4527,16 +4675,33 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     }
 
     const recipientRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId);
-    const { ledgerEntries = [], ...recipientUpdates } = updates;
+    const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'adminBilling', 'latest');
+    const { ledgerEntries = [], adminBilling = null, ...unsafeRecipientUpdates } = updates;
+    const recipientUpdates = sanitizeTeamFeeRecipientValue(unsafeRecipientUpdates, { topLevel: true });
+    const safeLedgerEntries = Array.isArray(ledgerEntries) ? sanitizeTeamFeeRecipientValue(ledgerEntries) : [];
     const isManualPaymentUpdate = Object.prototype.hasOwnProperty.call(recipientUpdates, 'manualPayment')
-        || (Array.isArray(ledgerEntries) && ledgerEntries.some((entry) => entry?.type === 'offline_payment'));
+        || safeLedgerEntries.some((entry) => entry?.type === 'offline_payment');
+    const explicitAdminBilling = adminBilling && typeof adminBilling === 'object' && !Array.isArray(adminBilling)
+        ? adminBilling
+        : null;
+    const adminBillingDetails = explicitAdminBilling || deriveTeamFeeAdminBillingPayload(unsafeRecipientUpdates, ledgerEntries);
+    const hasAdminBilling = Boolean(adminBillingDetails);
 
     const updatePayload = {
         ...recipientUpdates,
         teamId,
         batchId,
+        ...(hasAdminBilling ? { hasAdminBilling: true } : {}),
         updatedAt: serverTimestamp()
     };
+
+    const adminBillingPayload = hasAdminBilling ? {
+        ...adminBillingDetails,
+        teamId,
+        batchId,
+        recipientId,
+        updatedAt: serverTimestamp()
+    } : null;
 
     const invalidatesOnlineCheckout = [
         'status',
@@ -4563,8 +4728,8 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         updatePayload.checkoutAmountCents = deleteField();
     }
 
-    if (Array.isArray(ledgerEntries) && ledgerEntries.length > 0) {
-        updatePayload.paymentLedger = arrayUnion(...ledgerEntries);
+    if (safeLedgerEntries.length > 0) {
+        updatePayload.paymentLedger = arrayUnion(...safeLedgerEntries);
     }
 
     if (isManualPaymentUpdate) {
@@ -4580,7 +4745,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
             const priorPaidCents = Number.isFinite(Number(priorPaidRaw)) ? Math.max(0, Number(priorPaidRaw)) : 0;
             const remainingBalanceCents = Math.max(0, amountDueCents - priorPaidCents);
             const manualPaymentAmountRaw = recipientUpdates.manualPayment?.amountPaidCents
-                ?? ledgerEntries.find((entry) => entry?.type === 'offline_payment')?.amountCents;
+                ?? safeLedgerEntries.find((entry) => entry?.type === 'offline_payment')?.amountCents;
             const manualPaymentAmountCents = Number(manualPaymentAmountRaw);
 
             if (!Number.isFinite(manualPaymentAmountCents)) {
@@ -4591,11 +4756,17 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
             }
 
             transaction.update(recipientRef, updatePayload);
+            if (adminBillingPayload) {
+                transaction.set(adminBillingRef, adminBillingPayload, { merge: true });
+            }
         });
         return;
     }
 
     await updateDoc(recipientRef, updatePayload);
+    if (adminBillingPayload) {
+        await setDoc(adminBillingRef, adminBillingPayload, { merge: true });
+    }
 }
 
 export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user = {}) {

@@ -430,6 +430,31 @@ describe('React app chat recipient service', () => {
         }));
     });
 
+    it('returns teams immediately without preview lookups in fast inbox mode', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+            { id: 'team-a', name: 'Alpha', sport: 'Soccer' },
+            { id: 'team-b', name: 'Beta', sport: 'Basketball' }
+        ]);
+        dbMocks.getParentTeams.mockResolvedValue([]);
+        dbMocks.getUnreadChatCounts.mockResolvedValue({ 'team-b': 3 });
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'coach@example.com',
+            displayName: 'Coach',
+            roles: ['coach']
+        }, { includeLastMessages: false });
+
+        expect(inbox.teams).toEqual([
+            expect.objectContaining({ id: 'team-a', lastMessage: null, unreadCount: 0 }),
+            expect.objectContaining({ id: 'team-b', lastMessage: null, unreadCount: 3 })
+        ]);
+        expect(dbMocks.getChatConversations).not.toHaveBeenCalled();
+        expect(dbMocks.getChatMessages).not.toHaveBeenCalled();
+    });
+
     it('returns no inbox teams for signed-out users', async () => {
         const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
 
