@@ -12,6 +12,7 @@ import { resolveReportStatColumns, resolveOpponentReportStatColumns } from '../.
 import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from '../../../../js/live-game-video.js';
 import { resolveLiveStatConfig } from '../../../../js/live-game-state.js';
 import { generateGameInsights } from '../../../../js/post-game-insights.js';
+import { hasPlayerProfileParticipation } from '../../../../js/player-profile-stats.js';
 import { resolvePostGameTeamStatFields } from '../../../../js/post-game-stat-editor.js';
 
 export type GameReportInsight = {
@@ -28,6 +29,9 @@ export type GameReportPlayerRow = {
   stats: Record<string, any>;
   timeMs: number;
   didNotPlay: boolean;
+  participated: boolean;
+  participationStatus: string;
+  participationSource: string;
 };
 
 export type GameReportOpponentRow = {
@@ -64,6 +68,8 @@ export type GameReportData = {
   statLabels: Record<string, string>;
   hasPlayingTime: boolean;
   playerRows: GameReportPlayerRow[];
+  visiblePlayerRows: GameReportPlayerRow[];
+  deferredPlayerRows: GameReportPlayerRow[];
   opponentStatKeys: string[];
   opponentStatLabels: Record<string, string>;
   opponentRows: GameReportOpponentRow[];
@@ -86,6 +92,10 @@ type AggregatedStatsResult = {
   statsMap: Record<string, Record<string, any>>;
   timeMap: Record<string, number>;
   didNotPlayMap: Record<string, boolean>;
+  participatedMap: Record<string, boolean>;
+  participationStatusMap: Record<string, string>;
+  participationSourceMap: Record<string, string>;
+  recordedPlayerIds: Set<string>;
 };
 
 function toNumber(value: unknown) {
@@ -113,15 +123,23 @@ async function loadAggregatedStats(teamId: string, gameId: string): Promise<Aggr
   const statsMap: Record<string, Record<string, any>> = {};
   const timeMap: Record<string, number> = {};
   const didNotPlayMap: Record<string, boolean> = {};
+  const participatedMap: Record<string, boolean> = {};
+  const participationStatusMap: Record<string, string> = {};
+  const participationSourceMap: Record<string, string> = {};
+  const recordedPlayerIds = new Set<string>();
 
   snapshot.forEach((docSnap: any) => {
     const data = docSnap.data() || {};
+    recordedPlayerIds.add(String(docSnap.id || ''));
     statsMap[docSnap.id] = data.stats || {};
     timeMap[docSnap.id] = toNumber(data.timeMs);
     didNotPlayMap[docSnap.id] = data.didNotPlay === true;
+    participatedMap[docSnap.id] = data.participated === true;
+    participationStatusMap[docSnap.id] = String(data.participationStatus || '');
+    participationSourceMap[docSnap.id] = String(data.participationSource || '');
   });
 
-  return { statsMap, timeMap, didNotPlayMap };
+  return { statsMap, timeMap, didNotPlayMap, participatedMap, participationStatusMap, participationSourceMap, recordedPlayerIds };
 }
 
 function normalizePlay(entry: any): GameReportPlay {
@@ -184,7 +202,15 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
 
   const [configs, aggregateResult, rawEvents, teamStats] = await Promise.all([
     getConfigs(teamId).catch(() => []),
-    loadAggregatedStats(teamId, gameId).catch((): AggregatedStatsResult => ({ statsMap: {}, timeMap: {}, didNotPlayMap: {} })),
+    loadAggregatedStats(teamId, gameId).catch((): AggregatedStatsResult => ({
+      statsMap: {},
+      timeMap: {},
+      didNotPlayMap: {},
+      participatedMap: {},
+      participationStatusMap: {},
+      participationSourceMap: {},
+      recordedPlayerIds: new Set<string>()
+    })),
     getGameEvents(teamId, gameId, { limit: 100 }).catch(() => []),
     getTeamStatsForGame(teamId, gameId).catch(() => ({}))
   ]);
@@ -194,7 +220,15 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     game,
     team
   });
-  const { statsMap, timeMap, didNotPlayMap } = aggregateResult;
+  const {
+    statsMap,
+    timeMap,
+    didNotPlayMap,
+    participatedMap,
+    participationStatusMap,
+    participationSourceMap,
+    recordedPlayerIds
+  } = aggregateResult;
   const { statKeys, statLabels } = resolveReportStatColumns({
     statsMap,
     resolvedConfig
@@ -234,8 +268,17 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     photoUrl: player.photoUrl ? String(player.photoUrl) : undefined,
     stats: statsMap[player.id] || {},
     timeMs: timeMap[player.id] || 0,
-    didNotPlay: didNotPlayMap[player.id] === true
+    didNotPlay: didNotPlayMap[player.id] === true,
+    participated: participatedMap[player.id] === true,
+    participationStatus: participationStatusMap[player.id] || '',
+    participationSource: participationSourceMap[player.id] || ''
   }));
+  const visiblePlayerRows = playerRows.filter((player) => (
+    hasPlayerProfileParticipation(player)
+    || player.didNotPlay
+    || recordedPlayerIds.has(player.playerId)
+  ));
+  const deferredPlayerRows = playerRows.filter((player) => !visiblePlayerRows.includes(player));
   const playerLookup = new Map(playerRows.map((player) => [player.playerId, player]));
   const playerInsightRows = Object.entries(insights.playerInsightsById || {}).map(([playerId, playerInsights]) => ({
     playerId,
@@ -251,6 +294,8 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     statLabels,
     hasPlayingTime: Object.values(timeMap).some((time) => time > 0),
     playerRows,
+    visiblePlayerRows,
+    deferredPlayerRows,
     opponentStatKeys: oppKeys,
     opponentStatLabels: oppLabels,
     opponentRows: normalizeOpponentRows(opponentStats),

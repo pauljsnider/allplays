@@ -19,10 +19,12 @@ async function mockInviteLoginModules(page, options = {}) {
                 email: 'existing@example.com'
             }
         },
+        googleLoginResult = null,
         googleRedirectResult = null,
         defaultRedirect = 'dashboard.html'
     } = options;
     const encodedLoginResult = encodeModuleValue(loginResult);
+    const encodedGoogleLoginResult = encodeModuleValue(googleLoginResult);
     const encodedGoogleRedirectResult = encodeModuleValue(googleRedirectResult);
     const encodedDefaultRedirect = encodeModuleValue(defaultRedirect);
     const encodedProfile = encodeModuleValue(profile);
@@ -30,6 +32,7 @@ async function mockInviteLoginModules(page, options = {}) {
     await page.route(/\/js\/auth\.js\?v=\d+$/, async (route) => {
         const moduleSource = `
             const loginResult = JSON.parse(atob('${encodedLoginResult}'));
+            const googleLoginResult = JSON.parse(atob('${encodedGoogleLoginResult}'));
             const googleRedirectResult = JSON.parse(atob('${encodedGoogleRedirectResult}'));
             const defaultRedirect = JSON.parse(atob('${encodedDefaultRedirect}'));
 
@@ -48,7 +51,8 @@ async function mockInviteLoginModules(page, options = {}) {
 
             export async function loginWithGoogle(activationCode) {
                 window.__googleActivationCode = activationCode;
-                return null;
+                window.sessionStorage.setItem('__googleActivationCode', activationCode || '');
+                return googleLoginResult;
             }
 
             export async function handleGoogleRedirectResult() {
@@ -192,4 +196,50 @@ test('signup hash opens signup mode and passes activation code to Google signup'
 
     await expect.poll(() => page.evaluate(() => window.__googleActivationCode)).toBe('AB12CD34');
     await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('postGoogleAuthMode'))).toBe('signup');
+});
+
+test('google popup signup from invite-prefilled link redeems invite', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        googleLoginResult: {
+            user: {
+                uid: 'google-user-123',
+                email: 'parent@example.com'
+            }
+        },
+        defaultRedirect: 'dashboard.html'
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html?code=ab12cd34&type=parent'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await expect(page.locator('#activation-code-field')).toBeHidden();
+    await page.locator('#google-btn').click();
+
+    await expect(page).toHaveURL(/\/accept-invite\.html\?code=AB12CD34&type=parent$/);
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('AB12CD34');
+});
+
+test('google popup signup without invite uses normal post-auth redirect', async ({ page, baseURL }) => {
+    await mockInviteLoginModules(page, {
+        googleLoginResult: {
+            user: {
+                uid: 'google-user-456',
+                email: 'new-parent@example.com'
+            }
+        },
+        defaultRedirect: 'dashboard.html'
+    });
+
+    await page.goto(buildUrl(baseURL, '/login.html#signup'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.locator('#form-title')).toHaveText('Sign Up');
+    await page.locator('#activation-code').fill('ab12cd34');
+    await page.locator('#google-btn').click();
+
+    await expect(page).toHaveURL(/\/dashboard\.html$/);
+    await expect.poll(() => page.evaluate(() => window.sessionStorage.getItem('__googleActivationCode'))).toBe('AB12CD34');
 });

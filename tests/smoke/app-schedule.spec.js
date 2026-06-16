@@ -1264,7 +1264,7 @@ test('schedule failure states show errors without trapping users in spinners', a
     await mockScheduleModules(page, { scheduleLoadError: 'Schedule unavailable.' });
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
 
-    const scheduleError = page.getByText('Schedule unavailable.');
+    const scheduleError = page.getByText('Unable to load schedule while offline. Check your connection and try again.');
     await waitForScheduleRoute(page, scheduleError);
     await expect(page.getByText('Loading schedule')).toHaveCount(0);
 
