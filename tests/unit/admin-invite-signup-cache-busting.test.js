@@ -42,7 +42,7 @@ describe('admin invite signup cache busting', () => {
     it('keeps the shared header logout import pinned to auth.js v21', () => {
         const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
         const allAuthImports = utilsSource.match(/await import\('\.\/auth\.js\?v=\d+'\);/g) || [];
-        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=21'\);/g) || [];
+        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=22'\);/g) || [];
 
         expect(allAuthImports).toEqual(["await import('./auth.js?v=22');"]);
         expect(logoutImportMatches).toHaveLength(1);
