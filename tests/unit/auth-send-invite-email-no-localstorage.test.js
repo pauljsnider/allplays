@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const sendSignInLinkToEmailMock = vi.fn();
 const getUserByEmailMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=9', () => ({
+vi.mock('../../js/firebase.js?v=18', () => ({
     auth: { currentUser: null },
     signInWithEmailAndPassword: vi.fn(),
     createUserWithEmailAndPassword: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock('../../js/firebase.js?v=9', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=14', () => ({
+vi.mock('../../js/db.js?v=50', () => ({
     validateAccessCode: vi.fn(),
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),
@@ -46,9 +46,7 @@ describe('sendInviteEmail localStorage behavior', () => {
             removeItem: vi.fn()
         };
 
-        vi.stubGlobal('window', {
-            localStorage: localStorageMock
-        });
+        vi.stubGlobal('localStorage', localStorageMock);
     });
 
     afterEach(() => {
