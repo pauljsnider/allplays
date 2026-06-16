@@ -730,13 +730,13 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain('releaseRegistrationCheckoutCapacity');
         expect(functionsSource).toContain("registrationCapacityReleased: true");
         expect(functionsSource).toContain("product: 'registration'");
-        expect(functionsSource).toContain('getRegistrationCheckoutAmountCents(registration)');
+        // Server-side recomputation: form is passed to prevent tampered feeSnapshot amounts (issue #2243)
+        expect(functionsSource).toContain('getRegistrationCheckoutAmountCents(registration, form)');
         expect(functionsSource).toContain("if (input.retryPayment) {");
         expect(functionsSource).toContain("params.set('retryPayment', '1');");
         expect(functionsSource).toContain('reserveRegistrationCheckoutCapacityForRetry');
-        expect(functionsSource).toContain('const amountCents = input.retryPayment ? expectedAmountCents : (input.amountCents ?? expectedAmountCents);');
-        expect(functionsSource).toContain("if (!input.retryPayment && input.amountCents !== null && input.amountCents !== expectedAmountCents)");
-        expect(functionsSource).toContain("(input.retryPayment ? '' : input.currency)");
+        expect(functionsSource).toContain('const amountCents = expectedAmountCents');
+        expect(functionsSource).toContain('form.currency || registration.feeSnapshot?.currency || registration.currency');
         expect(functionsSource).toContain("Registration checkout attempt is required to retry this payment.");
         expect(functionsSource).toContain("This registration option is no longer available. Please restart registration or contact the organizer.");
         expect(functionsSource).toContain("registrationCapacityReleased: false");
