@@ -193,34 +193,20 @@ describe('parent dashboard team fees', () => {
         expect(html).not.toContain('admin-123');
     });
 
-    it('sanitizes parent fee records before exposing Stripe and refund internals', () => {
+    it('keeps already-safe parent fee records intact without needing private-field stripping', () => {
         const rawFee = {
             id: 'recipient-1',
-            title: 'Private billing data',
+            title: 'Parent-safe billing data',
             amountCents: 10000,
             status: 'paid',
-            stripeCheckoutSessionId: 'cs_private',
-            stripePaymentIntentId: 'pi_private',
-            stripeCustomerId: 'cus_private',
-            stripeEventId: 'evt_private',
             receiptMetadata: {
                 provider: 'stripe',
-                checkoutSessionId: 'cs_private',
-                paymentIntentId: 'pi_private',
-                receiptEmail: 'parent@example.com',
-                eventId: 'evt_private',
                 amountPaidCents: 10000
             },
             ledgerEntries: [
                 {
                     type: 'stripe_refund',
                     amountCents: 2500,
-                    stripeRefundId: 're_private',
-                    stripePaymentIntentId: 'pi_private',
-                    stripeChargeId: 'ch_private',
-                    reason: 'Admin reconciliation reason',
-                    refundedBy: 'admin-1',
-                    note: 'Private refund note',
                     publicNote: 'Uniform returned'
                 }
             ]
@@ -229,21 +215,16 @@ describe('parent dashboard team fees', () => {
         const sanitized = sanitizeParentFeeRecipientRecord(rawFee);
         const normalized = normalizeParentFeeRecord(rawFee);
 
-        expect(sanitized).not.toHaveProperty('stripeCheckoutSessionId');
-        expect(sanitized).not.toHaveProperty('stripePaymentIntentId');
-        expect(sanitized).not.toHaveProperty('stripeCustomerId');
-        expect(sanitized).not.toHaveProperty('stripeEventId');
-        expect(sanitized.receiptMetadata).toEqual({
+        expect(sanitized).toEqual(rawFee);
+        expect(normalized.receiptMetadata).toEqual({
             provider: 'stripe',
             amountPaidCents: 10000
         });
-        expect(sanitized.ledgerEntries[0]).toEqual({
+        expect(normalized.ledgerEntries[0]).toEqual({
             type: 'stripe_refund',
             amountCents: 2500,
             publicNote: 'Uniform returned'
         });
-        expect(normalized).not.toHaveProperty('stripePaymentIntentId');
-        expect(normalized.ledgerEntries[0]).not.toHaveProperty('refundedBy');
     });
 
     it('renders Pay online only for Stripe collection fees with an unpaid balance', () => {

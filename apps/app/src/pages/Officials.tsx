@@ -16,10 +16,12 @@ export function Officials({ auth }: { auth: AuthState }) {
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [hasAccess, setHasAccess] = useState(true);
 
-  const refresh = async () => {
+  const refresh = async ({ preserveStatus = false }: { preserveStatus?: boolean } = {}) => {
     if (!auth.user) return;
     setLoading(true);
-    setStatus(null);
+    if (!preserveStatus) {
+      setStatus(null);
+    }
     try {
       const result = await loadOfficialAssignments(auth.user, requestedTeamId ? { teamId: requestedTeamId } : {});
       if (!result.hasAccess) {
@@ -52,7 +54,7 @@ export function Officials({ auth }: { auth: AuthState }) {
     try {
       await action();
       setStatus({ tone: 'success', message: successMessage });
-      await refresh();
+      await refresh({ preserveStatus: true });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to update assignment.' });
     } finally {

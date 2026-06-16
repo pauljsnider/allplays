@@ -385,8 +385,8 @@ describe('React app auth/profile capability parity', () => {
         ]);
         expectContains(messagesPage, [
             'loadChatInbox',
-            'loadChatTeamContext',
-            'subscribeToTeamChatMessages',
+            'useChatTeam',
+            'useChatMessages',
             'sendTeamChatMessage',
             'editTeamChatMessage',
             'deleteTeamChatMessage',
@@ -488,7 +488,7 @@ describe('React app auth/profile capability parity', () => {
             'getEventDetailPath'
         ]);
         expectContains(scheduleEventDetail, [
-            'submitParentScheduleRsvp',
+            'useScheduleEventRsvp',
             'Availability',
             'Rideshare',
             'Assignments',

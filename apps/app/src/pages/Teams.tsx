@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
@@ -25,6 +25,7 @@ import {
   WalletCards
 } from 'lucide-react';
 import { RoleBadge } from '../components/Badges';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
 import { loadParentHomeSummary, loadParentTeamsSummary } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
@@ -63,31 +64,62 @@ export function Teams({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [teamsLoadError, setTeamsLoadError] = useState<AppServiceError | null>(null);
+  const [loadedTeamUserId, setLoadedTeamUserId] = useState<string | null>(null);
+  const activeLoadIdRef = useRef(0);
   const selectedTeamId = searchParams.get('selectedTeamId') || '';
+  const authUserId = auth.user?.uid || null;
+  const hasLoadedTeamDetails = Boolean(authUserId) && authUserId === loadedTeamUserId;
 
   const loadTeams = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
-    if (!auth.user) return;
+    const user = auth.user;
+    if (!user) return;
+    const loadId = activeLoadIdRef.current + 1;
+    activeLoadIdRef.current = loadId;
+    const hasExistingTeams = loadedTeamUserId === user.uid;
     if (showLoading) {
       setLoading(true);
     } else {
       setRefreshing(true);
     }
     setError('');
+    setTeamsLoadError(null);
     try {
-      const fastHome = await loadParentTeamsSummary(auth.user, { force: !showLoading });
+      const fastHome = await loadParentTeamsSummary(user, { force: !showLoading });
+      if (loadId !== activeLoadIdRef.current) return;
+      const hasFastTeams = fastHome.teams.length > 0;
       setHome(fastHome);
+      setTeamsLoadError(null);
       setLoading(false);
       setRefreshing(true);
       try {
-        const enrichedHome = await loadParentHomeSummary(auth.user, { force: !showLoading });
+        const enrichedHome = await loadParentHomeSummary(user, { force: !showLoading });
+        if (loadId !== activeLoadIdRef.current) return;
         setHome((current) => mergeTeamSummary(current, enrichedHome));
+        setLoadedTeamUserId(user.uid);
+        setTeamsLoadError(null);
       } catch (enrichError) {
-        console.warn('[teams-page] Unable to enrich team summary:', enrichError);
+        if (loadId !== activeLoadIdRef.current) return;
+        const appError = toAppServiceError(enrichError, 'Unable to load teams.');
+        if (!hasExistingTeams && !hasFastTeams) {
+          setHome(emptyHome());
+          setLoadedTeamUserId(null);
+          setTeamsLoadError(appError);
+        } else {
+          setError(getTeamsLoadErrorMessage(appError, true));
+        }
       }
     } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load teams.');
-      setHome(emptyHome());
+      if (loadId !== activeLoadIdRef.current) return;
+      const appError = toAppServiceError(loadError, 'Unable to load teams.');
+      setError(getTeamsLoadErrorMessage(appError, hasExistingTeams));
+      setTeamsLoadError(appError);
+      if (!hasExistingTeams) {
+        setHome(emptyHome());
+        setLoadedTeamUserId(null);
+      }
     } finally {
+      if (loadId !== activeLoadIdRef.current) return;
       setLoading(false);
       setRefreshing(false);
     }
@@ -95,6 +127,9 @@ export function Teams({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     loadTeams({ showLoading: true });
+    return () => {
+      activeLoadIdRef.current += 1;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
@@ -104,6 +139,8 @@ export function Teams({ auth }: { auth: AuthState }) {
       navigate(`/teams/${encodeURIComponent(home.teams[0].teamId)}`, { replace: true });
     }
   }, [loading, home.teams, navigate, selectedTeamId]);
+
+  const showBlockingErrorState = !loading && !hasLoadedTeamDetails && Boolean(teamsLoadError);
 
   const selectedTeam = useMemo(() => (
     home.teams.find((team) => team.teamId === selectedTeamId) || home.teams[0] || null
@@ -138,6 +175,8 @@ export function Teams({ auth }: { auth: AuthState }) {
           <div className="mt-3 text-sm font-black text-gray-900">Loading teams</div>
           <div className="mt-1 text-xs font-semibold text-gray-500">Pulling team access, linked players, schedule, and chat counts.</div>
         </section>
+      ) : showBlockingErrorState && teamsLoadError ? (
+        <TeamsLoadErrorState error={teamsLoadError} onRetry={() => loadTeams({ showLoading: true })} retrying={loading || refreshing} />
       ) : home.teams.length ? (
         isDesktopWeb ? (
           <div className="teams-web-workbench">
@@ -595,6 +634,21 @@ function EmptyTeams() {
   );
 }
 
+function TeamsLoadErrorState({ error, onRetry, retrying }: { error: AppServiceError; onRetry: () => void; retrying: boolean }) {
+  const copy = getTeamsLoadErrorStateCopy(error);
+  return (
+    <section className="app-card p-5 text-center">
+      <Shield className="mx-auto h-8 w-8 text-rose-400" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">{copy.title}</div>
+      <div className="mt-1 text-xs font-semibold text-gray-500">{copy.detail}</div>
+      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry team load">
+        <RefreshCw className={`h-4 w-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
+        Retry
+      </button>
+    </section>
+  );
+}
+
 export function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const isError = tone === 'error';
   return (
@@ -675,6 +729,52 @@ function getTeamHeaderMetrics(teams: ParentHomeTeam[]) {
     metrics.unread += Number(team.unreadCount || 0);
     return metrics;
   }, { teams: 0, players: 0, unread: 0 });
+}
+
+function getTeamsLoadErrorMessage(error: AppServiceError, hasExistingTeams: boolean) {
+  if (hasExistingTeams) {
+    if (error.type === 'network') return 'Unable to refresh teams while offline. Showing the last loaded teams.';
+    if (error.type === 'permission') return 'Unable to refresh teams because access was denied. Showing the last loaded teams.';
+    if (error.type === 'not_found') return 'Unable to refresh teams because the requested data was not found. Showing the last loaded teams.';
+    if (error.type === 'validation') return error.message;
+    return 'Unable to refresh teams. Showing the last loaded teams. Try again.';
+  }
+  if (error.type === 'network') return 'Unable to load teams while offline. Check your connection and try again.';
+  if (error.type === 'permission') return 'You do not have permission to load these teams.';
+  if (error.type === 'not_found') return 'Team data was not found. Try again or check the linked team access.';
+  if (error.type === 'validation') return error.message;
+  return error.message || 'Unable to load teams. Try again.';
+}
+
+function getTeamsLoadErrorStateCopy(error: AppServiceError) {
+  if (error.type === 'network') {
+    return {
+      title: 'Teams could not connect',
+      detail: 'Check your connection and try loading teams again.'
+    };
+  }
+  if (error.type === 'permission') {
+    return {
+      title: 'Teams access is blocked',
+      detail: 'Your account does not have permission to load these teams.'
+    };
+  }
+  if (error.type === 'not_found') {
+    return {
+      title: 'Team data was not found',
+      detail: 'The linked team data is missing. Try again after refreshing your team access.'
+    };
+  }
+  if (error.type === 'validation') {
+    return {
+      title: 'Teams request needs attention',
+      detail: error.message
+    };
+  }
+  return {
+    title: 'Teams could not load',
+    detail: 'Try loading teams again to restore your team dashboard.'
+  };
 }
 
 function getTeamHeaderDetail(teams: ParentHomeTeam[]) {

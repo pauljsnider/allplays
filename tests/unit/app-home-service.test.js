@@ -37,7 +37,15 @@ vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 const user = {
     uid: 'user-1',
     email: 'parent@example.com',
-    displayName: 'Pat Parent'
+    displayName: 'Pat Parent',
+    parentOf: [
+        {
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Pat Star'
+        }
+    ]
 };
 
 function event(overrides = {}) {
@@ -152,26 +160,51 @@ describe('React app Home service', () => {
         expect(home.actionItems.map((item) => item.kind)).toEqual(expect.arrayContaining(['rsvp', 'fee', 'message']));
     });
 
-    it('keeps Home usable when optional chat or fee loads fail', async () => {
-        chatMocks.loadChatInbox.mockRejectedValueOnce(new Error('Chat offline'));
-        dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('Fees offline'));
-        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    it('throws a typed network error when Home secondary data fails to load', async () => {
+        chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         const { loadParentHome } = await import('../../apps/app/src/lib/homeService.ts');
 
-        const home = await loadParentHome(user);
+        await expect(loadParentHome(user)).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
+        });
+    });
 
-        expect(home.players).toHaveLength(1);
-        expect(home.teams).toEqual([
-            expect.objectContaining({
-                teamId: 'team-1',
-                unreadCount: 0
-            })
-        ]);
-        expect(home.fees).toEqual([]);
-        expect(home.metrics.unreadMessages).toBe(0);
-        expect(warn).toHaveBeenCalledWith('[home-service] Unable to load chat inbox:', expect.any(Error));
-        expect(warn).toHaveBeenCalledWith('[home-service] Unable to load parent team fees:', expect.any(Error));
-        warn.mockRestore();
+    it('throws a typed permission error when Home fees are denied', async () => {
+        dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new Error('Permission denied for fees'));
+        const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+
+        await expect(loadParentHomeWithSecondaryData(user, {
+            schedule: {
+                children: [
+                    {
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        playerId: 'player-1',
+                        playerName: 'Pat Star'
+                    }
+                ],
+                events: [event()]
+            }
+        })).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'permission',
+            message: 'Permission denied for fees'
+        });
+    });
+
+    it('throws a typed network error when the Teams summary chat load fails', async () => {
+        chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
+
+        await expect(loadParentTeamsSummary(user, { force: true })).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
+        });
+
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user, { includeLastMessages: false });
     });
 
     it('composes the fast Home summary without optional secondary data', async () => {

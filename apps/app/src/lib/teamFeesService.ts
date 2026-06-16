@@ -142,9 +142,7 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
   const ledgerEntry = {
     type: 'offline_payment',
     amountCents: paymentAmountCents,
-    paymentDate: date,
-    note: noteText,
-    recordedBy: actorId || null
+    paymentDate: date
   };
 
   return {
@@ -154,11 +152,16 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
     paidAt: status === 'paid' ? date : null,
     manualPayment: {
       amountPaidCents: paymentAmountCents,
+      paidAt: date
+    },
+    ledgerEntries: [ledgerEntry],
+    adminBilling: {
+      type: 'offline_payment',
+      amountPaidCents: paymentAmountCents,
       paidAt: date,
       note: noteText,
       recordedBy: actorId || null
-    },
-    ledgerEntries: [ledgerEntry]
+    }
   };
 }
 
@@ -181,9 +184,7 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
     type: 'balance_adjustment',
     amountCents: adjustmentCents,
     previousAmountDueCents: priorBalanceCents,
-    amountDueCents,
-    reason,
-    adjustedBy: actorId || null
+    amountDueCents
   };
 
   return {
@@ -193,11 +194,17 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
     adjustment: {
       amountCents: adjustmentCents,
       previousAmountDueCents: priorBalanceCents,
-      amountDueCents,
-      note: reason,
-      adjustedBy: actorId || null
+      amountDueCents
     },
-    ledgerEntries: [ledgerEntry]
+    ledgerEntries: [ledgerEntry],
+    adminBilling: {
+      type: 'balance_adjustment',
+      amountCents: adjustmentCents,
+      previousAmountDueCents: priorBalanceCents,
+      amountDueCents,
+      reason,
+      adjustedBy: actorId || null
+    }
   };
 }
 
@@ -236,9 +243,7 @@ export function buildOfflineTeamFeeRefundUpdate({ refundType = 'full', amount, m
     refundAmountCents,
     refundType: normalizedType,
     refundMethod,
-    methodLabel: REFUND_METHOD_LABELS[refundMethod],
-    note: adminNote,
-    recordedBy: actorId || null
+    methodLabel: REFUND_METHOD_LABELS[refundMethod]
   };
 
   return {
@@ -249,11 +254,18 @@ export function buildOfflineTeamFeeRefundUpdate({ refundType = 'full', amount, m
     refunded: {
       amountCents: refundAmountCents,
       refundType: normalizedType,
+      refundMethod
+    },
+    ledgerEntries: [ledgerEntry],
+    adminBilling: {
+      type: 'offline_refund',
+      refundAmountCents,
+      refundType: normalizedType,
       refundMethod,
+      methodLabel: REFUND_METHOD_LABELS[refundMethod],
       note: adminNote,
       recordedBy: actorId || null
-    },
-    ledgerEntries: [ledgerEntry]
+    }
   };
 }
 

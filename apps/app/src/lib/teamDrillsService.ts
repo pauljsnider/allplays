@@ -66,6 +66,11 @@ export type TeamFavoriteDrillsModel = {
   drills: TeamDrillSummary[];
 };
 
+type TeamDrillLibraryCursor = {
+  communityCursor: unknown | null;
+  pendingDrills: any[];
+};
+
 function normalizeString(value: unknown) {
   return String(value || '').trim();
 }
@@ -88,6 +93,36 @@ function normalizeFilterValue(value: unknown, allowedValues: string[]) {
 
 function normalizeSearchText(value: unknown) {
   return normalizeString(value).toLowerCase();
+}
+
+function normalizeLibraryCursor(cursor: unknown): TeamDrillLibraryCursor {
+  if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) {
+    return {
+      communityCursor: cursor || null,
+      pendingDrills: []
+    };
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(cursor, 'communityCursor') && !Object.prototype.hasOwnProperty.call(cursor, 'pendingDrills')) {
+    return {
+      communityCursor: cursor,
+      pendingDrills: []
+    };
+  }
+
+  const candidate = cursor as { communityCursor?: unknown; pendingDrills?: unknown };
+  return {
+    communityCursor: candidate.communityCursor || null,
+    pendingDrills: Array.isArray(candidate.pendingDrills) ? candidate.pendingDrills : []
+  };
+}
+
+function createNextCursor(communityCursor: unknown, pendingDrills: any[]) {
+  if (!communityCursor && !pendingDrills.length) return null;
+  return {
+    communityCursor: communityCursor || null,
+    pendingDrills
+  };
 }
 
 async function loadTeamAccess(teamId: string, user: AuthUser | null) {
@@ -149,37 +184,50 @@ export async function loadTeamDrillLibraryPage(
     type: normalizeFilterValue(filters.type, DRILL_TYPES as string[]),
     level: normalizeFilterValue(filters.level, DRILL_LEVELS as string[])
   };
+  const cursorState = normalizeLibraryCursor(filters.cursor);
+  const isPaginatedRequest = Boolean(filters.cursor);
+  const shouldLoadCommunityPage = !isPaginatedRequest || Boolean(cursorState.communityCursor) || !cursorState.pendingDrills.length;
 
   const [favoriteIds, page, publishedDrills] = await Promise.all([
     Promise.resolve(getDrillFavorites(teamId)),
-    Promise.resolve(getDrills({
-      sport: access.team.sport,
-      type: normalizedFilters.type || undefined,
-      level: normalizedFilters.level || undefined,
-      searchText: normalizedFilters.searchText || undefined,
-      limitCount: drillLibraryPageSize,
-      startAfterDoc: filters.cursor || null
-    })),
-    Promise.resolve(getPublishedDrills({
-      sport: access.team.sport,
-      type: normalizedFilters.type || undefined,
-      level: normalizedFilters.level || undefined,
-      searchText: normalizedFilters.searchText || undefined,
-      limitCount: drillLibraryPageSize
-    }))
+    shouldLoadCommunityPage
+      ? Promise.resolve(getDrills({
+        sport: access.team.sport,
+        type: normalizedFilters.type || undefined,
+        level: normalizedFilters.level || undefined,
+        searchText: normalizedFilters.searchText || undefined,
+        limitCount: drillLibraryPageSize,
+        startAfterDoc: cursorState.communityCursor
+      }))
+      : Promise.resolve({ drills: [], lastDoc: null }),
+    isPaginatedRequest
+      ? Promise.resolve([])
+      : Promise.resolve(getPublishedDrills({
+        sport: access.team.sport,
+        type: normalizedFilters.type || undefined,
+        level: normalizedFilters.level || undefined,
+        searchText: normalizedFilters.searchText || undefined,
+        limitCount: drillLibraryPageSize
+      }))
   ]);
 
-  const mergedDrills = [...(Array.isArray(page?.drills) ? page.drills : []), ...(Array.isArray(publishedDrills) ? publishedDrills : [])];
+  const mergedDrills = [
+    ...(Array.isArray(cursorState.pendingDrills) ? cursorState.pendingDrills : []),
+    ...(Array.isArray(page?.drills) ? page.drills : []),
+    ...(Array.isArray(publishedDrills) ? publishedDrills : [])
+  ];
   const uniqueDrills = Array.from(new Map(mergedDrills.map((drill) => [normalizeString(drill?.id), drill])).entries())
     .filter(([id]) => Boolean(id))
     .map(([, drill]) => drill)
     .sort((left, right) => normalizeString(left?.title).localeCompare(normalizeString(right?.title)));
+  const visibleDrills = uniqueDrills.slice(0, drillLibraryPageSize);
+  const pendingDrills = uniqueDrills.slice(drillLibraryPageSize);
 
   return {
     ...access,
-    drills: uniqueDrills.slice(0, drillLibraryPageSize).map(toTeamDrillSummary),
+    drills: visibleDrills.map(toTeamDrillSummary),
     favoriteIds: Array.isArray(favoriteIds) ? favoriteIds.map((id) => normalizeString(id)).filter(Boolean) : [],
-    nextCursor: page?.lastDoc || null,
+    nextCursor: createNextCursor(page?.lastDoc || null, pendingDrills),
     filters: normalizedFilters
   };
 }
