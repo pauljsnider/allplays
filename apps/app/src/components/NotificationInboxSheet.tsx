@@ -16,10 +16,10 @@ export function NotificationInboxSheet({ items, uid, onClose, onMarkRead }: Noti
         if (!item.readAt) {
             await onMarkRead(uid, item.id);
         }
-        onClose();
         if (item.appRoute) {
             navigate(item.appRoute);
         }
+        onClose();
     };
 
     return (

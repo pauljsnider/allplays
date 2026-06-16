@@ -1,3 +1,4 @@
+import type { QuerySnapshot, DocumentData } from 'firebase/firestore';
 import {
     collection,
     db,
@@ -36,7 +37,7 @@ export function subscribeToNotificationInbox(
 
     return onSnapshot(
         q,
-        (snapshot) => {
+        (snapshot: QuerySnapshot<DocumentData>) => {
             const items: NotificationInboxItem[] = snapshot.docs.map((docSnap) => {
                 const data = docSnap.data();
                 return {
@@ -50,8 +51,12 @@ export function subscribeToNotificationInbox(
             });
             callback(items);
         },
-        (error) => {
-            if (onError) onError(error);
+        (error: unknown) => {
+            if (onError) {
+                onError(error);
+            } else {
+                console.error('Failed to subscribe to notification inbox:', error);
+            }
         }
     );
 }
