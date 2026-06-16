@@ -32,7 +32,15 @@ export default defineConfig({
       'react-dom': resolveModule('react-dom'),
       'react-router-dom': resolveModule('react-router-dom'),
       'lucide-react': resolveModule('lucide-react'),
-      '@testing-library/react': resolveModule('@testing-library/react')
+      '@testing-library/react': resolveModule('@testing-library/react'),
+      '@capacitor/app': resolveModule('@capacitor/app'),
+      '@capacitor/core': resolveModule('@capacitor/core'),
+      '@capacitor/browser': resolveModule('@capacitor/browser'),
+      '@capacitor/camera': resolveModule('@capacitor/camera'),
+      '@capacitor/filesystem': resolveModule('@capacitor/filesystem'),
+      '@capacitor/share': resolveModule('@capacitor/share'),
+      '@capacitor-firebase/messaging': resolveModule('@capacitor-firebase/messaging'),
+      '@capawesome/capacitor-badge': resolveModule('@capawesome/capacitor-badge')
     },
     dedupe: ['react', 'react-dom', 'react-router-dom']
   }

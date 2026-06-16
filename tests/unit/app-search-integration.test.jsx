@@ -20,7 +20,10 @@ const firebaseMocks = vi.hoisted(() => ({
     doc: vi.fn(),
     getDoc: vi.fn(),
     getDocs: vi.fn(),
+    onSnapshot: vi.fn(() => vi.fn()),
     query: vi.fn((...parts) => ({ parts })),
+    serverTimestamp: vi.fn(() => ({ _isServerTimestamp: true })),
+    updateDoc: vi.fn(),
     where: vi.fn((field, op, value) => ({ type: 'where', field, op, value })),
     orderBy: vi.fn((field) => ({ type: 'orderBy', field })),
     limit: vi.fn((count) => ({ type: 'limit', count }))
