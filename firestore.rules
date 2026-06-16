@@ -1081,7 +1081,7 @@ service cloud.firestore {
     function isLiveChatMessageCreate(data) {
       return isSignedIn() &&
              data.keys().hasAll(['text', 'senderId', 'senderName', 'createdAt']) &&
-             data.keys().hasOnly(['text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous', 'createdAt']) &&
+             data.keys().hasOnly(['text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous', 'createdAt', 'ai', 'aiQuestion']) &&
              data.text is string &&
              data.text.size() > 0 &&
              data.text.size() <= 2000 &&
