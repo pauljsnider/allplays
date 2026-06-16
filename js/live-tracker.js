@@ -26,7 +26,7 @@ import {
   readPersistedLiveTrackerState,
   writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
-import { commitFinishPlan, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
+import { commitFinishPlan, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js?v=1';
 
 let currentTeamId = null;
 let currentGameId = null;
