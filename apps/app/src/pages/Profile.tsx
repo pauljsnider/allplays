@@ -239,12 +239,15 @@ export function Profile({ auth }: { auth: AuthState }) {
       setAccountMergeEmail('');
 
       try {
-        // Seed form fields directly from the already-hydrated auth.profile when
-        // available, avoiding a redundant Firestore round-trip and loading spinner.
-        // Only fall back to loadProfileDocument when auth.profile is absent.
+        // Seed form fields from the already-hydrated auth.profile when it is
+        // fully populated (has at least fullName and phone), avoiding a redundant
+        // Firestore round-trip. Fall back to loadProfileDocument otherwise.
         const seededProfile = auth.profile;
+        const isFullyHydrated = seededProfile != null &&
+          typeof seededProfile.fullName === 'string' &&
+          'phone' in seededProfile;
         let loadedProfile: ProfileDocument;
-        if (seededProfile) {
+        if (isFullyHydrated) {
           loadedProfile = seededProfile as ProfileDocument;
         } else {
           loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
