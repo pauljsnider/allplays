@@ -399,6 +399,16 @@ describe('React app schedule service contract integration', () => {
         });
     });
 
+    it('throws a typed permission error when a primary team schedule load fails', async () => {
+        dbMocks.getGames.mockRejectedValueOnce(new Error('Permission denied for team schedule'));
+
+        await expect(loadParentSchedule(user())).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'permission',
+            message: 'Permission denied for team schedule'
+        });
+    });
+
     it('loads one linked player schedule without a cross-team fan-out', async () => {
         dbMocks.getTeams.mockResolvedValue([
             { id: 'team-staff-1', name: 'Staff Team 1', ownerId: 'user-1' },

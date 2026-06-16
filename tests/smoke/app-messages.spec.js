@@ -168,29 +168,40 @@ async function mockMessagesModules(page, options = {}) {
                     return message ? (message.senderName || 'Unknown') + ': ' + (message.text || 'Attachment') : 'No messages yet';
                 }
 
-                export async function loadChatInbox() {
-                    return {
-                        teams: [
-                            {
-                                id: 'team-1',
-                                name: 'Bears',
-                                sport: 'Basketball',
-                                role: 'Admin',
-                                canModerate: true,
-                                unreadCount: 4,
-                                lastMessage: msg({ id: 'last-1', text: 'Practice packet is posted.' })
-                            },
-                            {
-                                id: 'team-2',
-                                name: 'Thunder',
-                                sport: 'Soccer',
-                                role: 'Parent',
-                                canModerate: false,
-                                unreadCount: 0,
-                                lastMessage: msg({ id: 'last-2', text: 'Tournament schedule changed.', senderName: 'Morgan' })
-                            }
-                        ]
-                    };
+                export async function loadChatInbox(_user, options = {}) {
+                    const teams = [
+                        {
+                            id: 'team-1',
+                            name: 'Bears',
+                            sport: 'Basketball',
+                            role: 'Admin',
+                            canModerate: true,
+                            unreadCount: 4,
+                            lastMessage: options.includeLastMessages === false ? null : msg({ id: 'last-1', text: 'Practice packet is posted.' })
+                        },
+                        {
+                            id: 'team-2',
+                            name: 'Thunder',
+                            sport: 'Soccer',
+                            role: 'Parent',
+                            canModerate: false,
+                            unreadCount: 0,
+                            lastMessage: options.includeLastMessages === false ? null : msg({ id: 'last-2', text: 'Tournament schedule changed.', senderName: 'Morgan' })
+                        }
+                    ];
+                    if (options.includeLastMessages === false && options.onPreview) {
+                        setTimeout(() => options.onPreview({
+                            teamId: 'team-1',
+                            lastMessage: msg({ id: 'last-1', text: 'Practice packet is posted.' }),
+                            preferredConversationId: null
+                        }), ${options.previewDelayMs || 0});
+                        setTimeout(() => options.onPreview({
+                            teamId: 'team-2',
+                            lastMessage: msg({ id: 'last-2', text: 'Tournament schedule changed.', senderName: 'Morgan' }),
+                            preferredConversationId: null
+                        }), ${options.previewDelayMs || 0});
+                    }
+                    return { teams };
                 }
 
                 export async function loadChatTeamContext() {
@@ -438,6 +449,27 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     });
 });
 
+test('messages inbox stays interactive while previews hydrate on inbox and desktop routes', async ({ page, baseURL }) => {
+    await mockMessagesModules(page, { previewDelayMs: 600 });
+    await page.goto(appUrl(baseURL, '/messages'), { waitUntil: 'domcontentloaded' });
+
+    await waitForMessagesRoute(page, page.getByRole('heading', { name: 'Team chats' }));
+    const bearsInboxRow = page.getByRole('link', { name: /Bears/ }).first();
+    await expect(bearsInboxRow).toBeVisible();
+    await expect(bearsInboxRow).toContainText('No messages yet');
+    await expect(page.getByRole('button', { name: 'Refresh messages' })).toBeVisible();
+    await expect(bearsInboxRow).toContainText('Coach Jamie: Practice packet is posted.', { timeout: 5000 });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
+
+    await waitForMessagesRoute(page, page.locator('.messages-list-pane'));
+    await expect(page.getByRole('link', { name: /Bears/ }).first()).toBeVisible();
+    await expect(page.locator('.messages-chat-pane')).toContainText('Bring both jerseys.');
+    await expect(page.locator('.messages-list-pane')).toContainText('No messages yet');
+    await expect(page.locator('.messages-list-pane')).toContainText('Coach Jamie: Practice packet is posted.', { timeout: 5000 });
+});
+
 test('messages selected-member, dictation, and validation flows stay usable on mobile', async ({ page, baseURL }) => {
     await mockMessagesModules(page, { speech: true });
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
@@ -534,6 +566,7 @@ test('messages defer offscreen media requests until scroll or video interaction'
 
     await thread.evaluate((element) => {
         element.scrollTop = 0;
+        element.dispatchEvent(new Event('scroll', { bubbles: true }));
     });
     await expect(page.getByAltText('Deferred lineup 1')).toBeVisible();
     await expect.poll(() => mediaRequests.filter((path) => path.endsWith('.jpg')).sort()).toEqual([

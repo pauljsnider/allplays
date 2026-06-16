@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './AppShell';
@@ -60,8 +60,8 @@ describe('AppShell', () => {
     );
 
     const searchButton = screen.getByRole('button', { name: 'Search' });
-    expect(searchButton).toHaveAttribute('aria-label', 'Search');
-    expect(searchButton).toHaveAttribute('data-testid', 'app-shell-search-trigger');
+    expect(searchButton.getAttribute('aria-label')).toBe('Search');
+    expect(searchButton.getAttribute('data-testid')).toBe('app-shell-search-trigger');
   });
 
   it('keeps the mobile search trigger discoverable with a stable selector', () => {
@@ -76,10 +76,10 @@ describe('AppShell', () => {
     );
 
     const searchButton = screen.getByTestId('app-shell-search-trigger');
-    expect(searchButton).toHaveAttribute('aria-label', 'Search');
+    expect(searchButton.getAttribute('aria-label')).toBe('Search');
   });
 
-  it('opens the search dialog immediately when the desktop search button is clicked', () => {
+  it('opens the search dialog immediately when the desktop search button is clicked', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Routes>
@@ -89,10 +89,10 @@ describe('AppShell', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy());
   });
 
-  it('opens the search dialog from the Ctrl+K shortcut before browser chrome can consume it', () => {
+  it('opens the search dialog from the Ctrl+K shortcut before browser chrome can consume it', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Routes>
@@ -107,10 +107,10 @@ describe('AppShell', () => {
     });
 
     expect(event.defaultPrevented).toBe(true);
-    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy());
   });
 
-  it('dismisses the search dialog when native back asks overlays to close', () => {
+  it('dismisses the search dialog when native back asks overlays to close', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
         <Routes>
@@ -120,7 +120,7 @@ describe('AppShell', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy());
 
     const event = new Event(APP_BACK_DISMISS_EVENT, { cancelable: true });
     act(() => {

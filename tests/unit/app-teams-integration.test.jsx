@@ -375,14 +375,16 @@ describe('React app Teams page', () => {
         expect(hrefs).toContain('/players/team-multi/player-2');
     });
 
-    it('shows clear empty and error states instead of a spinner', async () => {
+    it('shows clear retryable error UI instead of a spinner when the initial load fails', async () => {
         homeMocks.loadParentTeamsSummary.mockRejectedValueOnce(new Error('Team service down'));
 
         const { container } = await renderTeams('/teams');
 
-        await waitForText(container, 'Team service down');
-        expect(container.textContent).toContain('No teams available');
+        await waitForText(container, 'Teams could not load');
+        expect(container.textContent).toContain('Try loading teams again to restore your team dashboard.');
+        expect(buttonByText(container, 'Retry')).toBeTruthy();
         expect(container.textContent).not.toContain('Loading teams');
+        expect(container.textContent).not.toContain('No teams available');
     });
 
     it('handles signed-in accounts that do not have team access yet', async () => {

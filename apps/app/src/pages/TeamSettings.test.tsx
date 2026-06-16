@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamSettings } from './TeamSettings';
 import type { AuthState } from '../lib/types';
@@ -29,6 +29,16 @@ const auth: AuthState = {
   refresh: vi.fn(),
   signOut: vi.fn()
 };
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const managedModel = {
   team: {
@@ -71,6 +81,14 @@ const managedModel = {
 describe('TeamSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:preview'),
+      writable: true
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      writable: true
+    });
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
     teamDetailServiceMocks.updateTeamSettingsForApp.mockResolvedValue(undefined);
   });
@@ -95,6 +113,30 @@ describe('TeamSettings', () => {
 
     expect(await screen.findByText('Only team staff can edit this team.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save team' })).toBeNull();
+  });
+
+  it('shows a retry path when the initial team settings load fails', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockRejectedValueOnce(new Error('Unable to load team settings.'))
+      .mockResolvedValueOnce(managedModel);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Team settings unavailable')).toBeTruthy();
+    expect(screen.getByText('Unable to load team settings.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
+    await waitFor(() => {
+      expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('validates team name inline and saves native team settings', async () => {
@@ -130,6 +172,29 @@ describe('TeamSettings', () => {
     expect(await screen.findByText('Team detail page')).toBeTruthy();
   });
 
+  it('keeps unsaved edits and does not reload when choosing a new photo', async () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
+    const nameInput = screen.getByPlaceholderText('Team name') as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: 'Updated Bears' } });
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['photo'], 'team.png', { type: 'image/png' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    expect(nameInput.value).toBe('Updated Bears');
+    await waitFor(() => {
+      expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('defaults legacy teams without visibility set to public on save', async () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
       ...managedModel,
@@ -159,5 +224,52 @@ describe('TeamSettings', () => {
       isPublic: true,
       photoFile: null
     }));
+  });
+
+  it('ignores stale team settings responses after navigating to a different team', async () => {
+    const teamOneLoad = createDeferred<typeof managedModel>();
+    const teamTwoLoad = createDeferred<typeof managedModel>();
+
+    teamDetailServiceMocks.loadParentTeamDetail.mockImplementation((requestedTeamId: string) => {
+      if (requestedTeamId === 'team-1') return teamOneLoad.promise;
+      if (requestedTeamId === 'team-2') return teamTwoLoad.promise;
+      throw new Error(`Unexpected team id: ${requestedTeamId}`);
+    });
+
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/teams/:teamId/edit',
+          element: <TeamSettings auth={auth} />
+        }
+      ],
+      { initialEntries: ['/teams/team-1/edit'] }
+    );
+
+    render(<RouterProvider router={router} />);
+
+    await act(async () => {
+      await router.navigate('/teams/team-2/edit');
+    });
+
+    teamTwoLoad.resolve({
+      ...managedModel,
+      team: {
+        ...managedModel.team,
+        id: 'team-2',
+        name: 'Wolves',
+        sport: 'Soccer'
+      }
+    });
+
+    expect(await screen.findByDisplayValue('Wolves')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Basketball')).toHaveValue('Soccer');
+
+    teamOneLoad.resolve(managedModel);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Team name')).toHaveValue('Wolves');
+      expect(screen.getByPlaceholderText('Basketball')).toHaveValue('Soccer');
+    });
   });
 });

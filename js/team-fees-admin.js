@@ -300,7 +300,9 @@ function getRecipientAdminNotes(recipient) {
         recipient?.manualPayment?.note,
         recipient?.adjustment?.note,
         recipient?.canceled?.note,
-        recipient?.refunded?.note
+        recipient?.refunded?.note,
+        recipient?.adminBilling?.note,
+        recipient?.adminBilling?.reason
     ]
         .map(normalizeString)
         .filter(Boolean)
@@ -309,7 +311,7 @@ function getRecipientAdminNotes(recipient) {
 }
 
 function getRecipientReference(recipient) {
-    return normalizeString(recipient?.reference || recipient?.paymentReference || recipient?.manualPayment?.reference || recipient?.invoiceNumber || recipient?.receiptNumber);
+    return normalizeString(recipient?.reference || recipient?.paymentReference || recipient?.manualPayment?.reference || recipient?.adminBilling?.reference || recipient?.invoiceNumber || recipient?.receiptNumber);
 }
 
 export function buildTeamFeePaymentSummaryRows(recipients = []) {
@@ -426,9 +428,7 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
     const ledgerEntry = {
         type: 'offline_payment',
         amountCents: paymentAmountCents,
-        paymentDate: date,
-        note: noteText,
-        recordedBy: actorId || null
+        paymentDate: date
     };
 
     return {
@@ -438,11 +438,16 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
         paidAt: status === 'paid' ? date : null,
         manualPayment: {
             amountPaidCents: paymentAmountCents,
+            paidAt: date
+        },
+        ledgerEntries: [ledgerEntry],
+        adminBilling: {
+            type: 'offline_payment',
+            amountPaidCents: paymentAmountCents,
             paidAt: date,
             note: noteText,
             recordedBy: actorId || null
-        },
-        ledgerEntries: [ledgerEntry]
+        }
     };
 }
 
@@ -465,9 +470,7 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
         type: 'balance_adjustment',
         amountCents: adjustmentCents,
         previousAmountDueCents: priorBalanceCents,
-        amountDueCents,
-        reason,
-        adjustedBy: actorId || null
+        amountDueCents
     };
 
     return {
@@ -477,11 +480,17 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
         adjustment: {
             amountCents: adjustmentCents,
             previousAmountDueCents: priorBalanceCents,
-            amountDueCents,
-            note: reason,
-            adjustedBy: actorId || null
+            amountDueCents
         },
-        ledgerEntries: [ledgerEntry]
+        ledgerEntries: [ledgerEntry],
+        adminBilling: {
+            type: 'balance_adjustment',
+            amountCents: adjustmentCents,
+            previousAmountDueCents: priorBalanceCents,
+            amountDueCents,
+            reason,
+            adjustedBy: actorId || null
+        }
     };
 }
 
@@ -520,9 +529,7 @@ export function buildOfflineRefundUpdate({ refundType = 'full', amount, method, 
         refundAmountCents,
         refundType: normalizedType,
         refundMethod,
-        methodLabel: REFUND_METHOD_LABELS[refundMethod],
-        note: adminNote,
-        recordedBy: actorId || null
+        methodLabel: REFUND_METHOD_LABELS[refundMethod]
     };
 
     return {
@@ -533,11 +540,18 @@ export function buildOfflineRefundUpdate({ refundType = 'full', amount, method, 
         refunded: {
             amountCents: refundAmountCents,
             refundType: normalizedType,
+            refundMethod
+        },
+        ledgerEntries: [ledgerEntry],
+        adminBilling: {
+            type: 'offline_refund',
+            refundAmountCents,
+            refundType: normalizedType,
             refundMethod,
+            methodLabel: REFUND_METHOD_LABELS[refundMethod],
             note: adminNote,
             recordedBy: actorId || null
-        },
-        ledgerEntries: [ledgerEntry]
+        }
     };
 }
 
@@ -809,7 +823,7 @@ function renderRecipients(container, countEl, recipients) {
         const outstanding = formatFeeCurrency(outstandingCents);
         const refundableCents = getRecipientRefundableCents(recipient);
         const canRefundOnline = isOnlineRefundEligible(recipient);
-        const note = recipient.manualPayment?.note || recipient.adjustment?.note || recipient.canceled?.note || recipient.notes || '';
+        const note = recipient.manualPayment?.note || recipient.adjustment?.note || recipient.canceled?.note || recipient.adminBilling?.note || recipient.adminBilling?.reason || recipient.notes || '';
         return `
             <article class="p-5" data-recipient-id="${escapeHtml(recipient.id)}" data-balance-cents="${balanceCents}" data-paid-cents="${paidCents}" data-status="${escapeHtml(normalizeFeeStatus(recipient.status))}">
                 <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
@@ -1157,7 +1171,7 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=48'),
+        import('./db.js?v=50'),
         import('./auth.js?v=23')
     ]);
 

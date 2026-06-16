@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
@@ -30,8 +30,9 @@ import { recordUxTiming } from '../lib/uxTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 import type { AuthState, NavItem } from '../lib/types';
-import { AppSearchDialog } from './AppSearchDialog';
 import { RoleBadge } from './Badges';
+
+const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -294,7 +295,11 @@ export function AppShell({ auth, children }: AppShellProps) {
         </>
       )}
 
-      {searchOpen ? <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} /> : null}
+      {searchOpen ? (
+        <Suspense fallback={null}>
+          <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
+        </Suspense>
+      ) : null}
 
       {addTeamOpen ? (
         <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add workflow">

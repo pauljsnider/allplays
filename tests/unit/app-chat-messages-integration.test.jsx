@@ -538,6 +538,48 @@ describe('React app messages integration', () => {
         expect(chatMocks.loadChatInbox).toHaveBeenCalledTimes(1);
     });
 
+    it('renders inbox rows before deferred preview hydration finishes, then updates the preview copy', async () => {
+        const deferredPreview = createDeferred();
+        chatMocks.loadChatInbox.mockImplementationOnce(async (_user, options = {}) => {
+            deferredPreview.promise.then(() => {
+                options.onPreview?.({
+                    teamId: 'team-1',
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' }),
+                    preferredConversationId: null
+                });
+            });
+            return {
+                teams: [
+                    {
+                        id: 'team-1',
+                        name: 'Bears',
+                        sport: 'Basketball',
+                        role: 'Admin',
+                        canModerate: true,
+                        unreadCount: 2,
+                        lastMessage: null,
+                        preferredConversationId: null
+                    }
+                ]
+            };
+        });
+
+        const { container } = await renderMessages('/messages');
+
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(auth.user, expect.objectContaining({ includeLastMessages: false, onPreview: expect.any(Function) }));
+        expect(container.textContent).toContain('Bears');
+        expect(container.textContent).toContain('No messages yet');
+        expect(container.textContent).not.toContain('Practice packet posted.');
+
+        await act(async () => {
+            deferredPreview.resolve();
+            await deferredPreview.promise;
+        });
+        await flush();
+
+        expect(container.textContent).toContain('Coach Jamie: Practice packet posted.');
+    });
+
     it('refreshes the inbox and keeps the latest preview copy visible', async () => {
         chatMocks.loadChatInbox
             .mockResolvedValueOnce({

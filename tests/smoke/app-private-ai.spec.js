@@ -67,6 +67,10 @@ async function mockPrivateAiModules(page) {
                     return { home, schedule: [] };
                 }
 
+                export async function loadParentScheduleSummary() {
+                    return [];
+                }
+
                 export async function loadParentHomeWithSecondaryData(...args) {
                     return loadParentHome(...args);
                 }
