@@ -446,11 +446,12 @@ export async function sendInviteEmail(email, inviteCode, inviteType, metadata = 
     try {
         await sendSignInLinkToEmail(auth, email, actionCodeSettings);
 
-        // Store email locally so we can retrieve it on the landing page
-        // This helps when user opens link on a different device
-        window.localStorage.setItem('emailForSignIn', email);
-        window.localStorage.setItem('inviteCode', inviteCode);
-        window.localStorage.setItem('inviteType', inviteType);
+        // NOTE: We intentionally do NOT store emailForSignIn / inviteCode / inviteType
+        // in localStorage here. The sender is not the recipient — storing the recipient's
+        // email on the sender's device would let the sender auto-complete sign-in when
+        // the invite link is opened in the same browser (issue #2318).
+        // The recipient's device will be asked for their email by accept-invite.html
+        // if they open the link on a different device from where they requested it.
 
         return {
             success: true,

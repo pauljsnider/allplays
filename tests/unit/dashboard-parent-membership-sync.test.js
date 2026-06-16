@@ -22,7 +22,7 @@ describe('dashboard parent membership sync', () => {
         const html = readRepoFile('dashboard.html');
 
         expect(html).toContain("import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=50';");
-        expect(html).toContain("import { checkAuth } from './js/auth.js?v=24';");
+        expect(html).toContain("import { checkAuth } from './js/auth.js?v=25';");
         expect(html).toContain('function requireSyncedAuth()');
         expect(html).toContain('const user = await requireSyncedAuth();');
         expect(html).toContain('getParentTeams(user.uid)');
