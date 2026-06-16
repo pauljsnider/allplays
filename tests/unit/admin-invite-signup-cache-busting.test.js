@@ -24,13 +24,13 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=24',
-            'accept-invite.html': 'auth.js?v=25',
-            'edit-team.html': 'auth.js?v=24',
-            'js/admin.js': 'auth.js?v=24',
-            'js/live-game.js': 'auth.js?v=24',
-            'js/live-tracker.js': 'auth.js?v=24',
-            'js/track-basketball.js': 'auth.js?v=24'
+            'login.html': 'auth.js?v=25',
+            'accept-invite.html': 'auth.js?v=26',
+            'edit-team.html': 'auth.js?v=25',
+            'js/admin.js': 'auth.js?v=25',
+            'js/live-game.js': 'auth.js?v=25',
+            'js/live-tracker.js': 'auth.js?v=25',
+            'js/track-basketball.js': 'auth.js?v=25'
         };
 
         for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
@@ -44,9 +44,9 @@ describe('admin invite signup cache busting', () => {
         const allAuthImports = utilsSource.match(/await import\('\.\/auth\.js\?v=\d+'\);/g) || [];
         const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=21'\);/g) || [];
 
-        expect(allAuthImports).toEqual(["await import('./auth.js?v=21');"]);
+        expect(allAuthImports).toEqual(["await import('./auth.js?v=22');"]);
         expect(logoutImportMatches).toHaveLength(1);
-        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=23');");
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=24');");
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=25');");
     });
 });
