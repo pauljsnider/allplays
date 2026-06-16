@@ -239,11 +239,23 @@ export function Profile({ auth }: { auth: AuthState }) {
       setAccountMergeEmail('');
 
       try {
-        const loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
-          console.warn('[profile] Unable to load profile:', error);
-          setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
-          return {} as ProfileDocument;
-        });
+        // Seed form fields from the already-hydrated auth.profile when it is
+        // fully populated (has at least fullName and phone), avoiding a redundant
+        // Firestore round-trip. Fall back to loadProfileDocument otherwise.
+        const seededProfile = auth.profile;
+        const isFullyHydrated = seededProfile != null &&
+          typeof seededProfile.fullName === 'string' &&
+          'phone' in seededProfile;
+        let loadedProfile: ProfileDocument;
+        if (isFullyHydrated) {
+          loadedProfile = seededProfile as ProfileDocument;
+        } else {
+          loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
+            console.warn('[profile] Unable to load profile:', error);
+            setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
+            return {} as ProfileDocument;
+          });
+        }
 
         if (cancelled) {
           return;
@@ -271,7 +283,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [auth.profile, user]);
 
   useEffect(() => {
     void refreshPushPermissionStatus();
