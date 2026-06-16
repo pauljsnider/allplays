@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Bell,
   ChevronDown,
@@ -83,6 +83,7 @@ const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
 
 export function Profile({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isDesktopWeb, isNative } = useShellLayout();
   const user = auth.user;
   const [profile, setProfile] = useState<ProfileDocument>({});
@@ -94,6 +95,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [photoChanged, setPhotoChanged] = useState(false);
   const [photoChooserOpen, setPhotoChooserOpen] = useState(false);
   const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
+  const [initialUrlTeamId] = useState(() => searchParams.get('teamId') || '');
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
   const [accessCodes, setAccessCodes] = useState<AccessCodeRecord[]>([]);
@@ -117,7 +119,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [accountMergeStatus, setAccountMergeStatus] = useState<Status | null>(null);
   const [inviteActionStatus, setInviteActionStatus] = useState('');
   const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
-  const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>('account');
+  const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>(() => {
+    const s = searchParams.get('section');
+    return (s === 'account' || s === 'alerts' || s === 'invites' || s === 'security') ? s as ProfileSectionId : 'account';
+  });
   const [notificationTeamsLoaded, setNotificationTeamsLoaded] = useState(false);
   const [accessCodesLoaded, setAccessCodesLoaded] = useState(false);
   const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
@@ -187,6 +192,12 @@ export function Profile({ auth }: { auth: AuthState }) {
 
   const selectProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('section', sectionId);
+      next.delete('teamId');
+      return next;
+    }, { replace: true });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -306,7 +317,11 @@ export function Profile({ auth }: { auth: AuthState }) {
           return;
         }
 
-        const initialTeamId = teams[0]?.id || '';
+        const fallbackTeamId = teams[0]?.id || '';
+        const preferredTeamId = initialUrlTeamId && teams.some((team) => team.id === initialUrlTeamId)
+          ? initialUrlTeamId
+          : fallbackTeamId;
+        const initialTeamId = preferredTeamId;
 
         setNotificationTeams(teams);
         setSelectedTeamId((current) => {
@@ -346,7 +361,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, notificationTeamsLoaded, user]);
+  }, [activeProfileSection, initialUrlTeamId, notificationTeamsLoaded, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1073,7 +1088,20 @@ export function Profile({ auth }: { auth: AuthState }) {
             <div className="mt-4 grid gap-3">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Team</span>
-                <select className="auth-input" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+                <select className="auth-input" value={selectedTeamId} onChange={(event) => {
+                  const nextTeamId = event.target.value;
+                  setSelectedTeamId(nextTeamId);
+                  setSearchParams((current) => {
+                    const next = new URLSearchParams(current);
+                    next.set('section', 'alerts');
+                    if (nextTeamId) {
+                      next.set('teamId', nextTeamId);
+                    } else {
+                      next.delete('teamId');
+                    }
+                    return next;
+                  }, { replace: true });
+                }}>
                   <option value="">Select a team</option>
                   {notificationTeams.map((team) => (
                     <option key={team.id} value={team.id}>{team.name || team.id}</option>
