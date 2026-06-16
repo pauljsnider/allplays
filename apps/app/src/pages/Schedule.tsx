@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { startUxTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -131,6 +132,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [timeRange, setTimeRange] = useState<ScheduleTimeRange>('all');
   const [children, setChildren] = useState<ParentScheduleChild[]>([]);
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
+  const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runAsyncOperation } = useAsyncOperation();
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [visibleListCount, setVisibleListCount] = useState(upcomingListPageSize);
@@ -170,6 +172,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setEvents(data.events);
   };
 
+  const hasLoadedSchedule = Boolean(auth.user?.uid) && loadedScheduleUserId === auth.user?.uid && hasLoadedScheduleRef.current;
   const isInitialScheduleLoad = Boolean(auth.user?.uid) && loadedScheduleUserId !== auth.user?.uid;
 
   const clearAiPreview = () => {
@@ -182,6 +185,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const refreshSchedule = async (force = false) => {
     if (!auth.user) return null;
     clearError();
+    setScheduleLoadError(null);
     setStatusMessage(null);
     const timer = startUxTimer('schedule summary load');
     const hasExistingSchedule = hasLoadedScheduleRef.current;
@@ -197,18 +201,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
       ),
       {
         getErrorMessage: (loadError) => {
-          if (hasExistingSchedule) {
-            return 'Unable to refresh schedule. Showing the last loaded schedule. Try again.';
-          }
-          if (loadError && typeof loadError === 'object' && 'message' in loadError && typeof loadError.message === 'string' && loadError.message.trim()) {
-            return loadError.message;
-          }
-          return 'Unable to load schedule. Try again.';
+          return getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule);
         },
         rethrow: false,
         onSuccess: (result) => {
           hasLoadedScheduleRef.current = true;
           setLoadedScheduleUserId(auth.user?.uid || null);
+          setScheduleLoadError(null);
           applyScheduleResult(result);
 
           if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
@@ -231,15 +230,15 @@ export function Schedule({ auth }: { auth: AuthState }) {
           });
         },
         onError: (loadError) => {
+          const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
+          setScheduleLoadError(mappedError);
           if (!hasExistingSchedule) {
             applyScheduleResult({ children: [], events: [] });
           }
           setLoadedScheduleUserId(auth.user?.uid || null);
           timer.end({
             force,
-            error: loadError && typeof loadError === 'object' && 'message' in loadError && typeof loadError.message === 'string'
-              ? loadError.message
-              : 'Unable to load schedule.'
+            error: mappedError.message
           });
         }
       }
@@ -829,7 +828,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
 
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
-          {error ? <Status tone="error" message={error} /> : null}
+          {error ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : error} /> : null}
 
           {loading || isInitialScheduleLoad ? (
             <LoadingSchedule />
@@ -1326,6 +1325,21 @@ function Status({ tone, message }: { tone: 'success' | 'error'; message: string 
       {message}
     </div>
   );
+}
+
+function getScheduleLoadErrorMessage(error: AppServiceError, hasExistingSchedule: boolean) {
+  if (hasExistingSchedule) {
+    if (error.type === 'network') return 'Unable to refresh schedule while offline. Showing the last loaded schedule.';
+    if (error.type === 'permission') return 'Unable to refresh schedule because access was denied. Showing the last loaded schedule.';
+    if (error.type === 'not_found') return 'Unable to refresh schedule because the requested data was not found. Showing the last loaded schedule.';
+    if (error.type === 'validation') return error.message;
+    return 'Unable to refresh schedule. Showing the last loaded schedule. Try again.';
+  }
+  if (error.type === 'network') return 'Unable to load schedule while offline. Check your connection and try again.';
+  if (error.type === 'permission') return 'You do not have permission to load this schedule.';
+  if (error.type === 'not_found') return 'Schedule data was not found. Try again after refreshing your team access.';
+  if (error.type === 'validation') return error.message;
+  return error.message || 'Unable to load schedule. Try again.';
 }
 
 type ScheduleWebInsights = {

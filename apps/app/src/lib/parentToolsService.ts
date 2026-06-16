@@ -65,7 +65,7 @@ import {
   sortByMediaOrder
 } from '../../../../js/team-media-utils.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
-import { loadParentSchedule } from './scheduleService';
+import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
 
@@ -436,12 +436,9 @@ export async function initiateParentTeamFeeCheckout(teamId: string, batchId: str
   return { success: true, checkoutUrl };
 }
 
-export async function loadParentCalendarTools(user: AuthUser | null) {
+export async function loadParentCalendarTools(user: AuthUser | null, options: { force?: boolean } = {}) {
   if (!user?.uid) return { events: [], teams: [] };
-  const schedule = await loadParentSchedule(user, {
-    hydrateDetails: false,
-    expandStaffPlayers: false
-  });
+  const schedule = await loadParentScheduleSummary(user, { force: options.force });
   const teamsById = new Map<string, ParentCalendarTeam>();
   (schedule.events || []).forEach((event) => {
     if (!event.teamId) return;
