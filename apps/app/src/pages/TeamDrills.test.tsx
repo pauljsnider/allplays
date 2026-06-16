@@ -165,4 +165,40 @@ describe('TeamDrills', () => {
     expect(await screen.findByText('Coach/admin access required')).toBeTruthy();
     expect(screen.getByText('Only team owners, team admins, and global admins can browse and favorite drills for a team.')).toBeTruthy();
   });
+
+  it('deduplicates repeated drill ids when load more returns an already rendered drill', async () => {
+    teamDrillsServiceMocks.loadTeamDrillLibraryPage
+      .mockResolvedValueOnce(createPage({
+        drills: [
+          createDrill({ id: 'published-1', title: 'Published finishing' }),
+          createDrill({ id: 'community-1', title: 'Rondo 4v2' })
+        ],
+        favoriteIds: ['published-1'],
+        nextCursor: { id: 'cursor-1' }
+      }))
+      .mockResolvedValueOnce(createPage({
+        drills: [
+          createDrill({ id: 'published-1', title: 'Published finishing' }),
+          createDrill({ id: 'community-2', title: 'Third-man run pattern' })
+        ],
+        favoriteIds: ['published-1'],
+        nextCursor: null
+      }));
+
+    renderTeamDrills();
+
+    expect(await screen.findByText('Published finishing')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more drills' }));
+
+    await waitFor(() => expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenNthCalledWith(2, 'team-1', auth.user, {
+      searchText: '',
+      type: '',
+      level: '',
+      cursor: { id: 'cursor-1' }
+    }));
+
+    expect(await screen.findByText('Third-man run pattern')).toBeTruthy();
+    expect(screen.getAllByText('Published finishing')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Favorites (1)' })).toBeTruthy();
+  });
 });

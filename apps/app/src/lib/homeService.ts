@@ -8,6 +8,7 @@ import {
   type ParentHomeModel
 } from './homeLogic';
 import { getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
+import { toAppServiceError } from './appErrors';
 import {
   hydrateParentScheduleDetails,
   loadParentSchedule,
@@ -28,12 +29,10 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
   const schedule = await loadParentScheduleSummary(user);
   const [chatInbox, rawFees] = await Promise.all([
     loadChatInbox(user).catch((error) => {
-      console.warn('[home-service] Unable to load chat inbox:', error);
-      return { teams: [] };
+      throw toAppServiceError(error, 'Unable to load Home chat.');
     }),
     Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
-      console.warn('[home-service] Unable to load parent team fees:', error);
-      return [];
+      throw toAppServiceError(error, 'Unable to load Home fees.');
     })
   ]);
 
@@ -85,8 +84,7 @@ export async function loadParentTeamsSummary(user: AuthUser | null, options: { f
       const timer = startUxTimer('teams summary load');
       try {
         const chatInbox = await loadChatInbox(user, { includeLastMessages: false }).catch((error) => {
-          console.warn('[home-service] Unable to load team inbox summary:', error);
-          return { teams: [] };
+          throw toAppServiceError(error, 'Unable to load teams.');
         });
         const children = normalizeChildLinks(user, { parentOf: user.parentOf || [] });
         const model = buildParentHomeModel({
@@ -124,12 +122,10 @@ export async function loadParentHomeWithSecondaryData(
     await hydrateParentScheduleDetails(schedule, user);
     const [chatInbox, rawFees] = await Promise.all([
       loadChatInbox(user).catch((error) => {
-        console.warn('[home-service] Unable to load chat inbox:', error);
-        return { teams: [] };
+        throw toAppServiceError(error, 'Unable to load Home chat.');
       }),
       Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
-        console.warn('[home-service] Unable to load parent team fees:', error);
-        return [];
+        throw toAppServiceError(error, 'Unable to load Home fees.');
       })
     ]);
     return buildParentHomeModel({
