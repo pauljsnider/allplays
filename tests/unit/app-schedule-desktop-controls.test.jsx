@@ -93,9 +93,14 @@ async function renderSchedule() {
 }
 
 async function waitForText(container, text) {
-    for (let index = 0; index < 25; index += 1) {
+    for (let index = 0; index < 200; index += 1) {
         if (container.textContent.includes(text)) return;
         await act(async () => {
+            if (vi.isFakeTimers()) {
+                await vi.advanceTimersByTimeAsync(1);
+                await Promise.resolve();
+                return;
+            }
             await new Promise((resolve) => setTimeout(resolve, 0));
         });
     }
@@ -379,7 +384,7 @@ describe('React app desktop Schedule controls', () => {
         scheduleMocks.loadParentSchedule.mockRejectedValueOnce(new Error('network down'));
 
         await clickButton(container, 'Refresh');
-        await waitForText(container, 'Unable to refresh schedule. Showing the last loaded schedule. Try again.');
+        await waitForText(container, 'Unable to refresh schedule while offline. Showing the last loaded schedule.');
 
         expect(container.textContent).not.toContain('network down');
         expect(container.textContent).toContain('Main Gym');

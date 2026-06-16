@@ -26,6 +26,15 @@ async function readPageReferenceFiles(page) {
     return values.filter((value) => value.endsWith('.html'));
 }
 
+async function expectReferenceRow(page, file, roles) {
+    const row = page.locator('tbody tr').filter({
+        has: page.locator('td.font-mono', { hasText: file })
+    });
+
+    await expect(row, `${file} row should be visible`).toBeVisible();
+    await expect(row, `${file} row should show ${roles}`).toContainText(roles);
+}
+
 function readRepoHtml(relativePath) {
     return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
 }
@@ -119,6 +128,11 @@ test('help center supports workflow discovery and page-reference navigation', as
     await expect(page.locator('tbody')).toContainText('edit-schedule.html');
     await expect(page.locator('tbody')).toContainText('live-game.html');
     await expect(page.locator('tbody')).toContainText('help-page-reference.html');
+    await expectReferenceRow(page, 'certificates.html', 'Parent, Coach, Admin');
+    await expectReferenceRow(page, 'check-admin-status.html', 'Admin');
+    await expectReferenceRow(page, 'registration.html', 'Parent');
+    await expectReferenceRow(page, 'team-fees.html', 'Coach, Admin');
+    await expectReferenceRow(page, 'team-media.html', 'Parent, Coach, Admin');
 
     await page.getByRole('link', { name: '← Back to Help Portal' }).click();
     await expect(page).toHaveURL(/help\.html/);
@@ -148,6 +162,13 @@ test('help manifest and page-reference files resolve successfully', async ({ pag
     expect(referenceFiles).toContain('edit-schedule.html');
     expect(referenceFiles).toContain('live-game.html');
     expect(referenceFiles).toContain('help-page-reference.html');
+    expect(referenceFiles).toEqual(expect.arrayContaining([
+        'certificates.html',
+        'check-admin-status.html',
+        'registration.html',
+        'team-fees.html',
+        'team-media.html'
+    ]));
 
     const uniqueFiles = [...new Set([...workflowFiles, ...referenceFiles])];
     const indexResponse = await request.get(buildUrl(baseURL, '/index.html'));

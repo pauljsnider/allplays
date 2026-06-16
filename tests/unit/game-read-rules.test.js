@@ -5,21 +5,30 @@ const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'u
 const collectionGroupGamesMatch = rules.match(/match \/{path=\*\*}\/games\/\{gameId} \{[\s\S]*?\n\s*}/);
 const collectionGroupGamesRules = collectionGroupGamesMatch?.[0] || '';
 const teamGamesStart = rules.indexOf('match /games/{gameId} {');
-const teamGamesEnd = rules.indexOf('// Events subcollection', teamGamesStart);
+const teamGamesEnd = rules.indexOf('// Live Events subcollection - for real-time game broadcasting', teamGamesStart);
 const teamGamesRules = teamGamesStart === -1 || teamGamesEnd === -1
     ? ''
     : rules.slice(teamGamesStart, teamGamesEnd);
+const eventsMatch = teamGamesRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/);
+const aggregatedStatsMatch = teamGamesRules.match(/match \/aggregatedStats\/\{statId} \{[\s\S]*?\n\s*}/);
+const eventsRules = eventsMatch?.[0] || '';
+const aggregatedStatsRules = aggregatedStatsMatch?.[0] || '';
 
 describe('game Firestore read rules', () => {
     it('replaces unconditional game reads with shared visibility helpers', () => {
         expect(rules).toContain('function canReadGameDocument(teamId, gameId, data)');
+        expect(rules).toContain('function canReadGameSubcollectionDocument(teamId, gameId)');
         expect(rules).toContain('function canReadCollectionGroupGameDocument(teamPath, data)');
         expect(rules).toContain('function canReadManagedTeamDocument(data)');
         expect(rules).toContain('function canReadPublicGameDocument(teamData, data)');
         expect(teamGamesRules).toContain('allow read: if canReadGameDocument(teamId, gameId, resource.data);');
+        expect(eventsRules).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
+        expect(aggregatedStatsRules).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
         expect(collectionGroupGamesRules).toContain('allow read: if canReadCollectionGroupGameDocument(path, resource.data);');
         expect(teamGamesRules).not.toContain('allow read: if true;');
         expect(collectionGroupGamesRules).not.toContain('allow read: if true;');
+        expect(eventsRules).not.toContain('allow read: if true;');
+        expect(aggregatedStatsRules).not.toContain('allow read: if true;');
     });
 
     it('keeps private-team private games unreadable to outsiders while allowing public or shareable games', () => {

@@ -75,14 +75,17 @@ describe('Schedule', () => {
     cleanup();
   });
 
-  it('shows the service error after the initial load fails and clears the loading skeleton', async () => {
-    scheduleServiceMocks.loadParentSchedule.mockRejectedValue(new Error('Schedule unavailable.'));
+  it.each([
+    new TypeError('Failed to fetch'),
+    new Error('Schedule unavailable.')
+  ])('shows network-specific schedule copy after the initial load fails', async (loadError) => {
+    scheduleServiceMocks.loadParentSchedule.mockRejectedValue(loadError);
 
     renderSchedule();
 
     expect(screen.getByRole('status', { name: 'Loading schedule' })).toBeTruthy();
     expect(screen.queryByText('No events in this filter')).toBeNull();
-    expect(await screen.findByText('Schedule unavailable.')).toBeTruthy();
+    expect(await screen.findByText('Unable to load schedule while offline. Check your connection and try again.')).toBeTruthy();
     await waitFor(() => {
       expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull();
     });
@@ -100,7 +103,7 @@ describe('Schedule', () => {
         ],
         events: []
       })
-      .mockRejectedValueOnce(new Error('Refresh failed.'));
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     renderSchedule();
 
@@ -112,8 +115,26 @@ describe('Schedule', () => {
 
     screen.getByRole('button', { name: 'Refresh schedule' }).click();
 
-    expect(await screen.findByText('Unable to refresh schedule. Showing the last loaded schedule. Try again.')).toBeTruthy();
+    expect(await screen.findByText('Unable to refresh schedule while offline. Showing the last loaded schedule.')).toBeTruthy();
     expect(teamFilter.innerHTML).toContain('Bears');
     expect(playerFilter.innerHTML).toContain('Pat');
+  });
+
+  it('shows permission-specific copy when a loaded schedule refresh is denied', async () => {
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce({
+        children: [
+          { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+        ],
+        events: []
+      })
+      .mockRejectedValueOnce(new Error('Permission denied for schedule refresh'));
+
+    renderSchedule();
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    screen.getByRole('button', { name: 'Refresh schedule' }).click();
+
+    expect(await screen.findByText('Unable to refresh schedule because access was denied. Showing the last loaded schedule.')).toBeTruthy();
   });
 });
