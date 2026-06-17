@@ -29,8 +29,8 @@ describe('player Firestore privacy rules', () => {
 
     it('allows linked parents to write household contacts only through the private profile doc', () => {
         expect(rules).not.toContain("affectedKeys().hasOnly(['parents'])");
-        expect(rules).not.toContain("hasOnly(['emergencyContact', 'medicalInfo', 'parents'");
-        expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt'])");
-        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'updatedAt'])");
+        expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
+        expect(rules).toContain("request.resource.data.parents.hasAll(resource.data.parents)");
     });
 });
