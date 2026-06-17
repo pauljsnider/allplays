@@ -25,7 +25,6 @@ import {
 } from 'lucide-react';
 import { describeAuthError, reloadCurrentUser, resendVerificationEmail, sendResetEmail, setCurrentUserPassword } from '../lib/authService';
 import {
-  acquireProfilePhoto,
   createProfileAccessCode,
   loadParentTeams,
   loadNotificationPreferences,
@@ -33,11 +32,9 @@ import {
   loadProfileAccessCodes,
   loadProfileDocument,
   normalizeNotificationPreferences,
-  normalizeProfilePhoto,
   requestAccountMerge,
   saveNotificationPreferences,
-  saveProfileDocument,
-  uploadProfilePhoto
+  saveProfileDocument
 } from '../lib/profileService';
 import {
   enablePushNotificationsForUser,
@@ -50,7 +47,7 @@ import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
 import { NOTIFICATION_PREFERENCE_GROUPS } from '../../../../js/notification-preferences.js';
 import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
-import type { ProfilePhotoSource } from '../lib/profileService';
+import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 import type { AuthState } from '../lib/types';
 
 type Tone = 'neutral' | 'success' | 'error';
@@ -508,7 +505,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     photoSelectionIdRef.current = selectionId;
 
     try {
-      const nextFile = options.normalize === false ? file : await normalizeProfilePhoto(file);
+      const nextFile = options.normalize === false ? file : await import('../lib/profilePhotoService').then((m) => m.normalizeProfilePhoto(file));
       if (photoSelectionIdRef.current !== selectionId) {
         return;
       }
@@ -534,6 +531,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     setProfileStatus(null);
 
     try {
+      const { acquireProfilePhoto } = await import('../lib/profilePhotoService');
       const file = await acquireProfilePhoto(source);
       await prepareSelectedPhoto(file, { normalize: false });
       setPhotoChooserOpen(false);
@@ -589,6 +587,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       let nextPhotoUrl = photoUrlRef.current || '';
       if (selectedPhotoChanged && selectedPhotoFile) {
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
+        const { uploadProfilePhoto } = await import('../lib/profilePhotoService');
         nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile);
       }
 

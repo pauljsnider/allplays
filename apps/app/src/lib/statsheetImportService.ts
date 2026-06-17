@@ -1,4 +1,4 @@
-import { acquireProfilePhoto } from './profileService'
+import { acquireProfilePhoto } from './profilePhotoService'
 import { getConfigs, getGame, getPlayers, getTeam, uploadStatSheetPhoto } from '../../../../js/db.js'
 import { collection, db, deleteDoc, doc, getDocs, writeBatch } from '../../../../js/firebase.js'
 import { buildTrackStatsheetApplyPlan, validateTrackStatsheetApplyRows } from '../../../../js/track-statsheet-apply.js'
