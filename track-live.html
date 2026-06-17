@@ -2667,15 +2667,13 @@
                         liveState.lastClockSyncAt = 0;
                     },
                     cleanupPersistedState: async () => {
-                        const [eventsSnapshot, statsSnapshot, liveEventsSnapshot] = await Promise.all([
+                        const [eventsSnapshot, statsSnapshot] = await Promise.all([
                             getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`)),
-                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`)),
-                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`))
+                            getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`))
                         ]);
                         const cleanupResults = await Promise.allSettled([
                             ...eventsSnapshot.docs.map(eventDoc => deleteDoc(eventDoc.ref)),
-                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref)),
-                            ...liveEventsSnapshot.docs.map(doc => deleteDoc(doc.ref))
+                            ...statsSnapshot.docs.map(doc => deleteDoc(doc.ref))
                         ]);
                         const failedDeletes = cleanupResults.filter((result) => result.status === 'rejected');
                         if (failedDeletes.length) {
