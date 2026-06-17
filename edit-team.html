@@ -604,7 +604,7 @@
             return sources
                 .map((record) => ({
                     provider: String(record.provider || record.providerId || '').trim(),
-                    sourceId: String(record.sourceId || record.registrationSourceId || '').trim(),
+                    sourceId: String(record.sourceId || record.registrationSourceId || record.id || '').trim(),
                     externalTeamId: String(record.externalTeamId || record.teamId || '').trim(),
                     externalTeamName: String(record.externalTeamName || record.teamName || record.name || '').trim(),
                     sport: String(record.sport || '').trim(),
