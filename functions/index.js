@@ -322,9 +322,13 @@ function computeRegistrationFeeAmountCentsFromForm(form, now = new Date()) {
   let remainingAmountCents = originalFeeAmountCents;
   normalizeServerRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
     if (!rule.active || !isServerDiscountRuleEligible(rule, { now })) return;
-    const discountAmountCents = rule.amountType === 'percent'
-      ? Math.round(remainingAmountCents * (rule.amountValue / 100))
-      : Math.round(rule.amountValue);
+    let discountAmountCents;
+    if (rule.amountType === 'percent') {
+      const percentDiscountRate = rule.amountValue / 100;
+      discountAmountCents = Math.round(remainingAmountCents * percentDiscountRate);
+    } else {
+      discountAmountCents = Math.round(rule.amountValue);
+    }
     const appliedAmountCents = Math.min(remainingAmountCents, Math.max(0, discountAmountCents));
     if (appliedAmountCents <= 0) return;
     remainingAmountCents -= appliedAmountCents;

@@ -4,6 +4,55 @@ import { calculateRegistrationFeeSnapshot } from '../../js/registration-flow.js'
 
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 
+function extractFunction(name) {
+    const start = source.indexOf(`function ${name}`);
+    if (start === -1) throw new Error(`${name} not found`);
+    const bodyStart = source.indexOf('{', start);
+    let depth = 0;
+    for (let index = bodyStart; index < source.length; index += 1) {
+        const char = source[index];
+        if (char === '{') depth += 1;
+        if (char === '}') depth -= 1;
+        if (depth === 0) return source.slice(start, index + 1);
+    }
+    throw new Error(`${name} body not found`);
+}
+
+function loadServerFeeHelpers() {
+    return Function(`
+        function isServerDiscountRuleEligible(rule, { now }) {
+            if (rule.type === 'quantity') return true;
+            if (rule.type === 'early_bird') {
+                const deadline = Date.parse(rule.earlyBirdDeadline + 'T23:59:59.999');
+                return Number.isFinite(deadline) && now.getTime() <= deadline;
+            }
+            return false;
+        }
+        function normalizeServerRegistrationDiscountRules(rules) {
+            if (!Array.isArray(rules)) return [];
+            return rules
+                .map((rule, index) => {
+                    const type = String(rule?.type || '').toLowerCase();
+                    const amountType = rule?.amountType === 'percent' ? 'percent' : 'fixed';
+                    const amountValue = Math.max(0, Number(rule?.amountValue || 0));
+                    if (!['early_bird', 'quantity'].includes(type) || amountValue <= 0) return null;
+                    return {
+                        id: String(rule?.id || 'discount_' + (index + 1)).trim(),
+                        type,
+                        amountType,
+                        amountValue,
+                        earlyBirdDeadline: String(rule?.earlyBirdDeadline || '').trim(),
+                        minimumQuantity: Math.max(1, Math.floor(Number(rule?.minimumQuantity || 1))),
+                        active: rule?.active !== false
+                    };
+                })
+                .filter(Boolean);
+        }
+        ${extractFunction('computeRegistrationFeeAmountCentsFromForm')}
+        return { computeRegistrationFeeAmountCentsFromForm };
+    `)();
+}
+
 describe('server-side registration fee recomputation (issue #2243)', () => {
     it('defines computeRegistrationFeeAmountCentsFromForm in functions/index.js', () => {
         expect(source).toContain('function computeRegistrationFeeAmountCentsFromForm(form, now = new Date())');
@@ -75,6 +124,21 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
         };
         const clientSnapshot = calculateRegistrationFeeSnapshot(form, { now: new Date() });
         expect(clientSnapshot.finalAmountDueCents).toBe(10000);
+    });
+
+    it('the server-side fee helper applies fixed discounts before percent discounts without operator precedence drift', () => {
+        const { computeRegistrationFeeAmountCentsFromForm } = loadServerFeeHelpers();
+        const now = new Date('2026-02-01T12:00:00Z');
+        const form = {
+            feeAmountCents: 10000,
+            currency: 'USD',
+            discountRules: [
+                { id: 'early', type: 'early_bird', amountType: 'fixed', amountValue: 1500, earlyBirdDeadline: '2026-03-01', active: true },
+                { id: 'quantity', type: 'quantity', amountType: 'percent', amountValue: 10, minimumQuantity: 1, active: true }
+            ]
+        };
+
+        expect(computeRegistrationFeeAmountCentsFromForm(form, now)).toBe(7650);
     });
 
     it('tampered feeSnapshot on the stored registration document cannot lower the Stripe charge amount', () => {
