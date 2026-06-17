@@ -16,6 +16,13 @@ import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import { isTeamActive } from '../../../../js/team-visibility.js';
 
+export {
+  acquireProfilePhoto,
+  normalizeProfilePhoto,
+  uploadProfilePhoto,
+  type ProfilePhotoSource
+} from './profilePhotoService';
+
 const profileTimeoutMs = 8000;
 const primaryDataTimeoutMs = 3000;
 
