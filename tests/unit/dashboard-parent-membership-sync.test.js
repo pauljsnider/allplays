@@ -18,9 +18,9 @@ function runRequireSyncedAuth(checkAuth, windowObject = { location: { href: '' }
 }
 
 describe('dashboard parent membership sync', () => {
-    it('uses the rich auth path before loading parent-linked teams', () => {
-        const html = readRepoFile('dashboard.html');
+    const html = readRepoFile('dashboard.html');
 
+    it('uses the rich auth path before loading parent-linked teams', () => {
         expect(html).toContain("import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=50';");
         expect(html).toContain("import { checkAuth } from './js/auth.js?v=25';");
         expect(html).toContain('function requireSyncedAuth()');
@@ -68,5 +68,52 @@ describe('dashboard parent membership sync', () => {
         await expect(runRequireSyncedAuth(checkAuth)).resolves.toBe(user);
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it('separates full-access teams from parent-only teams using distinct maps', () => {
+        expect(html).toContain('fullAccessMap');
+        expect(html).toContain('parentOnlyTeams');
+        expect(html).toContain('fullAccessTeams');
+    });
+
+    it('does not merge parent-only teams into the primary full-access grid', () => {
+        expect(html).toContain('full-access-teams-grid');
+        expect(html).toContain('fullAccessTeams.map(team => renderTeamCard');
+    });
+
+    it('renders parent-only teams in a separate collapsed section for mixed-role users', () => {
+        expect(html).toContain('parent-teams-section');
+        expect(html).toContain('parent-teams-collapsible');
+        expect(html).toContain('parent-teams-toggle');
+        expect(html).toContain('parentOnlyTeams.map(team => renderTeamCard');
+    });
+
+    it('labels the collapsed parent section with "Parent view only"', () => {
+        expect(html).toContain('Parent view only (${parentOnlyTeams.length})');
+    });
+
+    it('shows a parent-only notice and guidance for users with no full-access teams', () => {
+        expect(html).toContain('parent-only-notice');
+        expect(html).toContain('Parent view only');
+        expect(html).toContain('parent-dashboard.html');
+        expect(html).toContain('Parent Dashboard');
+    });
+
+    it('handles the parent-only case with a dedicated notice block before the parent teams grid', () => {
+        expect(html).toContain('parent-only-teams-grid');
+        expect(html).toContain('fullAccessTeams.length === 0 && parentOnlyTeams.length > 0');
+    });
+
+    it('deduplicates teams accessible as both coach and parent into the full-access list', () => {
+        expect(html).toContain('if (fullAccessMap.has(t.id)) return;');
+    });
+
+    it('collapses the parent section by default via hidden class', () => {
+        expect(html).toContain('"hidden mt-4 space-y-6"');
+    });
+
+    it('toggles aria-expanded on the parent section button', () => {
+        expect(html).toContain('aria-expanded');
+        expect(html).toContain("toggle.setAttribute('aria-expanded'");
     });
 });
