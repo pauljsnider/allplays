@@ -1,0 +1,90 @@
+import { Bell, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import type { NotificationInboxItem } from '../lib/notificationInboxService';
+
+interface NotificationInboxSheetProps {
+    items: NotificationInboxItem[];
+    uid: string;
+    onClose: () => void;
+    onMarkRead: (uid: string, itemId: string) => Promise<void>;
+}
+
+export function NotificationInboxSheet({ items, uid, onClose, onMarkRead }: NotificationInboxSheetProps) {
+    const navigate = useNavigate();
+
+    const handleItemClick = async (item: NotificationInboxItem) => {
+        if (!item.readAt) {
+            await onMarkRead(uid, item.id);
+        }
+        if (item.appRoute) {
+            navigate(item.appRoute);
+        }
+        onClose();
+    };
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Notifications"
+        >
+            <div className="w-full max-w-lg rounded-2xl bg-white shadow-app-lg">
+                <div className="flex items-center justify-between border-b border-gray-200 p-4">
+                    <div>
+                        <div className="app-label">Inbox</div>
+                        <h2 className="text-lg font-black text-gray-950">Notifications</h2>
+                    </div>
+                    <button
+                        type="button"
+                        className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
+                        onClick={onClose}
+                        aria-label="Close notifications"
+                    >
+                        <X className="h-5 w-5" aria-hidden="true" />
+                    </button>
+                </div>
+
+                <div className="max-h-[70vh] overflow-y-auto">
+                    {items.length === 0 ? (
+                        <div className="flex flex-col items-center gap-3 px-4 py-12 text-center">
+                            <Bell className="h-10 w-10 text-gray-300" aria-hidden="true" />
+                            <p className="text-sm font-semibold text-gray-500">No notifications yet</p>
+                        </div>
+                    ) : (
+                        <ul role="list" className="divide-y divide-gray-100">
+                            {items.map((item) => {
+                                const isUnread = !item.readAt;
+                                return (
+                                    <li key={item.id}>
+                                        <button
+                                            type="button"
+                                            className={`flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-gray-50 ${isUnread ? 'bg-primary-50' : ''}`}
+                                            onClick={() => void handleItemClick(item)}
+                                            data-testid={`notification-item-${item.id}`}
+                                        >
+                                            {isUnread && (
+                                                <span className="mt-1.5 h-2 w-2 flex-none rounded-full bg-primary-500" aria-label="Unread" />
+                                            )}
+                                            {!isUnread && <span className="mt-1.5 h-2 w-2 flex-none" />}
+                                            <span className="min-w-0 flex-1">
+                                                <span className={`block text-sm leading-snug ${isUnread ? 'font-bold text-gray-950' : 'font-semibold text-gray-700'}`}>
+                                                    {item.text}
+                                                </span>
+                                                {item.type ? (
+                                                    <span className="mt-0.5 block text-xs font-medium text-gray-400 capitalize">
+                                                        {item.type.replace(/_/g, ' ')}
+                                                    </span>
+                                                ) : null}
+                                            </span>
+                                        </button>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
