@@ -1243,4 +1243,55 @@ describe('React app team detail model', () => {
             isPublic: true
         })).rejects.toThrow('You do not have permission to edit this team.');
     });
+
+    it('deduplicates member hydration Firestore reads when staff permissions and parent invites are loaded sequentially for the same team', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star' }
+        ]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
+        const future = Date.now() + 60_000;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                return {
+                    docs: [
+                        { id: 'invite-1', data: () => ({ email: 'admin@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                    ]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        await loadTeamStaffPermissions('team-1', coachUser);
+
+        const parentTeamIdCallCountAfterFirst = getDocs.mock.calls.filter(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentTeamIds')
+        ).length;
+        expect(parentTeamIdCallCountAfterFirst).toBe(1);
+
+        getDocs.mockClear();
+
+        await loadTeamRosterParentInvites('team-1', coachUser);
+
+        const parentTeamIdCallCountAfterSecond = getDocs.mock.calls.filter(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentTeamIds')
+        ).length;
+        expect(parentTeamIdCallCountAfterSecond).toBe(0);
+    });
 });

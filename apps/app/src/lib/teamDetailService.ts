@@ -284,13 +284,17 @@ type TeamDetailBaseSnapshot = {
 type FirestoreDocument = Record<string, any> & { id: string };
 
 const teamDetailBaseSnapshotCache = new Map<string, TeamDetailBaseSnapshot>();
+const relevantTeamMembersCache = new Map<string, any[]>();
 
 export function __resetTeamDetailBaseSnapshotCacheForTests() {
   teamDetailBaseSnapshotCache.clear();
+  relevantTeamMembersCache.clear();
 }
 
 function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
-  teamDetailBaseSnapshotCache.delete(cleanString(teamId));
+  const normalizedTeamId = cleanString(teamId);
+  teamDetailBaseSnapshotCache.delete(normalizedTeamId);
+  relevantTeamMembersCache.delete(normalizedTeamId);
 }
 
 function canManageTeamAdmins(user: AuthUser | null, team: any) {
@@ -649,6 +653,9 @@ async function loadRelevantTeamMembers({
   pendingParentInvites?: any[];
 }) {
   const normalizedTeamId = cleanString(team?.id || team?.teamId);
+  const cached = normalizedTeamId ? relevantTeamMembersCache.get(normalizedTeamId) : undefined;
+  if (cached) return cached;
+
   const userIds = collectRelevantTeamMemberUserIds(team, players);
   const emails = collectRelevantTeamMemberEmails(team, players, [...pendingAdminInvites, ...pendingParentInvites]);
   const parentPlayerKeys = (Array.isArray(players) ? players : [])
@@ -679,7 +686,9 @@ async function loadRelevantTeamMembers({
     if (normalizedEmail && !membersByEmail.has(normalizedEmail)) membersByEmail.set(normalizedEmail, member);
   });
 
-  return Array.from(new Set([...membersById.values(), ...membersByEmail.values()]));
+  const members = Array.from(new Set([...membersById.values(), ...membersByEmail.values()]));
+  if (normalizedTeamId) relevantTeamMembersCache.set(normalizedTeamId, members);
+  return members;
 }
 
 export async function inviteTeamAdminForApp(teamId: string, email: string, user: AuthUser | null = null): Promise<InviteTeamAdminForAppResult> {
