@@ -690,6 +690,11 @@ service cloud.firestore {
              (discounts.size() < 10 || isRegistrationDiscountApplicationValid(discounts[9]));
     }
 
+    // Validates the shape of a client-submitted feeSnapshot.
+    // NOTE: The feeSnapshot.finalAmountDueCents value is NOT trusted for billing.
+    // The createStripeRegistrationCheckoutSession Cloud Function recomputes the charge
+    // amount from the authoritative registrationForm document (feeAmountCents + discountRules)
+    // and ignores whatever the client stored here. This rule only enforces structural validity.
     function isRegistrationFeeSnapshotValid(snapshot) {
       return snapshot is map &&
              snapshot.keys().hasOnly([

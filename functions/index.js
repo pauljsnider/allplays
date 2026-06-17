@@ -281,7 +281,67 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   };
 }
 
-function getRegistrationCheckoutAmountCents(registration = {}) {
+function isServerDiscountRuleEligible(rule, { now }) {
+  if (rule.type === 'quantity') return true; // quantity discounts always apply (single registration = quantity 1 satisfies minimum >= 1)
+  if (rule.type === 'early_bird') {
+    const deadline = Date.parse(`${rule.earlyBirdDeadline}T23:59:59.999`);
+    return Number.isFinite(deadline) && now.getTime() <= deadline;
+  }
+  return false;
+}
+
+function normalizeServerRegistrationDiscountRules(rules) {
+  if (!Array.isArray(rules)) return [];
+  return rules
+    .map((rule, index) => {
+      const type = String(rule?.type || '').toLowerCase();
+      const amountType = rule?.amountType === 'percent' ? 'percent' : 'fixed';
+      const amountValue = Math.max(0, Number(rule?.amountValue || 0));
+      if (!['early_bird', 'quantity'].includes(type) || amountValue <= 0) return null;
+      return {
+        id: String(rule?.id || `discount_${index + 1}`).trim(),
+        type,
+        amountType,
+        amountValue,
+        earlyBirdDeadline: String(rule?.earlyBirdDeadline || '').trim(),
+        minimumQuantity: Math.max(1, Math.floor(Number(rule?.minimumQuantity || 1))),
+        active: rule?.active !== false
+      };
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Recompute the expected checkout amount from the authoritative form document.
+ * This prevents clients from submitting a tampered feeSnapshot with a lower amount —
+ * pricing authority lives in the server-fetched registrationForm, not in the
+ * client-submitted registration document.
+ */
+function computeRegistrationFeeAmountCentsFromForm(form, now = new Date()) {
+  const originalFeeAmountCents = Math.max(0, Math.round(Number(form.feeAmountCents || 0)));
+  let remainingAmountCents = originalFeeAmountCents;
+  normalizeServerRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
+    if (!rule.active || !isServerDiscountRuleEligible(rule, { now })) return;
+    let discountAmountCents;
+    if (rule.amountType === 'percent') {
+      const percentDiscountRate = rule.amountValue / 100;
+      discountAmountCents = Math.round(remainingAmountCents * percentDiscountRate);
+    } else {
+      discountAmountCents = Math.round(rule.amountValue);
+    }
+    const appliedAmountCents = Math.min(remainingAmountCents, Math.max(0, discountAmountCents));
+    if (appliedAmountCents <= 0) return;
+    remainingAmountCents -= appliedAmountCents;
+  });
+  return Math.max(0, remainingAmountCents);
+}
+
+function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
+  if (form) {
+    // Use the server-recomputed amount from the authoritative form document so
+    // a tampered feeSnapshot stored on the registration cannot lower the charge.
+    return computeRegistrationFeeAmountCentsFromForm(form);
+  }
   return Math.max(0, Math.round(Number(registration.feeSnapshot?.finalAmountDueCents ?? registration.feeAmountCents ?? 0)));
 }
 
@@ -1942,13 +2002,12 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
   }
 
-  const expectedAmountCents = getRegistrationCheckoutAmountCents(registration);
-  const amountCents = input.retryPayment ? expectedAmountCents : (input.amountCents ?? expectedAmountCents);
-  if (!input.retryPayment && input.amountCents !== null && input.amountCents !== expectedAmountCents) {
-    throw new functions.https.HttpsError('failed-precondition', 'Checkout amount does not match the registration fee.');
-  }
+  // Always recompute the expected amount from the authoritative form document.
+  // This prevents a tampered feeSnapshot on the stored registration from lowering the charge.
+  const expectedAmountCents = getRegistrationCheckoutAmountCents(registration, form);
+  const amountCents = expectedAmountCents;
   const currency = String(
-    (input.retryPayment ? '' : input.currency) || registration.feeSnapshot?.currency || registration.currency || form.currency || 'usd'
+    form.currency || registration.feeSnapshot?.currency || registration.currency || 'usd'
   ).trim().toLowerCase() || 'usd';
   if (!registrationCheckoutAttemptMatches(registration, input)) {
     throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
