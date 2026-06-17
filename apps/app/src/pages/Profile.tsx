@@ -505,7 +505,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     photoSelectionIdRef.current = selectionId;
 
     try {
-      const nextFile = options.normalize === false ? file : await import('../lib/profileService').then((m) => m.normalizeProfilePhoto(file));
+      const nextFile = options.normalize === false ? file : await import('../lib/profilePhotoService').then((m) => m.normalizeProfilePhoto(file));
       if (photoSelectionIdRef.current !== selectionId) {
         return;
       }
@@ -531,7 +531,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     setProfileStatus(null);
 
     try {
-      const { acquireProfilePhoto } = await import('../lib/profileService');
+      const { acquireProfilePhoto } = await import('../lib/profilePhotoService');
       const file = await acquireProfilePhoto(source);
       await prepareSelectedPhoto(file, { normalize: false });
       setPhotoChooserOpen(false);
@@ -587,7 +587,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       let nextPhotoUrl = photoUrlRef.current || '';
       if (selectedPhotoChanged && selectedPhotoFile) {
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
-        const { uploadProfilePhoto } = await import('../lib/profileService');
+        const { uploadProfilePhoto } = await import('../lib/profilePhotoService');
         nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile);
       }
 
