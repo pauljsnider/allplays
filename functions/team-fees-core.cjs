@@ -140,13 +140,9 @@ function isEligibleTeamFeePayer({ team = {}, user = {}, uid = '', email = '', re
     const teamId = normalizeString(recipient.teamId || team.id);
     const playerId = normalizeString(recipient.playerId);
     const playerKey = normalizeString(recipient.playerKey || (teamId && playerId ? `${teamId}::${playerId}` : ''));
-    const parentTeamIds = Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [];
     const parentPlayerKeys = Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [];
 
-    return Boolean(
-        (teamId && parentTeamIds.includes(teamId)) ||
-        (playerKey && parentPlayerKeys.includes(playerKey))
-    );
+    return Boolean(playerKey && parentPlayerKeys.includes(playerKey));
 }
 
 function buildTeamFeeCheckoutUrls(appUrl, { teamId, batchId, recipientId }) {
