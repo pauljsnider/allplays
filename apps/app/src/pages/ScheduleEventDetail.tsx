@@ -100,48 +100,54 @@ import {
   type StaffRsvpReminderPreview,
   type ScheduleRideOffer
 } from '../lib/scheduleLogic';
+import {
+  assignLineupPlayer,
+  buildLineupAiPrompt,
+  buildLineupEditorAssignments,
+  buildLineupEditorPlayers,
+  buildProjectedPlayingTimeSummary,
+  buildRoundRobinLineup,
+  clearLineupPlayer,
+  getLineupAiModel,
+  getLineupSlotKey,
+  getOrderedLineupPeriods,
+  moveLineupPlayer,
+  parseAiLineupPlan
+} from '../lib/gameDayLineupBuilder';
+import {
+  buildAppWrapupCompletionPayload,
+  buildGameWrapupEmailDraft,
+  generateGameWrapupArtifactsForApp,
+  type PracticeFeedItem
+} from '../lib/gameWrapupService';
+import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
+import {
+  appendPracticeTimelineLiveNoteForApp,
+  createPracticeTimelineBlockFromOption,
+  getPracticeTimelineTotalMinutes,
+  loadPracticeTimelineModel,
+  savePracticeTimelineForApp,
+  type PracticeTimelineBlock,
+  type PracticeTimelineDrillOption
+} from '../lib/practiceTimelineService';
+import {
+  acquireTrackStatsheetPhoto,
+  analyzeTrackStatsheetPhoto,
+  applyTrackStatsheetImportForApp,
+  loadTrackStatsheetContextForApp,
+  type TrackStatsheetReviewRow
+} from '../lib/statsheetImportService';
 // Type-only imports for deferred modules — runtime values loaded on demand below
 import type { LiveGameChatMessage } from '../lib/liveGameChatService';
 import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
 
 // Deferred module type aliases for promise caches
-type GameDayLineupBuilderModule = typeof import('../lib/gameDayLineupBuilder');
-type GameWrapupModule = typeof import('../lib/gameWrapupService');
-type GameReportModule = typeof import('../lib/gameReportService');
 type LiveGameChatModule = typeof import('../lib/liveGameChatService');
 type LiveGameReactionsModule = typeof import('../lib/liveGameReactionsService');
-type PracticeTimelineModule = typeof import('../lib/practiceTimelineService');
-type StatsheetImportModule = typeof import('../lib/statsheetImportService');
 
 // Module-level promise caches — each module loads at most once per session
-let gameDayLineupBuilderModulePromise: Promise<GameDayLineupBuilderModule> | null = null;
-let gameWrapupModulePromise: Promise<GameWrapupModule> | null = null;
-let gameReportModulePromise: Promise<GameReportModule> | null = null;
 let liveGameChatModulePromise: Promise<LiveGameChatModule> | null = null;
 let liveGameReactionsModulePromise: Promise<LiveGameReactionsModule> | null = null;
-let practiceTimelineModulePromise: Promise<PracticeTimelineModule> | null = null;
-let statsheetImportModulePromise: Promise<StatsheetImportModule> | null = null;
-
-function loadGameDayLineupBuilderModule() {
-  if (!gameDayLineupBuilderModulePromise) {
-    gameDayLineupBuilderModulePromise = import('../lib/gameDayLineupBuilder');
-  }
-  return gameDayLineupBuilderModulePromise;
-}
-
-function loadGameWrapupModule() {
-  if (!gameWrapupModulePromise) {
-    gameWrapupModulePromise = import('../lib/gameWrapupService');
-  }
-  return gameWrapupModulePromise;
-}
-
-function loadGameReportModule() {
-  if (!gameReportModulePromise) {
-    gameReportModulePromise = import('../lib/gameReportService');
-  }
-  return gameReportModulePromise;
-}
 
 function loadLiveGameChatModule() {
   if (!liveGameChatModulePromise) {
@@ -155,20 +161,6 @@ function loadLiveGameReactionsModule() {
     liveGameReactionsModulePromise = import('../lib/liveGameReactionsService');
   }
   return liveGameReactionsModulePromise;
-}
-
-function loadPracticeTimelineModule() {
-  if (!practiceTimelineModulePromise) {
-    practiceTimelineModulePromise = import('../lib/practiceTimelineService');
-  }
-  return practiceTimelineModulePromise;
-}
-
-function loadStatsheetImportModule() {
-  if (!statsheetImportModulePromise) {
-    statsheetImportModulePromise = import('../lib/statsheetImportService');
-  }
-  return statsheetImportModulePromise;
 }
 import type { AuthState } from '../lib/types';
 import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
