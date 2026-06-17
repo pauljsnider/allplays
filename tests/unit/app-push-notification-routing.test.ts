@@ -22,6 +22,12 @@ describe('app push notification routing', () => {
         expect(resolvePushNotificationRoute({ category: 'schedule', teamId: 'team-1', eventId: 'event-9' })).toBe('/schedule/team-1/event-9');
     });
 
+    it('routes liveScore to the game hub even when a backend-supplied appRoute is present', () => {
+        expect(resolvePushNotificationRoute({ category: 'liveScore', teamId: 'team-1', gameId: 'game-7', appRoute: '/schedule/team-1/game-7' })).toBe('/schedule/team-1/game-7?section=game');
+        expect(resolvePushNotificationRoute({ category: 'liveScore', teamId: 'team-1', gameId: 'game-7', appRoute: '/schedule/team-1/game-7?section=availability' })).toBe('/schedule/team-1/game-7?section=game');
+        expect(resolvePushNotificationRoute({ category: 'schedule', teamId: 'team-1', eventId: 'event-9', appRoute: '/schedule/team-1/event-9' })).toBe('/schedule/team-1/event-9');
+    });
+
     it('falls back to legacy web links when an explicit app route is absent', () => {
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/team-chat.html?teamId=team-1' })).toBe('/messages/team-1');
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff-2' })).toBe('/messages/team-1?conversationId=staff-2');
