@@ -6,23 +6,25 @@ import { defineConfig } from 'vitest/config';
 const workspaceRoot = path.dirname(fileURLToPath(import.meta.url));
 const appNodeModules = path.resolve(workspaceRoot, 'apps/app/node_modules');
 const rootNodeModules = path.resolve(workspaceRoot, 'node_modules');
+// When running from a git worktree the local node_modules dirs may not exist;
+// fall back to the parent checkout that owns the actual installs.
+const parentRoot = path.resolve(workspaceRoot, '../../..');
+const parentAppNodeModules = path.resolve(parentRoot, 'apps/app/node_modules');
+const parentRootNodeModules = path.resolve(parentRoot, 'node_modules');
 
 function resolveModule(moduleName: string, relativePath = moduleName) {
-  const appPath = path.resolve(appNodeModules, relativePath);
-  if (fs.existsSync(appPath)) {
-    return appPath;
-  }
-
-  const rootPath = path.resolve(rootNodeModules, relativePath);
-  if (fs.existsSync(rootPath)) {
-    return rootPath;
+  for (const base of [appNodeModules, rootNodeModules, parentAppNodeModules, parentRootNodeModules]) {
+    const resolved = path.resolve(base, relativePath);
+    if (fs.existsSync(resolved)) {
+      return resolved;
+    }
   }
 
   if (moduleName === 'lucide-react') {
     return path.resolve(workspaceRoot, 'tests/support/lucide-react-stub.ts');
   }
 
-  return rootPath;
+  return path.resolve(rootNodeModules, relativePath);
 }
 
 export default defineConfig({
@@ -40,7 +42,8 @@ export default defineConfig({
       '@capacitor/filesystem': resolveModule('@capacitor/filesystem'),
       '@capacitor/share': resolveModule('@capacitor/share'),
       '@capacitor-firebase/messaging': resolveModule('@capacitor-firebase/messaging'),
-      '@capawesome/capacitor-badge': resolveModule('@capawesome/capacitor-badge')
+      '@capawesome/capacitor-badge': resolveModule('@capawesome/capacitor-badge'),
+      'dompurify': resolveModule('dompurify')
     },
     dedupe: ['react', 'react-dom', 'react-router-dom']
   }
