@@ -71,6 +71,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [addTeamOpen, setAddTeamOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxItems, setInboxItems] = useState<NotificationInboxItem[]>([]);
+  const [inboxState, setInboxState] = useState<'loading' | 'ready' | 'error'>('loading');
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
@@ -127,7 +128,17 @@ export function AppShell({ auth, children }: AppShellProps) {
   useEffect(() => {
     const uid = auth.user?.uid;
     if (!uid) return;
-    const unsubscribe = subscribeToNotificationInbox(uid, setInboxItems);
+    setInboxState('loading');
+    const unsubscribe = subscribeToNotificationInbox(
+      uid,
+      (items) => {
+        setInboxItems(items);
+        setInboxState('ready');
+      },
+      () => {
+        setInboxState((prev) => (prev === 'ready' ? 'ready' : 'error'));
+      }
+    );
     return unsubscribe;
   }, [auth.user?.uid]);
 
@@ -360,6 +371,7 @@ export function AppShell({ auth, children }: AppShellProps) {
         <Suspense fallback={null}>
           <NotificationInboxSheet
             items={inboxItems}
+            inboxState={inboxState}
             uid={auth.user?.uid ?? ''}
             onClose={() => setInboxOpen(false)}
             onMarkRead={markNotificationRead}

@@ -54,6 +54,7 @@ describe('Notification inbox review regressions', () => {
                         readAt: null,
                     },
                 ]}
+                inboxState="ready"
                 uid="user-1"
                 onClose={onClose}
                 onMarkRead={onMarkRead}
@@ -83,5 +84,77 @@ describe('Notification inbox review regressions', () => {
             'Failed to subscribe to notification inbox:',
             subscriptionError
         );
+    });
+
+    it('shows loading spinner when inboxState is loading and no items are present', () => {
+        render(
+            <NotificationInboxSheet
+                items={[]}
+                inboxState="loading"
+                uid="user-1"
+                onClose={vi.fn()}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+            />
+        );
+
+        expect(screen.getByTestId('notification-inbox-loading')).toBeTruthy();
+        expect(screen.queryByText('No notifications yet')).toBeNull();
+    });
+
+    it('shows error message when inboxState is error and no items are present', () => {
+        render(
+            <NotificationInboxSheet
+                items={[]}
+                inboxState="error"
+                uid="user-1"
+                onClose={vi.fn()}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+            />
+        );
+
+        expect(screen.getByTestId('notification-inbox-error')).toBeTruthy();
+        expect(screen.queryByText('No notifications yet')).toBeNull();
+        expect(screen.queryByTestId('notification-inbox-loading')).toBeNull();
+    });
+
+    it('shows items with an error banner when inboxState is error but prior items are loaded', () => {
+        render(
+            <NotificationInboxSheet
+                items={[
+                    {
+                        id: 'notif-2',
+                        type: 'game_update',
+                        text: 'Game rescheduled',
+                        appRoute: '/schedule',
+                        createdAt: null,
+                        readAt: null,
+                    },
+                ]}
+                inboxState="error"
+                uid="user-1"
+                onClose={vi.fn()}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+            />
+        );
+
+        expect(screen.getByTestId('notification-item-notif-2')).toBeTruthy();
+        expect(screen.getByTestId('notification-inbox-error-banner')).toBeTruthy();
+        expect(screen.queryByTestId('notification-inbox-error')).toBeNull();
+    });
+
+    it('shows "No notifications yet" only when inboxState is ready and items list is empty', () => {
+        render(
+            <NotificationInboxSheet
+                items={[]}
+                inboxState="ready"
+                uid="user-1"
+                onClose={vi.fn()}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+            />
+        );
+
+        expect(screen.getByText('No notifications yet')).toBeTruthy();
+        expect(screen.queryByTestId('notification-inbox-loading')).toBeNull();
+        expect(screen.queryByTestId('notification-inbox-error')).toBeNull();
     });
 });
