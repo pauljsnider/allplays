@@ -60,19 +60,24 @@ vi.mock('../../apps/app/src/components/NotificationInboxSheet', () => ({
             ) : items.length === 0 ? (
                 <p>No notifications yet</p>
             ) : (
-                <ul>
-                    {items.map((item) => (
-                        <li key={item.id}>
-                            <button
-                                type="button"
-                                data-testid={`notification-item-${item.id}`}
-                                onClick={() => void onMarkRead(uid, item.id).then(onClose)}
-                            >
-                                {item.text}
-                            </button>
-                        </li>
-                    ))}
-                </ul>
+                <>
+                    {inboxState === 'error' && (
+                        <p data-testid="inbox-error-banner">Could not refresh</p>
+                    )}
+                    <ul>
+                        {items.map((item) => (
+                            <li key={item.id}>
+                                <button
+                                    type="button"
+                                    data-testid={`notification-item-${item.id}`}
+                                    onClick={() => void onMarkRead(uid, item.id).then(onClose)}
+                                >
+                                    {item.text}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </>
             )}
             <button type="button" onClick={onClose} aria-label="Close notifications">
                 Close
@@ -319,9 +324,10 @@ describe('Notification bell in AppShell', () => {
             capturedOnError?.(new Error('Lost connection'));
         });
 
-        // Items should still be visible; no full error blank slate
+        // Items still visible with error banner; no full error blank slate
         await waitFor(() => {
             expect(screen.getByTestId('notification-item-n1')).toBeTruthy();
+            expect(screen.getByTestId('inbox-error-banner')).toBeTruthy();
         });
         expect(screen.queryByTestId('inbox-error-state')).toBeNull();
     });

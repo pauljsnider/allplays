@@ -136,7 +136,7 @@ export function AppShell({ auth, children }: AppShellProps) {
         setInboxState('ready');
       },
       () => {
-        setInboxState((prev) => (prev === 'ready' ? 'ready' : 'error'));
+        setInboxState('error');
       }
     );
     return unsubscribe;
