@@ -71,6 +71,7 @@ describe('team fee checkout function helpers', () => {
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'parent_1' })).toBe(true);
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'parent_2', user: { parentPlayerKeys: ['team_123::player_1'] } })).toBe(true);
         expect(isEligibleTeamFeePayer({ team, recipient, uid: 'fan_1', email: 'fan@example.com' })).toBe(false);
+        expect(isEligibleTeamFeePayer({ team, recipient, uid: 'other_parent', user: { parentTeamIds: ['team_123'] } })).toBe(false);
     });
 
     it('builds parent-dashboard return URLs and safe Stripe metadata', () => {
