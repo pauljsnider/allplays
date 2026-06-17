@@ -125,8 +125,20 @@ export function hasScorekeepingTeamAccess(user, team, game = null, rsvp = null) 
 }
 
 /**
+ * Check whether a user has videographer access for a team.
+ * Videography is always a selected-member-only permission.
+ */
+export function hasVideographerTeamAccess(user, team) {
+  if (!user || !team) return false;
+  if (hasFullTeamAccess(user, team)) return true;
+  if (!team.teamPermissions?.videography) return false;
+  const permissions = normalizeTeamPermissions(team.teamPermissions);
+  return normalizeMemberIdList(permissions.videography.memberIds).includes(String(user.uid || '').trim());
+}
+
+/**
  * Determine user's access level for a team.
- * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'stream-score'|'parent'|null, exitUrl: string }}
+ * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'stream-score'|'videographer'|'parent'|null, exitUrl: string }}
  */
 function hasParentTeamAccess(user, teamId) {
   if (!user || !teamId) return false;
@@ -165,6 +177,10 @@ export function getTeamAccessInfo(user, team, options = {}) {
 
   if (canStream) {
     return { hasAccess: true, accessLevel: 'stream', exitUrl: teamExitUrl };
+  }
+
+  if (hasVideographerTeamAccess(user, team)) {
+    return { hasAccess: true, accessLevel: 'videographer', exitUrl: teamExitUrl };
   }
 
   if (hasParentTeamAccess(user, team.id)) {
