@@ -1670,11 +1670,16 @@ service cloud.firestore {
           // Coaches/admins can write freely.
           allow create, update: if isTeamOwnerOrAdmin(teamId);
 
-          // Parents can only write specific sensitive fields for their linked player.
+          // Parents can write their own sensitive fields and append household contacts.
+          // The hasAll constraint prevents parents from replacing or removing existing
+          // contacts written by other parents or admins — only arrayUnion is effectively
+          // allowed on the parents field from client code.
           allow create: if isParentForPlayer(teamId, playerId) &&
                            request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt']);
           allow update: if isParentForPlayer(teamId, playerId) &&
-                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt']);
+                           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt']) &&
+                           (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['parents']) ||
+                            request.resource.data.parents.hasAll(resource.data.parents));
 
           allow delete: if isTeamOwnerOrAdmin(teamId);
         }
