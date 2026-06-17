@@ -100,43 +100,6 @@ import {
   type StaffRsvpReminderPreview,
   type ScheduleRideOffer
 } from '../lib/scheduleLogic';
-import {
-  assignLineupPlayer,
-  buildLineupAiPrompt,
-  buildLineupEditorAssignments,
-  buildLineupEditorPlayers,
-  buildProjectedPlayingTimeSummary,
-  buildRoundRobinLineup,
-  clearLineupPlayer,
-  getLineupAiModel,
-  getLineupSlotKey,
-  getOrderedLineupPeriods,
-  moveLineupPlayer,
-  parseAiLineupPlan
-} from '../lib/gameDayLineupBuilder';
-import {
-  buildAppWrapupCompletionPayload,
-  buildGameWrapupEmailDraft,
-  generateGameWrapupArtifactsForApp,
-  type PracticeFeedItem
-} from '../lib/gameWrapupService';
-import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
-import {
-  appendPracticeTimelineLiveNoteForApp,
-  createPracticeTimelineBlockFromOption,
-  getPracticeTimelineTotalMinutes,
-  loadPracticeTimelineModel,
-  savePracticeTimelineForApp,
-  type PracticeTimelineBlock,
-  type PracticeTimelineDrillOption
-} from '../lib/practiceTimelineService';
-import {
-  acquireTrackStatsheetPhoto,
-  analyzeTrackStatsheetPhoto,
-  applyTrackStatsheetImportForApp,
-  loadTrackStatsheetContextForApp,
-  type TrackStatsheetReviewRow
-} from '../lib/statsheetImportService';
 // Type-only imports for deferred modules — runtime values loaded on demand below
 import type { LiveGameChatMessage } from '../lib/liveGameChatService';
 import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
