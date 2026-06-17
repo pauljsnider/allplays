@@ -294,7 +294,11 @@ export function __resetTeamDetailBaseSnapshotCacheForTests() {
 function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
   const normalizedTeamId = cleanString(teamId);
   teamDetailBaseSnapshotCache.delete(normalizedTeamId);
-  relevantTeamMembersCache.delete(normalizedTeamId);
+  for (const cacheKey of relevantTeamMembersCache.keys()) {
+    if (cacheKey === normalizedTeamId || cacheKey.startsWith(`${normalizedTeamId}::`)) {
+      relevantTeamMembersCache.delete(cacheKey);
+    }
+  }
 }
 
 function canManageTeamAdmins(user: AuthUser | null, team: any) {
@@ -641,6 +645,24 @@ function collectRelevantTeamMemberEmails(team: any, players: any[] = [], invites
   return [...emails];
 }
 
+function buildRelevantTeamMembersCacheKey(team: any, pendingAdminInvites: any[] = [], pendingParentInvites: any[] = []) {
+  const normalizedTeamId = cleanString(team?.id || team?.teamId);
+  if (!normalizedTeamId) return '';
+
+  const inviteSignature = [...pendingAdminInvites, ...pendingParentInvites]
+    .map((invite) => [
+      cleanString(invite?.type).toLowerCase(),
+      cleanString(invite?.email).toLowerCase(),
+      cleanString(invite?.playerId),
+      cleanString(invite?.code).toUpperCase()
+    ].join(':'))
+    .filter(Boolean)
+    .sort()
+    .join('|');
+
+  return inviteSignature ? `${normalizedTeamId}::${inviteSignature}` : normalizedTeamId;
+}
+
 async function loadRelevantTeamMembers({
   team,
   players = [],
@@ -652,10 +674,11 @@ async function loadRelevantTeamMembers({
   pendingAdminInvites?: any[];
   pendingParentInvites?: any[];
 }) {
-  const normalizedTeamId = cleanString(team?.id || team?.teamId);
-  const cached = normalizedTeamId ? relevantTeamMembersCache.get(normalizedTeamId) : undefined;
+  const cacheKey = buildRelevantTeamMembersCacheKey(team, pendingAdminInvites, pendingParentInvites);
+  const cached = cacheKey ? relevantTeamMembersCache.get(cacheKey) : undefined;
   if (cached) return cached;
 
+  const normalizedTeamId = cleanString(team?.id || team?.teamId);
   const userIds = collectRelevantTeamMemberUserIds(team, players);
   const emails = collectRelevantTeamMemberEmails(team, players, [...pendingAdminInvites, ...pendingParentInvites]);
   const parentPlayerKeys = (Array.isArray(players) ? players : [])
@@ -687,7 +710,7 @@ async function loadRelevantTeamMembers({
   });
 
   const members = Array.from(new Set([...membersById.values(), ...membersByEmail.values()]));
-  if (normalizedTeamId) relevantTeamMembersCache.set(normalizedTeamId, members);
+  if (cacheKey) relevantTeamMembersCache.set(cacheKey, members);
   return members;
 }
 

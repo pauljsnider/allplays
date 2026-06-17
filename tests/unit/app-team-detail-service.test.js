@@ -1244,7 +1244,7 @@ describe('React app team detail model', () => {
         })).rejects.toThrow('You do not have permission to edit this team.');
     });
 
-    it('deduplicates member hydration Firestore reads when staff permissions and parent invites are loaded sequentially for the same team', async () => {
+    it('reloads member hydration when roster parent invites add new email inputs after staff permissions were cached', async () => {
         getTeam.mockResolvedValue({
             id: 'team-1',
             name: 'Bears',
@@ -1263,13 +1263,29 @@ describe('React app team detail model', () => {
             return { id: ref.id, exists: () => false, data: () => ({}) };
         });
         const future = Date.now() + 60_000;
+        let teamIdQueryCount = 0;
         getDocs.mockImplementation(async (queryParts) => {
             const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
             const filter = filters[0] || {};
             if (filter.field === 'teamId') {
+                teamIdQueryCount += 1;
+                if (teamIdQueryCount === 1) {
+                    return {
+                        docs: [
+                            { id: 'invite-1', data: () => ({ email: 'admin@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                        ]
+                    };
+                }
                 return {
                     docs: [
-                        { id: 'invite-1', data: () => ({ email: 'admin@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                        { id: 'invite-2', data: () => ({ email: 'parentinvite@example.com', playerId: 'player-1', teamId: 'team-1', code: 'PARENT1', type: 'parent_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                    ]
+                };
+            }
+            if (filter.field === 'email' && filter.value === 'parentinvite@example.com') {
+                return {
+                    docs: [
+                        { id: 'parent-1', data: () => ({ email: 'parentinvite@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) }
                     ]
                 };
             }
@@ -1279,19 +1295,22 @@ describe('React app team detail model', () => {
         const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
 
         await loadTeamStaffPermissions('team-1', coachUser);
-
-        const parentTeamIdCallCountAfterFirst = getDocs.mock.calls.filter(
-            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentTeamIds')
-        ).length;
-        expect(parentTeamIdCallCountAfterFirst).toBe(1);
-
         getDocs.mockClear();
 
-        await loadTeamRosterParentInvites('team-1', coachUser);
+        const summaries = await loadTeamRosterParentInvites('team-1', coachUser);
 
-        const parentTeamIdCallCountAfterSecond = getDocs.mock.calls.filter(
-            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentTeamIds')
-        ).length;
-        expect(parentTeamIdCallCountAfterSecond).toBe(0);
+        expect(summaries).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 1,
+                latestPendingCode: 'PARENT1'
+            }
+        ]);
+        expect(where).toHaveBeenCalledWith('email', '==', 'parentinvite@example.com');
+        expect(getDocs.mock.calls.some(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'email' && part?.value === 'parentinvite@example.com')
+        )).toBe(true);
     });
 });
