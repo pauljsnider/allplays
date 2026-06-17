@@ -84,10 +84,18 @@ describe('ICS recurring tracking ids', () => {
         expect(readTeamPage()).toContain("./js/utils.js?v=11");
     });
 
-    it('declares each calendar tracking helper only once in utils', () => {
+    it('declares each calendar tracking helper only once in utils before the ICS event mapper', () => {
         const utilsSource = readUtilsSource();
+        const trackingIdMatches = utilsSource.match(/export function getCalendarEventTrackingId\(/g) || [];
+        const trackedEventMatches = utilsSource.match(/export function isTrackedCalendarEvent\(/g) || [];
+        const trackingHelperIndex = utilsSource.indexOf('export function getCalendarEventTrackingId(');
+        const trackedHelperIndex = utilsSource.indexOf('export function isTrackedCalendarEvent(');
+        const mapperIndex = utilsSource.indexOf('export function buildGlobalCalendarIcsEvent(');
 
-        expect(utilsSource.match(/export function getCalendarEventTrackingId\(/g)).toHaveLength(1);
-        expect(utilsSource.match(/export function isTrackedCalendarEvent\(/g)).toHaveLength(1);
+        expect(trackingIdMatches).toHaveLength(1);
+        expect(trackedEventMatches).toHaveLength(1);
+        expect(trackingHelperIndex).toBeGreaterThan(-1);
+        expect(trackedHelperIndex).toBeGreaterThan(trackingHelperIndex);
+        expect(mapperIndex).toBeGreaterThan(trackedHelperIndex);
     });
 });
