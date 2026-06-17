@@ -41,32 +41,43 @@ vi.mock('../../apps/app/src/components/AppSearchDialog', () => ({
 vi.mock('../../apps/app/src/components/NotificationInboxSheet', () => ({
     NotificationInboxSheet: ({
         items,
+        inboxState,
         onClose,
         onMarkRead,
         uid,
     }: {
         items: Array<{ id: string; text: string; appRoute: string; readAt: unknown }>;
+        inboxState: 'loading' | 'ready' | 'error';
         uid: string;
         onClose: () => void;
         onMarkRead: (uid: string, itemId: string) => Promise<void>;
     }) => (
         <div role="dialog" aria-label="Notifications" data-testid="notification-inbox-sheet">
-            {items.length === 0 ? (
+            {inboxState === 'loading' && items.length === 0 ? (
+                <p data-testid="inbox-loading-state">Loading notifications…</p>
+            ) : inboxState === 'error' && items.length === 0 ? (
+                <p data-testid="inbox-error-state">Could not load notifications</p>
+            ) : items.length === 0 ? (
                 <p>No notifications yet</p>
             ) : (
-                <ul>
-                    {items.map((item) => (
-                        <li key={item.id}>
-                            <button
-                                type="button"
-                                data-testid={`notification-item-${item.id}`}
-                                onClick={() => void onMarkRead(uid, item.id).then(onClose)}
-                            >
-                                {item.text}
-                            </button>
-                        </li>
-                    ))}
-                </ul>
+                <>
+                    {inboxState === 'error' && (
+                        <p data-testid="inbox-error-banner">Could not refresh</p>
+                    )}
+                    <ul>
+                        {items.map((item) => (
+                            <li key={item.id}>
+                                <button
+                                    type="button"
+                                    data-testid={`notification-item-${item.id}`}
+                                    onClick={() => void onMarkRead(uid, item.id).then(onClose)}
+                                >
+                                    {item.text}
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </>
             )}
             <button type="button" onClick={onClose} aria-label="Close notifications">
                 Close
@@ -149,6 +160,7 @@ describe('Notification bell in AppShell', () => {
         renderShell(true);
         expect(inboxServiceMocks.subscribeToNotificationInbox).toHaveBeenCalledWith(
             'user-1',
+            expect.any(Function),
             expect.any(Function)
         );
     });
@@ -244,5 +256,79 @@ describe('Notification bell in AppShell', () => {
             const badge = screen.getByTestId('notification-unread-badge');
             expect(badge.textContent).toBe('99+');
         });
+    });
+
+    it('shows loading state before the first snapshot callback fires', async () => {
+        // subscribeToNotificationInbox never calls back — inbox stays in loading state
+        inboxServiceMocks.subscribeToNotificationInbox.mockReturnValue(vi.fn());
+
+        renderShell(true);
+
+        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('inbox-loading-state')).toBeTruthy();
+        });
+        expect(screen.queryByText('No notifications yet')).toBeNull();
+    });
+
+    it('shows error state when the onError callback is invoked before any items load', async () => {
+        let capturedOnError: ((error: unknown) => void) | undefined;
+
+        inboxServiceMocks.subscribeToNotificationInbox.mockImplementation(
+            (_uid: string, _callback: unknown, onError: (error: unknown) => void) => {
+                capturedOnError = onError;
+                return vi.fn();
+            }
+        );
+
+        renderShell(true);
+
+        // Trigger the error callback before any items arrive
+        act(() => {
+            capturedOnError?.(new Error('Firestore unavailable'));
+        });
+
+        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('inbox-error-state')).toBeTruthy();
+        });
+        expect(screen.queryByText('No notifications yet')).toBeNull();
+        expect(screen.queryByTestId('inbox-loading-state')).toBeNull();
+    });
+
+    it('keeps showing items after an error fires post-load', async () => {
+        let capturedOnError: ((error: unknown) => void) | undefined;
+
+        inboxServiceMocks.subscribeToNotificationInbox.mockImplementation(
+            (
+                _uid: string,
+                callback: (items: Array<{ id: string; text: string; appRoute: string; readAt: unknown }>) => void,
+                onError: (error: unknown) => void
+            ) => {
+                callback([{ id: 'n1', text: 'Game tonight', appRoute: '/schedule', readAt: null }]);
+                capturedOnError = onError;
+                return vi.fn();
+            }
+        );
+
+        renderShell(true);
+
+        // Open inbox and confirm items loaded
+        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+        await waitFor(() => screen.getByTestId('notification-item-n1'));
+
+        // Now trigger an error
+        act(() => {
+            capturedOnError?.(new Error('Lost connection'));
+        });
+
+        // Items still visible with error banner; no full error blank slate
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-item-n1')).toBeTruthy();
+            expect(screen.getByTestId('inbox-error-banner')).toBeTruthy();
+        });
+        expect(screen.queryByTestId('inbox-error-state')).toBeNull();
     });
 });
