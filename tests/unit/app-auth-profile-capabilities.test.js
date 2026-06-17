@@ -233,14 +233,11 @@ describe('React app auth/profile capability parity', () => {
         expectContains(profileService, [
             'loadProfileDocument',
             'saveProfileDocument',
-            'uploadProfilePhoto',
             'loadNotificationTeams',
             'saveNotificationPreferences',
             'saveNotificationDeviceToken',
             'createProfileAccessCode',
-            'loadProfileAccessCodes',
-            'nativeUploadProfilePhoto',
-            'acquireProfilePhoto'
+            'loadProfileAccessCodes'
         ]);
     });
 
@@ -250,7 +247,7 @@ describe('React app auth/profile capability parity', () => {
         const appPackage = readProjectFile('apps/app/package.json');
         const appPackageLock = readProjectFile('apps/app/package-lock.json');
         const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
-        const profileService = readProjectFile('apps/app/src/lib/profileService.ts');
+        const profilePhotoService = readProjectFile('apps/app/src/lib/profilePhotoService.ts');
         const androidManifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
         const androidSettings = readProjectFile('android/capacitor.settings.gradle');
         const androidCapacitorBuild = readProjectFile('android/app/capacitor.build.gradle');
@@ -260,7 +257,7 @@ describe('React app auth/profile capability parity', () => {
         expectContains(rootPackageLock, ['"node_modules/@capacitor/camera"']);
         expectContains(appPackage, ['"@capacitor/camera":']);
         expectContains(appPackageLock, ['"node_modules/@capacitor/camera"']);
-        expectContains(profileService, [
+        expectContains(profilePhotoService, [
             "from '@capacitor/camera'",
             'Capacitor.isNativePlatform() || window.location.protocol === \'capacitor:\'',
             'Camera.getPhoto',

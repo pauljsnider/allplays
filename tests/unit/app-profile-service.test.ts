@@ -71,7 +71,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { acquireProfilePhoto } from '../../apps/app/src/lib/profileService.ts';
+import { acquireProfilePhoto } from '../../apps/app/src/lib/profilePhotoService.ts';
 
 describe('React app profile photo service', () => {
     beforeEach(() => {
