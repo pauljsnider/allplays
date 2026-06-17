@@ -44,6 +44,24 @@ import {
   type LineupDraftPreviewResult
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
+import {
+  assignLineupPlayer,
+  buildLineupAiPrompt,
+  buildLineupEditorAssignments,
+  buildLineupEditorPlayers,
+  buildProjectedPlayingTimeSummary,
+  buildRoundRobinLineup,
+  clearLineupPlayer,
+  getLineupAiModel,
+  getLineupSlotKey,
+  getOrderedLineupPeriods,
+  moveLineupPlayer,
+  parseAiLineupPlan
+} from '../lib/gameDayLineupBuilder';
+import { buildAppWrapupCompletionPayload, buildGameWrapupEmailDraft, generateGameWrapupArtifactsForApp, type PracticeFeedItem } from '../lib/gameWrapupService';
+import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
+import { appendPracticeTimelineLiveNoteForApp, createPracticeTimelineBlockFromOption, getPracticeTimelineTotalMinutes, loadPracticeTimelineModel, savePracticeTimelineForApp, type PracticeTimelineBlock, type PracticeTimelineDrillOption } from '../lib/practiceTimelineService';
+import { acquireTrackStatsheetPhoto, analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, loadTrackStatsheetContextForApp, type TrackStatsheetReviewRow } from '../lib/statsheetImportService';
 import { buildRotationPlanFromGamePlan } from '../lib/adapters/legacyScheduleHelpers';
 import { applyLiveSubstitution, getSubstitutionOptions } from '../lib/adapters/legacyScheduleHelpers';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
@@ -83,12 +101,8 @@ import {
   type ScheduleRideOffer
 } from '../lib/scheduleLogic';
 // Type-only imports for deferred modules — runtime values loaded on demand below
-import type { PracticeFeedItem } from '../lib/gameWrapupService';
-import type { GameReportData, GameReportInsight, GameReportPlay, GameReportPlayerRow } from '../lib/gameReportService';
 import type { LiveGameChatMessage } from '../lib/liveGameChatService';
 import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
-import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../lib/practiceTimelineService';
-import type { TrackStatsheetReviewRow } from '../lib/statsheetImportService';
 
 // Deferred module type aliases for promise caches
 type GameDayLineupBuilderModule = typeof import('../lib/gameDayLineupBuilder');
