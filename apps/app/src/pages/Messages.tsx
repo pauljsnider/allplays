@@ -531,6 +531,7 @@ function ChatWindow({
   const recipientOptionsPromiseRef = useRef<Promise<ChatRecipientOption[]> | null>(null);
   const recipientOptionsRequestIdRef = useRef(0);
   const currentTeamIdRef = useRef(teamId);
+  const emailSheetLoadedForTeamRef = useRef<string | null>(null);
   const programmaticScrollRef = useRef(false);
   const mountedRef = useRef(true);
   const scheduledScrollFrameRef = useRef<number | null>(null);
@@ -807,6 +808,9 @@ function ChatWindow({
   }, [clearScheduledScrollTimeouts, maybeScrollToLatest]);
 
   useEffect(() => {
+    if (currentTeamIdRef.current !== teamId) {
+      emailSheetLoadedForTeamRef.current = null;
+    }
     currentTeamIdRef.current = teamId;
   }, [teamId]);
 
@@ -1167,9 +1171,12 @@ function ChatWindow({
     setEmailHistoryStatus(null);
     emailDispatch({ type: 'clearSelectedDraft' });
     void ensureRecipientOptionsLoaded().catch(() => undefined);
-    void reloadEmailDrafts();
-    void reloadEmailTemplates();
-    void reloadSentEmailHistory();
+    if (emailSheetLoadedForTeamRef.current !== teamId) {
+      emailSheetLoadedForTeamRef.current = teamId;
+      void reloadEmailDrafts();
+      void reloadEmailTemplates();
+      void reloadSentEmailHistory();
+    }
   };
 
   const handleApplyEmailDraft = (draftId: string) => {
