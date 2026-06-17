@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
+const mountedRoots = [];
+
 const homeMocks = vi.hoisted(() => ({
     loadParentHome: vi.fn(),
     loadParentHomeSummary: vi.fn(),
@@ -108,6 +110,7 @@ async function renderApp(initialEntry = '/home') {
         ));
     });
 
+    mountedRoots.push(root);
     await flush();
     return { container, root };
 }
@@ -507,7 +510,13 @@ beforeEach(() => {
     playerMocks.markParentPlayerIncentivePaid.mockResolvedValue();
 });
 
-afterEach(() => {
+afterEach(async () => {
+    await act(async () => {
+        while (mountedRoots.length) {
+            mountedRoots.pop()?.unmount();
+        }
+        await Promise.resolve();
+    });
     document.body.innerHTML = '';
 });
 
