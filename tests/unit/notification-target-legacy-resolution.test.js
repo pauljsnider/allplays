@@ -29,7 +29,7 @@ describe('legacy category notification target resolution fixtures', () => {
                     normalizeResolvedTargets(fixture.expectedTargets)
                 );
                 expect({
-                    targetQueries: env.counts.targetQueries,
+                    targetQueries: env.counts.recipientQueries ?? env.counts.targetQueries,
                     parentQueries: env.counts.parentQueries,
                     preferenceGets: env.counts.preferenceGets,
                     deviceGets: env.counts.deviceGets

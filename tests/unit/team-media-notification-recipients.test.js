@@ -15,14 +15,22 @@ function getSourceSlice(startMarker, endMarker) {
 function createFirestoreMock({ indexedTargets = [], preferences = {}, devices = {} } = {}) {
     return {
         collection: vi.fn((path) => {
-            if (path.startsWith('teams/') && path.endsWith('/notificationTargets')) {
+            if (path.startsWith('teams/') && path.endsWith('/notificationRecipients')) {
                 return {
-                    where: vi.fn(() => ({
+                    where: vi.fn((field) => ({
                         get: vi.fn(async () => ({
-                            docs: indexedTargets.map((target) => ({
-                                id: `${target.uid}__${target.deviceId}`,
-                                data: () => ({ ...target })
-                            }))
+                            docs: indexedTargets
+                                .filter((target) => {
+                                    const categories = target.categories || { media: true };
+                                    return categories[String(field).replace(/^categories\./, '')] === true;
+                                })
+                                .map((target) => ({
+                                    id: `${target.uid}__${target.deviceId}`,
+                                    data: () => ({
+                                        ...target,
+                                        categories: target.categories || { media: true }
+                                    })
+                                }))
                         }))
                     }))
                 };
