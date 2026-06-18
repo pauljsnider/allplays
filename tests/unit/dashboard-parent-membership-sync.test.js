@@ -99,6 +99,15 @@ describe('dashboard parent membership sync', () => {
         expect(html).toContain('Parent Dashboard');
     });
 
+    it('swaps the management-first header actions for a parent-dashboard CTA in the parent-only case', () => {
+        expect(html).toContain('my-teams-subtitle');
+        expect(html).toContain('create-team-cta');
+        expect(html).toContain('parent-dashboard-cta');
+        expect(html).toContain("subtitle.textContent = 'Parent-linked teams stay read-only here. Use Parent Dashboard for family tasks and quick team access.';");
+        expect(html).toContain("createTeamCta?.classList.add('hidden');");
+        expect(html).toContain("parentDashboardCta?.classList.remove('hidden');");
+    });
+
     it('handles the parent-only case with a dedicated notice block before the parent teams grid', () => {
         expect(html).toContain('parent-only-teams-grid');
         expect(html).toContain('fullAccessTeams.length === 0 && parentOnlyTeams.length > 0');

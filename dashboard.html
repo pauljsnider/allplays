@@ -50,21 +50,28 @@
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                 <div>
                     <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-2 bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent">My Teams</h1>
-                    <p class="text-gray-600 text-sm md:text-base">Manage your teams, rosters, schedules, and stats all in one place.</p>
+                    <p id="my-teams-subtitle" class="text-gray-600 text-sm md:text-base">Manage your teams, rosters, schedules, and stats all in one place.</p>
                 </div>
-                <div class="flex gap-3">
+                <div id="my-teams-actions" class="flex gap-3">
                     <a href="calendar.html"
                         class="inline-flex items-center gap-2 bg-white text-primary-600 px-4 py-3 rounded-xl border border-primary-200 hover:bg-primary-50 transition font-semibold text-sm">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
                         Calendar
                     </a>
-                <a href="edit-team.html"
-                    class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white px-6 py-3 rounded-xl hover:from-primary-700 hover:to-primary-800 transition shadow-lg hover:shadow-xl font-semibold">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-                    </svg>
-                    Create New Team
-                </a>
+                    <a id="create-team-cta" href="edit-team.html"
+                        class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white px-6 py-3 rounded-xl hover:from-primary-700 hover:to-primary-800 transition shadow-lg hover:shadow-xl font-semibold">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                        </svg>
+                        Create New Team
+                    </a>
+                    <a id="parent-dashboard-cta" href="parent-dashboard.html"
+                        class="hidden w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-amber-100 text-amber-900 px-6 py-3 rounded-xl border border-amber-200 hover:bg-amber-200 transition font-semibold">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                        </svg>
+                        Open Parent Dashboard
+                    </a>
                 </div>
             </div>
         </div>
@@ -166,6 +173,17 @@
 
                 const fullAccessTeams = Array.from(fullAccessMap.values());
                 const container = document.getElementById('my-teams-list');
+                const subtitle = document.getElementById('my-teams-subtitle');
+                const createTeamCta = document.getElementById('create-team-cta');
+                const parentDashboardCta = document.getElementById('parent-dashboard-cta');
+
+                if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {
+                    if (subtitle) {
+                        subtitle.textContent = 'Parent-linked teams stay read-only here. Use Parent Dashboard for family tasks and quick team access.';
+                    }
+                    createTeamCta?.classList.add('hidden');
+                    parentDashboardCta?.classList.remove('hidden');
+                }
 
                 // Fetch unread chat counts for all teams
                 const allTeams = [...fullAccessTeams, ...parentOnlyTeams];
