@@ -424,11 +424,11 @@ function InboxRow({ team, active, compact, onSelect }: { team: ChatTeam; active:
   );
 }
 
-function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
+export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
   return (
     <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
       {team.photoUrl ? (
-        <img src={team.photoUrl} alt="" className="h-full w-full object-cover" />
+        <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover" />
       ) : (
         <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
       )}
@@ -1857,14 +1857,18 @@ function isNearBottom(container: HTMLDivElement | null) {
   return container.scrollHeight - container.scrollTop - container.clientHeight <= 96;
 }
 
-function StatusBanner({ status, onClose }: { status: ChatStatus; onClose: () => void }) {
+export function StatusBanner({ status, onClose }: { status: ChatStatus; onClose: () => void }) {
   const toneClass = status.tone === 'error'
     ? 'border-rose-200 bg-rose-50 text-rose-700'
     : status.tone === 'success'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
       : 'border-primary-200 bg-primary-50 text-primary-700';
   return (
-    <div className={`mt-3 flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm font-bold ${toneClass}`}>
+    <div
+      role={status.tone === 'error' ? 'alert' : 'status'}
+      aria-live={status.tone === 'error' ? 'assertive' : 'polite'}
+      className={`mt-3 flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm font-bold ${toneClass}`}
+    >
       <span>{status.message}</span>
       <button type="button" className="rounded-lg p-1" onClick={onClose} aria-label="Close status">
         <X className="h-4 w-4" aria-hidden="true" />
@@ -2406,12 +2410,12 @@ function normalizeTimestampValue(value: unknown) {
   return String(value);
 }
 
-function MessageAvatar({ message, label }: { message: ChatMessage; label: string }) {
+export function MessageAvatar({ message, label }: { message: ChatMessage; label: string }) {
   if (message.ai) {
-    return <img src="./logo_small.png" alt="" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
+    return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
   }
   if (message.senderPhotoUrl) {
-    return <img src={message.senderPhotoUrl} alt="" className="h-8 w-8 rounded-full object-cover" />;
+    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} className="h-8 w-8 rounded-full object-cover" />;
   }
   return (
     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-600">
@@ -2596,7 +2600,7 @@ function Composer({
               {preview.file.type.startsWith('video/') ? (
                 <video src={preview.url} className="h-full w-full object-cover" muted playsInline />
               ) : (
-                <img src={preview.url} alt="" className="h-full w-full object-cover" />
+                <img src={preview.url} alt={preview.file.name || `Attachment preview ${index + 1}`} className="h-full w-full object-cover" />
               )}
               <button type="button" className="absolute right-1 top-1 rounded-full bg-gray-950/70 p-1 text-white" onClick={() => onRemoveFile(index)} aria-label="Remove attachment">
                 <X className="h-3 w-3" aria-hidden="true" />
