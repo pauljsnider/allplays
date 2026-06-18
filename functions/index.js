@@ -3631,6 +3631,11 @@ async function sendDirectTargetsNotification({ targets, category, title, body, t
   };
 }
 
+exports._internal = {
+  getTargetsForCategory,
+  sendCategoryNotification
+};
+
 exports.markNotificationInboxItemRead = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in before updating notification inbox items.');
