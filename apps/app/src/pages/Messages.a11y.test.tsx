@@ -5,9 +5,36 @@ import { MessageAvatar, StatusBanner, TeamAvatar } from './Messages';
 
 vi.mock('lucide-react', () => {
   const Icon = () => null;
-  return new Proxy({}, {
-    get: () => Icon
-  });
+  return {
+    Archive: Icon,
+    BellOff: Icon,
+    Bot: Icon,
+    Camera: Icon,
+    Check: Icon,
+    ChevronDown: Icon,
+    ChevronLeft: Icon,
+    Copy: Icon,
+    Download: Icon,
+    Edit3: Icon,
+    ImageIcon: Icon,
+    Link2: Icon,
+    Loader2: Icon,
+    Mail: Icon,
+    MessageCircle: Icon,
+    Mic: Icon,
+    MoreVertical: Icon,
+    Paperclip: Icon,
+    RefreshCw: Icon,
+    Search: Icon,
+    Send: Icon,
+    Share2: Icon,
+    ShieldCheck: Icon,
+    Smile: Icon,
+    Trash2: Icon,
+    Users: Icon,
+    Video: Icon,
+    X: Icon
+  };
 });
 
 describe('Messages accessibility helpers', () => {
