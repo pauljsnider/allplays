@@ -183,6 +183,12 @@ export type ChatInboxPreviewUpdate = {
   teamId: string;
   lastMessage: ChatMessage | null;
   preferredConversationId: string | null;
+  isMuted: boolean;
+};
+
+type TeamChatStateEntry = {
+  lastReadAt?: unknown;
+  mutedConversations?: Record<string, unknown>;
 };
 
 export type ChatInboxLoadOptions = {
@@ -495,6 +501,22 @@ function getMessageTime(message: ChatMessage | null) {
   return toDate(message?.createdAt)?.getTime() || 0;
 }
 
+function getTeamChatStateEntry(profile: Record<string, any>, teamId: string): TeamChatStateEntry {
+  const state = profile?.teamChatState;
+  if (!state || typeof state !== 'object') return {};
+  const teamState = state[teamId];
+  return teamState && typeof teamState === 'object' ? teamState as TeamChatStateEntry : {};
+}
+
+function isConversationMuted(profile: Record<string, any>, teamId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
+  const mutedConversations = getTeamChatStateEntry(profile, teamId).mutedConversations;
+  if (mutedConversations && typeof mutedConversations === 'object' && mutedConversations[conversationId]) {
+    return true;
+  }
+  return isDefaultTeamConversation(conversationId)
+    && Boolean(profile?.chatMuted && typeof profile.chatMuted === 'object' && profile.chatMuted[teamId]);
+}
+
 function getNewestChatMessage(messages: Array<ChatMessage | null>) {
   return messages.reduce<ChatMessage | null>((newest, message) => (
     getMessageTime(message) > getMessageTime(newest) ? message : newest
@@ -656,15 +678,14 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
           lastMessage: preview.message,
           preferredConversationId: preview.conversationId && !isDefaultTeamConversation(preview.conversationId)
             ? preview.conversationId
-            : null
+            : null,
+          isMuted: isConversationMuted(profile, team.id, preview.conversationId || DEFAULT_TEAM_CONVERSATION_ID)
         });
       } catch (error) {
         console.warn('[chat-service] Deferred inbox preview failed:', sanitizeErrorForLogging(error));
       }
     }));
   }
-
-  const chatMuted = profile.chatMuted && typeof profile.chatMuted === 'object' ? profile.chatMuted : {};
 
   return {
     teams: previews.map(({ team, canModerate, preview }) => ({
@@ -680,7 +701,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       preferredConversationId: preview.conversationId && !isDefaultTeamConversation(preview.conversationId)
         ? preview.conversationId
         : null,
-      isMuted: Boolean(chatMuted[team.id])
+      isMuted: isConversationMuted(profile, team.id, preview.conversationId || DEFAULT_TEAM_CONVERSATION_ID)
     })).sort((a, b) => {
       const aTime = toDate(a.lastMessage?.createdAt)?.getTime() || 0;
       const bTime = toDate(b.lastMessage?.createdAt)?.getTime() || 0;
@@ -1290,19 +1311,28 @@ export async function markTeamChatRead(userId: string, teamId: string) {
     console.warn('[chat-service] Falling back to REST chat last-read update:', sanitizeErrorForLogging(error));
     const userPath = `users/${encodeURIComponent(userId)}`;
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
+    const lastReadAt = new Date();
+    const teamChatState = getTeamChatStateEntry(profile, teamId);
     await nativePatchDocument(userPath, {
       chatLastRead: {
         ...(profile.chatLastRead || {}),
-        [teamId]: new Date()
+        [teamId]: lastReadAt
+      },
+      teamChatState: {
+        ...(profile.teamChatState || {}),
+        [teamId]: {
+          ...teamChatState,
+          lastReadAt
+        }
       }
     });
     return null;
   }
 }
 
-export async function muteTeamChat(uid: string, teamId: string): Promise<void> {
+export async function muteTeamChat(uid: string, teamId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<void> {
   try {
-    await withTimeout(Promise.resolve(updateChatMuted(uid, teamId)), 'Chat mute update', 2500);
+    await withTimeout(Promise.resolve(updateChatMuted(uid, teamId, conversationId)), 'Chat mute update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
       console.warn('[chat-service] Failed to mute team chat:', sanitizeErrorForLogging(error));
@@ -1311,18 +1341,34 @@ export async function muteTeamChat(uid: string, teamId: string): Promise<void> {
     console.warn('[chat-service] Falling back to REST chat mute update:', sanitizeErrorForLogging(error));
     const userPath = `users/${encodeURIComponent(uid)}`;
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
-    await nativePatchDocument(userPath, {
-      chatMuted: {
-        ...(profile.chatMuted || {}),
-        [teamId]: new Date()
+    const mutedAt = new Date();
+    const teamChatState = getTeamChatStateEntry(profile, teamId);
+    const mutedConversations = {
+      ...(teamChatState.mutedConversations || {}),
+      [conversationId]: mutedAt
+    };
+    const updates: Record<string, unknown> = {
+      teamChatState: {
+        ...(profile.teamChatState || {}),
+        [teamId]: {
+          ...teamChatState,
+          mutedConversations
+        }
       }
-    });
+    };
+    if (isDefaultTeamConversation(conversationId)) {
+      updates.chatMuted = {
+        ...(profile.chatMuted || {}),
+        [teamId]: mutedAt
+      };
+    }
+    await nativePatchDocument(userPath, updates);
   }
 }
 
-export async function unmuteTeamChat(uid: string, teamId: string): Promise<void> {
+export async function unmuteTeamChat(uid: string, teamId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<void> {
   try {
-    await withTimeout(Promise.resolve(clearChatMuted(uid, teamId)), 'Chat unmute update', 2500);
+    await withTimeout(Promise.resolve(clearChatMuted(uid, teamId, conversationId)), 'Chat unmute update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
       console.warn('[chat-service] Failed to unmute team chat:', sanitizeErrorForLogging(error));
@@ -1331,9 +1377,24 @@ export async function unmuteTeamChat(uid: string, teamId: string): Promise<void>
     console.warn('[chat-service] Falling back to REST chat unmute update:', sanitizeErrorForLogging(error));
     const userPath = `users/${encodeURIComponent(uid)}`;
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
-    const chatMuted = { ...(profile.chatMuted || {}) };
-    delete chatMuted[teamId];
-    await nativePatchDocument(userPath, { chatMuted });
+    const teamChatState = getTeamChatStateEntry(profile, teamId);
+    const mutedConversations = { ...(teamChatState.mutedConversations || {}) };
+    delete mutedConversations[conversationId];
+    const updates: Record<string, unknown> = {
+      teamChatState: {
+        ...(profile.teamChatState || {}),
+        [teamId]: {
+          ...teamChatState,
+          mutedConversations
+        }
+      }
+    };
+    if (isDefaultTeamConversation(conversationId)) {
+      const chatMuted = { ...(profile.chatMuted || {}) };
+      delete chatMuted[teamId];
+      updates.chatMuted = chatMuted;
+    }
+    await nativePatchDocument(userPath, updates);
   }
 }
 

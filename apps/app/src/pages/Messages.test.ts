@@ -33,11 +33,13 @@ describe('mergeInboxTeams', () => {
         deleted: false,
       },
       preferredConversationId: null,
+      isMuted: true,
     };
 
     const merged = mergeInboxTeams([buildTeam()], new Map([[previewUpdate.teamId, previewUpdate]]));
 
     expect(merged[0].lastMessage?.text).toBe('Practice packet is posted.');
+    expect(merged[0].isMuted).toBe(true);
   });
 
   it('resets teams back to placeholder previews when a new inbox load has no deferred preview yet', () => {
