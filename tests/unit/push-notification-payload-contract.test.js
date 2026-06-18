@@ -8,6 +8,11 @@ describe('push notification payload contract', () => {
         expect(source).toContain('appRoute,');
         expect(source).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}`;");
         expect(source).toContain('eventId: String(eventId || gameId || \'\')');
+        expect(source).toContain('conversationId: String(conversationId || \'\')');
+        expect(source).toContain("if (category === 'liveChat' || category === 'mentions') {");
+        expect(source).toContain("if ((category === 'liveChat' || category === 'mentions') && teamId) {");
+        expect(source).toContain('return `${route}?conversationId=${encodeURIComponent(conversationId)}`;');
+        expect(source).toContain('params.push(`conversationId=${encodeURIComponent(conversationId)}`);');
         expect(source).toContain('fcmOptions: { link }');
     });
 });

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { redeemSignedInInvite } from '../lib/inviteRedemption';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import {
   buildParentScheduleIcs,
   createParentFamilyShare,
@@ -53,6 +54,7 @@ import {
   type ParentRegistrationCard
 } from '../lib/parentToolsService';
 import { getCalendarEventShareText } from '../lib/parentToolsService';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import type { ParentScheduleEvent } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
 
@@ -236,33 +238,41 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
   const [relation, setRelation] = useState('Parent');
-  const [loading, setLoading] = useState(true);
-  const [loadingTeams, setLoadingTeams] = useState(false);
-  const [loadingPlayers, setLoadingPlayers] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [redeemCode, setRedeemCode] = useState('');
-  const [redeeming, setRedeeming] = useState(false);
   const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState<AppServiceError | null>(null);
+  const [manualLookupError, setManualLookupError] = useState<AppServiceError | null>(null);
+  const [actionError, setActionError] = useState<AppServiceError | null>(null);
+  const accessLoadOperation = useAsyncOperation();
+  const teamLoadOperation = useAsyncOperation();
+  const playerLoadOperation = useAsyncOperation();
+  const submitOperation = useAsyncOperation();
+  const redeemOperation = useAsyncOperation();
 
-  const loadAccessModel = async () => {
-    const model = await loadParentAccessModel(auth.user);
-    setRequests(model.requests);
-  };
+  const loading = accessLoadOperation.loading;
+  const loadingTeams = teamLoadOperation.loading;
+  const loadingPlayers = playerLoadOperation.loading;
+  const saving = submitOperation.loading;
+  const redeeming = redeemOperation.loading;
 
   const loadTeams = useCallback(async () => {
-    setLoadingTeams(true);
-    setError('');
-    try {
-      const rows = await loadParentAccessTeams();
-      setTeams(rows);
-      setSelectedTeamId((current) => rows.some((team) => team.id === current) ? current : '');
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load public teams.');
-    } finally {
-      setLoadingTeams(false);
-    }
-  }, []);
+    setManualLookupError(null);
+    setActionError(null);
+    return teamLoadOperation.run(
+      () => loadParentAccessTeams(),
+      {
+        rethrow: false,
+        getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load public teams.'), 'Unable to load public teams.'),
+        onSuccess: (rows) => {
+          setTeams(rows);
+          setSelectedTeamId((current) => rows.some((team) => team.id === current) ? current : '');
+        },
+        onError: (error) => {
+          setManualLookupError(toAppServiceError(error, 'Unable to load public teams.'));
+        }
+      }
+    );
+  }, [teamLoadOperation]);
 
   const openManualRequest = useCallback(() => {
     setManualRequestOpen(true);
@@ -271,18 +281,25 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
     }
   }, [loadTeams, loadingTeams, teams.length]);
 
-  const refresh = async () => {
-    setLoading(true);
-    setError('');
+  const refresh = useCallback(async () => {
+    setLoadError(null);
+    setManualLookupError(null);
+    setActionError(null);
     setMessage('');
-    try {
-      await loadAccessModel();
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load team access.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    return accessLoadOperation.run(
+      () => loadParentAccessModel(auth.user),
+      {
+        rethrow: false,
+        getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load team access.'), 'Unable to load team access.'),
+        onSuccess: (model) => {
+          setRequests(model.requests);
+        },
+        onError: (error) => {
+          setLoadError(toAppServiceError(error, 'Unable to load team access.'));
+        }
+      }
+    );
+  }, [accessLoadOperation, auth.user]);
 
   useEffect(() => {
     void refresh();
@@ -297,23 +314,43 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
     setSelectedPlayerId('');
   }, [auth.user?.uid]);
 
+  const loadPlayersForTeam = useCallback(async (teamId: string) => {
+    setManualLookupError(null);
+    const rows = await playerLoadOperation.run(
+      () => loadParentAccessPlayers(teamId),
+      {
+        rethrow: false,
+        getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load players for this team.'), 'Unable to load players for this team.')
+      }
+    );
+    if (rows) {
+      setPlayers(rows);
+      setSelectedPlayerId(rows[0]?.id || '');
+      return;
+    }
+    setManualLookupError(toAppServiceError(playerLoadOperation.error || new Error('Unable to load players for this team.'), 'Unable to load players for this team.'));
+  }, [playerLoadOperation]);
+
   useEffect(() => {
     let cancelled = false;
     async function loadPlayers() {
       setPlayers([]);
       setSelectedPlayerId('');
       if (!selectedTeamId) return;
-      setLoadingPlayers(true);
-      try {
-        const rows = await loadParentAccessPlayers(selectedTeamId);
-        if (!cancelled) {
-          setPlayers(rows);
-          setSelectedPlayerId(rows[0]?.id || '');
+      const rows = await playerLoadOperation.run(
+        () => loadParentAccessPlayers(selectedTeamId),
+        {
+          rethrow: false,
+          getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load players for this team.'), 'Unable to load players for this team.')
         }
-      } catch (loadError: any) {
-        if (!cancelled) setError(loadError?.message || 'Unable to load players for this team.');
-      } finally {
-        if (!cancelled) setLoadingPlayers(false);
+      );
+      if (!cancelled && rows) {
+        setManualLookupError(null);
+        setPlayers(rows);
+        setSelectedPlayerId(rows[0]?.id || '');
+      }
+      if (!cancelled && !rows) {
+        setManualLookupError(toAppServiceError(playerLoadOperation.error || new Error('Unable to load players for this team.'), 'Unable to load players for this team.'));
       }
     }
     void loadPlayers();
@@ -324,58 +361,68 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
 
   const redeem = async (event: FormEvent) => {
     event.preventDefault();
-    if (!auth.user?.uid) {
-      setError('Sign in to redeem an invite code.');
+    const currentUser = auth.user;
+    if (!currentUser?.uid) {
+      setActionError(toAppServiceError(new Error('Sign in to redeem an invite code.'), 'Sign in to redeem an invite code.'));
       return;
     }
 
-    setRedeeming(true);
-    setError('');
+    setActionError(null);
     setMessage('');
-    try {
-      const result = await redeemSignedInInvite({
-        userId: auth.user.uid,
+    await redeemOperation.run(
+      () => redeemSignedInInvite({
+        userId: currentUser.uid,
         code: redeemCode,
-        email: auth.user.email,
+        email: currentUser.email,
         refresh: auth.refresh
-      });
-      await loadAccessModel();
-      onAccessChanged();
-      setRedeemCode('');
-      setMessage(result.message);
-    } catch (redeemError: any) {
-      setError(redeemError?.message || 'Unable to redeem this invite code.');
-    } finally {
-      setRedeeming(false);
-    }
+      }),
+      {
+        rethrow: false,
+        getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to redeem this invite code.'), 'Unable to redeem this invite code.'),
+        onSuccess: async (result) => {
+          await refresh();
+          onAccessChanged();
+          setRedeemCode('');
+          setMessage(result.message);
+        },
+        onError: (error) => {
+          setActionError(toAppServiceError(error, 'Unable to redeem this invite code.'));
+        }
+      }
+    );
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!selectedTeamId || !selectedPlayerId) {
-      setError('Choose a team and player first.');
+      setActionError(toAppServiceError(new Error('Choose a team and player first.'), 'Choose a team and player first.'));
       return;
     }
-    setSaving(true);
-    setError('');
+    setActionError(null);
     setMessage('');
-    try {
-      await submitParentAccessRequest(selectedTeamId, selectedPlayerId, relation);
-      setMessage('Access request sent.');
-      await loadAccessModel();
-      onAccessChanged();
-    } catch (submitError: any) {
-      setError(submitError?.message || 'Unable to send access request.');
-    } finally {
-      setSaving(false);
-    }
+    await submitOperation.run(
+      () => submitParentAccessRequest(selectedTeamId, selectedPlayerId, relation),
+      {
+        rethrow: false,
+        getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to send access request.'), 'Unable to send access request.'),
+        onSuccess: async () => {
+          await refresh();
+          onAccessChanged();
+          setMessage('Access request sent.');
+        },
+        onError: (error) => {
+          setActionError(toAppServiceError(error, 'Unable to send access request.'));
+        }
+      }
+    );
   };
 
   return (
     <div className="space-y-3">
       <section className="app-card p-4">
         <ToolHeader icon={Shield} title="Request player access" detail="Use this when you do not have an invite code." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading || redeeming}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
-        {error ? <Status tone="error" message={error} /> : null}
+        {loadError ? <RetryableStatus error={loadError} fallbackMessage="Unable to load team access." onRetry={refresh} retrying={loading} /> : null}
+        {actionError ? <Status tone="error" message={getParentToolErrorMessage(actionError, 'Unable to complete that action.')} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
         {loading ? <LoadingBlock label="Loading access tools" /> : (
           <>
@@ -405,6 +452,7 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
             </form>
             {manualRequestOpen ? (
               <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
+                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={selectedTeamId ? () => { void loadPlayersForTeam(selectedTeamId); } : loadTeams} retrying={loadingTeams || loadingPlayers} /></div> : null}
                 <div className="min-w-0">
                   <label className="app-label" htmlFor="parent-access-team">Team</label>
                   <select id="parent-access-team" aria-label="Team" className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} disabled={loadingTeams || !teams.length}>
@@ -471,22 +519,30 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
 function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [fees, setFees] = useState<ParentFeeAppRecord[]>([]);
   const [filter, setFilter] = useState<'open' | 'all' | 'paid'>('open');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
   const [payingFeeId, setPayingFeeId] = useState('');
   const [feeErrors, setFeeErrors] = useState<Record<string, string>>({});
+  const loadOperation = useAsyncOperation();
+  const payOperation = useAsyncOperation();
+  const loading = loadOperation.loading;
 
-  const refresh = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      setFees(await loadParentFeesForApp(auth.user));
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load fees.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const refresh = useCallback(async () => {
+    setError(null);
+    return loadOperation.run(
+      () => loadParentFeesForApp(auth.user),
+      {
+        rethrow: false,
+        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load fees.'), 'Unable to load fees.'),
+        onSuccess: (result) => {
+          setFees(result);
+          setError(null);
+        },
+        onError: (loadError) => {
+          setError(toAppServiceError(loadError, 'Unable to load fees.'));
+        }
+      }
+    );
+  }, [auth.user, loadOperation]);
 
   useEffect(() => {
     void refresh();
@@ -507,25 +563,33 @@ function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: n
     const reusableCheckoutUrl = Boolean(fee.checkoutUrl) && (!checkoutStatus || checkoutStatus === 'open');
     setPayingFeeId(feeKey);
     setFeeErrors((current) => ({ ...current, [feeKey]: '' }));
-    try {
-      if (fee.paymentAction === 'checkoutUrl' || (!fee.paymentAction && reusableCheckoutUrl)) {
+    await payOperation.run(
+      async () => {
+        if (fee.paymentAction === 'checkoutUrl' || (!fee.paymentAction && reusableCheckoutUrl)) {
+          await openPublicUrl(String(fee.checkoutUrl));
+          return;
+        }
+        if (fee.paymentAction === 'createCheckout' || (!fee.paymentAction && fee.checkoutInitiatable)) {
+          const checkout = await initiateParentTeamFeeCheckout(String(fee.teamId || ''), String(fee.batchId || ''), String(fee.recipientId || ''));
+          await openPublicUrl(checkout.checkoutUrl);
+          return;
+        }
+        if (!reusableCheckoutUrl) {
+          throw new Error('Checkout is not available for this fee.');
+        }
         await openPublicUrl(String(fee.checkoutUrl));
-        return;
+      },
+      {
+        rethrow: false,
+        getErrorMessage: (payError) => getParentToolErrorMessage(toAppServiceError(payError, 'Unable to open checkout. Please try again.'), 'Unable to open checkout. Please try again.'),
+        onError: (payError) => {
+          setFeeErrors((current) => ({ ...current, [feeKey]: getParentToolErrorMessage(toAppServiceError(payError, 'Unable to open checkout. Please try again.'), 'Unable to open checkout. Please try again.') }));
+        },
+        onFinally: () => {
+          setPayingFeeId('');
+        }
       }
-      if (fee.paymentAction === 'createCheckout' || (!fee.paymentAction && fee.checkoutInitiatable)) {
-        const checkout = await initiateParentTeamFeeCheckout(String(fee.teamId || ''), String(fee.batchId || ''), String(fee.recipientId || ''));
-        await openPublicUrl(checkout.checkoutUrl);
-        return;
-      }
-      if (!reusableCheckoutUrl) {
-        throw new Error('Checkout is not available for this fee.');
-      }
-      await openPublicUrl(String(fee.checkoutUrl));
-    } catch (payError: any) {
-      setFeeErrors((current) => ({ ...current, [feeKey]: payError?.message || 'Unable to open checkout. Please try again.' }));
-    } finally {
-      setPayingFeeId('');
-    }
+    );
   };
 
   return (
@@ -546,7 +610,7 @@ function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: n
         </div>
       </section>
 
-      {error ? <Status tone="error" message={error} /> : null}
+      {error ? <RetryableStatus error={error} fallbackMessage="Unable to load fees." onRetry={refresh} retrying={loading} /> : null}
       {loading ? <LoadingBlock label="Loading fees" /> : (
         <div className="grid gap-3 lg:grid-cols-2">
           {visibleFees.length ? visibleFees.map((fee) => {
@@ -568,26 +632,33 @@ function getFeeCardKey(fee: ParentFeeAppRecord) {
 function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [teams, setTeams] = useState<ParentCalendarTeam[]>([]);
-  const [loading, setLoading] = useState(true);
   const [busyTeamId, setBusyTeamId] = useState('');
-  const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
+  const loadOperation = useAsyncOperation();
+  const exportOperation = useAsyncOperation();
+  const feedOperation = useAsyncOperation();
+  const loading = loadOperation.loading;
+  const exporting = exportOperation.loading;
 
-  const refresh = async (options: { force?: boolean } = {}) => {
-    setLoading(true);
-    setError('');
+  const refresh = useCallback(async (options: { force?: boolean } = {}) => {
+    setError(null);
     setMessage('');
-    try {
-      const model = await loadParentCalendarTools(auth.user, options);
-      setEvents(model.events);
-      setTeams(model.teams);
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load calendar tools.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    return loadOperation.run(
+      () => loadParentCalendarTools(auth.user, options),
+      {
+        rethrow: false,
+        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load calendar tools.'), 'Unable to load calendar tools.'),
+        onSuccess: (model) => {
+          setEvents(model.events);
+          setTeams(model.teams);
+        },
+        onError: (loadError) => {
+          setError(toAppServiceError(loadError, 'Unable to load calendar tools.'));
+        }
+      }
+    );
+  }, [auth.user, loadOperation]);
 
   useEffect(() => {
     void refresh(refreshVersion > 0 ? { force: true } : {});
@@ -599,17 +670,21 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
       setMessage('No events to export yet.');
       return;
     }
-    setExporting(true);
-    setError('');
+    setError(null);
     setMessage('');
-    try {
-      await exportCalendarIcsFile('all-plays-family-schedule.ics', buildParentScheduleIcs(events));
-      setMessage('Calendar file ready to share.');
-    } catch (downloadError: any) {
-      setError(downloadError?.message || 'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.');
-    } finally {
-      setExporting(false);
-    }
+    await exportOperation.run(
+      () => exportCalendarIcsFile('all-plays-family-schedule.ics', buildParentScheduleIcs(events)),
+      {
+        rethrow: false,
+        getErrorMessage: (downloadError) => getParentToolErrorMessage(toAppServiceError(downloadError, 'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.'), 'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.'),
+        onSuccess: () => {
+          setMessage('Calendar file ready to share.');
+        },
+        onError: (downloadError) => {
+          setError(toAppServiceError(downloadError, 'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.'));
+        }
+      }
+    );
   };
 
   const copyAgenda = async () => {
@@ -623,28 +698,36 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
 
   const openFeed = async (team: ParentCalendarTeam, target: 'copy' | 'apple' | 'google') => {
     setBusyTeamId(team.teamId);
-    setError('');
+    setError(null);
     setMessage('');
-    try {
-      const feedUrl = await getPrivateTeamCalendarFeedUrl(team.teamId);
-      if (!feedUrl) throw new Error('Unable to create private calendar feed. Sign in again and retry.');
-      if (target === 'copy') {
-        await copyText(feedUrl, setMessage);
-      } else {
+    await feedOperation.run(
+      async () => {
+        const feedUrl = await getPrivateTeamCalendarFeedUrl(team.teamId);
+        if (!feedUrl) throw new Error('Unable to create private calendar feed. Sign in again and retry.');
+        if (target === 'copy') {
+          await copyText(feedUrl, setMessage);
+          return;
+        }
         await openPublicUrl(target === 'apple' ? getAppleCalendarFeedUrl(feedUrl) : getGoogleCalendarFeedUrl(feedUrl));
+      },
+      {
+        rethrow: false,
+        getErrorMessage: (feedError) => getParentToolErrorMessage(toAppServiceError(feedError, 'Unable to open calendar feed.'), 'Unable to open calendar feed.'),
+        onError: (feedError) => {
+          setError(toAppServiceError(feedError, 'Unable to open calendar feed.'));
+        },
+        onFinally: () => {
+          setBusyTeamId('');
+        }
       }
-    } catch (feedError: any) {
-      setError(feedError?.message || 'Unable to open calendar feed.');
-    } finally {
-      setBusyTeamId('');
-    }
+    );
   };
 
   return (
     <div className="space-y-3">
       <section className="app-card p-4">
         <ToolHeader icon={CalendarDays} title="Calendar tools" detail="Download your family schedule or subscribe by team." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={() => { void refresh({ force: true }); }} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
-        {error ? <Status tone="error" message={error} /> : null}
+        {error ? <RetryableStatus error={error} fallbackMessage="Unable to load calendar tools." onRetry={loading ? undefined : () => refresh({ force: true })} retrying={loading} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
           <button type="button" className="secondary-button justify-center" onClick={() => { void download(); }} disabled={loading || exporting}>
@@ -692,27 +775,33 @@ function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refres
   const [email, setEmail] = useState('');
   const [relation, setRelation] = useState('');
   const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
+  const loadOperation = useAsyncOperation();
+  const submitOperation = useAsyncOperation();
+  const loading = loadOperation.loading;
+  const saving = submitOperation.loading;
 
   const pendingMembers = useMemo(() => members.filter((member) => String(member.status || '').toLowerCase() === 'pending'), [members]);
 
-  const refresh = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const model = await loadParentHouseholdInviteModel(auth.user);
-      setLinkedPlayers(model.linkedPlayers);
-      setMembers(model.members);
-      setPlayerKey((current) => current || (model.linkedPlayers[0] ? `${model.linkedPlayers[0].teamId}::${model.linkedPlayers[0].playerId}` : ''));
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load household invites.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const refresh = useCallback(async () => {
+    setError(null);
+    return loadOperation.run(
+      () => loadParentHouseholdInviteModel(auth.user),
+      {
+        rethrow: false,
+        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load household invites.'), 'Unable to load household invites.'),
+        onSuccess: (model) => {
+          setLinkedPlayers(model.linkedPlayers);
+          setMembers(model.members);
+          setPlayerKey((current) => current || (model.linkedPlayers[0] ? `${model.linkedPlayers[0].teamId}::${model.linkedPlayers[0].playerId}` : ''));
+        },
+        onError: (loadError) => {
+          setError(toAppServiceError(loadError, 'Unable to load household invites.'));
+        }
+      }
+    );
+  }, [auth.user, loadOperation]);
 
   useEffect(() => {
     void refresh();
@@ -724,46 +813,50 @@ function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refres
     const trimmedEmail = email.trim();
     const trimmedRelation = relation.trim();
     if (!playerKey) {
-      setError('Choose a linked player first.');
+      setError(toAppServiceError(new Error('Choose a linked player first.'), 'Choose a linked player first.'));
       return;
     }
     if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setError('Enter a valid email for the household contact.');
+      setError(toAppServiceError(new Error('Enter a valid email for the household contact.'), 'Enter a valid email for the household contact.'));
       return;
     }
     if (!trimmedRelation) {
-      setError('Enter the household contact relation.');
+      setError(toAppServiceError(new Error('Enter the household contact relation.'), 'Enter the household contact relation.'));
       return;
     }
-    setSaving(true);
-    setError('');
+    setError(null);
     setMessage('');
     setCreatedInvite(null);
-    try {
-      const result = await createParentHouseholdMemberInvite(auth.user, {
+    await submitOperation.run(
+      () => createParentHouseholdMemberInvite(auth.user, {
         playerKey,
         displayName,
         email: trimmedEmail,
         relation: trimmedRelation
-      });
-      setCreatedInvite(result);
-      setMessage('Household invite created.');
-      setDisplayName('');
-      setEmail('');
-      setRelation('');
-      await refresh();
-    } catch (createError: any) {
-      setError(createError?.message || 'Unable to create household invite.');
-    } finally {
-      setSaving(false);
-    }
+      }),
+      {
+        rethrow: false,
+        getErrorMessage: (createError) => getParentToolErrorMessage(toAppServiceError(createError, 'Unable to create household invite.'), 'Unable to create household invite.'),
+        onSuccess: async (result) => {
+          setCreatedInvite(result);
+          setMessage('Household invite created.');
+          setDisplayName('');
+          setEmail('');
+          setRelation('');
+          await refresh();
+        },
+        onError: (createError) => {
+          setError(toAppServiceError(createError, 'Unable to create household invite.'));
+        }
+      }
+    );
   };
 
   return (
     <div className="space-y-3">
       <section className="app-card p-4">
         <ToolHeader icon={Users} title="Household member invite" detail="Create one pending family plan invite for a linked player. This is separate from co-parent and token share links." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
-        {error ? <Status tone="error" message={error} /> : null}
+        {error ? <RetryableStatus error={error} fallbackMessage="Unable to load household invites." onRetry={loading ? undefined : refresh} retrying={loading} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
         {createdInvite ? (
           <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
@@ -819,24 +912,30 @@ function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
   const [calendarText, setCalendarText] = useState('');
   const [editingTokenId, setEditingTokenId] = useState('');
   const [pendingRevokeToken, setPendingRevokeToken] = useState<FamilyShareTokenCard | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
+  const loadOperation = useAsyncOperation();
+  const saveOperation = useAsyncOperation();
+  const loading = loadOperation.loading;
+  const saving = saveOperation.loading;
 
-  const refresh = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const model = await loadFamilyShareModel(auth.user);
-      setChildren(model.children);
-      setTokens(model.tokens);
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load family share links.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const refresh = useCallback(async () => {
+    setError(null);
+    return loadOperation.run(
+      () => loadFamilyShareModel(auth.user),
+      {
+        rethrow: false,
+        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load family share links.'), 'Unable to load family share links.'),
+        onSuccess: (model) => {
+          setChildren(model.children);
+          setTokens(model.tokens);
+        },
+        onError: (loadError) => {
+          setError(toAppServiceError(loadError, 'Unable to load family share links.'));
+        }
+      }
+    );
+  }, [auth.user, loadOperation]);
 
   useEffect(() => {
     void refresh();
@@ -845,60 +944,74 @@ function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
-    setSaving(true);
-    setError('');
+    setError(null);
     setMessage('');
-    try {
-      const result = await createParentFamilyShare(auth.user, label || 'Family share', splitLines(calendarText));
-      setMessage('Family link created.');
-      setLabel('');
-      setCalendarText('');
-      await copyText(result.url, setMessage);
-      await refresh();
-    } catch (createError: any) {
-      setError(createError?.message || 'Unable to create family share link.');
-    } finally {
-      setSaving(false);
-    }
+    await saveOperation.run(
+      () => createParentFamilyShare(auth.user, label || 'Family share', splitLines(calendarText)),
+      {
+        rethrow: false,
+        getErrorMessage: (createError) => getParentToolErrorMessage(toAppServiceError(createError, 'Unable to create family share link.'), 'Unable to create family share link.'),
+        onSuccess: async (result) => {
+          setMessage('Family link created.');
+          setLabel('');
+          setCalendarText('');
+          await copyText(result.url, setMessage);
+          await refresh();
+        },
+        onError: (createError) => {
+          setError(toAppServiceError(createError, 'Unable to create family share link.'));
+        }
+      }
+    );
   };
 
   const revoke = async (tokenId: string) => {
-    setSaving(true);
-    setError('');
+    setError(null);
     setMessage('');
-    try {
-      await revokeParentFamilyShare(tokenId);
-      setMessage('Family link revoked.');
-      await refresh();
-    } catch (revokeError: any) {
-      setError(revokeError?.message || 'Unable to revoke family link.');
-    } finally {
-      setSaving(false);
-      setPendingRevokeToken(null);
-    }
+    await saveOperation.run(
+      () => revokeParentFamilyShare(tokenId),
+      {
+        rethrow: false,
+        getErrorMessage: (revokeError) => getParentToolErrorMessage(toAppServiceError(revokeError, 'Unable to revoke family share link.'), 'Unable to revoke family share link.'),
+        onSuccess: async () => {
+          setMessage('Family link revoked.');
+          await refresh();
+        },
+        onError: (revokeError) => {
+          setError(toAppServiceError(revokeError, 'Unable to revoke family share link.'));
+        },
+        onFinally: () => {
+          setPendingRevokeToken(null);
+        }
+      }
+    );
   };
 
   const saveCalendars = async (tokenId: string, value: string) => {
-    setSaving(true);
-    setError('');
+    setError(null);
     setMessage('');
-    try {
-      await updateParentFamilyShareCalendars(tokenId, splitLines(value));
-      setEditingTokenId('');
-      setMessage('Calendar links updated.');
-      await refresh();
-    } catch (saveError: any) {
-      setError(saveError?.message || 'Unable to update calendar links.');
-    } finally {
-      setSaving(false);
-    }
+    await saveOperation.run(
+      () => updateParentFamilyShareCalendars(tokenId, splitLines(value)),
+      {
+        rethrow: false,
+        getErrorMessage: (saveError) => getParentToolErrorMessage(toAppServiceError(saveError, 'Unable to update calendar links.'), 'Unable to update calendar links.'),
+        onSuccess: async () => {
+          setEditingTokenId('');
+          setMessage('Calendar links updated.');
+          await refresh();
+        },
+        onError: (saveError) => {
+          setError(toAppServiceError(saveError, 'Unable to update calendar links.'));
+        }
+      }
+    );
   };
 
   return (
     <div className="space-y-3">
       <section className="app-card p-4">
         <ToolHeader icon={Share2} title="Family share" detail="Share a private family page with relatives and caregivers." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
-        {error ? <Status tone="error" message={error} /> : null}
+        {error ? <RetryableStatus error={error} fallbackMessage="Unable to load family share links." onRetry={loading ? undefined : refresh} retrying={loading} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
         <div className="mt-3 flex flex-wrap gap-1.5">
           {children.length ? children.map((child) => (
@@ -957,20 +1070,26 @@ function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
 
 function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [cards, setCards] = useState<ParentRegistrationCard[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
+  const loadOperation = useAsyncOperation();
+  const loading = loadOperation.loading;
 
-  const refresh = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      setCards(await loadParentRegistrations(auth.user));
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load registrations.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const refresh = useCallback(async () => {
+    setError(null);
+    return loadOperation.run(
+      () => loadParentRegistrations(auth.user),
+      {
+        rethrow: false,
+        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load registrations.'), 'Unable to load registrations.'),
+        onSuccess: (result) => {
+          setCards(result);
+        },
+        onError: (loadError) => {
+          setError(toAppServiceError(loadError, 'Unable to load registrations.'));
+        }
+      }
+    );
+  }, [auth.user, loadOperation]);
 
   useEffect(() => {
     void refresh();
@@ -981,7 +1100,7 @@ function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshV
     <div className="space-y-3">
       <section className="app-card p-4">
         <ToolHeader icon={Ticket} title="Registrations" detail="Published team registration forms linked to your family." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
-        {error ? <Status tone="error" message={error} /> : null}
+        {error ? <RetryableStatus error={error} fallbackMessage="Unable to load registrations." onRetry={refresh} retrying={loading} /> : null}
       </section>
       {loading ? <LoadingBlock label="Loading registrations" /> : (
         <div className="grid gap-3 lg:grid-cols-2">
@@ -996,20 +1115,26 @@ function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshV
 
 function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [cards, setCards] = useState<ParentCertificateCard[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
+  const loadOperation = useAsyncOperation();
+  const loading = loadOperation.loading;
 
-  const refresh = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      setCards(await loadParentCertificates(auth.user));
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load awards.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const refresh = useCallback(async () => {
+    setError(null);
+    return loadOperation.run(
+      () => loadParentCertificates(auth.user),
+      {
+        rethrow: false,
+        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load awards.'), 'Unable to load awards.'),
+        onSuccess: (result) => {
+          setCards(result);
+        },
+        onError: (loadError) => {
+          setError(toAppServiceError(loadError, 'Unable to load awards.'));
+        }
+      }
+    );
+  }, [auth.user, loadOperation]);
 
   useEffect(() => {
     void refresh();
@@ -1020,7 +1145,7 @@ function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; refreshVe
     <div className="space-y-3">
       <section className="app-card p-4">
         <ToolHeader icon={Award} title="Awards" detail="Published certificates for linked players." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
-        {error ? <Status tone="error" message={error} /> : null}
+        {error ? <RetryableStatus error={error} fallbackMessage="Unable to load awards." onRetry={refresh} retrying={loading} /> : null}
       </section>
       {loading ? <LoadingBlock label="Loading awards" /> : (
         <div className="grid gap-3 lg:grid-cols-2">
@@ -1266,6 +1391,40 @@ function Status({ tone, message }: { tone: 'error' | 'success'; message: string 
       <span>{message}</span>
     </div>
   );
+}
+
+function RetryableStatus({
+  error,
+  fallbackMessage,
+  onRetry,
+  retrying,
+  buttonLabel = 'Retry'
+}: {
+  error: AppServiceError | null;
+  fallbackMessage: string;
+  onRetry?: () => void;
+  retrying?: boolean;
+  buttonLabel?: string;
+}) {
+  return (
+    <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm font-semibold text-rose-800">
+      <div className="flex items-start gap-3">
+        <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+        <div className="min-w-0 flex-1">{getParentToolErrorMessage(error, fallbackMessage)}</div>
+        {onRetry ? (
+          <button type="button" className="ghost-button !min-h-8 !px-2 text-xs" onClick={onRetry} disabled={retrying}>
+            <RefreshCw className={`h-4 w-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
+            {buttonLabel}
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function getParentToolErrorMessage(error: AppServiceError | null, fallbackMessage: string) {
+  if (!error) return fallbackMessage;
+  return String(error.message || '').trim() || fallbackMessage;
 }
 
 function LoadingBlock({ label }: { label: string }) {

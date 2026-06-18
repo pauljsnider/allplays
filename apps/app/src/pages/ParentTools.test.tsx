@@ -61,8 +61,8 @@ const auth: AuthState = {
     signOut: vi.fn().mockResolvedValue(undefined)
 };
 
-function ParentToolsRoute() {
-    return <ParentTools auth={auth} />;
+function ParentToolsRoute({ authState = auth }: { authState?: AuthState }) {
+    return <ParentTools auth={authState} />;
 }
 
 function InvalidParentToolsButton() {
@@ -70,7 +70,11 @@ function InvalidParentToolsButton() {
     return <button type="button" onClick={() => navigate('/parent-tools/not-a-real-tab')}>Go invalid</button>;
 }
 
-function renderParentTools(initialEntries: string[] = ['/parent-tools/access'], includeInvalidButton = false) {
+function renderParentTools(
+    initialEntries: string[] = ['/parent-tools/access'],
+    includeInvalidButton = false,
+    authState: AuthState = auth
+) {
     return render(
         <MemoryRouter initialEntries={initialEntries}>
             <Routes>
@@ -79,7 +83,7 @@ function renderParentTools(initialEntries: string[] = ['/parent-tools/access'], 
                     element={(
                         <>
                             {includeInvalidButton ? <InvalidParentToolsButton /> : null}
-                            <ParentToolsRoute />
+                            <ParentToolsRoute authState={authState} />
                         </>
                     )}
                 />
@@ -143,6 +147,23 @@ describe('ParentTools access', () => {
 
         expect(await screen.findByText('Invite code expired.')).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
+    });
+
+    it('blocks inline redeem when the signed-in user is unavailable', async () => {
+        const signedOutAuth: AuthState = {
+            ...auth,
+            user: null,
+            roles: [],
+            isParent: false
+        };
+        renderParentTools(['/parent-tools/access'], false, signedOutAuth);
+
+        await screen.findByText('Request player access');
+        fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
+
+        expect(await screen.findByText('Sign in to redeem an invite code.')).toBeTruthy();
+        expect(inviteRedemptionMocks.redeemSignedInInvite).not.toHaveBeenCalled();
     });
 
     it('opens the manual request form immediately while public teams finish loading', async () => {

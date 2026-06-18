@@ -320,7 +320,9 @@ function buildNotificationTestEnv({
                 messagingCalls.push({
                     tokens: [...message.tokens],
                     title: message.notification?.title || '',
-                    body: message.notification?.body || ''
+                    body: message.notification?.body || '',
+                    data: { ...(message.data || {}) },
+                    webLink: message.webpush?.fcmOptions?.link || ''
                 });
                 const responses = message.tokens.map((token, index) => invalidTokenResponses[index] || { success: true, token });
                 const failureCount = responses.filter((response) => response?.success === false).length;
