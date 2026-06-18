@@ -112,7 +112,9 @@ describe('useScheduleRideOffers', () => {
     });
 
     it('keeps the rideshare action busy until the refresh finishes', async () => {
-        let resolveRefresh: ((value: any) => void) | null = null;
+        let resolveRefresh: (value: any) => void = () => {
+            throw new Error('Expected ride-offer refresh resolver to be captured.');
+        };
         vi.mocked(loadParentScheduleRideOffers)
             .mockResolvedValueOnce([] as any)
             .mockImplementationOnce(() => new Promise((resolve) => {
@@ -135,7 +137,7 @@ describe('useScheduleRideOffers', () => {
         expect(screen.getByTestId('submitting').textContent).toBe('create-offer');
         expect(screen.getByTestId('offers-count').textContent).toBe('0');
 
-        resolveRefresh?.([
+        resolveRefresh([
             {
                 id: 'offer-1',
                 driverUserId: 'parent-1',
