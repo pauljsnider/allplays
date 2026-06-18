@@ -1635,6 +1635,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Registration sources configured by global admins for the Create Team import path.
+    match /registrationSources/{sourceId} {
+      allow read: if isSignedIn();
+      allow write: if isGlobalAdmin();
+    }
+
     // Teams - only public teams are readable by anonymous browse/listing paths.
     match /teams/{teamId} {
       allow read: if canReadTeamDocument(resource.data);

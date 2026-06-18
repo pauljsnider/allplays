@@ -555,7 +555,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame } from './js/db.js?v=50';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources } from './js/db.js?v=51';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
         import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
@@ -595,7 +595,7 @@
         let lastRenderedRolloverSourceTeamId = null;
         let isInitPending = true;
         let selectedRegistrationTeam = null;
-        const configuredRegistrationTeams = getConfiguredRegistrationTeams();
+        let configuredRegistrationTeams = getConfiguredRegistrationTeams();
         let rosterRolloverPreviewRequestId = 0;
         let rosterRolloverPlayers = [];
 
@@ -604,7 +604,7 @@
             return sources
                 .map((record) => ({
                     provider: String(record.provider || record.providerId || '').trim(),
-                    sourceId: String(record.sourceId || record.registrationSourceId || '').trim(),
+                    sourceId: String(record.sourceId || record.registrationSourceId || record.id || '').trim(),
                     externalTeamId: String(record.externalTeamId || record.teamId || '').trim(),
                     externalTeamName: String(record.externalTeamName || record.teamName || record.name || '').trim(),
                     sport: String(record.sport || '').trim(),
@@ -947,6 +947,16 @@
         }
 
         initRegistrationImportControls();
+
+        if (!initialTeamId) {
+            getRegistrationSources().then((sources) => {
+                window.allplaysRegistrationSources = sources;
+                configuredRegistrationTeams = getConfiguredRegistrationTeams();
+                populateRegistrationSourcePicker();
+            }).catch(() => {
+                // Firestore unavailable — picker stays empty and radio stays disabled
+            });
+        }
 
         function setRosterRolloverStatus(message, isError = false) {
             const status = document.getElementById('roster-rollover-status');

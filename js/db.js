@@ -1495,6 +1495,11 @@ export async function upsertNotificationDeviceToken(userId, { token, platform = 
     return deviceId;
 }
 
+export async function getRegistrationSources() {
+    const snapshot = await getDocs(collection(db, "registrationSources"));
+    return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+}
+
 export async function getAllUsers() {
     const q = query(collection(db, "users"), orderBy("email"));
     const snapshot = await getDocs(q);
