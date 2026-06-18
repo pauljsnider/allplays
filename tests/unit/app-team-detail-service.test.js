@@ -1243,4 +1243,74 @@ describe('React app team detail model', () => {
             isPublic: true
         })).rejects.toThrow('You do not have permission to edit this team.');
     });
+
+    it('reloads member hydration when roster parent invites add new email inputs after staff permissions were cached', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star' }
+        ]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
+        const future = Date.now() + 60_000;
+        let teamIdQueryCount = 0;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                teamIdQueryCount += 1;
+                if (teamIdQueryCount === 1) {
+                    return {
+                        docs: [
+                            { id: 'invite-1', data: () => ({ email: 'admin@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                        ]
+                    };
+                }
+                return {
+                    docs: [
+                        { id: 'invite-2', data: () => ({ email: 'parentinvite@example.com', playerId: 'player-1', teamId: 'team-1', code: 'PARENT1', type: 'parent_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                    ]
+                };
+            }
+            if (filter.field === 'email' && filter.value === 'parentinvite@example.com') {
+                return {
+                    docs: [
+                        { id: 'parent-1', data: () => ({ email: 'parentinvite@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) }
+                    ]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        await loadTeamStaffPermissions('team-1', coachUser);
+        getDocs.mockClear();
+
+        const summaries = await loadTeamRosterParentInvites('team-1', coachUser);
+
+        expect(summaries).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 1,
+                latestPendingCode: 'PARENT1'
+            }
+        ]);
+        expect(where).toHaveBeenCalledWith('email', '==', 'parentinvite@example.com');
+        expect(getDocs.mock.calls.some(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'email' && part?.value === 'parentinvite@example.com')
+        )).toBe(true);
+    });
 });
