@@ -1125,6 +1125,75 @@ describe('React app team detail model', () => {
         expect(parentPlayerKeyQueries).toHaveLength(1);
     });
 
+    it('preserves base member hydration when only admin invites change between team manager views', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: [],
+            teamPermissions: {
+                videography: { mode: 'selected', memberIds: ['video-1'] }
+            }
+        });
+        getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star' }]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            if (ref.path === 'users/video-1') {
+                return { id: 'video-1', exists: () => true, data: () => ({ email: 'video@example.com', fullName: 'Video Parent', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
+        const future = Date.now() + 60_000;
+        let teamIdQueryCount = 0;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                teamIdQueryCount += 1;
+                return {
+                    docs: [
+                        {
+                            id: `invite-${teamIdQueryCount}`,
+                            data: () => ({
+                                teamId: 'team-1',
+                                type: 'admin_invite',
+                                email: `pending${teamIdQueryCount}@example.com`,
+                                used: false,
+                                expiresAt: { toMillis: () => future }
+                            })
+                        }
+                    ]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        const firstPermissions = await loadTeamStaffPermissions('team-1', coachUser);
+        const secondPermissions = await loadTeamStaffPermissions('team-1', coachUser);
+
+        expect(firstPermissions.pendingInvites).toEqual(['pending1@example.com']);
+        expect(secondPermissions.pendingInvites).toEqual(['pending2@example.com']);
+        expect(secondPermissions.videographerGrantTargets).toEqual([
+            { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: true }
+        ]);
+
+        const parentTeamIdQueries = getDocs.mock.calls.filter(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentTeamIds' && part?.value === 'team-1')
+        );
+        const parentPlayerKeyQueries = getDocs.mock.calls.filter(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentPlayerKeys' && part?.value === 'team-1::player-1')
+        );
+
+        expect(parentTeamIdQueries).toHaveLength(1);
+        expect(parentPlayerKeyQueries).toHaveLength(1);
+    });
+
     it('loads deferred insights and sponsors only when requested', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', sport: 'Basketball' });
         getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', photoUrl: 'https://img.example.test/player.png' }]);
