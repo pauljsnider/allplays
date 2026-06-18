@@ -696,14 +696,16 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     if (!checkoutIsOpen && !canReleasePreCheckoutReservation && !canReleaseRetryCapacityReservation) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not releasable.');
     }
-    if ((canReleasePreCheckoutReservation || canReleaseRetryCapacityReservation)
-      && !registrationCheckoutAttemptStrictlyMatches(registration, input)) {
+    if (canReleasePreCheckoutReservation && !registrationCheckoutAttemptStrictlyMatches(registration, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to release this reservation.');
     }
-    if (!canReleasePreCheckoutReservation
-      && !canReleaseRetryCapacityReservation
-      && !registrationCheckoutAttemptMatches(registration, input)) {
-      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
+    if (canReleaseRetryCapacityReservation && !registrationCheckoutAttemptStrictlyMatches(registration, input)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to release this reservation.');
+    }
+    if (!canReleasePreCheckoutReservation && !registrationCheckoutAttemptMatches(registration, input)) {
+      if (!canReleaseRetryCapacityReservation) {
+        throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
+      }
     }
 
     const selectedOption = registration.selectedOption || {};
