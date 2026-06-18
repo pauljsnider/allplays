@@ -1017,7 +1017,7 @@ describe('React app parent tools service', () => {
                 },
                 {
                     id: 'folder-2',
-                    itemCount: 1,
+                    itemCount: 0,
                     itemsLoaded: false,
                     items: []
                 },
@@ -1029,9 +1029,8 @@ describe('React app parent tools service', () => {
                 }
             ]
         });
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(2);
-        expect(dbMocks.getTeamMediaItems).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1');
-        expect(dbMocks.getTeamMediaItems).toHaveBeenNthCalledWith(2, 'team-1', 'folder-2');
+        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledWith('team-1', 'folder-1');
 
         await expect(loadTeamMediaForApp(user, 'team-1', { folderIds: ['folder-2'] })).resolves.toMatchObject({
             folders: [
@@ -1040,7 +1039,7 @@ describe('React app parent tools service', () => {
                 { id: 'folder-3', itemCount: 2, itemsLoaded: false, items: [] }
             ]
         });
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(3);
+        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(2);
         expect(dbMocks.getTeamMediaItems).toHaveBeenLastCalledWith('team-1', 'folder-2');
 
         await expect(createTeamMediaAlbumForApp('team-1', { name: '  Spring photos  ', visibility: 'private' })).resolves.toBe('folder-new');
