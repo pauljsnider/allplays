@@ -284,7 +284,16 @@ type TeamDetailBaseSnapshot = {
 type FirestoreDocument = Record<string, any> & { id: string };
 
 const teamDetailBaseSnapshotCache = new Map<string, TeamDetailBaseSnapshot>();
-const relevantTeamMembersCache = new Map<string, any[]>();
+type RelevantTeamMembersCacheEntry = {
+  baseMembersPromise: Promise<any[]> | null;
+  baseMembers: any[];
+  membersById: Map<string, any>;
+  membersByEmail: Map<string, any>;
+  loadedInviteEmails: Set<string>;
+  inviteEmailPromises: Map<string, Promise<void>>;
+};
+
+const relevantTeamMembersCache = new Map<string, RelevantTeamMembersCacheEntry>();
 
 export function __resetTeamDetailBaseSnapshotCacheForTests() {
   teamDetailBaseSnapshotCache.clear();
@@ -645,22 +654,28 @@ function collectRelevantTeamMemberEmails(team: any, players: any[] = [], invites
   return [...emails];
 }
 
-function buildRelevantTeamMembersCacheKey(team: any, pendingAdminInvites: any[] = [], pendingParentInvites: any[] = []) {
-  const normalizedTeamId = cleanString(team?.id || team?.teamId);
-  if (!normalizedTeamId) return '';
+function createRelevantTeamMembersCacheEntry(): RelevantTeamMembersCacheEntry {
+  return {
+    baseMembersPromise: null,
+    baseMembers: [],
+    membersById: new Map<string, any>(),
+    membersByEmail: new Map<string, any>(),
+    loadedInviteEmails: new Set<string>(),
+    inviteEmailPromises: new Map<string, Promise<void>>()
+  };
+}
 
-  const inviteSignature = [...pendingAdminInvites, ...pendingParentInvites]
-    .map((invite) => [
-      cleanString(invite?.type).toLowerCase(),
-      cleanString(invite?.email).toLowerCase(),
-      cleanString(invite?.playerId),
-      cleanString(invite?.code).toUpperCase()
-    ].join(':'))
-    .filter(Boolean)
-    .sort()
-    .join('|');
+function mergeRelevantTeamMembers(entry: RelevantTeamMembersCacheEntry, members: any[] = []) {
+  (Array.isArray(members) ? members : []).forEach((member) => {
+    const normalizedUserId = cleanString(member?.id || member?.uid);
+    const normalizedEmail = cleanString(member?.email).toLowerCase();
+    if (normalizedUserId && !entry.membersById.has(normalizedUserId)) entry.membersById.set(normalizedUserId, member);
+    if (normalizedEmail && !entry.membersByEmail.has(normalizedEmail)) entry.membersByEmail.set(normalizedEmail, member);
+  });
+}
 
-  return inviteSignature ? `${normalizedTeamId}::${inviteSignature}` : normalizedTeamId;
+function getCachedRelevantTeamMembers(entry: RelevantTeamMembersCacheEntry) {
+  return Array.from(new Set([...entry.membersById.values(), ...entry.membersByEmail.values()]));
 }
 
 async function loadRelevantTeamMembers({
@@ -674,11 +689,15 @@ async function loadRelevantTeamMembers({
   pendingAdminInvites?: any[];
   pendingParentInvites?: any[];
 }) {
-  const cacheKey = buildRelevantTeamMembersCacheKey(team, pendingAdminInvites, pendingParentInvites);
-  const cached = cacheKey ? relevantTeamMembersCache.get(cacheKey) : undefined;
-  if (cached) return cached;
-
   const normalizedTeamId = cleanString(team?.id || team?.teamId);
+  if (!normalizedTeamId) return [];
+
+  let cacheEntry = relevantTeamMembersCache.get(normalizedTeamId);
+  if (!cacheEntry) {
+    cacheEntry = createRelevantTeamMembersCacheEntry();
+    relevantTeamMembersCache.set(normalizedTeamId, cacheEntry);
+  }
+
   const userIds = collectRelevantTeamMemberUserIds(team, players);
   const emails = collectRelevantTeamMemberEmails(team, players, [...pendingAdminInvites, ...pendingParentInvites]);
   const parentPlayerKeys = (Array.isArray(players) ? players : [])
@@ -688,30 +707,48 @@ async function loadRelevantTeamMembers({
     })
     .filter(Boolean);
 
-  const [usersById, usersByEmail, usersByParentTeamId, usersByParentPlayerKey] = await Promise.all([
-    Promise.all(userIds.map((userId) => loadUserById(userId).catch(() => null))),
-    Promise.all(emails.map((email) => loadUsersByEmail(email).catch(() => []))),
-    loadUsersByParentTeamId(normalizedTeamId).catch(() => []),
-    Promise.all(parentPlayerKeys.map((parentPlayerKey) => loadUsersByParentPlayerKey(parentPlayerKey).catch(() => [])))
-  ]);
+  if (!cacheEntry.baseMembersPromise) {
+    cacheEntry.baseMembersPromise = Promise.all([
+      Promise.all(userIds.map((userId) => loadUserById(userId).catch(() => null))),
+      loadUsersByParentTeamId(normalizedTeamId).catch(() => []),
+      Promise.all(parentPlayerKeys.map((parentPlayerKey) => loadUsersByParentPlayerKey(parentPlayerKey).catch(() => [])))
+    ]).then(([usersById, usersByParentTeamId, usersByParentPlayerKey]) => {
+      mergeRelevantTeamMembers(cacheEntry!, [
+        ...usersById.filter(Boolean),
+        ...usersByParentTeamId,
+        ...usersByParentPlayerKey.flat()
+      ]);
+      cacheEntry!.baseMembers = getCachedRelevantTeamMembers(cacheEntry!);
+      return cacheEntry!.baseMembers;
+    });
+  }
 
-  const membersById = new Map<string, any>();
-  const membersByEmail = new Map<string, any>();
-  [
-    ...usersById.filter(Boolean),
-    ...usersByEmail.flat(),
-    ...usersByParentTeamId,
-    ...usersByParentPlayerKey.flat()
-  ].forEach((member) => {
-    const normalizedUserId = cleanString(member?.id || member?.uid);
-    const normalizedEmail = cleanString(member?.email).toLowerCase();
-    if (normalizedUserId && !membersById.has(normalizedUserId)) membersById.set(normalizedUserId, member);
-    if (normalizedEmail && !membersByEmail.has(normalizedEmail)) membersByEmail.set(normalizedEmail, member);
-  });
+  await cacheEntry.baseMembersPromise;
 
-  const members = Array.from(new Set([...membersById.values(), ...membersByEmail.values()]));
-  if (cacheKey) relevantTeamMembersCache.set(cacheKey, members);
-  return members;
+  const inviteEmailsToLoad = emails.filter((email) => (
+    email
+    && !cacheEntry!.loadedInviteEmails.has(email)
+    && !cacheEntry!.membersByEmail.has(email)
+  ));
+
+  await Promise.all(inviteEmailsToLoad.map((email) => {
+    let invitePromise = cacheEntry!.inviteEmailPromises.get(email);
+    if (!invitePromise) {
+      invitePromise = loadUsersByEmail(email)
+        .catch(() => [])
+        .then((members) => {
+          mergeRelevantTeamMembers(cacheEntry!, members);
+          cacheEntry!.loadedInviteEmails.add(email);
+        })
+        .finally(() => {
+          cacheEntry!.inviteEmailPromises.delete(email);
+        });
+      cacheEntry!.inviteEmailPromises.set(email, invitePromise);
+    }
+    return invitePromise;
+  }));
+
+  return getCachedRelevantTeamMembers(cacheEntry);
 }
 
 export async function inviteTeamAdminForApp(teamId: string, email: string, user: AuthUser | null = null): Promise<InviteTeamAdminForAppResult> {
@@ -732,6 +769,7 @@ export async function inviteTeamAdminForApp(teamId: string, email: string, user:
     addTeamAdminEmail,
     sendInviteEmail
   });
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
   const code = cleanString(result?.code) || null;
   return {
     email: normalizedEmail,
@@ -781,6 +819,7 @@ export async function createRosterParentInviteForApp(teamId: string, user: AuthU
   const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), '', 'Parent');
   const code = cleanString(inviteResult?.code).toUpperCase();
   if (!code) throw new Error('Invite code was not created.');
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
   return {
     code,
