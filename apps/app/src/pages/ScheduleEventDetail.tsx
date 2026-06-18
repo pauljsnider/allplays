@@ -44,7 +44,6 @@ import {
   type LineupDraftPreviewResult
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
-import { buildRotationPlanFromGamePlan } from '../lib/adapters/legacyScheduleHelpers';
 import {
   assignLineupPlayer,
   buildLineupAiPrompt,
@@ -59,32 +58,14 @@ import {
   moveLineupPlayer,
   parseAiLineupPlan
 } from '../lib/gameDayLineupBuilder';
-import { applyLiveSubstitution, getSubstitutionOptions } from '../lib/adapters/legacyScheduleHelpers';
-import {
-  buildAppWrapupCompletionPayload,
-  buildGameWrapupEmailDraft,
-  generateGameWrapupArtifactsForApp,
-  type PracticeFeedItem
-} from '../lib/gameWrapupService';
+import { buildAppWrapupCompletionPayload, buildGameWrapupEmailDraft, generateGameWrapupArtifactsForApp, type PracticeFeedItem } from '../lib/gameWrapupService';
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
+import { appendPracticeTimelineLiveNoteForApp, createPracticeTimelineBlockFromOption, getPracticeTimelineTotalMinutes, loadPracticeTimelineModel, savePracticeTimelineForApp, type PracticeTimelineBlock, type PracticeTimelineDrillOption } from '../lib/practiceTimelineService';
+import { acquireTrackStatsheetPhoto, analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, loadTrackStatsheetContextForApp, type TrackStatsheetReviewRow } from '../lib/statsheetImportService';
+import { buildRotationPlanFromGamePlan } from '../lib/adapters/legacyScheduleHelpers';
+import { applyLiveSubstitution, getSubstitutionOptions } from '../lib/adapters/legacyScheduleHelpers';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
-import {
-  canUseLiveGameChat,
-  getLiveGameChatNotice,
-  sendLiveGameChatMessage,
-  subscribeToLiveGameChat,
-  type LiveGameChatMessage
-} from '../lib/liveGameChatService';
-import {
-  canUseLiveGameReactions,
-  getLiveGameReactionNotice,
-  liveGameReactionOptions,
-  sendLiveGameReaction,
-  subscribeToLiveGameReactions,
-  type LiveGameReaction,
-  type LiveGameReactionType
-} from '../lib/liveGameReactionsService';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import {
   buildGameHubDestinations,
@@ -119,22 +100,31 @@ import {
   type StaffRsvpReminderPreview,
   type ScheduleRideOffer
 } from '../lib/scheduleLogic';
-import {
-  appendPracticeTimelineLiveNoteForApp,
-  createPracticeTimelineBlockFromOption,
-  getPracticeTimelineTotalMinutes,
-  loadPracticeTimelineModel,
-  savePracticeTimelineForApp,
-  type PracticeTimelineBlock,
-  type PracticeTimelineDrillOption
-} from '../lib/practiceTimelineService';
-import {
-  acquireTrackStatsheetPhoto,
-  analyzeTrackStatsheetPhoto,
-  applyTrackStatsheetImportForApp,
-  loadTrackStatsheetContextForApp,
-  type TrackStatsheetReviewRow
-} from '../lib/statsheetImportService';
+// Type-only imports for deferred modules — runtime values loaded on demand below
+import type { LiveGameChatMessage } from '../lib/liveGameChatService';
+import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
+
+// Deferred module type aliases for promise caches
+type LiveGameChatModule = typeof import('../lib/liveGameChatService');
+type LiveGameReactionsModule = typeof import('../lib/liveGameReactionsService');
+
+// Module-level promise caches — each module loads at most once per session
+let liveGameChatModulePromise: Promise<LiveGameChatModule> | null = null;
+let liveGameReactionsModulePromise: Promise<LiveGameReactionsModule> | null = null;
+
+function loadLiveGameChatModule() {
+  if (!liveGameChatModulePromise) {
+    liveGameChatModulePromise = import('../lib/liveGameChatService');
+  }
+  return liveGameChatModulePromise;
+}
+
+function loadLiveGameReactionsModule() {
+  if (!liveGameReactionsModulePromise) {
+    liveGameReactionsModulePromise = import('../lib/liveGameReactionsService');
+  }
+  return liveGameReactionsModulePromise;
+}
 import type { AuthState } from '../lib/types';
 import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
 import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
@@ -1730,30 +1720,36 @@ function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease
   );
 }
 
-function getLiveReactionEmoji(type: LiveGameReactionType) {
-  return liveGameReactionOptions.find((reaction) => reaction.key === type)?.emoji || '🔥';
-}
-
 function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [reactionsModule, setReactionsModule] = useState<LiveGameReactionsModule | null>(null);
   const [activeReactions, setActiveReactions] = useState<ActiveLiveReaction[]>([]);
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [sendingReactionKey, setSendingReactionKey] = useState<LiveGameReactionType | null>(null);
   const timeoutIdsRef = useRef<number[]>([]);
-  const canReact = canUseLiveGameReactions(event, { now: new Date() });
-  const reactionNotice = getLiveGameReactionNotice(event, { now: new Date() });
 
   useEffect(() => {
-    if (!event.isDbGame || !event.teamId || !event.id) return undefined;
+    void loadLiveGameReactionsModule().then(setReactionsModule);
+  }, []);
 
+  const canReact = reactionsModule ? reactionsModule.canUseLiveGameReactions(event, { now: new Date() }) : false;
+  const reactionNotice = reactionsModule ? reactionsModule.getLiveGameReactionNotice(event, { now: new Date() }) : null;
+  const reactionOptions = reactionsModule ? reactionsModule.liveGameReactionOptions : [];
+  const reactionsReady = Boolean(reactionsModule && reactionOptions.length);
+
+  useEffect(() => {
+    if (!reactionsModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
+
+    const { subscribeToLiveGameReactions, liveGameReactionOptions: options } = reactionsModule;
     const unsubscribe = subscribeToLiveGameReactions(event.teamId, event.id, (reaction) => {
-      const normalizedType = liveGameReactionOptions.some((option) => option.key === reaction.type)
+      const normalizedType = options.some((option) => option.key === reaction.type)
         ? reaction.type
         : 'fire';
+      const emoji = options.find((r) => r.key === normalizedType)?.emoji || '🔥';
       const nextReaction: ActiveLiveReaction = {
         ...reaction,
         type: normalizedType,
         localId: `${reaction.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        emoji: getLiveReactionEmoji(normalizedType)
+        emoji
       };
       setActiveReactions((current) => [...current, nextReaction].slice(-12));
       const timeoutId = window.setTimeout(() => {
@@ -1770,14 +1766,14 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
       timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
       timeoutIdsRef.current = [];
     };
-  }, [event.id, event.isDbGame, event.teamId]);
+  }, [reactionsModule, event.id, event.isDbGame, event.teamId]);
 
   const sendReaction = async (type: LiveGameReactionType) => {
-    if (!canReact || !event.teamId || !event.id || !auth.user?.uid || sendingReactionKey === type) return;
+    if (!reactionsModule || !canReact || !event.teamId || !event.id || !auth.user?.uid || sendingReactionKey === type) return;
     setSendingReactionKey(type);
     setSendStatus(null);
     try {
-      await sendLiveGameReaction(event.teamId, event.id, {
+      await reactionsModule.sendLiveGameReaction(event.teamId, event.id, {
         type,
         user: auth.user
       });
@@ -1818,8 +1814,8 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {liveGameReactionOptions.map((reaction) => {
+      <div className="mt-3 flex min-h-11 flex-wrap gap-2">
+        {reactionsReady ? reactionOptions.map((reaction) => {
           const disabled = !canReact || sendingReactionKey === reaction.key;
           return (
             <button
@@ -1833,11 +1829,19 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
               {reaction.emoji}
             </button>
           );
-        })}
+        }) : Array.from({ length: 5 }).map((_, index) => (
+          <span
+            key={`reaction-loading-${index}`}
+            className="inline-flex min-h-11 min-w-11 animate-pulse items-center justify-center rounded-full border border-amber-100 bg-white/80 px-3"
+            aria-hidden="true"
+          />
+        ))}
       </div>
 
       <div className="mt-2 text-xs font-semibold text-gray-500">
-        {reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.'}
+        {reactionsReady
+          ? (reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.')
+          : 'Loading reaction controls…'}
       </div>
       {sendStatus ? <div className="mt-2 text-xs font-bold text-rose-700">{sendStatus}</div> : null}
     </div>
@@ -1845,6 +1849,7 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
 }
 
 function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [chatModule, setChatModule] = useState<LiveGameChatModule | null>(null);
   const [messages, setMessages] = useState<LiveGameChatMessage[]>([]);
   const [messageText, setMessageText] = useState('');
   const [anonymousDisplayName, setAnonymousDisplayName] = useState('');
@@ -1852,16 +1857,20 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
-  const canChat = canUseLiveGameChat(event, { now: new Date() });
-  const chatNotice = getLiveGameChatNotice(event, { now: new Date() });
+  useEffect(() => {
+    void loadLiveGameChatModule().then(setChatModule);
+  }, []);
+
+  const canChat = chatModule ? chatModule.canUseLiveGameChat(event, { now: new Date() }) : false;
+  const chatNotice = chatModule ? chatModule.getLiveGameChatNotice(event, { now: new Date() }) : null;
   const canSend = canChat && Boolean(messageText.trim()) && !sending;
 
   useEffect(() => {
-    if (!event.isDbGame || !event.teamId || !event.id) return undefined;
+    if (!chatModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
 
     setLoading(true);
     setStatus(null);
-    const unsubscribe = subscribeToLiveGameChat(event.teamId, event.id, (nextMessages) => {
+    const unsubscribe = chatModule.subscribeToLiveGameChat(event.teamId, event.id, (nextMessages) => {
       setMessages(sortLiveGameChatMessages(nextMessages));
       setLoading(false);
     }, (subscribeError: any) => {
@@ -1872,16 +1881,16 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     return () => {
       unsubscribe?.();
     };
-  }, [event.id, event.isDbGame, event.teamId]);
+  }, [chatModule, event.id, event.isDbGame, event.teamId]);
 
   const sendMessage = async (submitEvent: FormEvent) => {
     submitEvent.preventDefault();
-    if (!canChat || !event.teamId || !event.id || !messageText.trim() || sending) return;
+    if (!chatModule || !canChat || !event.teamId || !event.id || !messageText.trim() || sending) return;
 
     setSending(true);
     setStatus(null);
     try {
-      await sendLiveGameChatMessage(event.teamId, event.id, {
+      await chatModule.sendLiveGameChatMessage(event.teamId, event.id, {
         text: messageText,
         user: auth.user || undefined,
         anonymousDisplayName
