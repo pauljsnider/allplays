@@ -2033,24 +2033,41 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   const { appUrl } = getStripeConfig();
   const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, input);
   const title = registration.programName || form.programName || form.title || form.name || 'Program registration';
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    line_items: [{
-      price_data: {
-        currency,
-        unit_amount: amountCents,
-        product_data: {
-          name: title
-        }
-      },
-      quantity: 1
-    }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    customer_email: getRegistrationCustomerEmail(registration),
-    client_reference_id: `${input.teamId}:${input.formId}:${input.registrationId}`,
-    metadata: buildRegistrationCheckoutMetadata({ input, registration })
-  });
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency,
+          unit_amount: amountCents,
+          product_data: {
+            name: title
+          }
+        },
+        quantity: 1
+      }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      customer_email: getRegistrationCustomerEmail(registration),
+      client_reference_id: `${input.teamId}:${input.formId}:${input.registrationId}`,
+      metadata: buildRegistrationCheckoutMetadata({ input, registration })
+    });
+  } catch (error) {
+    if (input.retryPayment && registration.registrationCapacityReleased === true) {
+      try {
+        await releaseRegistrationCheckoutCapacity(input);
+      } catch (releaseError) {
+        functions.logger.error('Failed to roll back registration retry capacity after Stripe checkout creation failed.', {
+          teamId: input.teamId,
+          formId: input.formId,
+          registrationId: input.registrationId,
+          releaseError: releaseError?.message || releaseError
+        });
+      }
+    }
+    throw error;
+  }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   await buildRegistrationRef(input).set({
