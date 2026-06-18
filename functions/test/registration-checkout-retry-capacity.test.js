@@ -400,6 +400,33 @@ test('restores capacity after retrying a previously failed session when Stripe c
     assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
 });
 
+test('records and clears a retry capacity reservation id around Stripe checkout creation failures', async () => {
+    const registrationPath = 'teams/team-1/registrationForms/form-1/registrations/reg-1';
+    let firestore = null;
+    let reservedRetryCapacityReservationId = '';
+    const loaded = loadCheckoutHandler({
+        seed: buildSeedState(),
+        stripeCreateImpl: async () => {
+            const registration = firestore.snapshot(registrationPath);
+            reservedRetryCapacityReservationId = String(registration.retryCapacityReservationId || '');
+            throw new Error('Stripe checkout creation failed.');
+        }
+    });
+    firestore = loaded.firestore;
+
+    await assert.rejects(
+        loaded.createStripeRegistrationCheckout(checkoutInput),
+        /Stripe checkout creation failed\./
+    );
+
+    const registration = firestore.snapshot(registrationPath);
+
+    assert.match(reservedRetryCapacityReservationId, /^[0-9a-f-]{36}$/i);
+    assert.equal(registration.registrationCapacityReleased, true);
+    assert.equal(registration.capacityReleasedAt, 'SERVER_TIMESTAMP');
+    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'retryCapacityReservationId'), false);
+});
+
 test('reserves capacity exactly once after a failed retry is retried successfully', async () => {
     const stripeCreateSuccess = async () => ({
         id: 'cs_test_123',
