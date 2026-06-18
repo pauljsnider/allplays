@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import {
@@ -106,6 +106,7 @@ function renderProbe() {
 
 describe('useScheduleRideOffers', () => {
     afterEach(() => {
+        cleanup();
         vi.clearAllMocks();
     });
 
@@ -143,8 +144,8 @@ describe('useScheduleRideOffers', () => {
         await waitFor(() => {
             expect(screen.getByText('Ride offer saved.')).toBeTruthy();
         });
-        expect(screen.getByTestId('offers-count')).toHaveTextContent('1');
-        expect(screen.getByTestId('summary-count')).toHaveTextContent('1');
+        expect(screen.getByTestId('offers-count').textContent).toBe('1');
+        expect(screen.getByTestId('summary-count').textContent).toBe('1');
         expect(summarizeParentScheduleRideOffers).toHaveBeenCalled();
     });
 
@@ -174,8 +175,8 @@ describe('useScheduleRideOffers', () => {
         await waitFor(() => {
             expect(screen.getByText('Unable to save ride offer.')).toBeTruthy();
         });
-        expect(screen.getByTestId('offers-count')).toHaveTextContent('1');
-        expect(screen.getByTestId('summary-count')).toHaveTextContent('1');
+        expect(screen.getByTestId('offers-count').textContent).toBe('1');
+        expect(screen.getByTestId('summary-count').textContent).toBe('1');
     });
 
     it('reloads ride offers when the selected schedule event changes', async () => {
@@ -203,13 +204,13 @@ describe('useScheduleRideOffers', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Switch event' }));
 
         await waitFor(() => {
-            expect(screen.getByTestId('event-id')).toHaveTextContent('game-2');
+            expect(screen.getByTestId('event-id').textContent).toBe('game-2');
         });
         await waitFor(() => {
             expect(loadParentScheduleRideOffers).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-2' }));
         });
-        expect(screen.getByTestId('offers-count')).toHaveTextContent('1');
-        expect(screen.getByTestId('summary-count')).toHaveTextContent('1');
+        expect(screen.getByTestId('offers-count').textContent).toBe('1');
+        expect(screen.getByTestId('summary-count').textContent).toBe('1');
     });
 
     it('surfaces rideshare load failures instead of treating them like an empty state', async () => {
@@ -220,7 +221,19 @@ describe('useScheduleRideOffers', () => {
         await waitFor(() => {
             expect(screen.getByText('Unable to load rideshare offers.')).toBeTruthy();
         });
-        expect(screen.getByTestId('offers-count')).toHaveTextContent('0');
-        expect(screen.getByTestId('summary-count')).toHaveTextContent('0');
+        expect(screen.getByTestId('offers-count').textContent).toBe('0');
+        expect(screen.getByTestId('summary-count').textContent).toBe('0');
+    });
+
+    it('preserves explicit rideshare availability errors during load failures', async () => {
+        vi.mocked(loadParentScheduleRideOffers).mockRejectedValue(new Error('Rideshare unavailable.'));
+
+        renderProbe();
+
+        await waitFor(() => {
+            expect(screen.getByText('Rideshare unavailable.')).toBeTruthy();
+        });
+        expect(screen.getByTestId('offers-count').textContent).toBe('0');
+        expect(screen.getByTestId('summary-count').textContent).toBe('0');
     });
 });

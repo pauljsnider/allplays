@@ -54,7 +54,13 @@ function resolveRideChildIdForOffer(
 
 function getRideOffersErrorMessage(error: unknown, fallbackMessage: string) {
   const mappedError = toAppServiceError(error, fallbackMessage);
-  if (mappedError.type === 'network') return `${fallbackMessage.replace(/\.$/, '')} while offline. Check your connection and try again.`;
+  if (mappedError.type === 'network') {
+    const explicitMessage = String(mappedError.message || '').trim();
+    if (explicitMessage && !/(failed to fetch|load failed|network|offline|timed out|timeout|unreachable|connection)/i.test(explicitMessage)) {
+      return explicitMessage;
+    }
+    return `${fallbackMessage.replace(/\.$/, '')} while offline. Check your connection and try again.`;
+  }
   if (mappedError.type === 'permission') return 'You do not have permission to update rideshare for this event.';
   if (mappedError.type === 'not_found') return 'This event is no longer available for rideshare. Refresh the page and try again.';
   if (mappedError.type === 'validation') return mappedError.message;
