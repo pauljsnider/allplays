@@ -103,8 +103,10 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('users/${uid}/notificationPreferences/${teamId}');
         expect(targetResolverSource).toContain('users/${uid}/notificationDevices');
         expect(targetResolverSource).toContain('if (!NOTIFICATION_CATEGORIES.includes(category)) return []');
-        expect(targetResolverSource).toContain('notificationAudienceAllowsRoles(category, user.roles)');
+        expect(targetResolverSource).toContain('canReceiveCategoryNotification(category, user, audienceContext)');
+        expect(functionsSource).toContain("normalizeNotificationAlbumVisibility(audienceContext.albumVisibility) !== 'private'");
+        expect(functionsSource).toContain("return Array.isArray(user.roles) && user.roles.includes('staff');");
         expect(targetResolverSource).toContain('const missingUsers = users.filter');
-        expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid)');
+        expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
     });
 });

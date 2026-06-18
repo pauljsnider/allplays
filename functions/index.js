@@ -3260,9 +3260,20 @@ async function getUserRecordsByIds(userIds) {
   return records;
 }
 
-async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null) {
+function normalizeNotificationAlbumVisibility(value) {
+  return String(value || '').trim().toLowerCase() === 'private' ? 'private' : 'team';
+}
+
+function canReceiveCategoryNotification(category, user, audienceContext = {}) {
+  if (!user?.uid || !notificationAudienceAllowsRoles(category, user.roles)) return false;
+  if (category !== 'media') return true;
+  if (normalizeNotificationAlbumVisibility(audienceContext.albumVisibility) !== 'private') return true;
+  return Array.isArray(user.roles) && user.roles.includes('staff');
+}
+
+async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}) {
   const queryTasks = users
-    .filter((user) => user?.uid && user.uid !== actorUid && notificationAudienceAllowsRoles(category, user.roles))
+    .filter((user) => user?.uid && user.uid !== actorUid && canReceiveCategoryNotification(category, user, audienceContext))
     .map(async (user) => {
       const uid = user.uid;
       const prefRef = firestore.doc(`users/${uid}/notificationPreferences/${teamId}`);
@@ -3294,14 +3305,16 @@ async function getLegacyTargetsForCategory(teamId, category, users, actorUid = n
   return targetGroups.flat();
 }
 
-async function getTargetsForCategory(teamId, category, actorUid = null) {
+async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationTargets`)
     .where(`categories.${category}`, '==', true)
     .get();
   const users = await getCandidateUsersForTeam(teamId);
-  const eligibleUsers = new Map(users.filter((user) => notificationAudienceAllowsRoles(category, user.roles)).map((user) => [user.uid, user]));
+  const eligibleUsers = new Map(users
+    .filter((user) => canReceiveCategoryNotification(category, user, audienceContext))
+    .map((user) => [user.uid, user]));
   const indexedTargets = targetSnap.docs
     .map((docSnap) => {
       const data = docSnap.data() || {};
@@ -3321,12 +3334,17 @@ async function getTargetsForCategory(teamId, category, actorUid = null) {
     .filter(Boolean);
 
   const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
-  const missingUsers = users.filter((user) => user?.uid && user.uid !== actorUid && !indexedUserIds.has(user.uid));
+  const missingUsers = users.filter((user) => (
+    user?.uid
+    && user.uid !== actorUid
+    && !indexedUserIds.has(user.uid)
+    && eligibleUsers.has(user.uid)
+  ));
   if (!missingUsers.length) {
     return indexedTargets;
   }
 
-  const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid);
+  const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);
   return [...indexedTargets, ...fallbackTargets];
 }
 
@@ -3477,7 +3495,8 @@ async function sendCategoryNotification({
   body,
   actorUid = null,
   linkOverride = null,
-  excludeUids = []
+  excludeUids = [],
+  audienceContext = {}
 }) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return null;
 
@@ -3490,7 +3509,7 @@ async function sendCategoryNotification({
     }
   }
 
-  const allTargets = await getTargetsForCategory(teamId, category, actorUid);
+  const allTargets = await getTargetsForCategory(teamId, category, actorUid, audienceContext);
   const excludeSet = new Set(Array.isArray(excludeUids) ? excludeUids : []);
   const targets = excludeSet.size
     ? allTargets.filter((t) => !excludeSet.has(t.uid))
