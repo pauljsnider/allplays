@@ -1,8 +1,7 @@
-'use strict';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import Module, { createRequire } from 'node:module';
 
-const { beforeEach, describe, it } = require('node:test');
-const assert = require('node:assert/strict');
-const Module = require('node:module');
+const require = createRequire(import.meta.url);
 
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
@@ -286,6 +285,14 @@ describe('createStripeRegistrationCheckout retry capacity handling', () => {
     StripeStub = null;
   });
 
+  afterEach(() => {
+    delete require.cache[repoIndexPath];
+    Module._load = originalModuleLoad;
+    adminStub = null;
+    functionsStub = null;
+    StripeStub = null;
+  });
+
   it('rolls back reserved capacity when Stripe checkout creation fails', async () => {
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
       seed: buildSeedState(),
@@ -294,20 +301,17 @@ describe('createStripeRegistrationCheckout retry capacity handling', () => {
       }
     });
 
-    await assert.rejects(
-      () => createStripeRegistrationCheckout(checkoutInput),
-      /Stripe checkout creation failed\./
-    );
+    await expect(createStripeRegistrationCheckout(checkoutInput)).rejects.toThrow('Stripe checkout creation failed.');
 
     const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
     const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
 
-    assert.equal(form.registrationOptionCounts.u10.enrolled, 0);
-    assert.equal(registration.registrationCapacityReleased, true);
-    assert.equal(registration.capacityReleasedAt, 'SERVER_TIMESTAMP');
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutStatus'), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'paymentStatus'), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'checkoutUrl'), false);
+    expect(form.registrationOptionCounts.u10.enrolled).toBe(0);
+    expect(registration.registrationCapacityReleased).toBe(true);
+    expect(registration.capacityReleasedAt).toBe('SERVER_TIMESTAMP');
+    expect(Object.prototype.hasOwnProperty.call(registration, 'checkoutStatus')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(registration, 'paymentStatus')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(registration, 'checkoutUrl')).toBe(false);
   });
 
   it('reserves capacity exactly once after a failed retry is retried successfully', async () => {
@@ -323,10 +327,7 @@ describe('createStripeRegistrationCheckout retry capacity handling', () => {
       }
     });
 
-    await assert.rejects(
-      () => createStripeRegistrationCheckout(checkoutInput),
-      /Stripe checkout creation failed\./
-    );
+    await expect(createStripeRegistrationCheckout(checkoutInput)).rejects.toThrow('Stripe checkout creation failed.');
 
     delete require.cache[repoIndexPath];
     adminStub = {
@@ -360,16 +361,16 @@ describe('createStripeRegistrationCheckout retry capacity handling', () => {
     const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
     const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
 
-    assert.deepEqual(result, {
+    expect(result).toEqual({
       checkoutUrl: 'https://checkout.stripe.com/c/session_123',
       sessionId: 'cs_test_123'
     });
-    assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
-    assert.equal(registration.registrationCapacityReleased, false);
-    assert.equal(Object.prototype.hasOwnProperty.call(registration, 'capacityReleasedAt'), false);
-    assert.equal(registration.checkoutStatus, 'open');
-    assert.equal(registration.paymentStatus, 'checkout_open');
-    assert.equal(registration.stripeCheckoutSessionId, 'cs_test_123');
-    assert.equal(registration.checkoutAmountCents, 5000);
+    expect(form.registrationOptionCounts.u10.enrolled).toBe(1);
+    expect(registration.registrationCapacityReleased).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(registration, 'capacityReleasedAt')).toBe(false);
+    expect(registration.checkoutStatus).toBe('open');
+    expect(registration.paymentStatus).toBe('checkout_open');
+    expect(registration.stripeCheckoutSessionId).toBe('cs_test_123');
+    expect(registration.checkoutAmountCents).toBe(5000);
   });
 });
