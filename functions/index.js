@@ -4852,7 +4852,20 @@ exports.notifyFeeMarkedPaid = functions.firestore
     const { teamId, batchId, recipientId } = context.params;
     const title = String(after.feeTitle || after.title || 'Team fee').trim();
     const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
-    const staffFeeDestination = buildStaffFeeNotificationDestination({ teamId, batchId, recipientId });
+    const encodedTeamId = encodeURIComponent(teamId);
+    const encodedBatchId = batchId ? encodeURIComponent(batchId) : '';
+    const staffFeeBaseRoute = encodedBatchId
+      ? `/teams/${encodedTeamId}/fees/${encodedBatchId}`
+      : `/teams/${encodedTeamId}/fees`;
+    const staffFeeParams = new URLSearchParams();
+    if (recipientId) {
+      staffFeeParams.set('recipientId', recipientId);
+    }
+    const staffFeeQuery = staffFeeParams.toString();
+    const staffFeeDestination = {
+      appRoute: `${staffFeeBaseRoute}${staffFeeQuery ? `?${staffFeeQuery}` : ''}`,
+      link: `https://allplays.ai/app/#${staffFeeBaseRoute}${staffFeeQuery ? `?${staffFeeQuery}` : ''}`
+    };
 
     const [allFeeTargets, candidateUsers] = await Promise.all([
       getTargetsForCategory(teamId, 'fees', null),
