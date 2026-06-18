@@ -247,4 +247,84 @@ describe('TeamMedia bulk delete', () => {
     await screen.findByText('Bears media');
     expect(container.querySelector('img[src="https://example.com/cover.jpg"]')).toBeTruthy();
   });
+
+  it('loads unopened albums only when tapped and keeps earlier album items cached', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        canManage: true,
+        canContribute: false,
+        canPostChat: false,
+        folders: [
+          {
+            id: 'album-1',
+            name: 'Game day',
+            visibility: 'team',
+            itemCount: 1,
+            itemsLoaded: true,
+            items: [
+              { id: 'photo-1', title: 'Photo one', type: 'photo', url: 'https://example.com/photo-1.jpg', uploadedBy: 'coach-1' }
+            ]
+          },
+          {
+            id: 'album-2',
+            name: 'Highlights',
+            visibility: 'team',
+            itemCount: 0,
+            itemsLoaded: false,
+            items: []
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        canManage: true,
+        canContribute: false,
+        canPostChat: false,
+        folders: [
+          {
+            id: 'album-1',
+            name: 'Game day',
+            visibility: 'team',
+            itemCount: 1,
+            itemsLoaded: false,
+            items: []
+          },
+          {
+            id: 'album-2',
+            name: 'Highlights',
+            visibility: 'team',
+            itemCount: 1,
+            itemsLoaded: true,
+            items: [
+              { id: 'photo-2', title: 'Photo two', type: 'photo', url: 'https://example.com/photo-2.jpg', uploadedBy: 'coach-1' }
+            ]
+          }
+        ]
+      });
+
+    renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenNthCalledWith(1, auth.user, 'team-1', {
+      initialFolderId: '',
+      folderIds: []
+    });
+    expect(screen.getByRole('button', { name: 'Game day1' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Highlights0' })).toBeTruthy();
+    expect(screen.getByText('Photo one')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Highlights0' }));
+
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenNthCalledWith(2, auth.user, 'team-1', {
+      initialFolderId: 'album-2',
+      folderIds: ['album-2']
+    });
+    expect(await screen.findByText('Photo two')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Game day1' }));
+
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText('Photo one')).toBeTruthy();
+  });
 });

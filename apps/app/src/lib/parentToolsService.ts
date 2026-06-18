@@ -848,15 +848,15 @@ export async function loadTeamMediaForApp(
     if (!folderId) return;
     const storedCount = getStoredMediaCount(folder);
     const shouldLoadItems = requestedFolderIds.has(folderId);
-    if (!shouldLoadItems && storedCount !== null) {
-      fallbackCounts.set(folderId, storedCount);
+    if (!shouldLoadItems) {
+      if (storedCount !== null) fallbackCounts.set(folderId, storedCount);
       return;
     }
     const items = sortByMediaOrder(await Promise.resolve(getTeamMediaItems(teamId, folderId)).catch(() => []))
       .map(toTeamMediaItem)
       .filter((item: TeamMediaItem) => item.url && isSafeTeamMediaUrl(item.url));
     fallbackCounts.set(folderId, items.length);
-    if (shouldLoadItems) itemSets.set(folderId, items);
+    itemSets.set(folderId, items);
   }));
 
   const folderCards = visibleFolders.map((folder: any) => {
