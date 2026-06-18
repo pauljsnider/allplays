@@ -4042,7 +4042,8 @@ function detectMentionedUids(text, members) {
   return [...mentioned];
 }
 
-async function buildTeamChatNotificationContext(teamId) {
+async function buildTeamChatNotificationContext(teamId, options = {}) {
+  const { includeMentions = true } = options || {};
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
   if (!teamSnap.exists) {
     return {
@@ -4082,7 +4083,7 @@ async function buildTeamChatNotificationContext(teamId) {
   }));
   const userRecords = await getUserRecordsByIds(members.map((member) => member.uid));
 
-  const categories = ['mentions', 'liveChat'];
+  const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];
   const eligibleUidsByCategory = categories.reduce((accumulator, category) => {
     accumulator[category] = new Set(
       members
@@ -4135,7 +4136,9 @@ async function buildTeamChatNotificationContext(teamId) {
     const chatMuted = userRecord.chatMuted;
     return {
       ...member,
-      displayName: String(userRecord.displayName || userRecord.fullName || userRecord.name || '').trim(),
+      displayName: includeMentions
+        ? String(userRecord.displayName || userRecord.fullName || userRecord.name || '').trim()
+        : '',
       muted: Boolean(chatMuted && chatMuted[teamId])
     };
   });
@@ -4199,7 +4202,10 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
       : 'sent a photo';
 
-    const recipientContext = await buildTeamChatNotificationContext(teamId);
+    const shouldResolveMentions = Boolean(text);
+    const recipientContext = await buildTeamChatNotificationContext(teamId, {
+      includeMentions: shouldResolveMentions
+    });
     const notificationPlan = buildTeamChatNotificationPlan({
       text,
       actorUid,

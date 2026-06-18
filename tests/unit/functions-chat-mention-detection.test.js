@@ -116,7 +116,9 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     });
 
     it('builds one shared recipient context for mentions and live chat delivery', () => {
-        expect(notifyTeamChatMessageCreatedSource).toContain('const recipientContext = await buildTeamChatNotificationContext(teamId);');
+        expect(notifyTeamChatMessageCreatedSource).toContain('const shouldResolveMentions = Boolean(text);');
+        expect(notifyTeamChatMessageCreatedSource).toContain('const recipientContext = await buildTeamChatNotificationContext(teamId, {');
+        expect(notifyTeamChatMessageCreatedSource).toContain('includeMentions: shouldResolveMentions');
         expect(notifyTeamChatMessageCreatedSource).toContain('const notificationPlan = buildTeamChatNotificationPlan({');
         expect(notifyTeamChatMessageCreatedSource).not.toContain('const candidateUsers = await getCandidateUsersForTeam(teamId);');
         expect(notifyTeamChatMessageCreatedSource).not.toContain('await getMutedUserIdsForTeam(');
@@ -136,6 +138,11 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     it('preloads user records in batches instead of one users/{uid} read per recipient', () => {
         expect(functionsSource).toContain('async function getUserRecordsByIds(userIds)');
         expect(functionsSource).toContain('const snaps = await firestore.getAll(...refs);');
+    });
+
+    it('skips mention target resolution for photo-only chats', () => {
+        expect(functionsSource).toContain("const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];");
+        expect(functionsSource).toContain("displayName: includeMentions");
     });
 });
 
