@@ -2033,14 +2033,28 @@ describe('React app messages integration', () => {
         }));
     });
 
-    it('loads deep-linked mute state from the team context profile when inbox data is unavailable', async () => {
+    it('loads deep-linked mute state from the conversation-keyed team chat profile when inbox data is unavailable', async () => {
         chatMocks.loadChatTeamContext.mockResolvedValueOnce({
             team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
-            profile: { fullName: 'Pat Parent', photoUrl: '', chatMuted: { 'team-1': new Date('2026-06-01T12:00:00Z') } },
+            profile: {
+                fullName: 'Pat Parent',
+                photoUrl: '',
+                teamChatState: {
+                    'team-1': {
+                        mutedConversations: {
+                            'staff-conversation': new Date('2026-06-01T12:00:00Z')
+                        }
+                    }
+                }
+            },
             canModerate: true
         });
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+        ]);
 
-        const { container } = await renderMessages('/messages/team-1');
+        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
 
         expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
         expect(buttonByText(container, 'Unmute notifications')).toBeTruthy();
@@ -2115,15 +2129,15 @@ describe('React app messages integration', () => {
         expect(buttonByText(container, 'Unmute notifications')).toBeTruthy();
     });
 
-    it('mute toggle button calls muteTeamChat then unmuteTeamChat when pressed twice', async () => {
+    it('mute toggle button calls muteTeamChat then unmuteTeamChat for the active conversation', async () => {
         const { container } = await renderMessages('/messages/team-1');
 
         await click(container, 'Mute notifications');
-        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
         expect(chatMocks.unmuteTeamChat).not.toHaveBeenCalled();
 
         await click(container, 'Unmute notifications');
-        expect(chatMocks.unmuteTeamChat).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(chatMocks.unmuteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
     });
 
     it('rolls back the mute toggle when the server write fails', async () => {
@@ -2132,7 +2146,7 @@ describe('React app messages integration', () => {
 
         await click(container, 'Mute notifications');
 
-        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
         expect(buttonByText(container, 'Mute notifications')).toBeTruthy();
     });
 

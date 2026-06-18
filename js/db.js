@@ -6097,26 +6097,34 @@ export async function toggleChatReaction(teamId, messageId, reactionKey, userId,
  */
 export async function updateChatLastRead(userId, teamId) {
     const userRef = doc(db, 'users', userId);
-    const fieldPath = `chatLastRead.${teamId}`;
+    const lastReadAt = Timestamp.now();
     return await updateDoc(userRef, {
-        [fieldPath]: Timestamp.now()
+        [`chatLastRead.${teamId}`]: lastReadAt,
+        [`teamChatState.${teamId}.lastReadAt`]: lastReadAt
     });
 }
 
-export async function updateChatMuted(userId, teamId) {
+export async function updateChatMuted(userId, teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     const userRef = doc(db, 'users', userId);
-    const fieldPath = `chatMuted.${teamId}`;
-    return await updateDoc(userRef, {
-        [fieldPath]: Timestamp.now()
-    });
+    const mutedAt = Timestamp.now();
+    const updates = {
+        [`teamChatState.${teamId}.mutedConversations.${conversationId}`]: mutedAt
+    };
+    if (isDefaultTeamConversation(conversationId)) {
+        updates[`chatMuted.${teamId}`] = mutedAt;
+    }
+    return await updateDoc(userRef, updates);
 }
 
-export async function clearChatMuted(userId, teamId) {
+export async function clearChatMuted(userId, teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     const userRef = doc(db, 'users', userId);
-    const fieldPath = `chatMuted.${teamId}`;
-    return await updateDoc(userRef, {
-        [fieldPath]: deleteField()
-    });
+    const updates = {
+        [`teamChatState.${teamId}.mutedConversations.${conversationId}`]: deleteField()
+    };
+    if (isDefaultTeamConversation(conversationId)) {
+        updates[`chatMuted.${teamId}`] = deleteField();
+    }
+    return await updateDoc(userRef, updates);
 }
 
 /**
@@ -6128,7 +6136,7 @@ export async function clearChatMuted(userId, teamId) {
 export async function getUnreadChatCount(userId, teamId) {
     const userDoc = await getDoc(doc(db, 'users', userId));
     const userData = userDoc.data();
-    const lastRead = userData?.chatLastRead?.[teamId] || null;
+    const lastRead = userData?.teamChatState?.[teamId]?.lastReadAt || userData?.chatLastRead?.[teamId] || null;
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
     const unreadConstraints = [];
 

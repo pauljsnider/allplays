@@ -514,7 +514,7 @@ function ChatWindow({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState('');
-  const [isMuted, setIsMuted] = useState(() => resolveMutedState(teamId, inboxTeam, {}));
+  const [isMuted, setIsMuted] = useState(() => resolveMutedState(teamId, DEFAULT_TEAM_CONVERSATION_ID, inboxTeam, {}));
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -815,8 +815,8 @@ function ChatWindow({
   }, [teamId]);
 
   useEffect(() => {
-    setIsMuted(resolveMutedState(teamId, inboxTeam, profile));
-  }, [inboxTeam, profile, teamId]);
+    setIsMuted(resolveMutedState(teamId, selectedConversationId, inboxTeam, profile));
+  }, [inboxTeam, profile, selectedConversationId, teamId]);
 
   useLayoutEffect(() => {
     if (!pendingScrollRef.current) return;
@@ -1482,17 +1482,18 @@ function ChatWindow({
   const handleToggleMute = useCallback(async () => {
     if (!auth.user?.uid) return;
     const next = !isMuted;
+    const conversationId = selectedConversationId || DEFAULT_TEAM_CONVERSATION_ID;
     setIsMuted(next);
     try {
       if (next) {
-        await muteTeamChat(auth.user.uid, teamId);
+        await muteTeamChat(auth.user.uid, teamId, conversationId);
       } else {
-        await unmuteTeamChat(auth.user.uid, teamId);
+        await unmuteTeamChat(auth.user.uid, teamId, conversationId);
       }
     } catch {
       setIsMuted(!next);
     }
-  }, [auth.user?.uid, isMuted, teamId]);
+  }, [auth.user?.uid, isMuted, selectedConversationId, teamId]);
 
   if (loadingContext) {
     return <MessagesPageSkeleton embedded={embedded} />;
@@ -1825,12 +1826,29 @@ function toInboxSortTime(message: ChatMessage | null | undefined) {
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
-function resolveMutedState(teamId: string, inboxTeam?: ChatTeam, profile: Record<string, any> = {}) {
-  if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
-    return inboxTeam.isMuted;
+function resolveMutedState(
+  teamId: string,
+  conversationId: string,
+  inboxTeam?: ChatTeam,
+  profile: Record<string, any> = {}
+) {
+  const teamChatState = profile?.teamChatState;
+  const mutedConversations = teamChatState && typeof teamChatState === 'object'
+    ? teamChatState?.[teamId]?.mutedConversations
+    : null;
+  if (mutedConversations && typeof mutedConversations === 'object' && mutedConversations[conversationId]) {
+    return true;
   }
-  const chatMuted = profile?.chatMuted;
-  return Boolean(chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]);
+  if (isDefaultTeamConversation(conversationId)) {
+    const chatMuted = profile?.chatMuted;
+    if (chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]) {
+      return true;
+    }
+    if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
+      return inboxTeam.isMuted;
+    }
+  }
+  return false;
 }
 
 function maybeMarkRead(user: AuthState['user'] | null | undefined, teamId: string, hasTeamId: boolean, shouldRefreshBadge = false) {

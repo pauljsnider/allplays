@@ -693,23 +693,23 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.deleteUploadedChatAttachments).toHaveBeenCalledWith([uploadedPhoto]);
     });
 
-    it('muteTeamChat sets mutedAt via updateChatMuted', async () => {
+    it('muteTeamChat sets mutedAt via updateChatMuted for the selected conversation', async () => {
         dbMocks.updateChatMuted.mockResolvedValue(undefined);
 
         const { muteTeamChat } = await import('../../apps/app/src/lib/chatService.ts');
-        await muteTeamChat('user-1', 'team-1');
+        await muteTeamChat('user-1', 'team-1', 'staff-conversation');
 
-        expect(dbMocks.updateChatMuted).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(dbMocks.updateChatMuted).toHaveBeenCalledWith('user-1', 'team-1', 'staff-conversation');
         expect(dbMocks.clearChatMuted).not.toHaveBeenCalled();
     });
 
-    it('unmuteTeamChat deletes mutedAt via clearChatMuted', async () => {
+    it('unmuteTeamChat deletes mutedAt via clearChatMuted for the selected conversation', async () => {
         dbMocks.clearChatMuted.mockResolvedValue(undefined);
 
         const { unmuteTeamChat } = await import('../../apps/app/src/lib/chatService.ts');
-        await unmuteTeamChat('user-1', 'team-1');
+        await unmuteTeamChat('user-1', 'team-1', 'staff-conversation');
 
-        expect(dbMocks.clearChatMuted).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(dbMocks.clearChatMuted).toHaveBeenCalledWith('user-1', 'team-1', 'staff-conversation');
         expect(dbMocks.updateChatMuted).not.toHaveBeenCalled();
     });
 
@@ -723,11 +723,17 @@ describe('React app chat recipient service', () => {
         await expect(unmuteTeamChat('user-1', 'team-1')).rejects.toThrow('permission-denied');
     });
 
-    it('loadChatInbox sets isMuted from chatMuted profile field', async () => {
+    it('loadChatInbox sets isMuted from the conversation-keyed team chat state', async () => {
         dbMocks.getUserProfile.mockResolvedValue({
             email: 'parent@example.com',
             parentOf: [],
-            chatMuted: { 'team-parent': new Date('2026-06-01T12:00:00Z') }
+            teamChatState: {
+                'team-parent': {
+                    mutedConversations: {
+                        team: new Date('2026-06-01T12:00:00Z')
+                    }
+                }
+            }
         });
         dbMocks.getUserTeamsWithAccess.mockResolvedValue([]);
         dbMocks.getParentTeams.mockResolvedValue([
