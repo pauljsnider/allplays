@@ -79,6 +79,8 @@ function isPrivateIpAddress(ip) {
   if (normalized === '::1' || normalized === '::') return true;
   if (normalized.startsWith('fe80:')) return true;
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+  const siteLocalPrefix = normalized.slice(0, 3);
+  if (siteLocalPrefix >= 'fec' && siteLocalPrefix <= 'fef') return true;
   return false;
 }
 
