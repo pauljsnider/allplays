@@ -49,7 +49,10 @@ describe('app telemetry bridge', () => {
     );
   });
 
-  it('reports React boundary failures without throwing when telemetry is missing', async () => {
+  it('reports React boundary failures without misclassifying generic TypeErrors as network errors', async () => {
+    const capture = vi.fn();
+    window.AllPlaysTelemetry = { capture };
+
     installReactErrorTelemetry();
 
     expect(typeof window.__ALLPLAYS_REPORT_REACT_ERROR__).toBe('function');
@@ -57,13 +60,26 @@ describe('app telemetry bridge', () => {
     expect(() => {
       window.__ALLPLAYS_REPORT_REACT_ERROR__?.({
         boundaryName: 'app-root',
-        error: new Error('render failed'),
+        error: new TypeError("Cannot read properties of undefined (reading 'team')"),
         errorInfo: { componentStack: '\n    at Home' },
         location: '/home'
       });
     }).not.toThrow();
 
     await Promise.resolve();
+
+    expect(capture).toHaveBeenCalledWith(
+      'app_load_error',
+      expect.objectContaining({
+        label: 'react render error',
+        boundaryName: 'app-root',
+        location: '/home',
+        componentStackPresent: true,
+        errorName: 'TypeError',
+        errorType: 'unknown'
+      }),
+      { flush: true }
+    );
   });
 
   it('degrades safely when the pipeline is unavailable', async () => {

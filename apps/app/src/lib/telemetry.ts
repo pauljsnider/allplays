@@ -183,7 +183,7 @@ function getErrorType(error: unknown, message: string) {
   if (typeof explicitType === 'string' && explicitType.trim()) {
     return explicitType.trim();
   }
-  if (error instanceof TypeError || /(network|offline|failed to fetch|timed out|timeout|unavailable|connection)/.test(lowered)) {
+  if (/(network|offline|failed to fetch|timed out|timeout|unavailable|connection)/.test(lowered)) {
     return 'network';
   }
   if (/(permission|forbidden|unauthorized|denied)/.test(lowered)) {
