@@ -1,11 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import assert from 'node:assert/strict';
+import test from 'node:test';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const { loadNotificationInternals } = require('./send-category-notification-test-helpers');
 
-describe('getTargetsForCategory', () => {
-    it('uses indexed targets without legacy per-user device scans when index coverage is complete', async () => {
+test('getTargetsForCategory uses indexed targets without legacy per-user device scans when index coverage is complete', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
@@ -31,22 +31,21 @@ describe('getTargetsForCategory', () => {
         try {
             const targets = await internals.getTargetsForCategory('team-1', 'schedule');
 
-            expect(targets).toHaveLength(2);
-            expect(env.counts.recipientQueries).toBe(1);
-            expect(env.counts.parentQueries).toBe(1);
-            expect(env.counts.recipientCollectionGets).toBe(0);
-            expect(env.counts.preferenceGets).toBe(0);
-            expect(env.counts.deviceGets).toBe(0);
-            expect(targets.map((target) => target.token).sort()).toEqual([
+            assert.equal(targets.length, 2);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.recipientCollectionGets, 0);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+            assert.deepEqual(targets.map((target) => target.token).sort(), [
                 'coach-token', 'parent-token'
             ]);
         } finally {
             cleanup();
         }
-    });
+});
 
-
-    it('does not backfill repeatedly when the recipient collection already contains disabled-category docs', async () => {
+test('getTargetsForCategory does not backfill repeatedly when the recipient collection already contains disabled-category docs', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
@@ -78,20 +77,22 @@ describe('getTargetsForCategory', () => {
         try {
             const targets = await internals.getTargetsForCategory('team-1', 'media');
 
-            expect(targets).toEqual([]);
-            expect(env.counts.recipientQueries).toBe(1);
-            expect(env.counts.recipientCollectionGets).toBe(1);
-            expect(env.counts.preferenceGets).toBe(2);
-            expect(env.counts.deviceGets).toBe(2);
-            expect(
+            assert.deepEqual(targets, []);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.recipientCollectionGets, 1);
+            assert.equal(env.counts.preferenceGets, 2);
+            assert.equal(env.counts.deviceGets, 2);
+            assert.equal(
                 env.dedupWrites.filter((write) => write.path.includes('/notificationRecipients/'))
-            ).toHaveLength(0);
+                    .length,
+                0
+            );
         } finally {
             cleanup();
         }
-    });
+});
 
-    it('falls back only for users missing from the notification target index', async () => {
+test('getTargetsForCategory falls back only for users missing from the notification target index', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
@@ -119,21 +120,21 @@ describe('getTargetsForCategory', () => {
         try {
             const targets = await internals.getTargetsForCategory('team-1', 'schedule');
 
-            expect(targets).toHaveLength(2);
-            expect(env.counts.recipientQueries).toBe(1);
-            expect(env.counts.parentQueries).toBe(1);
-            expect(env.counts.recipientCollectionGets).toBe(0);
-            expect(env.counts.preferenceGets).toBe(1);
-            expect(env.counts.deviceGets).toBe(1);
-            expect(targets.map((target) => target.token).sort()).toEqual([
+            assert.equal(targets.length, 2);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.recipientCollectionGets, 0);
+            assert.equal(env.counts.preferenceGets, 1);
+            assert.equal(env.counts.deviceGets, 1);
+            assert.deepEqual(targets.map((target) => target.token).sort(), [
                 'coach-token', 'parent-token'
             ]);
         } finally {
             cleanup();
         }
-    });
+});
 
-    it('falls back to legacy resolution and backfills recipients when the team index is empty', async () => {
+test('getTargetsForCategory falls back to legacy resolution and backfills recipients when the team index is empty', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
@@ -157,36 +158,34 @@ describe('getTargetsForCategory', () => {
         try {
             const targets = await internals.getTargetsForCategory('team-1', 'schedule');
 
-            expect(targets).toHaveLength(2);
-            expect(env.counts.recipientQueries).toBe(1);
-            expect(env.counts.recipientCollectionGets).toBe(1);
-            expect(env.counts.preferenceGets).toBe(4);
-            expect(env.counts.deviceGets).toBe(4);
-            expect(targets.map((target) => `${target.uid}:${target.deviceId}:${target.token}`).sort()).toEqual([
+            assert.equal(targets.length, 2);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.recipientCollectionGets, 1);
+            assert.equal(env.counts.preferenceGets, 4);
+            assert.equal(env.counts.deviceGets, 4);
+            assert.deepEqual(targets.map((target) => `${target.uid}:${target.deviceId}:${target.token}`).sort(), [
                 'coach-1:coach-device:coach-token',
                 'parent-1:parent-device:parent-token'
             ]);
-            expect(
+            assert.deepEqual(
                 env.dedupWrites
                     .filter((write) => write.path.includes('/notificationRecipients/'))
                     .map((write) => write.path)
                     .sort()
-            ).toEqual([
+            , [
                 'teams/team-1/notificationRecipients/coach-1__coach-device',
                 'teams/team-1/notificationRecipients/parent-1__parent-device'
             ]);
         } finally {
             cleanup();
         }
-    });
 });
 
-
-describe('sendCategoryNotification', () => {
-    it.each([
-        ['liveChat', { liveChat: true }],
-        ['mentions', { mentions: true }]
-    ])('includes conversation deep links for %s notifications', async (category, categories) => {
+for (const [category, categories] of [
+    ['liveChat', { liveChat: true }],
+    ['mentions', { mentions: true }]
+]) {
+    test(`sendCategoryNotification includes conversation deep links for ${category} notifications`, async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
@@ -211,23 +210,29 @@ describe('sendCategoryNotification', () => {
                 conversationId: 'staff room'
             });
 
-            expect(result?.successCount).toBe(1);
-            expect(env.messagingCalls).toHaveLength(1);
-            expect(env.messagingCalls[0].data).toMatchObject({
+            assert.equal(result?.successCount, 1);
+            assert.equal(env.messagingCalls.length, 1);
+            assert.deepEqual(env.messagingCalls[0].data, {
                 category,
+                teamId: 'team-1',
+                gameId: '',
+                eventId: '',
                 conversationId: 'staff room',
                 appRoute: '/messages/team-1?conversationId=staff%20room',
                 link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room'
             });
-            expect(env.messagingCalls[0].webLink).toBe('https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room');
-            expect(env.inboxWrites).toHaveLength(1);
-            expect(env.inboxWrites[0].value.appRoute).toBe('/messages/team-1?conversationId=staff%20room');
+            assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room');
+            assert.equal(env.inboxWrites.length, 1);
+            assert.equal(env.inboxWrites[0].value.appRoute, '/messages/team-1?conversationId=staff%20room');
+            assert.equal(env.auditWrites.length, 1);
+            assert.equal(env.auditWrites[0].value.category, category);
         } finally {
             cleanup();
         }
     });
+}
 
-    it('prunes invalid tokens from both notification index collections', async () => {
+test('sendCategoryNotification prunes invalid tokens from both notification index collections', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
@@ -257,8 +262,8 @@ describe('sendCategoryNotification', () => {
                 body: 'Updated'
             });
 
-            expect(result?.failureCount).toBe(1);
-            expect(env.deletedPaths.sort()).toEqual([
+            assert.equal(result?.failureCount, 1);
+            assert.deepEqual(env.deletedPaths.sort(), [
                 'teams/team-1/notificationRecipients/coach-1__coach-device',
                 'teams/team-1/notificationTargets/coach-1__coach-device',
                 'users/coach-1/notificationDevices/coach-device'
@@ -266,5 +271,4 @@ describe('sendCategoryNotification', () => {
         } finally {
             cleanup();
         }
-    });
 });

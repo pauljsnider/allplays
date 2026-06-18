@@ -64,3 +64,6 @@ jobs:
 
       - name: Run unit tests
         run: npm run test:unit:ci
+
+      - name: Run notification functions coverage
+        run: npm run test:functions:notifications

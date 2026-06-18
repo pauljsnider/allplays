@@ -3615,6 +3615,64 @@ async function writeNotificationInboxRecords({
   return { writeCount, cleanupCount, failureCount };
 }
 
+async function writeNotificationAuditRecord({
+  teamId,
+  category,
+  title,
+  body,
+  link,
+  appRoute,
+  targets,
+  successCount,
+  failureCount,
+  inboxResult,
+  gameId = null,
+  eventId = null,
+  conversationId = null,
+  batchId = null,
+  recipientId = null,
+  dedupGuardApplied = false
+}) {
+  if (!teamId || !category) return;
+
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(targets) ? targets : [])
+      .map((target) => String(target?.uid || '').trim())
+      .filter(Boolean)
+  ));
+
+  try {
+    await firestore.collection(`teams/${teamId}/notificationAudit`).add({
+      teamId: String(teamId),
+      category: String(category),
+      title: String(title || ''),
+      body: String(body || ''),
+      link: String(link || ''),
+      appRoute: String(appRoute || ''),
+      gameId: gameId || null,
+      eventId: eventId || null,
+      conversationId: conversationId || null,
+      batchId: batchId || null,
+      recipientId: recipientId || null,
+      dedupGuardApplied: dedupGuardApplied === true,
+      targetCount: Array.isArray(targets) ? targets.length : 0,
+      targetUserIds: uniqueUserIds,
+      successCount: Number(successCount || 0),
+      failureCount: Number(failureCount || 0),
+      inboxWriteCount: Number(inboxResult?.writeCount || 0),
+      inboxCleanupCount: Number(inboxResult?.cleanupCount || 0),
+      inboxFailureCount: Number(inboxResult?.failureCount || 0),
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  } catch (error) {
+    functions.logger.warn('Failed to write notification audit record', {
+      teamId,
+      category,
+      error: error?.message || String(error || 'Unknown error')
+    });
+  }
+}
+
 const NOTIFICATION_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
 async function checkAndSetNotificationDedup(teamId, category, gameId) {
@@ -3721,6 +3779,23 @@ async function sendCategoryNotification({
     eventId: eventId || gameId
   });
 
+  await writeNotificationAuditRecord({
+    teamId,
+    category,
+    title,
+    body,
+    link,
+    appRoute,
+    targets,
+    successCount,
+    failureCount,
+    inboxResult,
+    gameId,
+    eventId: eventId || gameId,
+    conversationId,
+    dedupGuardApplied: !ALWAYS_SEND_CATEGORIES.has(category)
+  });
+
   return {
     responses: allResponses,
     successCount,
@@ -3792,6 +3867,25 @@ async function sendDirectTargetsNotification({
     teamId,
     gameId,
     eventId: eventId || gameId
+  });
+
+  await writeNotificationAuditRecord({
+    teamId,
+    category,
+    title,
+    body,
+    link,
+    appRoute,
+    targets,
+    successCount,
+    failureCount,
+    inboxResult,
+    gameId,
+    eventId: eventId || gameId,
+    conversationId,
+    batchId,
+    recipientId,
+    dedupGuardApplied: false
   });
 
   return {
