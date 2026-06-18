@@ -194,6 +194,14 @@ async function mockSearchModules(page) {
                     ];
                 }
 
+                export function getCachedAppPlayerSearchResults() {
+                    return null;
+                }
+
+                export function hasSatisfiedAppPlayerSearchResultBudget() {
+                    return false;
+                }
+
                 export function computeAppSearchResults({ queryText, auth, teams, players, helpRoleFilter = 'all' }) {
                     const q = String(queryText || '').trim().toLowerCase();
                     const actions = [
