@@ -2979,6 +2979,12 @@ function buildTeamNotificationTargetRef(teamId, uid, deviceId) {
   return firestore.doc(`teams/${teamId}/notificationTargets/${docId}`);
 }
 
+function buildTeamNotificationRecipientRef(teamId, uid, deviceId) {
+  const docId = buildNotificationTargetDocId({ uid, deviceId });
+  if (!docId) return null;
+  return firestore.doc(`teams/${teamId}/notificationRecipients/${docId}`);
+}
+
 function normalizeNotificationDeviceRecord(deviceId, raw) {
   const token = String(raw?.token || '').trim();
   if (!token) return null;
@@ -3305,10 +3311,81 @@ async function getLegacyTargetsForCategory(teamId, category, users, actorUid = n
   return targetGroups.flat();
 }
 
+async function backfillNotificationRecipientsForTeam(teamId, users) {
+  const uniqueUsers = Array.from(new Map(
+    (Array.isArray(users) ? users : [])
+      .filter((user) => user?.uid)
+      .map((user) => [user.uid, user])
+  ).values());
+  if (!uniqueUsers.length) return 0;
+
+  const userRecords = await Promise.all(uniqueUsers.map(async (user) => {
+    const uid = user.uid;
+    const prefRef = firestore.doc(`users/${uid}/notificationPreferences/${teamId}`);
+    const devicesRef = firestore.collection(`users/${uid}/notificationDevices`);
+    const [prefSnap, devicesSnap] = await Promise.all([
+      prefRef.get(),
+      devicesRef.get()
+    ]);
+    return {
+      uid,
+      preferences: prefSnap.exists
+        ? normalizeNotificationPreferences(prefSnap.data())
+        : DEFAULT_NOTIFICATION_PREFERENCES,
+      devicesSnap
+    };
+  }));
+
+  let batch = firestore.batch();
+  let pendingOps = 0;
+  let writeCount = 0;
+  const commitBatch = async () => {
+    if (!pendingOps) return;
+    await batch.commit();
+    batch = firestore.batch();
+    pendingOps = 0;
+  };
+
+  for (const record of userRecords) {
+    const hasAnyEnabledCategory = hasEnabledNotificationCategory(record.preferences);
+    for (const deviceSnap of record.devicesSnap.docs) {
+      const device = normalizeNotificationDeviceRecord(deviceSnap.id, deviceSnap.data());
+      const recipientRef = buildTeamNotificationRecipientRef(teamId, record.uid, deviceSnap.id);
+      if (!recipientRef) continue;
+
+      if (!device || !hasAnyEnabledCategory) {
+        batch.delete(recipientRef);
+      } else {
+        batch.set(recipientRef, {
+          ...buildNotificationTargetPayload({
+            uid: record.uid,
+            teamId,
+            deviceId: device.deviceId,
+            token: device.token,
+            platform: device.platform,
+            userAgent: device.userAgent,
+            preferences: record.preferences
+          }),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        writeCount += 1;
+      }
+
+      pendingOps += 1;
+      if (pendingOps === 450) {
+        await commitBatch();
+      }
+    }
+  }
+
+  await commitBatch();
+  return writeCount;
+}
+
 async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
-  const targetSnap = await firestore.collection(`teams/${teamId}/notificationTargets`)
+  const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
     .where(`categories.${category}`, '==', true)
     .get();
   const users = await getCandidateUsersForTeam(teamId);
@@ -3342,6 +3419,18 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   ));
   if (!missingUsers.length) {
     return indexedTargets;
+  }
+
+  if (targetSnap.empty) {
+    try {
+      await backfillNotificationRecipientsForTeam(teamId, users);
+    } catch (error) {
+      functions.logger.warn('Failed to backfill notification recipient index after empty lookup', {
+        teamId,
+        category,
+        error: error?.message || String(error || 'Unknown error')
+      });
+    }
   }
 
   const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);
