@@ -3180,7 +3180,7 @@ function detectGameNotificationCategory(beforeGame, afterGame) {
 }
 
 function buildNotificationLink({ category, teamId, gameId, conversationId = null }) {
-  if (category === 'liveChat') {
+  if (category === 'liveChat' || category === 'mentions') {
     const params = [`teamId=${encodeURIComponent(teamId)}`];
     if (conversationId) {
       params.push(`conversationId=${encodeURIComponent(conversationId)}`);
@@ -3194,7 +3194,7 @@ function buildNotificationLink({ category, teamId, gameId, conversationId = null
 }
 
 function buildNotificationAppRoute({ category, teamId, gameId, eventId, conversationId = null }) {
-  if (category === 'liveChat' && teamId) {
+  if ((category === 'liveChat' || category === 'mentions') && teamId) {
     const route = `/messages/${encodeURIComponent(teamId)}`;
     if (!conversationId) {
       return route;

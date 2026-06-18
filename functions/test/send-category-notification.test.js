@@ -183,7 +183,10 @@ describe('getTargetsForCategory', () => {
 
 
 describe('sendCategoryNotification', () => {
-    it('includes conversation deep links for live chat notifications', async () => {
+    it.each([
+        ['liveChat', { liveChat: true }],
+        ['mentions', { mentions: true }]
+    ])('includes conversation deep links for %s notifications', async (category, categories) => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
@@ -194,7 +197,7 @@ describe('sendCategoryNotification', () => {
                     uid: 'coach-1',
                     deviceId: 'coach-device',
                     token: 'coach-token',
-                    categories: { liveChat: true }
+                    categories
                 }
             ]
         });
@@ -202,7 +205,7 @@ describe('sendCategoryNotification', () => {
         try {
             const result = await internals.sendCategoryNotification({
                 teamId: 'team-1',
-                category: 'liveChat',
+                category,
                 title: 'New message',
                 body: 'Check chat',
                 conversationId: 'staff room'
@@ -211,7 +214,7 @@ describe('sendCategoryNotification', () => {
             expect(result?.successCount).toBe(1);
             expect(env.messagingCalls).toHaveLength(1);
             expect(env.messagingCalls[0].data).toMatchObject({
-                category: 'liveChat',
+                category,
                 conversationId: 'staff room',
                 appRoute: '/messages/team-1?conversationId=staff%20room',
                 link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room'
