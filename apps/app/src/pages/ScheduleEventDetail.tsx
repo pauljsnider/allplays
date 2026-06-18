@@ -1734,6 +1734,7 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
   const canReact = reactionsModule ? reactionsModule.canUseLiveGameReactions(event, { now: new Date() }) : false;
   const reactionNotice = reactionsModule ? reactionsModule.getLiveGameReactionNotice(event, { now: new Date() }) : null;
   const reactionOptions = reactionsModule ? reactionsModule.liveGameReactionOptions : [];
+  const reactionsReady = Boolean(reactionsModule && reactionOptions.length);
 
   useEffect(() => {
     if (!reactionsModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
@@ -1813,8 +1814,8 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {reactionOptions.map((reaction) => {
+      <div className="mt-3 flex min-h-11 flex-wrap gap-2">
+        {reactionsReady ? reactionOptions.map((reaction) => {
           const disabled = !canReact || sendingReactionKey === reaction.key;
           return (
             <button
@@ -1828,11 +1829,19 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
               {reaction.emoji}
             </button>
           );
-        })}
+        }) : Array.from({ length: 5 }).map((_, index) => (
+          <span
+            key={`reaction-loading-${index}`}
+            className="inline-flex min-h-11 min-w-11 animate-pulse items-center justify-center rounded-full border border-amber-100 bg-white/80 px-3"
+            aria-hidden="true"
+          />
+        ))}
       </div>
 
       <div className="mt-2 text-xs font-semibold text-gray-500">
-        {reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.'}
+        {reactionsReady
+          ? (reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.')
+          : 'Loading reaction controls…'}
       </div>
       {sendStatus ? <div className="mt-2 text-xs font-bold text-rose-700">{sendStatus}</div> : null}
     </div>

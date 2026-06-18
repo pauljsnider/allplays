@@ -506,6 +506,9 @@ describe('ScheduleEventDetail assignments', () => {
     await waitFor(() => {
       expect(screen.getByTestId('live-game-reactions-panel')).toBeTruthy();
     });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Heart' })).toBeTruthy();
+    });
 
     reactionCallback({ id: 'reaction-1', type: 'heart' });
 
@@ -517,6 +520,31 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(liveGameReactionsServiceMocks.sendLiveGameReaction).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ type: 'heart', user: auth.user }));
+    });
+  });
+
+  it('shows reaction loading placeholders before the deferred controls finish loading', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ liveStatus: 'live', status: 'live' })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Live reactions' }));
+
+    expect(screen.getByText('Loading reaction controls…')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Heart' })).toBeNull();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Heart' })).toBeTruthy();
     });
   });
 
@@ -745,6 +773,9 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('live-game-chat-panel')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.subscribeToLiveGameChat).toHaveBeenCalledTimes(1);
     });
 
     chatCallback([
