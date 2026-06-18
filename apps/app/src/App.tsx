@@ -14,7 +14,7 @@ import {
 } from './lib/nativeBackButton';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { shouldReloadTeamsToHome } from './lib/reloadRouting';
-import { addPushNotificationOpenListener } from './lib/pushService';
+import { addPushNotificationOpenListener, ensureAndroidNotificationChannels } from './lib/pushService';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
 
@@ -138,6 +138,7 @@ export default function App() {
     let removeListener = async () => {};
 
     async function registerPushListener() {
+      await ensureAndroidNotificationChannels();
       removeListener = await addPushNotificationOpenListener((route) => {
         if (authUserRef.current) {
           navigate(route, { replace: true });

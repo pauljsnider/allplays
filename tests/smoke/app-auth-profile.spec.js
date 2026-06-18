@@ -331,6 +331,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return async () => {};
                 }
 
+                export async function ensureAndroidNotificationChannels() {
+                    return;
+                }
+
                 export async function enablePushNotificationsForUser() {
                     window.__appProfileCalls.push += 1;
                 }
