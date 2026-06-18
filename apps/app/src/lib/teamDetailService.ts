@@ -11,7 +11,6 @@ import {
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
-  getAllUsers,
   updateTeam,
   grantScorekeeperAccess,
   grantVideographerAccess,
@@ -27,7 +26,7 @@ import {
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
-import { collection, db, getDocs, query, where } from '../../../../js/firebase.js';
+import { collection, db, doc, getDoc, getDocs, query, where } from '../../../../js/firebase.js';
 import { normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility, validateRosterProfileValues } from '../../../../js/roster-profile-fields.js';
 import { describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
@@ -285,13 +284,32 @@ type TeamDetailBaseSnapshot = {
 type FirestoreDocument = Record<string, any> & { id: string };
 
 const teamDetailBaseSnapshotCache = new Map<string, TeamDetailBaseSnapshot>();
+type RelevantTeamMembersCacheEntry = {
+  inviteStateKey: string;
+  parentInviteStateKey: string;
+  baseMembersPromise: Promise<any[]> | null;
+  baseMembers: any[];
+  membersById: Map<string, any>;
+  membersByEmail: Map<string, any>;
+  loadedInviteEmails: Set<string>;
+  inviteEmailPromises: Map<string, Promise<void>>;
+};
+
+const relevantTeamMembersCache = new Map<string, RelevantTeamMembersCacheEntry>();
 
 export function __resetTeamDetailBaseSnapshotCacheForTests() {
   teamDetailBaseSnapshotCache.clear();
+  relevantTeamMembersCache.clear();
 }
 
 function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
-  teamDetailBaseSnapshotCache.delete(cleanString(teamId));
+  const normalizedTeamId = cleanString(teamId);
+  teamDetailBaseSnapshotCache.delete(normalizedTeamId);
+  for (const cacheKey of relevantTeamMembersCache.keys()) {
+    if (cacheKey === normalizedTeamId || cacheKey.startsWith(`${normalizedTeamId}::`)) {
+      relevantTeamMembersCache.delete(cacheKey);
+    }
+  }
 }
 
 function canManageTeamAdmins(user: AuthUser | null, team: any) {
@@ -544,6 +562,233 @@ async function loadPendingParentInvites(teamId: string) {
     .filter(isPendingParentInvite));
 }
 
+async function loadUserById(userId: string) {
+  const normalizedUserId = cleanString(userId);
+  if (!normalizedUserId) return null;
+
+  return readWithNativeFallback(
+    `user ${normalizedUserId}`,
+    async () => {
+      const snapshot = await getDoc(doc(db, 'users', normalizedUserId));
+      return snapshot.exists() ? { id: snapshot.id, ...(snapshot.data() || {}) } : null;
+    },
+    async () => nativeGetDocument(`users/${encodeURIComponent(normalizedUserId)}`)
+  );
+}
+
+async function loadUsersByEmail(email: string) {
+  const normalizedEmail = cleanString(email).toLowerCase();
+  if (!normalizedEmail) return [] as any[];
+
+  return readWithNativeFallback(
+    `users by email ${normalizedEmail}`,
+    async () => {
+      const snapshot = await getDocs(query(collection(db, 'users'), where('email', '==', normalizedEmail)));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    async () => nativeRunQuery('users', 'email', 'EQUAL', normalizedEmail)
+  );
+}
+
+async function loadUsersByParentTeamId(teamId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) return [] as any[];
+
+  return readWithNativeFallback(
+    `users by parentTeamIds ${normalizedTeamId}`,
+    async () => {
+      const snapshot = await getDocs(query(collection(db, 'users'), where('parentTeamIds', 'array-contains', normalizedTeamId)));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    async () => nativeRunQuery('users', 'parentTeamIds', 'ARRAY_CONTAINS', normalizedTeamId)
+  );
+}
+
+async function loadUsersByParentPlayerKey(parentPlayerKey: string) {
+  const normalizedParentPlayerKey = cleanString(parentPlayerKey);
+  if (!normalizedParentPlayerKey) return [] as any[];
+
+  return readWithNativeFallback(
+    `users by parentPlayerKeys ${normalizedParentPlayerKey}`,
+    async () => {
+      const snapshot = await getDocs(query(collection(db, 'users'), where('parentPlayerKeys', 'array-contains', normalizedParentPlayerKey)));
+      return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+    },
+    async () => nativeRunQuery('users', 'parentPlayerKeys', 'ARRAY_CONTAINS', normalizedParentPlayerKey)
+  );
+}
+
+function collectRelevantTeamMemberUserIds(team: any, players: any[] = []) {
+  const userIds = new Set<string>();
+  const addUserId = (value: any) => {
+    const normalizedValue = cleanString(value);
+    if (normalizedValue) userIds.add(normalizedValue);
+  };
+
+  addUserId(team?.ownerId);
+  getSelectedPermissionIds(team, 'scorekeeping').forEach(addUserId);
+  getSelectedPermissionIds(team, 'videography').forEach(addUserId);
+
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    getPlayerLinkedUserIds(player).forEach(addUserId);
+  });
+
+  return [...userIds];
+}
+
+function collectRelevantTeamMemberEmails(team: any, players: any[] = [], invites: any[] = []) {
+  const emails = new Set<string>();
+  const addEmail = (value: any) => {
+    const normalizedValue = cleanString(value).toLowerCase();
+    if (normalizedValue.includes('@')) emails.add(normalizedValue);
+  };
+
+  addEmail(team?.ownerEmail);
+  normalizeAdminEmailList(team?.adminEmails).forEach(addEmail);
+  (Array.isArray(invites) ? invites : []).forEach((invite) => addEmail(invite?.email));
+
+  (Array.isArray(players) ? players : []).forEach((player) => {
+    (Array.isArray(player?.parents) ? player.parents : []).forEach((parent: any) => {
+      addEmail(parent?.email);
+    });
+  });
+
+  return [...emails];
+}
+
+function createRelevantTeamMembersCacheEntry(): RelevantTeamMembersCacheEntry {
+  return {
+    inviteStateKey: '',
+    parentInviteStateKey: '',
+    baseMembersPromise: null,
+    baseMembers: [],
+    membersById: new Map<string, any>(),
+    membersByEmail: new Map<string, any>(),
+    loadedInviteEmails: new Set<string>(),
+    inviteEmailPromises: new Map<string, Promise<void>>()
+  };
+}
+
+function buildRelevantTeamMemberInviteStateKey(pendingAdminInvites: any[] = [], pendingParentInvites: any[] = []) {
+  return [...pendingAdminInvites, ...pendingParentInvites]
+    .map((invite) => [
+      cleanString(invite?.type).toLowerCase(),
+      cleanString(invite?.email).toLowerCase(),
+      cleanString(invite?.playerId),
+      cleanString(invite?.code).toUpperCase()
+    ].join(':'))
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+function resetRelevantTeamMembersCacheEntry(entry: RelevantTeamMembersCacheEntry, inviteStateKey: string, options: { resetBaseMembers?: boolean; parentInviteStateKey?: string } = {}) {
+  entry.inviteStateKey = inviteStateKey;
+  if (typeof options.parentInviteStateKey === 'string') entry.parentInviteStateKey = options.parentInviteStateKey;
+  if (options.resetBaseMembers) {
+    entry.baseMembersPromise = null;
+    entry.baseMembers = [];
+  }
+  entry.membersById.clear();
+  entry.membersByEmail.clear();
+  mergeRelevantTeamMembers(entry, entry.baseMembers);
+  entry.loadedInviteEmails.clear();
+  entry.inviteEmailPromises.clear();
+}
+
+function mergeRelevantTeamMembers(entry: RelevantTeamMembersCacheEntry, members: any[] = []) {
+  (Array.isArray(members) ? members : []).forEach((member) => {
+    const normalizedUserId = cleanString(member?.id || member?.uid);
+    const normalizedEmail = cleanString(member?.email).toLowerCase();
+    if (normalizedUserId && !entry.membersById.has(normalizedUserId)) entry.membersById.set(normalizedUserId, member);
+    if (normalizedEmail && !entry.membersByEmail.has(normalizedEmail)) entry.membersByEmail.set(normalizedEmail, member);
+  });
+}
+
+function getCachedRelevantTeamMembers(entry: RelevantTeamMembersCacheEntry) {
+  return Array.from(new Set([...entry.membersById.values(), ...entry.membersByEmail.values()]));
+}
+
+async function loadRelevantTeamMembers({
+  team,
+  players = [],
+  pendingAdminInvites = [],
+  pendingParentInvites = []
+}: {
+  team: any;
+  players?: any[];
+  pendingAdminInvites?: any[];
+  pendingParentInvites?: any[];
+}) {
+  const normalizedTeamId = cleanString(team?.id || team?.teamId);
+  if (!normalizedTeamId) return [];
+
+  let cacheEntry = relevantTeamMembersCache.get(normalizedTeamId);
+  if (!cacheEntry) {
+    cacheEntry = createRelevantTeamMembersCacheEntry();
+    relevantTeamMembersCache.set(normalizedTeamId, cacheEntry);
+  }
+
+  const inviteStateKey = buildRelevantTeamMemberInviteStateKey(pendingAdminInvites, pendingParentInvites);
+  const parentInviteStateKey = buildRelevantTeamMemberInviteStateKey([], pendingParentInvites);
+  if (cacheEntry.parentInviteStateKey !== parentInviteStateKey) {
+    resetRelevantTeamMembersCacheEntry(cacheEntry, inviteStateKey, { resetBaseMembers: true, parentInviteStateKey });
+  } else if (cacheEntry.inviteStateKey !== inviteStateKey) {
+    resetRelevantTeamMembersCacheEntry(cacheEntry, inviteStateKey, { parentInviteStateKey });
+  }
+
+  const userIds = collectRelevantTeamMemberUserIds(team, players);
+  const emails = collectRelevantTeamMemberEmails(team, players, [...pendingAdminInvites, ...pendingParentInvites]);
+  const parentPlayerKeys = (Array.isArray(players) ? players : [])
+    .map((player) => {
+      const playerId = cleanString(player?.id || player?.playerId);
+      return normalizedTeamId && playerId ? `${normalizedTeamId}::${playerId}` : '';
+    })
+    .filter(Boolean);
+
+  if (!cacheEntry.baseMembersPromise) {
+    cacheEntry.baseMembersPromise = Promise.all([
+      Promise.all(userIds.map((userId) => loadUserById(userId).catch(() => null))),
+      loadUsersByParentTeamId(normalizedTeamId).catch(() => []),
+      Promise.all(parentPlayerKeys.map((parentPlayerKey) => loadUsersByParentPlayerKey(parentPlayerKey).catch(() => [])))
+    ]).then(([usersById, usersByParentTeamId, usersByParentPlayerKey]) => {
+      mergeRelevantTeamMembers(cacheEntry!, [
+        ...usersById.filter(Boolean),
+        ...usersByParentTeamId,
+        ...usersByParentPlayerKey.flat()
+      ]);
+      cacheEntry!.baseMembers = getCachedRelevantTeamMembers(cacheEntry!);
+      return cacheEntry!.baseMembers;
+    });
+  }
+
+  await cacheEntry.baseMembersPromise;
+
+  const inviteEmailsToLoad = emails.filter((email) => (
+    email
+    && !cacheEntry!.loadedInviteEmails.has(email)
+    && !cacheEntry!.membersByEmail.has(email)
+  ));
+
+  await Promise.all(inviteEmailsToLoad.map((email) => {
+    let invitePromise = cacheEntry!.inviteEmailPromises.get(email);
+    if (!invitePromise) {
+      invitePromise = loadUsersByEmail(email)
+        .catch(() => [])
+        .then((members) => {
+          mergeRelevantTeamMembers(cacheEntry!, members);
+          cacheEntry!.loadedInviteEmails.add(email);
+        })
+        .finally(() => {
+          cacheEntry!.inviteEmailPromises.delete(email);
+        });
+      cacheEntry!.inviteEmailPromises.set(email, invitePromise);
+    }
+    return invitePromise;
+  }));
+
+  return getCachedRelevantTeamMembers(cacheEntry);
+}
 
 export async function inviteTeamAdminForApp(teamId: string, email: string, user: AuthUser | null = null): Promise<InviteTeamAdminForAppResult> {
   const normalizedTeamId = cleanString(teamId);
@@ -563,6 +808,7 @@ export async function inviteTeamAdminForApp(teamId: string, email: string, user:
     addTeamAdminEmail,
     sendInviteEmail
   });
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
   const code = cleanString(result?.code) || null;
   return {
     email: normalizedEmail,
@@ -612,6 +858,7 @@ export async function createRosterParentInviteForApp(teamId: string, user: AuthU
   const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), '', 'Parent');
   const code = cleanString(inviteResult?.code).toUpperCase();
   if (!code) throw new Error('Invite code was not created.');
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
   return {
     code,
@@ -914,10 +1161,12 @@ export async function loadTeamStaffPermissions(teamId: string, user: AuthUser | 
 
   if (!team || !hasFullTeamAccess(user, team)) return null;
 
-  const [pendingAdminInvites, confirmedTeamMembers] = await Promise.all([
-    loadPendingAdminInvites(teamId).catch(() => []),
-    Promise.resolve(getAllUsers()).catch(() => [])
-  ]);
+  const pendingAdminInvites = await loadPendingAdminInvites(teamId).catch(() => []);
+  const confirmedTeamMembers = await loadRelevantTeamMembers({
+    team,
+    players,
+    pendingAdminInvites
+  });
 
   return buildTeamStaffPermissionsSummary({
     teamId,
@@ -933,10 +1182,12 @@ export async function loadTeamRosterParentInvites(teamId: string, user: AuthUser
 
   if (!team || !hasFullTeamAccess(user, team)) return [];
 
-  const [pendingParentInvites, confirmedTeamMembers] = await Promise.all([
-    loadPendingParentInvites(teamId).catch(() => []),
-    Promise.resolve(getAllUsers()).catch(() => [])
-  ]);
+  const pendingParentInvites = await loadPendingParentInvites(teamId).catch(() => []);
+  const confirmedTeamMembers = await loadRelevantTeamMembers({
+    team,
+    players,
+    pendingParentInvites
+  });
 
   return buildRosterParentInviteSummaries({
     teamId,
@@ -1209,10 +1460,8 @@ function buildPermissionGrantTargets(team: Record<string, any>, players: any[], 
   });
 
   (Array.isArray(confirmedTeamMembers) ? confirmedTeamMembers : []).forEach((member) => {
-    const parentLinks = (Array.isArray(member?.parentOf) ? member.parentOf : [])
-      .filter((link: any) => cleanString(link?.teamId) === teamId);
-    parentLinks.forEach((link: any) => {
-      const player = playersById.get(cleanString(link?.playerId));
+    getAcceptedParentPlayerIds(member, teamId).forEach((playerId) => {
+      const player = playersById.get(playerId);
       if (player) addTarget(member?.id || member?.uid, player, member);
     });
   });
@@ -1321,6 +1570,7 @@ function dedupeStrings(values: string[]) {
 function isUpcomingAssignedGame(game: any) {
   if (!game || game?.type === 'practice') return false;
   if (isHistoricalGameStatus(game)) return false;
+  if (isActiveGameStatus(game)) return true;
   return isInUpcomingWindow(game?.date);
 }
 
@@ -1328,6 +1578,13 @@ function isHistoricalGameStatus(game: any) {
   const status = cleanString(game?.status).toLowerCase();
   const liveStatus = cleanString(game?.liveStatus).toLowerCase();
   return status === 'completed' || status === 'final' || status === 'cancelled' || liveStatus === 'completed';
+}
+
+function isActiveGameStatus(game: any) {
+  const status = cleanString(game?.status).toLowerCase();
+  const liveStatus = cleanString(game?.liveStatus).toLowerCase();
+  return ['active', 'in_progress', 'in-progress', 'live', 'started', 'running'].includes(status)
+    || ['active', 'in_progress', 'in-progress', 'live', 'started', 'running'].includes(liveStatus);
 }
 
 function normalizeEvents(games: any[], configById: Map<string, TeamDetailStatTrackerConfig> = new Map()) {

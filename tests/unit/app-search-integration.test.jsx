@@ -20,7 +20,10 @@ const firebaseMocks = vi.hoisted(() => ({
     doc: vi.fn(),
     getDoc: vi.fn(),
     getDocs: vi.fn(),
+    onSnapshot: vi.fn(() => vi.fn()),
     query: vi.fn((...parts) => ({ parts })),
+    serverTimestamp: vi.fn(() => ({ _isServerTimestamp: true })),
+    updateDoc: vi.fn(),
     where: vi.fn((field, op, value) => ({ type: 'where', field, op, value })),
     orderBy: vi.fn((field) => ({ type: 'orderBy', field })),
     limit: vi.fn((count) => ({ type: 'limit', count }))
@@ -529,7 +532,7 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('No Member help articles match this search');
     });
 
-    it('navigates to the in-app browse teams route when Browse Teams is clicked', async () => {
+    it('opens Browse Teams through the native app route for signed-in users', async () => {
         const { container } = await renderShell();
 
         await clickButton(container, 'Search');
@@ -537,6 +540,7 @@ describe('React app shell search', () => {
 
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/teams/browse');
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+        expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledWith('/teams/browse');
     });
 
     it('preloads a highlighted app route before Enter and does not preload it twice on selection', async () => {

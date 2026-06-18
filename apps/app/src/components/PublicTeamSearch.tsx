@@ -16,8 +16,12 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [nextCursor, setNextCursor] = useState<unknown | null>(null);
   const autoBrowseTriggeredRef = useRef(false);
+  const latestRequestIdRef = useRef(0);
 
   const fetchPublicTeams = useCallback(async ({ searchText, cursor = null, append = false }: { searchText?: string; cursor?: unknown | null; append?: boolean } = {}) => {
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+
     setLoading(true);
     if (!append) {
       setError('');
@@ -25,17 +29,25 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     setHasSearched(true);
     try {
       const result = await getPublicTeamsPage({ searchText, cursor });
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
       setPublicTeams((current) => append ? [...current, ...result.teams] : result.teams);
       setNextCursor(result.nextCursor);
       setActiveSearchQuery(searchText || null);
     } catch (err: any) {
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
       if (!append) {
         setError(err?.message || 'Failed to fetch public teams.');
         setPublicTeams([]);
         setNextCursor(null);
       }
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -48,8 +60,8 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   };
 
   const handleLoadMore = () => {
-    if (!nextCursor || activeSearchQuery) return;
-    void fetchPublicTeams({ cursor: nextCursor, append: true });
+    if (!nextCursor) return;
+    void fetchPublicTeams({ searchText: activeSearchQuery || undefined, cursor: nextCursor, append: true });
   };
 
   const handleClear = () => {
@@ -123,7 +135,8 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           type="button"
           className="primary-button !min-h-10 !px-3 text-sm"
           onClick={handleSearch}
-          disabled={loading}
+          disabled={loading && !searchQuery.trim()}
+          aria-label="Search public teams"
         >
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -138,6 +151,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
             className="ghost-button !min-h-10 !px-3 text-sm"
             onClick={handleClear}
             disabled={loading}
+            aria-label="Clear public team search"
           >
             <XCircle className="h-4 w-4" aria-hidden="true" />
             <span className="hidden sm:inline">Clear</span>
@@ -179,7 +193,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
               </div>
             </div>
           ))}
-          {nextCursor && !activeSearchQuery ? (
+          {nextCursor ? (
             <div className="flex justify-center">
               <button
                 type="button"

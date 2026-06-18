@@ -81,9 +81,9 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=45';
+        import { getTeams, getUserTeamsWithAccess, getParentTeams, deleteTeam, getUserProfile, getUnreadChatCounts } from './js/db.js?v=50';
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
-        import { checkAuth } from './js/auth.js?v=22';
+        import { checkAuth } from './js/auth.js?v=25';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -153,25 +153,30 @@
                     getParentTeams(user.uid)
                 ]);
 
-                // Merge coach/admin teams with parent-linked teams
-                // Parent-linked teams are view-only unless the user is also owner/admin.
-                const mergedMap = new Map();
+                const fullAccessMap = new Map();
                 coachTeams.forEach(t => {
-                    mergedMap.set(t.id, { ...t, _access: 'full' });
-                });
-                parentTeams.forEach(t => {
-                    if (mergedMap.has(t.id)) return;
-                    mergedMap.set(t.id, { ...t, _access: 'parent' });
+                    fullAccessMap.set(t.id, { ...t, _access: 'full' });
                 });
 
-                const teams = Array.from(mergedMap.values());
+                const parentOnlyTeams = [];
+                parentTeams.forEach(t => {
+                    if (fullAccessMap.has(t.id)) return;
+                    parentOnlyTeams.push({ ...t, _access: 'parent' });
+                });
+
+                const fullAccessTeams = Array.from(fullAccessMap.values());
                 const container = document.getElementById('my-teams-list');
 
                 // Fetch unread chat counts for all teams
-                const teamIds = teams.map(t => t.id);
+                const allTeams = [...fullAccessTeams, ...parentOnlyTeams];
+                const teamIds = allTeams.map(t => t.id);
                 const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts(user.uid, teamIds) : {};
 
-                if (teams.length === 0) {
+                function renderTeamCard(team) {
+                    const hasFullAccess = team._access === 'full';
+                    const unread = unreadCounts[team.id] || 0;
+
+                if (fullAccessTeams.length === 0 && parentOnlyTeams.length === 0) {
                     container.innerHTML = `
                         <div class="text-center py-16 bg-white rounded-2xl shadow-md border border-gray-200">
                             <svg class="w-20 h-20 text-gray-300 mx-auto mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -190,9 +195,6 @@
                     return;
                 }
 
-                container.innerHTML = teams.map(team => {
-                    const hasFullAccess = team._access === 'full';
-                    const unread = unreadCounts[team.id] || 0;
                     const unreadBadge = unread > 0
                         ? `<span class="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">${unread > 99 ? '99+' : unread}</span>`
                         : '';
@@ -335,47 +337,79 @@
                             `}
                         </div>
                     </div>
-                `}).join('');
+                `;
+                }
 
-                // Attach delete handlers
-                container.querySelectorAll('.delete-team-btn').forEach(btn => {
-                    btn.addEventListener('click', async (e) => {
-                        const buttonEl = e.currentTarget;
-                        const teamId = buttonEl.dataset.teamId;
-                        const teamName = buttonEl.dataset.teamName;
-                        if (!confirm(`Deactivate team "${teamName}"? Team data will be retained for history.`)) return;
-                        const card = buttonEl.closest('[data-team-card]');
-                        const originalText = buttonEl.textContent;
-                        buttonEl.disabled = true;
-                        buttonEl.textContent = 'Deactivating...';
-                        try {
-                            await deleteTeam(teamId);
-                            if (card) card.remove();
-                            if (!container.querySelector('[data-team-card]')) {
-                                container.innerHTML = `
-                                    <div class="text-center py-16 bg-white rounded-2xl shadow-md border border-gray-200">
-                                        <svg class="w-20 h-20 text-gray-300 mx-auto mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
-                                        </svg>
-                                        <h3 class="text-xl font-bold text-gray-900 mb-3">No Teams Yet</h3>
-                                        <p class="text-gray-600 mb-6 max-w-md mx-auto">Create your first team to start tracking stats, managing schedules, and building a winning program.</p>
-                                        <a href="edit-team.html" class="inline-flex items-center gap-2 bg-gradient-to-r from-primary-600 to-primary-700 text-white px-6 py-3 rounded-xl hover:from-primary-700 hover:to-primary-800 transition shadow-lg font-semibold">
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-                                            </svg>
-                                            Create Your First Team
-                                        </a>
-                                    </div>
-                                `;
+                function attachDeleteHandlers(el) {
+                    el.querySelectorAll('.delete-team-btn').forEach(btn => {
+                        btn.addEventListener('click', async (e) => {
+                            const buttonEl = e.currentTarget;
+                            const teamId = buttonEl.dataset.teamId;
+                            const teamName = buttonEl.dataset.teamName;
+                            if (!confirm(`Deactivate team "${teamName}"? Team data will be retained for history.`)) return;
+                            const card = buttonEl.closest('[data-team-card]');
+                            const originalText = buttonEl.textContent;
+                            buttonEl.disabled = true;
+                            buttonEl.textContent = 'Deactivating...';
+                            try {
+                                await deleteTeam(teamId);
+                                if (card) card.remove();
+                            } catch (err) {
+                                console.error('Deactivate team failed', err);
+                                alert('Error deactivating team. ' + (err?.message || 'Please try again.'));
+                                buttonEl.disabled = false;
+                                buttonEl.textContent = originalText;
                             }
-                        } catch (err) {
-                            console.error('Deactivate team failed', err);
-                            alert('Error deactivating team. ' + (err?.message || 'Please try again.'));
-                            buttonEl.disabled = false;
-                            buttonEl.textContent = originalText;
-                        }
+                        });
                     });
-                });
+                }
+
+                if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {
+                    container.innerHTML = `
+                        <div id="parent-only-notice" class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-6">
+                            <p class="text-sm font-semibold text-amber-800">Parent view only — you are linked as a parent on these teams. Visit the <a href="parent-dashboard.html" class="underline hover:text-amber-900">Parent Dashboard</a> for family-focused tools.</p>
+                        </div>
+                        <div id="parent-only-teams-grid" class="space-y-6">
+                            ${parentOnlyTeams.map(team => renderTeamCard(team)).join('')}
+                        </div>
+                    `;
+                    attachDeleteHandlers(container);
+                } else {
+                    const parentSection = fullAccessTeams.length > 0 && parentOnlyTeams.length > 0 ? `
+                        <div id="parent-teams-section" class="mt-6">
+                            <button id="parent-teams-toggle" type="button" aria-expanded="false" aria-controls="parent-teams-collapsible"
+                                class="flex items-center gap-2 text-sm font-semibold text-amber-700 hover:text-amber-900 transition">
+                                <svg id="parent-teams-chevron" class="w-4 h-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                </svg>
+                                Parent view only (${parentOnlyTeams.length})
+                            </button>
+                            <div id="parent-teams-collapsible" class="hidden mt-4 space-y-6">
+                                ${parentOnlyTeams.map(team => renderTeamCard(team)).join('')}
+                            </div>
+                        </div>
+                    ` : '';
+
+                    container.innerHTML = `
+                        <div id="full-access-teams-grid" class="space-y-6">
+                            ${fullAccessTeams.map(team => renderTeamCard(team)).join('')}
+                        </div>
+                        ${parentSection}
+                    `;
+                    attachDeleteHandlers(container);
+
+                    const toggle = container.querySelector('#parent-teams-toggle');
+                    const collapsible = container.querySelector('#parent-teams-collapsible');
+                    const chevron = container.querySelector('#parent-teams-chevron');
+                    if (toggle && collapsible) {
+                        toggle.addEventListener('click', () => {
+                            const isExpanded = toggle.getAttribute('aria-expanded') === 'true';
+                            toggle.setAttribute('aria-expanded', String(!isExpanded));
+                            collapsible.classList.toggle('hidden', isExpanded);
+                            if (chevron) chevron.style.transform = isExpanded ? '' : 'rotate(90deg)';
+                        });
+                    }
+                }
 
             } catch (error) {
                 console.error(error);

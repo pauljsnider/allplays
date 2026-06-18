@@ -4,6 +4,12 @@ import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 
+function canReadTeamMediaObject({ authUid, isTeamAdmin = false, isTeamParent = false, folderExists = true, folderVisibility = 'team' }) {
+    if (!authUid) return false;
+    if (isTeamAdmin) return true;
+    return isTeamParent && folderExists && folderVisibility === 'team';
+}
+
 describe('team media page wiring', () => {
     it('links the dashboard to the team media library', () => {
         const dashboard = fs.readFileSync(path.join(repoRoot, 'dashboard.html'), 'utf8');
@@ -14,12 +20,12 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=6"');
+        expect(page).toContain('src="js/team-media.js?v=7"');
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=45'");
-        expect(source).toContain("import { checkAuth } from './auth.js?v=22';");
+        expect(source).toContain("from './db.js?v=50'");
+        expect(source).toContain("import { checkAuth } from './auth.js?v=24';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(source).toContain('Team media permissions are not enabled');
@@ -53,11 +59,21 @@ describe('team media page wiring', () => {
 
         expect(firebaseJson.storage.rules).toBe('storage.rules');
         expect(storageRules).toContain('match /team-media/{teamId}/{folderId}/{userId}/{fileName}');
+        expect(storageRules).toContain('function canReadTeamMediaObject(teamId, folderId)');
+        expect(storageRules).toContain('allow get: if canReadTeamMediaObject(teamId, folderId);');
+        expect(storageRules).toContain("firestore.get(folderPath).data.get('visibility', 'team') == 'team'");
         expect(storageRules).toContain('canCreateTeamMediaUpload(teamId, folderId)');
         expect(storageRules).toContain("teamId in firestore.get(userPath).data.get('teamMediaUploadTeamIds', [])");
         expect(storageRules).toContain('canUploadTeamMediaFolder(teamId, folderId)');
         expect(storageRules).toContain('isAllowedTeamMediaUploadType(request.resource.contentType)');
         expect(storageRules).toContain('application/pdf');
         expect(storageRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+    });
+
+    it('denies parent reads for private team-media objects while preserving admin access', () => {
+        expect(canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderVisibility: 'team' })).toBe(true);
+        expect(canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderVisibility: 'private' })).toBe(false);
+        expect(canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderExists: false })).toBe(false);
+        expect(canReadTeamMediaObject({ authUid: 'admin-1', isTeamAdmin: true, folderVisibility: 'private' })).toBe(true);
     });
 });

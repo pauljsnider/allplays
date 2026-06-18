@@ -35,7 +35,8 @@ vi.mock('../../../../js/team-visibility.js', () => ({
     isTeamActive: vi.fn(() => true)
 }));
 
-import { normalizeProfilePhoto, requestAccountMerge } from './profileService';
+import { normalizeProfilePhoto } from './profilePhotoService';
+import { requestAccountMerge } from './profileService';
 
 describe('normalizeProfilePhoto', () => {
     beforeEach(() => {

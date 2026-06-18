@@ -19,7 +19,7 @@ async function waitForAppShell(page) {
 }
 
 async function waitForSearchTrigger(page) {
-    const trigger = page.getByRole('button', { name: 'Search', exact: true }).first();
+    const trigger = page.getByTestId('app-shell-search-trigger').first();
 
     await expect(async () => {
         await waitForAppShell(page);
@@ -68,7 +68,7 @@ async function openDesktopSearch(page) {
         try {
             await expect(searchDialog).toBeVisible({ timeout: 3000 });
         } catch {
-            const trigger = page.getByRole('button', { name: 'Search', exact: true }).first();
+            const trigger = page.getByTestId('app-shell-search-trigger').first();
             if (!await trigger.isVisible().catch(() => false)) {
                 await page.reload({ waitUntil: 'domcontentloaded' });
                 throw new Error('Search trigger was not ready; reloaded app shell');
@@ -192,6 +192,14 @@ async function mockSearchModules(page) {
                             playerId: 'player-1'
                         }
                     ];
+                }
+
+                export function getCachedAppPlayerSearchResults() {
+                    return null;
+                }
+
+                export function hasSatisfiedAppPlayerSearchResultBudget() {
+                    return false;
                 }
 
                 export function computeAppSearchResults({ queryText, auth, teams, players, helpRoleFilter = 'all' }) {
@@ -446,7 +454,8 @@ test.describe('desktop app global search', () => {
 
         await openDesktopSearch(page);
         await page.getByRole('button', { name: /Browse Teams/ }).click();
-        await expect(page).toHaveURL(/#\/teams\/browse$/);
+        await expect(page).toHaveURL(/#\/teams\/browse$/, { timeout: 1000 });
+        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
     });
 
     test('desktop search filters help results by selected role', async ({ page, baseURL }) => {

@@ -31,31 +31,43 @@ import {
   updatePracticeAttendance,
   updateTeam,
   upsertPracticePacketCompletion,
+  postChatMessage,
   postSharedGameCancellationNotification,
-  cancelOccurrence
-} from '../../../../js/db.js';
-import { sendPublicRsvpReminderEmails } from '../../../../js/schedule-notifications.js';
-import { db, doc, collection, collectionGroup, getDocs, query, runTransaction, where, increment, serverTimestamp } from '../../../../js/firebase.js';
-import { normalizeOfficialLinkEmail, normalizeOfficialLinkPhone } from '../../../../js/admin-user-official-links.js';
-import { getAssignedOfficiatingSlots, getOpenOfficiatingSlots } from '../../../../js/officiating-utils.js';
+  cancelOccurrence,
+  db,
+  doc,
+  collection,
+  collectionGroup,
+  getDocs,
+  query,
+  runTransaction,
+  where,
+  increment,
+  serverTimestamp
+} from './adapters/legacyScheduleDb';
 import {
+  sendPublicRsvpReminderEmails,
+  normalizeOfficialLinkEmail,
+  normalizeOfficialLinkPhone,
+  getAssignedOfficiatingSlots,
+  getOpenOfficiatingSlots,
   expandRecurrence,
   extractOpponent,
   fetchAndParseCalendar,
   getCalendarEventTrackingId,
   isPracticeEvent,
-  isTrackedCalendarEvent
-} from '../../../../js/utils.js';
-import { filterVisiblePracticeSessions } from '../../../../js/parent-dashboard-practice-sessions.js';
-import { buildPracticePacketCompletionPayload as buildPracticePacketCompletionPayloadBase } from '../../../../js/parent-dashboard-packets.js';
-import { resolveMyRsvpByChildForGame } from '../../../../js/parent-dashboard-rsvp.js';
-import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from '../../../../js/availability-preferences.js';
-import { buildGameDayRsvpBreakdown } from '../../../../js/game-day-rsvp-breakdown.js';
-import { getPeriodsForFormation } from '../../../../js/game-day-periods.js';
-import { getEventRideshareSummary } from '../../../../js/rideshare-helpers.js';
-import { mergeAssignmentsWithClaims } from '../../../../js/snack-helpers.js';
-import { hasScorekeepingTeamAccess } from '../../../../js/team-access.js';
-import { isTeamActive } from '../../../../js/team-visibility.js';
+  isTrackedCalendarEvent,
+  filterVisiblePracticeSessions,
+  buildPracticePacketCompletionPayload,
+  resolveMyRsvpByChildForGame,
+  buildGameDayRsvpBreakdown,
+  getPeriodsForFormation,
+  getEventRideshareSummary,
+  mergeAssignmentsWithClaims,
+  hasScorekeepingTeamAccess,
+  isTeamActive
+} from './adapters/legacyScheduleHelpers';
+import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './adapters/legacyAvailability';
 import { buildTrackerEventDocument } from './statTrackingService';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
@@ -103,9 +115,12 @@ import {
 } from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData } from './appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
+import { toAppServiceError } from './appErrors';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import type { AuthUser } from './types';
+
+const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
 
 const primaryDataTimeoutMs = 5000;
 const parentScheduleTeamConcurrency = 3;
@@ -2134,7 +2149,7 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
 
   const timer = startUxTimer('parent game route resolve');
   const expandStaffPlayers = options.expandStaffPlayers === true;
-  const cachedSchedule = getCachedAppData<ParentScheduleLoadResult>(`app-schedule-summary:${user.uid}`);
+  const cachedSchedule = getCachedAppData<ParentScheduleLoadResult>(getParentScheduleSummaryCacheKey(user.uid));
   const cachedMatch = (cachedSchedule?.events || []).find((event) => (
     compactString(event?.id) === requestedGameId
     && event?.type === 'game'
@@ -2203,7 +2218,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
         return await buildTeamSchedule(teamId, teamChildren, user);
       } catch (error) {
         console.warn('[schedule-service] Failed to load team schedule:', teamId, sanitizeErrorForLogging(error));
-        return [];
+        throw toAppServiceError(error, 'Unable to load schedule.');
       }
     });
 
@@ -3388,7 +3403,6 @@ export async function cancelScheduledGameForApp(event: ParentScheduleEvent, user
   }
 
   const notificationFailures: string[] = [];
-  const { postChatMessage } = await import('../../../../js/db.js');
   const senderName = user.displayName || user.email;
   const senderEmail = user.email;
   const counterpartTeamId = compactString(event.opponentTeamId || event.sharedScheduleOpponentTeamId) || null;
@@ -4121,7 +4135,7 @@ async function nativeCancelRideRequestForChild(event: ParentScheduleEvent, offer
 
 export async function loadParentScheduleRideOffers(event: ParentScheduleEvent) {
   if (!event.isDbGame || event.isCancelled) return [];
-  return normalizeRideOffers(await loadRideOffers(event.teamId, event.id).catch(() => []));
+  return normalizeRideOffers(await loadRideOffers(event.teamId, event.id));
 }
 
 export async function createParentScheduleRideOffer(event: ParentScheduleEvent, user: AuthUser, input: RideOfferInput) {

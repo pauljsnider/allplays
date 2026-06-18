@@ -68,28 +68,33 @@ describe('post-game stat editor helpers', () => {
         });
     });
 
-    it('preserves punctuation in configured stat keys when building correction payloads', () => {
+    it('normalizes configured custom stat keys so editor inputs and payloads stay aligned', () => {
+        // Regression for issue #2196: configured columns like "3-Pt" rendered raw data-stat-field keys
+        // while completed-game saves normalized to "3pt", dropping edited values on submit.
         const statFields = resolvePostGameStatFields({
             resolvedConfig: {
-                columns: ['AST/TO', 'FG%']
+                columns: ['3-Pt', 'FG%', 'Reb.']
             },
             statsMap: {
-                p1: { 'ast/to': 2, 'fg%': 45 }
+                p1: { '3pt': 8, fg: 5, reb: 4 }
             }
         });
 
         expect(statFields).toEqual([
-            { fieldName: 'ast/to', label: 'AST/TO' },
-            { fieldName: 'fg%', label: 'FG%' },
+            { fieldName: '3pt', label: '3-Pt' },
+            { fieldName: 'fg', label: 'FG%' },
+            { fieldName: 'reb', label: 'Reb.' },
             { fieldName: 'fouls', label: 'FOULS' }
         ]);
+
         expect(buildCompletedGamePlayerStatsPayload({
             player: { name: 'Ava Cole', number: '3' },
             statFields,
-            values: { 'ast/to': '3', 'fg%': '47', fouls: '1' }
+            values: { '3pt': '8', fg: '5', reb: '4', fouls: '1' }
         }).stats).toEqual({
-            'ast/to': 3,
-            'fg%': 47,
+            '3pt': 8,
+            fg: 5,
+            reb: 4,
             fouls: 1
         });
     });
@@ -175,5 +180,27 @@ describe('post-game stat editor helpers', () => {
         expect(pageSource).toContain("function hasRecordedStatValue(stats, key)");
         expect(pageSource).toContain("hasRecordedStatValue(pStats, key) ? pStats[key] : '&mdash;'");
         expect(pageSource).toContain("hasRecordedStatValue(p.stats, key) ? p.stats[key] : '&mdash;'");
+    });
+
+    it('uses normalizeStatKey for form input keys so custom stat names round-trip correctly', () => {
+        // Regression for issue #2196: form inputs were rendered with raw fieldName (e.g. "3-pt")
+        // but buildCompletedGamePlayerStatsPayload reads back using normalizeStatKey (e.g. "3pt"),
+        // causing a key mismatch that wiped custom stat values on save.
+        const pageSource = readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
+
+        // The team stat editor comes first in the file, then the player stat editor
+        const teamEditorStart = pageSource.indexOf('function setupPostGameTeamStatEditor({');
+        const playerEditorStart = pageSource.indexOf('function setupPostGameStatEditor({');
+
+        // The team stat editor renderEditor function must normalize field keys before use
+        const teamEditorEnd = playerEditorStart;
+        const teamEditorSource = pageSource.slice(teamEditorStart, teamEditorEnd);
+        expect(teamEditorSource).toContain('normalizeStatKey(field.fieldName)');
+        expect(teamEditorSource).toContain('data-team-stat-field=');
+
+        // The player stat editor renderEditor function must also normalize field keys
+        const playerEditorSource = pageSource.slice(playerEditorStart);
+        expect(playerEditorSource).toContain('normalizeStatKey(field.fieldName)');
+        expect(playerEditorSource).toContain('data-stat-field=');
     });
 });

@@ -7,6 +7,7 @@ import {
   createTeamMediaLink,
   discoverPublicTeams,
   getPlayers,
+  getTeamRegistrationForm,
   getTeam,
   getTeamMediaFolders,
   getTeamMediaItems,
@@ -64,7 +65,7 @@ import {
   sortByMediaOrder
 } from '../../../../js/team-media-utils.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
-import { loadParentSchedule } from './scheduleService';
+import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
 
@@ -104,6 +105,9 @@ export type ParentFeeAppRecord = Record<string, any> & {
   feeNotes?: string;
   offlinePaymentInstructions?: string;
   paymentInstructions?: string;
+  collectionMode?: string;
+  checkoutUrl?: string;
+  checkoutStatus?: string;
   canPay: boolean;
   checkoutInitiatable: boolean;
   paymentAction: 'checkoutUrl' | 'createCheckout' | '';
@@ -432,12 +436,9 @@ export async function initiateParentTeamFeeCheckout(teamId: string, batchId: str
   return { success: true, checkoutUrl };
 }
 
-export async function loadParentCalendarTools(user: AuthUser | null) {
+export async function loadParentCalendarTools(user: AuthUser | null, options: { force?: boolean } = {}) {
   if (!user?.uid) return { events: [], teams: [] };
-  const schedule = await loadParentSchedule(user, {
-    hydrateDetails: false,
-    expandStaffPlayers: false
-  });
+  const schedule = await loadParentScheduleSummary(user, { force: options.force });
   const teamsById = new Map<string, ParentCalendarTeam>();
   (schedule.events || []).forEach((event) => {
     if (!event.teamId) return;
@@ -847,15 +848,15 @@ export async function loadTeamMediaForApp(
     if (!folderId) return;
     const storedCount = getStoredMediaCount(folder);
     const shouldLoadItems = requestedFolderIds.has(folderId);
-    if (!shouldLoadItems && storedCount !== null) {
-      fallbackCounts.set(folderId, storedCount);
+    if (!shouldLoadItems) {
+      if (storedCount !== null) fallbackCounts.set(folderId, storedCount);
       return;
     }
     const items = sortByMediaOrder(await Promise.resolve(getTeamMediaItems(teamId, folderId)).catch(() => []))
       .map(toTeamMediaItem)
       .filter((item: TeamMediaItem) => item.url && isSafeTeamMediaUrl(item.url));
     fallbackCounts.set(folderId, items.length);
-    if (shouldLoadItems) itemSets.set(folderId, items);
+    itemSets.set(folderId, items);
   }));
 
   const folderCards = visibleFolders.map((folder: any) => {
@@ -927,13 +928,22 @@ function normalizeAccessRequest(request: any): ParentAccessRequest {
 
 function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
   const normalized = normalizeParentFeeRecord(fee);
-  const meta = getParentFeeStatusMeta(normalized.status);
-  const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(normalized) && Boolean(normalized.checkoutUrl);
-  const checkoutInitiatable = canInitiateParentTeamFeeCheckout(normalized);
-  return {
+  const collectionMode = compactString(normalized.collectionMode);
+  const checkoutUrl = compactString(normalized.checkoutUrl);
+  const checkoutStatus = compactString(normalized.checkoutStatus);
+  const parentFee = {
     ...normalized,
-    amountLabel: formatParentFeeAmount(normalized),
-    dueLabel: formatParentFeeDueDate(normalized.dueDate),
+    collectionMode,
+    checkoutUrl,
+    checkoutStatus
+  };
+  const meta = getParentFeeStatusMeta(normalized.status);
+  const canOpenCheckoutUrl = isParentTeamFeePayActionAllowed(parentFee) && hasReusableParentTeamFeeCheckoutUrl(parentFee);
+  const checkoutInitiatable = canInitiateParentTeamFeeCheckout(parentFee);
+  return {
+    ...parentFee,
+    amountLabel: formatParentFeeAmount(parentFee),
+    dueLabel: formatParentFeeDueDate(parentFee.dueDate),
     statusLabel: meta.label,
     canPay: canOpenCheckoutUrl || checkoutInitiatable,
     checkoutInitiatable,
@@ -944,7 +954,25 @@ function toParentFeeAppRecord(fee: any): ParentFeeAppRecord {
   };
 }
 
+function isOnlineParentTeamFeeCollection(fee: any) {
+  const collectionMode = compactString(fee?.collectionMode).toLowerCase();
+  if (!collectionMode) {
+    return Boolean(compactString(fee?.checkoutUrl));
+  }
+
+  return ['online_stripe', 'stripe', 'stripe_checkout', 'online'].includes(collectionMode);
+}
+
+function hasReusableParentTeamFeeCheckoutUrl(fee: any) {
+  if (!compactString(fee?.checkoutUrl)) return false;
+
+  const checkoutStatus = compactString(fee?.checkoutStatus).toLowerCase();
+  return !checkoutStatus || checkoutStatus === 'open';
+}
+
 export function isParentTeamFeePayActionAllowed(fee: any) {
+  if (!isOnlineParentTeamFeeCollection(fee)) return false;
+
   const status = compactString(fee?.status).toLowerCase();
   if (status === 'paid' || status === 'canceled' || status === 'cancelled') return false;
 
@@ -957,7 +985,7 @@ export function isParentTeamFeePayActionAllowed(fee: any) {
 export function canInitiateParentTeamFeeCheckout(fee: any) {
   return Boolean(
     isParentTeamFeePayActionAllowed(fee)
-    && !fee?.checkoutUrl
+    && !hasReusableParentTeamFeeCheckoutUrl(fee)
     && compactString(fee?.teamId)
     && compactString(fee?.batchId)
     && compactString(fee?.recipientId)
@@ -1142,12 +1170,11 @@ async function loadRegistrationDetailModel(teamId: string, formId: string): Prom
   if (!teamId || !formId) {
     throw new Error('Team and form are required.');
   }
-  const [team, forms] = await Promise.all([
+  const [team, form] = await Promise.all([
     Promise.resolve(getTeam(teamId)).catch(() => null),
-    Promise.resolve(listTeamRegistrationForms(teamId)).catch(() => [])
+    Promise.resolve(getTeamRegistrationForm(teamId, formId)).catch(() => null)
   ]);
 
-  const form = forms.find((candidate: any) => candidate.id === formId);
   if (!form) throw new Error('Registration form not found.');
   if (!team) throw new Error('Team not found.');
 

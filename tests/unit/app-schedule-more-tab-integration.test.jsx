@@ -61,7 +61,7 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 
-import { ScheduleEventDetail, parseEventDetailSection } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSection } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -104,6 +104,8 @@ function report(overrides = {}) {
         statKeys: [],
         statLabels: {},
         playerRows: [],
+        visiblePlayerRows: [],
+        deferredPlayerRows: [],
         hasPlayingTime: false,
         plays: [],
         opponentRows: [],
@@ -253,6 +255,53 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(parseEventDetailSection('assignments')).toBe('assignments');
         expect(parseEventDetailSection('invalid')).toBe('availability');
         expect(parseEventDetailSection(null)).toBe('availability');
+    });
+
+    it('enables Save note only for dirty notes on existing RSVPs', () => {
+        expect(getAvailabilityNoteSaveState('going', 'Running late', 'Original note')).toMatchObject({
+            isDirty: true,
+            canSaveNote: true
+        });
+        expect(getAvailabilityNoteSaveState('going', 'Original note', 'Original note')).toMatchObject({
+            isDirty: false,
+            canSaveNote: false
+        });
+        expect(getAvailabilityNoteSaveState('not_responded', 'Need a ride', '')).toMatchObject({
+            isDirty: true,
+            canSaveNote: false
+        });
+    });
+
+    it('saves an edited RSVP note without reselecting the current response', async () => {
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            events: [event({ myRsvp: 'going', myRsvpNote: 'Original note' })]
+        });
+        scheduleMocks.submitParentScheduleRsvp.mockResolvedValue({ going: 1, maybe: 0, notGoing: 0, notResponded: 0 });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'Is Pat going?');
+
+        const noteInput = container.querySelector('textarea[aria-label="Availability note"]');
+        await act(async () => {
+            const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+            setValue.call(noteInput, 'Running late from pickup');
+            noteInput.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+
+        await waitForText(container, 'Unsaved note changes');
+        expect(buttonByText(container, 'Save note')).not.toBeNull();
+
+        await clickButton(container, 'Save note');
+
+        expect(scheduleMocks.submitParentScheduleRsvp).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'game-1', childId: 'player-1' }),
+            auth.user,
+            'going',
+            'Running late from pickup'
+        );
+        await waitForText(container, 'Pat availability note saved.');
+        await waitForText(container, 'Availability saved');
+        expect(container.querySelector('textarea[aria-label="Availability note"]')?.value).toBe('Running late from pickup');
     });
 
     it('renders the practice More tab with text-only sharing wired to the primary top card', async () => {
@@ -448,6 +497,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
         await waitForText(container, 'Report sections');
+        await clickButton(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
         expect(queryButtonByText(container, 'Summary')).not.toBeNull();
@@ -481,11 +531,57 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
         await waitForText(container, 'Report sections');
+        await clickButton(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
         expect(queryButtonByText(container, 'Opponent')).not.toBeNull();
         expect(queryButtonByText(container, 'Media')).not.toBeNull();
         expect(queryButtonByText(container, 'Insights')).toBeNull();
+    });
+
+    it('defaults Player Performance to participants and reveals the full roster on demand', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ liveStatus: 'completed', homeScore: 4, awayScore: 2 })]
+        });
+        reportMocks.loadGameReportSections.mockResolvedValue(report({
+            statKeys: ['pts'],
+            statLabels: { pts: 'PTS' },
+            playerRows: [
+                { playerId: 'player-1', playerName: 'Pat', number: '7', stats: { pts: 8 }, timeMs: 1200000, didNotPlay: false, participated: true, participationStatus: 'appeared', participationSource: 'app-stat-tracker' },
+                { playerId: 'player-2', playerName: 'Sam', number: '9', stats: {}, timeMs: 0, didNotPlay: false, participated: true, participationStatus: 'appeared', participationSource: 'app-stat-tracker' },
+                { playerId: 'player-3', playerName: 'Drew', number: '11', stats: {}, timeMs: 0, didNotPlay: true, participated: false, participationStatus: 'did-not-appear', participationSource: '' },
+                { playerId: 'player-4', playerName: 'Casey', number: '15', stats: {}, timeMs: 0, didNotPlay: false, participated: false, participationStatus: '', participationSource: '' }
+            ],
+            visiblePlayerRows: [
+                { playerId: 'player-1', playerName: 'Pat', number: '7', stats: { pts: 8 }, timeMs: 1200000, didNotPlay: false, participated: true, participationStatus: 'appeared', participationSource: 'app-stat-tracker' },
+                { playerId: 'player-2', playerName: 'Sam', number: '9', stats: {}, timeMs: 0, didNotPlay: false, participated: true, participationStatus: 'appeared', participationSource: 'app-stat-tracker' },
+                { playerId: 'player-3', playerName: 'Drew', number: '11', stats: {}, timeMs: 0, didNotPlay: true, participated: false, participationStatus: 'did-not-appear', participationSource: '' }
+            ],
+            deferredPlayerRows: [
+                { playerId: 'player-4', playerName: 'Casey', number: '15', stats: {}, timeMs: 0, didNotPlay: false, participated: false, participationStatus: '', participationSource: '' }
+            ],
+            hasPlayingTime: true
+        }));
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Report sections');
+        await clickButton(container, 'Report sections');
+        await waitForText(container, 'Match Summary');
+        await clickButton(container, 'Players');
+
+        expect(container.textContent).toContain('#7 Pat');
+        expect(container.textContent).toContain('#9 Sam');
+        expect(container.textContent).toContain('#11 Drew');
+        expect(container.textContent).toContain('DNP');
+        expect(container.textContent).not.toContain('#15 Casey');
+        expect(container.textContent).toContain('Show full roster (1)');
+
+        await clickButton(container, 'Show full roster (1)');
+
+        expect(container.textContent).toContain('#15 Casey');
+        expect(container.textContent).toContain('Hide full roster');
     });
 
     it('does not refresh completed game reports on focus or while Plays stays open', async () => {
@@ -500,6 +596,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
         await waitForText(container, 'Report sections');
+        await clickButton(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
         expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
@@ -530,6 +627,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
         await waitForText(container, 'Report sections');
+        await clickButton(container, 'Report sections');
         await waitForText(container, 'Match Summary');
 
         expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
@@ -799,6 +897,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
         await waitForText(container, 'Lineup builder');
+        await clickButton(container, 'Lineup builder');
         await waitForText(container, 'No lineup draft is available yet.');
 
         expect(container.querySelector('#game-hub-lineup-formation')).not.toBeNull();
@@ -815,6 +914,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
         await waitForText(container, 'Lineup builder');
+        await clickButton(container, 'Lineup builder');
 
         const select = container.querySelector('#game-hub-lineup-formation');
         await act(async () => {
@@ -857,6 +957,8 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
         await clickButton(container, 'Game');
+        await waitForText(container, 'Lineup builder');
+        await clickButton(container, 'Lineup builder');
         await waitForText(container, 'Published v1. 1 draft assignment unpublished.');
 
         await clickButton(container, 'Publish lineup');

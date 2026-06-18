@@ -195,4 +195,29 @@ describe('game plan interop helpers', () => {
       I1: { lcf: 'p3' }
     });
   });
+
+  it('uses inning prefixes for baseball and softball legacy plans', () => {
+    const baseballPlan = buildRotationPlanFromGamePlan({
+      formationId: 'baseball-9',
+      numPeriods: 7,
+      lineups: {
+        '1-1-p': 'p1',
+        '2-1-ss': 'p2'
+      }
+    });
+    expect(baseballPlan).toEqual({
+      I1: { p: 'p1' },
+      I2: { ss: 'p2' }
+    });
+
+    const softballPlan = buildRotationPlanFromGamePlan({
+      formationId: 'softball-10',
+      lineups: {
+        'I1-lcf': 'p3'
+      }
+    });
+    expect(softballPlan).toEqual({
+      I1: { lcf: 'p3' }
+    });
+  });
 });

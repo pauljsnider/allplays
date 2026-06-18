@@ -48,7 +48,19 @@ jobs:
         run: npm ci
 
       - name: Install app dependencies
-        run: npm ci --prefix apps/app
+        run: |
+          npm config set fetch-retries 5
+          npm config set fetch-retry-factor 2
+          npm config set fetch-retry-mintimeout 10000
+          npm config set fetch-retry-maxtimeout 60000
+          for attempt in 1 2 3; do
+            npm ci --prefix apps/app && exit 0
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            echo "Transient npm install failure for apps/app. Retrying in 15 seconds..."
+            sleep 15
+          done
 
       - name: Run unit tests
         run: npm run test:unit:ci

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { Award, ExternalLink, Loader2, Sparkles } from 'lucide-react';
+import { Award, ExternalLink, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { renderCertificate } from '../../../../js/certificates/renderer.js';
 import { loadCertificateDraftComposer, saveCertificateDraftsForApp, type CertificateDraftComposerModel, type CertificateDraftPlayer, type CertificateDraftSharedState } from '../lib/certificateDraftService';
 import { openPublicUrl } from '../lib/publicActions';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
 
 export function TeamCertificates({ auth }: { auth: AuthState }) {
@@ -12,45 +13,55 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
   const [shared, setShared] = useState<CertificateDraftSharedState | null>(null);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState<string[]>([]);
   const [previewPlayerId, setPreviewPlayerId] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(false);
+  const { loading, error, setError, run: runPrimaryLoad } = useAsyncOperation();
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const activeLoadIdRef = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadComposer = useCallback(async () => {
+    if (!teamId) return null;
 
-    async function load() {
-      if (!teamId) return;
-      setLoading(true);
-      setError('');
-      setSuccess('');
-      try {
-        const nextModel = await loadCertificateDraftComposer(teamId, auth.user);
-        if (cancelled) return;
-        setModel(nextModel);
-        setShared(nextModel.shared);
-        setSelectedPlayerIds(nextModel.players.map((player) => player.id));
-        setPreviewPlayerId(nextModel.players[0]?.id || '');
-      } catch (loadError: any) {
-        if (!cancelled) {
+    const loadId = activeLoadIdRef.current + 1;
+    activeLoadIdRef.current = loadId;
+    setSuccess('');
+
+    return runPrimaryLoad(
+      () => loadCertificateDraftComposer(teamId, auth.user),
+      {
+        errorMessage: 'Unable to load certificate drafting.',
+        rethrow: false,
+        onSuccess: (nextModel) => {
+          if (loadId !== activeLoadIdRef.current) return;
+          setModel(nextModel);
+          setShared(nextModel.shared);
+          setSelectedPlayerIds(nextModel.players.map((player) => player.id));
+          setPreviewPlayerId(nextModel.players[0]?.id || '');
+        },
+        onError: () => {
+          if (loadId !== activeLoadIdRef.current) return;
           setModel(null);
           setShared(null);
           setSelectedPlayerIds([]);
           setPreviewPlayerId('');
-          setError(loadError?.message || 'Unable to load certificate drafting.');
+        },
+        onFinally: () => {
+          if (loadId !== activeLoadIdRef.current) return;
+          setHasResolvedInitialLoad(true);
         }
-      } finally {
-        if (!cancelled) setLoading(false);
       }
-    }
+    );
+  }, [auth.user, runPrimaryLoad, teamId]);
 
-    void load();
+  useEffect(() => {
+    setHasResolvedInitialLoad(false);
+    void loadComposer();
+
     return () => {
-      cancelled = true;
+      activeLoadIdRef.current += 1;
     };
-  }, [auth.user, teamId]);
+  }, [loadComposer]);
 
   const selectedPlayers = useMemo(() => {
     if (!model) return [];
@@ -128,7 +139,7 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
     }
   };
 
-  if (loading) {
+  if (loading || !hasResolvedInitialLoad) {
     return (
       <div className="app-card flex min-h-[240px] items-center justify-center gap-3 p-5 text-sm font-semibold text-gray-600">
         <Loader2 className="h-5 w-5 animate-spin text-primary-600" aria-hidden="true" />
@@ -144,6 +155,10 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
         <div className="app-card p-5">
           <div className="text-base font-black text-gray-950">Certificate drafting unavailable</div>
           <div className="mt-2 text-sm font-semibold text-rose-700">{error}</div>
+          <button type="button" className="primary-button mt-4" onClick={() => void loadComposer()} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+            Retry
+          </button>
         </div>
       </div>
     );

@@ -7,7 +7,6 @@ import { Profile } from '../../apps/app/src/pages/Profile';
 import type { AuthState } from '../../apps/app/src/lib/types';
 
 const profileServiceMocks = vi.hoisted(() => ({
-  acquireProfilePhoto: vi.fn(),
   createProfileAccessCode: vi.fn(),
   loadParentTeams: vi.fn(),
   loadNotificationPreferences: vi.fn(),
@@ -19,10 +18,14 @@ const profileServiceMocks = vi.hoisted(() => ({
     liveScore: preferences?.liveScore === true,
     schedule: preferences?.schedule !== false
   })),
-  normalizeProfilePhoto: vi.fn(),
   requestAccountMerge: vi.fn(),
   saveNotificationPreferences: vi.fn(),
-  saveProfileDocument: vi.fn(),
+  saveProfileDocument: vi.fn()
+}));
+
+const profilePhotoServiceMocks = vi.hoisted(() => ({
+  acquireProfilePhoto: vi.fn(),
+  normalizeProfilePhoto: vi.fn(),
   uploadProfilePhoto: vi.fn()
 }));
 
@@ -42,6 +45,7 @@ const shellLayoutState = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/profileService', () => profileServiceMocks);
+vi.mock('../../apps/app/src/lib/profilePhotoService', () => profilePhotoServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions', () => publicActionsMocks);
 vi.mock('../../apps/app/src/lib/pushService', () => pushServiceMocks);
 vi.mock('../../apps/app/src/lib/useShellLayout', () => ({
@@ -127,7 +131,7 @@ async function selectPhoto(container: HTMLElement, fileName: string) {
     value: [file]
   });
   fireEvent.change(input);
-  await waitFor(() => expect(profileServiceMocks.normalizeProfilePhoto).toHaveBeenCalledWith(file));
+  await waitFor(() => expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalledWith(file));
   return file;
 }
 
@@ -159,7 +163,7 @@ describe('Profile invites', () => {
       updatedAt: { seconds: 1717200000 }
     });
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([]);
-    profileServiceMocks.acquireProfilePhoto.mockResolvedValue(new File(['native-photo'], 'native-camera.jpg', { type: 'image/jpeg' }));
+    profilePhotoServiceMocks.acquireProfilePhoto.mockResolvedValue(new File(['native-photo'], 'native-camera.jpg', { type: 'image/jpeg' }));
     pushServiceMocks.enablePushNotificationsForUser.mockResolvedValue(undefined);
     pushServiceMocks.getPushNotificationPermissionStatus.mockResolvedValue({
       state: 'prompt',
@@ -174,8 +178,8 @@ describe('Profile invites', () => {
     profileServiceMocks.requestAccountMerge.mockResolvedValue(undefined);
     profileServiceMocks.saveNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
-    profileServiceMocks.uploadProfilePhoto.mockResolvedValue('https://example.test/avatar.png');
-    profileServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
+    profilePhotoServiceMocks.uploadProfilePhoto.mockResolvedValue('https://example.test/avatar.png');
+    profilePhotoServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
     profileServiceMocks.createProfileAccessCode.mockResolvedValue('NEWMVP42');
     profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([
       { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
@@ -280,7 +284,7 @@ describe('Profile invites', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:second.png');
   });
 
-  it('revokes temporary blob previews after save and on unmount without touching remote urls', async () => {
+  it('uploads a newly selected profile photo even when save is clicked immediately after selection', async () => {
     profileServiceMocks.loadProfileDocument
       .mockResolvedValueOnce({
         fullName: 'Pat Parent',
@@ -297,7 +301,7 @@ describe('Profile invites', () => {
     await selectPhoto(container, 'saved.png');
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
-    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
     expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
@@ -326,7 +330,7 @@ describe('Profile invites', () => {
     }));
     await screen.findByText('Profile saved.');
 
-    expect(profileServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
     expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('heading', { name: 'Pat Parent Updated' })).toBeTruthy();
   });
@@ -342,7 +346,7 @@ describe('Profile invites', () => {
     await selectPhoto(container, 'saved.png');
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
-    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(profileServiceMocks.saveProfileDocument).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(auth.refresh).toHaveBeenCalledTimes(1));
 
@@ -355,10 +359,11 @@ describe('Profile invites', () => {
     refreshDeferred.resolve();
   });
 
-  it('shows a loading state until alert teams resolve and only then renders team controls', async () => {
+  it('keeps alerts in the loading state until the first team preferences hydrate', async () => {
     const deferredTeams = createDeferred<Array<{ id: string; name: string }>>();
+    const deferredPreferences = createDeferred<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
     profileServiceMocks.loadNotificationTeams.mockReturnValue(deferredTeams.promise);
-    profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
+    profileServiceMocks.loadNotificationPreferences.mockReturnValue(deferredPreferences.promise);
 
     renderProfile();
 
@@ -371,6 +376,14 @@ describe('Profile invites', () => {
     expect(screen.queryByRole('button', { name: 'Save preferences' })).toBeNull();
 
     deferredTeams.resolve([{ id: 'team-1', name: 'Blue Team' }]);
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Loading your alert teams…')).toBeTruthy();
+    expect(screen.queryByLabelText('Team')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Turn on game-day alerts' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save preferences' })).toBeNull();
+
+    deferredPreferences.resolve({ liveChat: true, liveScore: false, schedule: true });
 
     await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
     expect(await screen.findByRole('button', { name: 'Turn on game-day alerts' })).toBeTruthy();
@@ -594,7 +607,9 @@ describe('Profile invites', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
     await screen.findByText('Notifications are off in device settings');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Open device settings to finish alerts' }));
+    const openSettingsButton = await screen.findByRole('button', { name: 'Open device settings to finish alerts' });
+    expect(openSettingsButton.hasAttribute('disabled')).toBe(false);
+    fireEvent.click(openSettingsButton);
 
     await waitFor(() => expect(pushServiceMocks.openPushNotificationSettings).toHaveBeenCalledTimes(1));
     expect(pushServiceMocks.enablePushNotificationsForUser).not.toHaveBeenCalled();
@@ -603,7 +618,7 @@ describe('Profile invites', () => {
 
   it('uploads the normalized profile photo instead of the original selection', async () => {
     const normalizedFile = new File(['normalized-image'], 'normalized.jpg', { type: 'image/jpeg' });
-    profileServiceMocks.normalizeProfilePhoto.mockResolvedValue(normalizedFile);
+    profilePhotoServiceMocks.normalizeProfilePhoto.mockResolvedValue(normalizedFile);
     const { container } = renderProfile();
 
     await screen.findByText('Choose photo');
@@ -613,7 +628,7 @@ describe('Profile invites', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
-    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(normalizedFile));
+    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(normalizedFile));
   });
 
   it('keeps the most recent profile photo selection when normalization finishes out of order', async () => {
@@ -621,7 +636,7 @@ describe('Profile invites', () => {
     const secondNormalizedFile = new File(['second-normalized'], 'second-normalized.jpg', { type: 'image/jpeg' });
     const firstNormalization = createDeferred<File>();
     const secondNormalization = createDeferred<File>();
-    profileServiceMocks.normalizeProfilePhoto
+    profilePhotoServiceMocks.normalizeProfilePhoto
       .mockReturnValueOnce(firstNormalization.promise)
       .mockReturnValueOnce(secondNormalization.promise);
 
@@ -636,15 +651,15 @@ describe('Profile invites', () => {
     expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:second-normalized.jpg');
 
     firstNormalization.resolve(firstNormalizedFile);
-    await waitFor(() => expect(profileServiceMocks.normalizeProfilePhoto).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(profilePhotoServiceMocks.normalizeProfilePhoto).toHaveBeenCalledTimes(2));
     expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:second-normalized.jpg');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
-    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(secondNormalizedFile));
-    expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
-    expect(profileServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).toBe(secondNormalizedFile);
-    expect(profileServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).not.toBe(firstNormalizedFile);
+    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledWith(secondNormalizedFile));
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1);
+    expect(profilePhotoServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).toBe(secondNormalizedFile);
+    expect(profilePhotoServiceMocks.uploadProfilePhoto.mock.calls[0]?.[0]).not.toBe(firstNormalizedFile);
   });
 
   it('uses the native chooser to capture a profile photo before saving', async () => {
@@ -657,14 +672,14 @@ describe('Profile invites', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Take photo' }));
 
-    await waitFor(() => expect(profileServiceMocks.acquireProfilePhoto).toHaveBeenCalledWith('camera'));
-    expect(profileServiceMocks.normalizeProfilePhoto).not.toHaveBeenCalled();
+    await waitFor(() => expect(profilePhotoServiceMocks.acquireProfilePhoto).toHaveBeenCalledWith('camera'));
+    expect(profilePhotoServiceMocks.normalizeProfilePhoto).not.toHaveBeenCalled();
     await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled());
     expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('blob:native-camera.jpg');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
 
-    await waitFor(() => expect(profileServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(profilePhotoServiceMocks.uploadProfilePhoto).toHaveBeenCalledTimes(1));
     expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/avatar.png');
   });
 
@@ -678,7 +693,7 @@ describe('Profile invites', () => {
       hasPassword: false,
       updatedAt: { seconds: 1717200000 }
     });
-    profileServiceMocks.acquireProfilePhoto.mockRejectedValue({ code: 'permission-denied', message: 'Denied' });
+    profilePhotoServiceMocks.acquireProfilePhoto.mockRejectedValue({ code: 'permission-denied', message: 'Denied' });
 
     const { container } = renderProfile();
 
@@ -690,6 +705,6 @@ describe('Profile invites', () => {
 
     expect(await screen.findByText('Camera permission was denied. Allow camera access to take a new profile photo.')).toBeTruthy();
     expect((container.querySelector('img') as HTMLImageElement | null)?.getAttribute('src')).toBe('https://example.test/original.png');
-    expect(profileServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
+    expect(profilePhotoServiceMocks.uploadProfilePhoto).not.toHaveBeenCalled();
   });
 });

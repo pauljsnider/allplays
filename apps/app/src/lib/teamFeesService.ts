@@ -42,6 +42,8 @@ export type TeamFeeRosterPlayer = {
   id: string;
   name: string;
   number: string;
+  parentName: string;
+  parentEmail: string;
 };
 
 export type CreateTeamFeeBatchInput = {
@@ -92,7 +94,7 @@ export function toFeeCents(value: string | number | null | undefined) {
   const normalized = String(value ?? '').replace(/[$,]/g, '').trim();
   if (!normalized) return null;
   const parsed = Number(normalized);
-  if (!Number.isFinite(parsed)) return null;
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
   return Math.round(parsed * 100);
 }
 
@@ -140,9 +142,7 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
   const ledgerEntry = {
     type: 'offline_payment',
     amountCents: paymentAmountCents,
-    paymentDate: date,
-    note: noteText,
-    recordedBy: actorId || null
+    paymentDate: date
   };
 
   return {
@@ -152,11 +152,16 @@ export function buildManualPaymentUpdate({ amount, date, note, actorId, currentB
     paidAt: status === 'paid' ? date : null,
     manualPayment: {
       amountPaidCents: paymentAmountCents,
+      paidAt: date
+    },
+    ledgerEntries: [ledgerEntry],
+    adminBilling: {
+      type: 'offline_payment',
+      amountPaidCents: paymentAmountCents,
       paidAt: date,
       note: noteText,
       recordedBy: actorId || null
-    },
-    ledgerEntries: [ledgerEntry]
+    }
   };
 }
 
@@ -179,9 +184,7 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
     type: 'balance_adjustment',
     amountCents: adjustmentCents,
     previousAmountDueCents: priorBalanceCents,
-    amountDueCents,
-    reason,
-    adjustedBy: actorId || null
+    amountDueCents
   };
 
   return {
@@ -191,11 +194,17 @@ export function buildBalanceAdjustmentUpdate({ amount, note, actorId, currentBal
     adjustment: {
       amountCents: adjustmentCents,
       previousAmountDueCents: priorBalanceCents,
-      amountDueCents,
-      note: reason,
-      adjustedBy: actorId || null
+      amountDueCents
     },
-    ledgerEntries: [ledgerEntry]
+    ledgerEntries: [ledgerEntry],
+    adminBilling: {
+      type: 'balance_adjustment',
+      amountCents: adjustmentCents,
+      previousAmountDueCents: priorBalanceCents,
+      amountDueCents,
+      reason,
+      adjustedBy: actorId || null
+    }
   };
 }
 
@@ -234,9 +243,7 @@ export function buildOfflineTeamFeeRefundUpdate({ refundType = 'full', amount, m
     refundAmountCents,
     refundType: normalizedType,
     refundMethod,
-    methodLabel: REFUND_METHOD_LABELS[refundMethod],
-    note: adminNote,
-    recordedBy: actorId || null
+    methodLabel: REFUND_METHOD_LABELS[refundMethod]
   };
 
   return {
@@ -247,11 +254,18 @@ export function buildOfflineTeamFeeRefundUpdate({ refundType = 'full', amount, m
     refunded: {
       amountCents: refundAmountCents,
       refundType: normalizedType,
+      refundMethod
+    },
+    ledgerEntries: [ledgerEntry],
+    adminBilling: {
+      type: 'offline_refund',
+      refundAmountCents,
+      refundType: normalizedType,
       refundMethod,
+      methodLabel: REFUND_METHOD_LABELS[refundMethod],
       note: adminNote,
       recordedBy: actorId || null
-    },
-    ledgerEntries: [ledgerEntry]
+    }
   };
 }
 
@@ -312,14 +326,18 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
     .filter((player) => player?.active !== false)
     .map(toRosterPlayer)
     .filter((player) => player.id);
+  const activePlayersById = new Map(activePlayers.map((player) => [player.id, player]));
+  const requestedRecipientIds = Array.from(new Set((recipientIds || []).map(normalizeString).filter(Boolean)));
+  const invalidRecipientIds = requestedRecipientIds.filter((recipientId) => !activePlayersById.has(recipientId));
+  if (!applyToWholeRoster && invalidRecipientIds.length) {
+    throw new Error(`One or more selected recipients are no longer on the active roster: ${invalidRecipientIds.join(', ')}.`);
+  }
+
   const selectedPlayers = applyToWholeRoster
     ? activePlayers
-    : activePlayers.filter((player) => new Set((recipientIds || []).map(normalizeString).filter(Boolean)).has(player.id));
+    : requestedRecipientIds.map((recipientId) => activePlayersById.get(recipientId)).filter(Boolean) as TeamFeeRosterPlayer[];
 
   if (!selectedPlayers.length) throw new Error('Select at least one roster recipient.');
-  if (!applyToWholeRoster && selectedPlayers.length !== new Set((recipientIds || []).map(normalizeString).filter(Boolean)).size) {
-    throw new Error('One or more selected recipients are no longer on the active roster.');
-  }
 
   const draft = {
     title: cleanTitle,
@@ -338,6 +356,8 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
     playerKey: `${teamId}::${player.id}`,
     playerName: player.name,
     playerNumber: player.number,
+    parentName: player.parentName,
+    parentEmail: player.parentEmail,
     feeTitle: cleanTitle,
     amountCents,
     dueDate: draft.dueDate,
@@ -484,9 +504,44 @@ function toRecipientSummary(recipient: any): TeamFeeRecipientSummary {
 }
 
 function toRosterPlayer(player: any): TeamFeeRosterPlayer {
+  const parentContact = normalizeRosterPlayerParentContact(player);
   return {
     id: String(player?.id || ''),
     name: normalizeString(player?.name || player?.displayName) || 'Roster member',
-    number: normalizeString(player?.number)
+    number: normalizeString(player?.number),
+    parentName: parentContact.parentName,
+    parentEmail: parentContact.parentEmail
   };
+}
+
+function normalizeRosterPlayerParentContact(player: any) {
+  const privateParents = Array.isArray(player?.privateProfileParents) ? player.privateProfileParents : [];
+  const publicParents = Array.isArray(player?.parents) ? player.parents : [];
+  const parentRecords = privateParents.length > 0 ? privateParents : publicParents;
+  const primaryParent = parentRecords.find((parent: any) => normalizeString(parent?.email || parent?.parentEmail || parent?.guardianEmail))
+    || parentRecords[0]
+    || {};
+  const parentName = normalizeString(
+    player?.parentName
+    || player?.guardianName
+    || player?.parent?.name
+    || player?.guardian?.name
+    || primaryParent.name
+    || primaryParent.displayName
+    || primaryParent.fullName
+    || primaryParent.email
+    || primaryParent.parentEmail
+    || primaryParent.guardianEmail
+  );
+  const parentEmail = normalizeString(
+    player?.parentEmail
+    || player?.guardianEmail
+    || player?.parent?.email
+    || player?.guardian?.email
+    || primaryParent.email
+    || primaryParent.parentEmail
+    || primaryParent.guardianEmail
+  ).toLowerCase();
+
+  return { parentName, parentEmail };
 }

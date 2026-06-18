@@ -18,9 +18,10 @@ async function waitForHomeRoute(page, readyLocator) {
 }
 
 async function waitForTeamsRoute(page, readyLocator) {
+    const teamsLoadingState = page.getByText(/^Loading teams$/);
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 5000 });
-        await expect(page.getByText('Loading teams')).toHaveCount(0, { timeout: 5000 });
+        await expect(teamsLoadingState).toHaveCount(0, { timeout: 5000 });
         await expect(readyLocator).toBeVisible({ timeout: 5000 });
     }).toPass({ timeout: 45000 });
 }
@@ -102,6 +103,10 @@ async function mockHomePlayerModules(page) {
 
                 export async function loadParentTeamsSummary(...args) {
                     return loadParentHome(...args);
+                }
+
+                export async function loadParentScheduleSummary() {
+                    return [];
                 }
 
                 export async function loadParentHomeWithSecondaryData(...args) {

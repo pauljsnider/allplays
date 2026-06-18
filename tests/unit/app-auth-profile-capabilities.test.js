@@ -233,14 +233,11 @@ describe('React app auth/profile capability parity', () => {
         expectContains(profileService, [
             'loadProfileDocument',
             'saveProfileDocument',
-            'uploadProfilePhoto',
             'loadNotificationTeams',
             'saveNotificationPreferences',
             'saveNotificationDeviceToken',
             'createProfileAccessCode',
-            'loadProfileAccessCodes',
-            'nativeUploadProfilePhoto',
-            'acquireProfilePhoto'
+            'loadProfileAccessCodes'
         ]);
     });
 
@@ -250,7 +247,7 @@ describe('React app auth/profile capability parity', () => {
         const appPackage = readProjectFile('apps/app/package.json');
         const appPackageLock = readProjectFile('apps/app/package-lock.json');
         const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
-        const profileService = readProjectFile('apps/app/src/lib/profileService.ts');
+        const profilePhotoService = readProjectFile('apps/app/src/lib/profilePhotoService.ts');
         const androidManifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
         const androidSettings = readProjectFile('android/capacitor.settings.gradle');
         const androidCapacitorBuild = readProjectFile('android/app/capacitor.build.gradle');
@@ -260,7 +257,7 @@ describe('React app auth/profile capability parity', () => {
         expectContains(rootPackageLock, ['"node_modules/@capacitor/camera"']);
         expectContains(appPackage, ['"@capacitor/camera":']);
         expectContains(appPackageLock, ['"node_modules/@capacitor/camera"']);
-        expectContains(profileService, [
+        expectContains(profilePhotoService, [
             "from '@capacitor/camera'",
             'Capacitor.isNativePlatform() || window.location.protocol === \'capacitor:\'',
             'Camera.getPhoto',
@@ -311,9 +308,12 @@ describe('React app auth/profile capability parity', () => {
         const turnOnGameDayAlerts = profilePage.slice(turnOnStart, turnOnEnd);
 
         expect(profilePage).toContain("const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferencesByTeamId, selectedTeamId);");
-        expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}");
+        expect(profilePage).toContain("disabled={busy === 'game-day-alerts' || (!nativePushBlocked && (!selectedTeamId || !selectedTeamPreferencesHydrated))}");
         expect(turnOnGameDayAlerts).toContain('const teamId = selectedTeamId;');
-        expect(turnOnGameDayAlerts).toContain('const currentPreferences = notificationPreferencesByTeamId[teamId] || notificationPreferences;');
+        expect(turnOnGameDayAlerts).toContain('const currentPreferences = notificationPreferencesByTeamId[teamId]');
+        expect(turnOnGameDayAlerts).toContain('loadedNotificationTeamId === teamId');
+        expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
+        expect(turnOnGameDayAlerts).toContain(': await loadNotificationPreferences(user.uid, teamId));');
         expect(turnOnGameDayAlerts).toContain('...currentPreferences,');
         expect(turnOnGameDayAlerts.indexOf('await enablePushNotificationsForUser(user.uid);')).toBeLessThan(
             turnOnGameDayAlerts.indexOf('saveNotificationPreferences(user.uid, teamId, nextPreferences)')
@@ -383,8 +383,8 @@ describe('React app auth/profile capability parity', () => {
         ]);
         expectContains(messagesPage, [
             'loadChatInbox',
-            'loadChatTeamContext',
-            'subscribeToTeamChatMessages',
+            'useChatTeam',
+            'useChatMessages',
             'sendTeamChatMessage',
             'editTeamChatMessage',
             'deleteTeamChatMessage',
@@ -438,6 +438,18 @@ describe('React app auth/profile capability parity', () => {
         ]);
     });
 
+    it('keeps the live broadcast tracker capability scoped to shipped app features', () => {
+        const capabilities = readProjectFile('apps/app/src/data/capabilities.ts');
+        const trackLiveLine = capabilities
+            .split('\n')
+            .find((line) => line.includes("capability('track-live'"));
+
+        expect(trackLiveLine).toContain("'native-shell'");
+        expect(trackLiveLine).toContain('Score updates');
+        expect(trackLiveLine).toContain('Live play-by-play publish');
+        expect(trackLiveLine).not.toMatch(/'Chat'|'Game log'|'Notes'|'Replay data'/);
+    });
+
     it('covers parent-dashboard.html schedule capabilities and filters in the React app schedule', () => {
         const legacyParentDashboard = readProjectFile('parent-dashboard.html');
         const schedulePage = readProjectFile('apps/app/src/pages/Schedule.tsx');
@@ -474,7 +486,7 @@ describe('React app auth/profile capability parity', () => {
             'getEventDetailPath'
         ]);
         expectContains(scheduleEventDetail, [
-            'submitParentScheduleRsvp',
+            'useScheduleEventRsvp',
             'Availability',
             'Rideshare',
             'Assignments',

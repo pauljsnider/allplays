@@ -74,6 +74,10 @@ export async function updateGame() {
     return undefined;
 }
 
+export async function getRegistrationSources() {
+    return [];
+}
+
 export async function inviteAdmin(teamId, email) {
     window.__lastAdminInvite = { teamId, email };
     return {

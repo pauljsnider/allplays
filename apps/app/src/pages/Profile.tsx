@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Bell,
   ChevronDown,
@@ -25,7 +25,6 @@ import {
 } from 'lucide-react';
 import { describeAuthError, reloadCurrentUser, resendVerificationEmail, sendResetEmail, setCurrentUserPassword } from '../lib/authService';
 import {
-  acquireProfilePhoto,
   createProfileAccessCode,
   loadParentTeams,
   loadNotificationPreferences,
@@ -33,11 +32,9 @@ import {
   loadProfileAccessCodes,
   loadProfileDocument,
   normalizeNotificationPreferences,
-  normalizeProfilePhoto,
   requestAccountMerge,
   saveNotificationPreferences,
-  saveProfileDocument,
-  uploadProfilePhoto
+  saveProfileDocument
 } from '../lib/profileService';
 import {
   enablePushNotificationsForUser,
@@ -50,7 +47,7 @@ import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
 import { NOTIFICATION_PREFERENCE_GROUPS } from '../../../../js/notification-preferences.js';
 import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
-import type { ProfilePhotoSource } from '../lib/profileService';
+import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 import type { AuthState } from '../lib/types';
 
 type Tone = 'neutral' | 'success' | 'error';
@@ -83,6 +80,7 @@ const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
 
 export function Profile({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isDesktopWeb, isNative } = useShellLayout();
   const user = auth.user;
   const [profile, setProfile] = useState<ProfileDocument>({});
@@ -94,6 +92,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [photoChanged, setPhotoChanged] = useState(false);
   const [photoChooserOpen, setPhotoChooserOpen] = useState(false);
   const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
+  const [initialUrlTeamId] = useState(() => searchParams.get('teamId') || '');
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
   const [notificationPreferencesByTeamId, setNotificationPreferencesByTeamId] = useState<Record<string, NotificationPreferences>>({});
@@ -118,14 +117,21 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [accountMergeStatus, setAccountMergeStatus] = useState<Status | null>(null);
   const [inviteActionStatus, setInviteActionStatus] = useState('');
   const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
-  const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>('account');
+  const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>(() => {
+    const s = searchParams.get('section');
+    return (s === 'account' || s === 'alerts' || s === 'invites' || s === 'security') ? s as ProfileSectionId : 'account';
+  });
   const [notificationTeamsLoaded, setNotificationTeamsLoaded] = useState(false);
   const [accessCodesLoaded, setAccessCodesLoaded] = useState(false);
   const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
+  const [loadedNotificationTeamId, setLoadedNotificationTeamId] = useState('');
   const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string }>({ email: '', phone: '' });
   const ownedPhotoPreviewUrlRef = useRef<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const photoSelectionIdRef = useRef(0);
+  const photoFileRef = useRef<File | null>(null);
+  const photoUrlRef = useRef('');
+  const photoChangedRef = useRef(false);
 
   const revokeOwnedPhotoPreviewUrl = () => {
     const activePreviewUrl = ownedPhotoPreviewUrlRef.current;
@@ -184,6 +190,12 @@ export function Profile({ auth }: { auth: AuthState }) {
 
   const selectProfileSection = (sectionId: ProfileSectionId) => {
     setActiveProfileSection(sectionId);
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('section', sectionId);
+      next.delete('teamId');
+      return next;
+    }, { replace: true });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
@@ -215,6 +227,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       setPushPermissionLoading(false);
       setNotificationPreferences(emptyPreferences);
       setNotificationPreferencesByTeamId({});
+      setLoadedNotificationTeamId('');
       setSelectedTeamId('');
       setAccessCodes([]);
       setInviteActionStatus('');
@@ -225,11 +238,23 @@ export function Profile({ auth }: { auth: AuthState }) {
       setAccountMergeEmail('');
 
       try {
-        const loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
-          console.warn('[profile] Unable to load profile:', error);
-          setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
-          return {} as ProfileDocument;
-        });
+        // Seed form fields from the already-hydrated auth.profile when it is
+        // fully populated (has at least fullName and phone), avoiding a redundant
+        // Firestore round-trip. Fall back to loadProfileDocument otherwise.
+        const seededProfile = auth.profile;
+        const isFullyHydrated = seededProfile != null &&
+          typeof seededProfile.fullName === 'string' &&
+          'phone' in seededProfile;
+        let loadedProfile: ProfileDocument;
+        if (isFullyHydrated) {
+          loadedProfile = seededProfile as ProfileDocument;
+        } else {
+          loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
+            console.warn('[profile] Unable to load profile:', error);
+            setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
+            return {} as ProfileDocument;
+          });
+        }
 
         if (cancelled) {
           return;
@@ -239,6 +264,9 @@ export function Profile({ auth }: { auth: AuthState }) {
         setProfile(loadedProfile);
         setFullName(loadedProfile.fullName || user.displayName || '');
         setPhone(loadedProfile.phone || '');
+        photoUrlRef.current = loadedProfile.photoUrl || '';
+        photoFileRef.current = null;
+        photoChangedRef.current = false;
         setPhotoUrl(loadedProfile.photoUrl || '');
         setPhotoPreview(loadedProfile.photoUrl || '');
         setPhotoFile(null);
@@ -254,7 +282,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [auth.profile, user]);
 
   useEffect(() => {
     void refreshPushPermissionStatus();
@@ -300,14 +328,42 @@ export function Profile({ auth }: { auth: AuthState }) {
           return;
         }
 
+        const fallbackTeamId = teams[0]?.id || '';
+        const preferredTeamId = initialUrlTeamId && teams.some((team) => team.id === initialUrlTeamId)
+          ? initialUrlTeamId
+          : fallbackTeamId;
+        const initialTeamId = preferredTeamId;
+
         setNotificationTeams(teams);
         setSelectedTeamId((current) => {
           if (current && teams.some((team) => team.id === current)) {
             return current;
           }
-          return teams[0]?.id || '';
+          return initialTeamId;
         });
-        setNotificationTeamsLoaded(true);
+
+        if (!initialTeamId) {
+          setNotificationTeamsLoaded(true);
+          return;
+        }
+
+        try {
+          const firstPrefs = await loadNotificationPreferences(user.uid, initialTeamId);
+          if (!cancelled) {
+            setNotificationPreferences(firstPrefs);
+            setNotificationPreferencesByTeamId((current) => ({ ...current, [initialTeamId]: firstPrefs }));
+            setLoadedNotificationTeamId(initialTeamId);
+          }
+        } catch {
+          // Don't set loadedNotificationTeamId on error so loadPreferences effect can retry
+          if (!cancelled) {
+            setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
+          }
+        } finally {
+          if (!cancelled) {
+            setNotificationTeamsLoaded(true);
+          }
+        }
       } catch {
         // no-op: handled inline above
       }
@@ -317,22 +373,24 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, notificationTeamsLoaded, user]);
+  }, [activeProfileSection, initialUrlTeamId, notificationTeamsLoaded, user]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadPreferences() {
-      if (!user || activeProfileSection !== 'alerts') {
+      if (!user || activeProfileSection !== 'alerts' || !notificationTeamsLoaded) {
         return;
       }
       if (!selectedTeamId) {
         setNotificationPreferences(emptyPreferences);
+        setLoadedNotificationTeamId('');
         return;
       }
       const cachedPreferences = notificationPreferencesByTeamId[selectedTeamId];
       if (cachedPreferences) {
         setNotificationPreferences(cachedPreferences);
+        setLoadedNotificationTeamId(selectedTeamId);
         return;
       }
 
@@ -341,12 +399,14 @@ export function Profile({ auth }: { auth: AuthState }) {
         if (!cancelled) {
           setNotificationPreferences(preferences);
           setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: preferences }));
+          setLoadedNotificationTeamId(selectedTeamId);
         }
       } catch (error) {
         console.warn('[profile] Unable to load notification preferences:', error);
         if (!cancelled) {
           setNotificationPreferences(emptyPreferences);
           setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: emptyPreferences }));
+          setLoadedNotificationTeamId(selectedTeamId);
           setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
         }
       }
@@ -356,7 +416,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, notificationPreferencesByTeamId, selectedTeamId, user]);
+  }, [activeProfileSection, notificationPreferencesByTeamId, notificationTeamsLoaded, selectedTeamId, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -431,6 +491,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     const nextPhotoPreviewUrl = URL.createObjectURL(file);
     revokeOwnedPhotoPreviewUrl();
     ownedPhotoPreviewUrlRef.current = nextPhotoPreviewUrl;
+    photoFileRef.current = file;
+    photoChangedRef.current = true;
     setPhotoFile(file);
     setPhotoPreview(nextPhotoPreviewUrl);
     setPhotoChanged(true);
@@ -451,7 +513,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     photoSelectionIdRef.current = selectionId;
 
     try {
-      const nextFile = options.normalize === false ? file : await normalizeProfilePhoto(file);
+      const nextFile = options.normalize === false ? file : await import('../lib/profilePhotoService').then((m) => m.normalizeProfilePhoto(file));
       if (photoSelectionIdRef.current !== selectionId) {
         return;
       }
@@ -477,6 +539,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     setProfileStatus(null);
 
     try {
+      const { acquireProfilePhoto } = await import('../lib/profilePhotoService');
       const file = await acquireProfilePhoto(source);
       await prepareSelectedPhoto(file, { normalize: false });
       setPhotoChooserOpen(false);
@@ -505,6 +568,9 @@ export function Profile({ auth }: { auth: AuthState }) {
   const removePhoto = () => {
     photoSelectionIdRef.current += 1;
     revokeOwnedPhotoPreviewUrl();
+    photoFileRef.current = null;
+    photoUrlRef.current = '';
+    photoChangedRef.current = true;
     setPhotoFile(null);
     setPhotoUrl('');
     setPhotoPreview('');
@@ -524,10 +590,13 @@ export function Profile({ auth }: { auth: AuthState }) {
     try {
       const trimmedFullName = fullName.trim();
       const trimmedPhone = phone.trim();
-      let nextPhotoUrl = photoUrl || '';
-      if (photoChanged && photoFile) {
+      const selectedPhotoFile = photoFileRef.current;
+      const selectedPhotoChanged = photoChangedRef.current;
+      let nextPhotoUrl = photoUrlRef.current || '';
+      if (selectedPhotoChanged && selectedPhotoFile) {
         setProfileStatus({ message: 'Uploading photo...', tone: 'neutral' });
-        nextPhotoUrl = await uploadProfilePhoto(photoFile);
+        const { uploadProfilePhoto } = await import('../lib/profilePhotoService');
+        nextPhotoUrl = await uploadProfilePhoto(selectedPhotoFile);
       }
 
       await saveProfileDocument(user.uid, {
@@ -548,6 +617,9 @@ export function Profile({ auth }: { auth: AuthState }) {
       };
       revokeOwnedPhotoPreviewUrl();
       setProfile(nextProfile);
+      photoUrlRef.current = nextProfile.photoUrl || nextPhotoUrl || '';
+      photoFileRef.current = null;
+      photoChangedRef.current = false;
       setPhotoUrl(nextProfile.photoUrl || nextPhotoUrl || '');
       setPhotoPreview(nextProfile.photoUrl || nextPhotoUrl || '');
       setPhotoFile(null);
@@ -609,6 +681,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       const saved = await saveNotificationPreferences(user.uid, selectedTeamId, notificationPreferences);
       setNotificationPreferences(saved);
       setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: saved }));
+      setLoadedNotificationTeamId(selectedTeamId);
       setNotificationStatus({ message: 'Notification preferences saved.', tone: 'success' });
     } catch (error: any) {
       setNotificationStatus({ message: error?.message || 'Failed to save notification preferences.', tone: 'error' });
@@ -673,7 +746,10 @@ export function Profile({ auth }: { auth: AuthState }) {
         return;
       }
 
-      const currentPreferences = notificationPreferencesByTeamId[teamId] || notificationPreferences;
+      const currentPreferences = notificationPreferencesByTeamId[teamId]
+        || (loadedNotificationTeamId === teamId
+          ? notificationPreferences
+          : await loadNotificationPreferences(user.uid, teamId));
       const nextPreferences = normalizeNotificationPreferences({
         ...currentPreferences,
         ...gameDayDefaultPreferences
@@ -684,6 +760,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
       setNotificationPreferences(saved);
       setNotificationPreferencesByTeamId((current) => ({ ...current, [teamId]: saved }));
+      setLoadedNotificationTeamId(teamId);
       setNotificationStatus({ message: 'Game-day alerts are on for this team.', tone: 'success' });
     } catch (error: any) {
       await refreshPushPermissionStatus({ silent: true });
@@ -1034,7 +1111,20 @@ export function Profile({ auth }: { auth: AuthState }) {
             <div className="mt-4 grid gap-3">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Team</span>
-                <select className="auth-input" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)}>
+                <select className="auth-input" value={selectedTeamId} onChange={(event) => {
+                  const nextTeamId = event.target.value;
+                  setSelectedTeamId(nextTeamId);
+                  setSearchParams((current) => {
+                    const next = new URLSearchParams(current);
+                    next.set('section', 'alerts');
+                    if (nextTeamId) {
+                      next.set('teamId', nextTeamId);
+                    } else {
+                      next.delete('teamId');
+                    }
+                    return next;
+                  }, { replace: true });
+                }}>
                   <option value="">Select a team</option>
                   {notificationTeams.map((team) => (
                     <option key={team.id} value={team.id}>{team.name || team.id}</option>
@@ -1072,7 +1162,7 @@ export function Profile({ auth }: { auth: AuthState }) {
                     ? 'Notifications are blocked in device settings. Open settings, allow notifications, then return here to finish game-day alerts.'
                     : 'One tap enables push on this device and turns on schedule changes and live score updates for the selected team.'}
                 </p>
-                <button type="button" className="primary-button mt-3" onClick={nativePushBlocked ? () => void openDeviceSettingsForPush('Notifications are turned off in device settings. Open device settings to finish turning on game-day alerts.') : turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
+                <button type="button" className="primary-button mt-3" onClick={nativePushBlocked ? () => void openDeviceSettingsForPush('Notifications are turned off in device settings. Open device settings to finish turning on game-day alerts.') : turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || (!nativePushBlocked && (!selectedTeamId || !selectedTeamPreferencesHydrated))}>
                   {busy === 'game-day-alerts' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
                   {nativePushBlocked ? 'Open device settings to finish alerts' : 'Turn on game-day alerts'}
                 </button>

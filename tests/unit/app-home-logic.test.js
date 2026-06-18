@@ -8,6 +8,18 @@ import {
     getTeamHomePath
 } from '../../apps/app/src/lib/homeLogic.ts';
 
+class InstrumentedEvents extends Array {
+    constructor(...items) {
+        super(...items);
+        this.rootFilterCalls = 0;
+    }
+
+    filter(callback, thisArg) {
+        this.rootFilterCalls += 1;
+        return Array.prototype.filter.call(this, callback, thisArg);
+    }
+}
+
 function child(overrides = {}) {
     return {
         teamId: overrides.teamId || 'team-1',
@@ -191,5 +203,162 @@ describe('React app Home model helpers', () => {
             kind: 'message',
             to: '/messages/team-staff'
         });
+    });
+
+    it('builds the same Home outputs from indexed event aggregates across multiple teams and players', () => {
+        const now = new Date('2100-05-30T12:00:00Z');
+        const model = buildParentHomeModel({
+            children: [
+                child({ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' }),
+                child({ teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }),
+                child({ teamId: 'team-2', teamName: 'Storm', playerId: 'player-3', playerName: 'Alex' })
+            ],
+            events: [
+                event({
+                    id: 'game-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    childId: 'player-1',
+                    childName: 'Pat',
+                    date: new Date('2100-06-01T18:00:00Z'),
+                    myRsvp: 'not_responded'
+                }),
+                event({
+                    eventKey: 'team-1::game-1::player-2',
+                    id: 'game-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    childId: 'player-2',
+                    childName: 'Sam',
+                    date: new Date('2100-06-01T18:00:00Z'),
+                    myRsvp: 'going'
+                }),
+                event({
+                    id: 'practice-1',
+                    type: 'practice',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    childId: 'player-1',
+                    childName: 'Pat',
+                    date: new Date('2100-06-02T18:00:00Z'),
+                    myRsvp: 'going',
+                    practiceHomePacketSummary: 'Mobility packet'
+                }),
+                event({
+                    id: 'game-2',
+                    teamId: 'team-2',
+                    teamName: 'Storm',
+                    childId: 'player-3',
+                    childName: 'Alex',
+                    date: new Date('2100-06-03T18:00:00Z'),
+                    myRsvp: 'going',
+                    assignments: [
+                        { role: 'Clock', value: '', claimable: true, claim: null },
+                        { role: 'Scorebook', value: '', claimable: true, claim: null }
+                    ]
+                }),
+                event({
+                    eventKey: 'team-2::game-2::player-3::duplicate',
+                    id: 'game-2',
+                    teamId: 'team-2',
+                    teamName: 'Storm',
+                    childId: 'player-3',
+                    childName: 'Alex',
+                    date: new Date('2100-06-03T18:00:00Z'),
+                    myRsvp: 'going',
+                    assignments: [
+                        { role: 'Clock', value: '', claimable: true, claim: null },
+                        { role: 'Scorebook', value: '', claimable: true, claim: null }
+                    ]
+                })
+            ],
+            inboxTeams: [
+                { id: 'team-1', name: 'Bears', role: 'Parent', unreadCount: 2, sport: 'Basketball' },
+                { id: 'team-2', name: 'Storm', role: 'Parent', unreadCount: 0, sport: 'Soccer' }
+            ],
+            fees: [
+                { id: 'fee-1', title: 'Travel', teamId: 'team-2', teamName: 'Storm', status: 'partial', balanceDueCents: 2000 }
+            ],
+            now
+        });
+
+        expect(model.upcomingEvents.map((entry) => `${entry.teamId}:${entry.id}`)).toEqual([
+            'team-1:game-1',
+            'team-1:practice-1',
+            'team-2:game-2'
+        ]);
+        expect(model.players.map((player) => ({
+            name: player.playerName,
+            nextEvent: player.nextEvent?.id || null,
+            rsvpNeeded: player.rsvpNeeded,
+            packetsReady: player.packetsReady,
+            openAssignments: player.openAssignments,
+            unreadCount: player.unreadCount
+        }))).toEqual([
+            { name: 'Alex', nextEvent: 'game-2', rsvpNeeded: 0, packetsReady: 0, openAssignments: 4, unreadCount: 0 },
+            { name: 'Pat', nextEvent: 'game-1', rsvpNeeded: 1, packetsReady: 1, openAssignments: 0, unreadCount: 2 },
+            { name: 'Sam', nextEvent: 'game-1', rsvpNeeded: 0, packetsReady: 0, openAssignments: 0, unreadCount: 2 }
+        ]);
+        expect(model.teams.map((team) => ({
+            teamId: team.teamId,
+            nextEvent: team.nextEvent?.id || null,
+            eventCount: team.eventCount,
+            unreadCount: team.unreadCount,
+            openActions: team.openActions
+        }))).toEqual([
+            { teamId: 'team-1', nextEvent: 'game-1', eventCount: 2, unreadCount: 2, openActions: 3 },
+            { teamId: 'team-2', nextEvent: 'game-2', eventCount: 1, unreadCount: 0, openActions: 4 }
+        ]);
+        expect(model.actionItems.map((action) => action.kind)).toEqual(['rsvp', 'packet', 'assignment', 'assignment', 'fee', 'message']);
+        expect(model.metrics).toEqual({
+            players: 3,
+            teams: 2,
+            rsvpNeeded: 1,
+            unreadMessages: 2,
+            packetsReady: 1
+        });
+    });
+
+    it('avoids repeated full-event scans when building large Home models', () => {
+        const now = new Date('2100-05-30T12:00:00Z');
+        const children = [];
+        const events = new InstrumentedEvents();
+
+        for (let teamIndex = 1; teamIndex <= 12; teamIndex += 1) {
+            for (let playerIndex = 1; playerIndex <= 5; playerIndex += 1) {
+                const teamId = `team-${teamIndex}`;
+                const playerId = `player-${teamIndex}-${playerIndex}`;
+                children.push(child({
+                    teamId,
+                    teamName: `Team ${teamIndex}`,
+                    playerId,
+                    playerName: `Player ${teamIndex}-${playerIndex}`
+                }));
+
+                for (let eventIndex = 1; eventIndex <= 4; eventIndex += 1) {
+                    events.push(event({
+                        eventKey: `${teamId}::event-${playerId}-${eventIndex}`,
+                        id: `event-${teamIndex}-${eventIndex}`,
+                        teamId,
+                        teamName: `Team ${teamIndex}`,
+                        childId: playerId,
+                        childName: `Player ${teamIndex}-${playerIndex}`,
+                        type: eventIndex % 2 === 0 ? 'practice' : 'game',
+                        myRsvp: eventIndex % 2 === 0 ? 'going' : 'not_responded',
+                        date: new Date(`2100-06-${String(eventIndex + 1).padStart(2, '0')}T18:00:00Z`),
+                        practiceHomePacketSummary: eventIndex % 2 === 0 ? 'Skills packet' : null,
+                        assignments: eventIndex % 2 === 0 ? [] : [
+                            { role: 'Clock', value: '', claimable: true, claim: null }
+                        ]
+                    }));
+                }
+            }
+        }
+
+        const model = buildParentHomeModel({ children, events, now });
+
+        expect(model.players).toHaveLength(children.length);
+        expect(model.teams).toHaveLength(12);
+        expect(events.rootFilterCalls).toBe(0);
     });
 });

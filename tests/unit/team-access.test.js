@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hasFullTeamAccess, hasScorekeepingTeamAccess, hasStreamTeamAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
+import { hasFullTeamAccess, hasScorekeepingTeamAccess, hasStreamTeamAccess, hasVideographerTeamAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
 
 const TEAM = {
   id: 'team-1',
@@ -214,6 +214,53 @@ describe('team access helpers', () => {
       scorekeeping: { mode: 'all_confirmed', memberIds: [] },
       streaming: { mode: 'all_confirmed', memberIds: [] },
       videography: { mode: 'selected', memberIds: [] }
+    });
+  });
+
+  it('grants videographer access to selected videography memberIds', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        videography: { mode: 'selected', memberIds: [' vid-user ', 'vid-user'] }
+      }
+    };
+
+    expect(hasVideographerTeamAccess({ uid: 'vid-user' }, team)).toBe(true);
+    expect(hasFullTeamAccess({ uid: 'vid-user' }, team)).toBe(false);
+    expect(getTeamAccessInfo({ uid: 'vid-user' }, team)).toEqual({
+      hasAccess: true,
+      accessLevel: 'videographer',
+      exitUrl: 'team.html#teamId=team-1'
+    });
+  });
+
+  it('denies videographer access to users not in the memberIds list', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        videography: { mode: 'selected', memberIds: ['vid-user'] }
+      }
+    };
+
+    expect(hasVideographerTeamAccess({ uid: 'other-user' }, team)).toBe(false);
+  });
+
+  it('denies videographer access when teamPermissions.videography is absent', () => {
+    expect(hasVideographerTeamAccess({ uid: 'vid-user' }, TEAM)).toBe(false);
+  });
+
+  it('videographer access is superseded by full access', () => {
+    const team = {
+      ...TEAM,
+      teamPermissions: {
+        videography: { mode: 'selected', memberIds: ['owner-1'] }
+      }
+    };
+
+    expect(getTeamAccessInfo({ uid: 'owner-1' }, team)).toEqual({
+      hasAccess: true,
+      accessLevel: 'full',
+      exitUrl: 'dashboard.html'
     });
   });
 

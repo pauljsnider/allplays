@@ -108,14 +108,13 @@ export function resolvePushNotificationRoute(input: unknown) {
     const gameId = normalizeValue(payload.gameId);
     const eventId = normalizeValue(payload.eventId) || gameId;
 
+    if (category === 'liveScore' && gameId) {
+        if (teamId) {
+            return buildScheduleEventRoute(teamId, gameId, 'game');
+        }
+        return `/games/${encodeRouteParam(gameId)}`;
+    }
     if (category === 'liveChat' && teamId && conversationId) {
-        return buildMessagesRoute(teamId, conversationId);
-    }
-    if (appRoute) {
-        return appRoute;
-    }
-
-    if (category === 'liveChat' && teamId) {
         return buildMessagesRoute(teamId, conversationId);
     }
     if (category === 'liveScore' && gameId) {
@@ -123,6 +122,13 @@ export function resolvePushNotificationRoute(input: unknown) {
             return buildScheduleEventRoute(teamId, gameId, 'game');
         }
         return `/games/${encodeRouteParam(gameId)}`;
+    }
+    if (appRoute) {
+        return appRoute;
+    }
+
+    if (category === 'liveChat' && teamId) {
+        return buildMessagesRoute(teamId, conversationId);
     }
     if (category === 'schedule') {
         if (teamId && eventId) {

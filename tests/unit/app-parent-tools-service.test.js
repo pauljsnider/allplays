@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const dbMocks = vi.hoisted(() => ({
     approveTeamRegistration: vi.fn(),
@@ -19,6 +21,7 @@ const dbMocks = vi.hoisted(() => ({
     setDoc: vi.fn(),
     runTransaction: vi.fn(),
     getPlayers: vi.fn(),
+    getTeamRegistrationForm: vi.fn(),
     getTeam: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItems: vi.fn(),
@@ -162,7 +165,7 @@ vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 vi.mock('../../js/registration-flow.js', () => registrationMocks);
 vi.mock('../../js/registration-review.js', () => registrationReviewMocks);
 vi.mock('../../js/team-media-utils.js', () => mediaMocks);
-vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
+vi.mock('../../apps/app/src/lib/authService', () => authMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../js/stripe-service.js', () => stripeMocks);
@@ -224,11 +227,21 @@ const user = {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    clearAppDataCache();
     authMocks.firebaseAuth.currentUser.getIdToken.mockResolvedValue('firebase-token');
     authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
 });
 
 describe('React app parent tools service', () => {
+    it('uses the non-cache-busted firebase module path so the app build can resolve it', async () => {
+        const source = await import('node:fs/promises').then(({ readFile }) =>
+            readFile(resolve(process.cwd(), 'apps/app/src/lib/parentToolsService.ts'), 'utf8')
+        );
+
+        expect(source).toContain("from '../../../../js/firebase.js';");
+        expect(source).not.toContain("firebase.js?v=");
+    });
+
     it('builds legacy URLs used for current-site handoffs', () => {
         expect(getLegacyUrl('team.html', {}, { teamId: 'team-1' })).toBe('https://allplays.ai/team.html#teamId=team-1');
         expect(getFamilyShareUrl('token-1')).toBe('https://allplays.ai/family.html?token=token-1');
@@ -498,14 +511,32 @@ describe('React app parent tools service', () => {
                 id: 'fee-2',
                 title: 'Uniform',
                 status: 'paid',
+                collectionMode: 'online_stripe',
+                checkoutStatus: 'paid',
                 amountDueCents: 5000,
                 balanceDueCents: 0,
                 checkoutUrl: 'https://pay.example.test/paid'
             },
             {
+                id: 'fee-3',
+                title: 'Offline fee',
+                status: 'unpaid',
+                collectionMode: 'offline_manual',
+                checkoutStatus: 'open',
+                amountDueCents: 9000,
+                balanceDueCents: 9000,
+                checkoutUrl: 'https://pay.example.test/offline',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-3',
+                offlinePaymentInstructions: 'Pay by cash or check.'
+            },
+            {
                 id: 'fee-1',
                 title: 'Dues',
                 status: 'unpaid',
+                collectionMode: 'online_stripe',
+                checkoutStatus: 'open',
                 amountDueCents: 12000,
                 balanceDueCents: 12000,
                 checkoutUrl: 'https://pay.example.test/open',
@@ -520,11 +551,14 @@ describe('React app parent tools service', () => {
         const fees = await loadParentFeesForApp(user);
 
         expect(dbMocks.listParentTeamFeeRecipients).toHaveBeenCalledWith('user-1', user.parentOf);
-        expect(fees.map((fee) => fee.title)).toEqual(['Dues', 'Uniform']);
+        expect(fees.map((fee) => fee.title)).toEqual(['Dues', 'Offline fee', 'Uniform']);
         expect(fees[0]).toMatchObject({
             amountLabel: '$120',
             dueLabel: 'No due date',
             statusLabel: 'Open',
+            collectionMode: 'online_stripe',
+            checkoutStatus: 'open',
+            checkoutUrl: 'https://pay.example.test/open',
             notes: 'Bring jersey deposit form.',
             offlinePaymentInstructions: 'Cash or check accepted at practice.',
             canPay: true,
@@ -534,23 +568,34 @@ describe('React app parent tools service', () => {
             installments: [{ label: 'Deposit', amountCents: 5000 }],
             ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
         });
-        expect(fees[1].canPay).toBe(false);
+        expect(fees[1]).toMatchObject({
+            collectionMode: 'offline_manual',
+            checkoutStatus: 'open',
+            checkoutUrl: 'https://pay.example.test/offline',
+            offlinePaymentInstructions: 'Pay by cash or check.',
+            canPay: false,
+            checkoutInitiatable: false,
+            paymentAction: ''
+        });
+        expect(fees[2].canPay).toBe(false);
     });
 
     it('marks unpaid team fees without checkout URLs as initiatable only when identifiers exist', async () => {
         dbMocks.listParentTeamFeeRecipients.mockResolvedValue([
-            { id: 'missing-team', title: 'Missing team', status: 'unpaid', balanceDueCents: 1500, batchId: 'batch-1', recipientId: 'recipient-1' },
-            { id: 'paid', title: 'Paid', status: 'paid', balanceDueCents: 1500, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
-            { id: 'partial', title: 'Partial', status: 'partial', balanceDueCents: 2500, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
-            { id: 'adjusted', title: 'Adjusted', status: 'adjusted', balanceDueCents: 3000, checkoutUrl: 'https://pay.example.test/adjusted', teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
-            { id: 'adjusted-zero', title: 'Adjusted zero', status: 'adjusted', balanceDueCents: 0, checkoutUrl: 'https://pay.example.test/adjusted-zero', teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
-            { id: 'zero', title: 'Zero', status: 'unpaid', balanceDueCents: 0, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }
+            { id: 'missing-team', title: 'Missing team', status: 'unpaid', collectionMode: 'online_stripe', balanceDueCents: 1500, batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'paid', title: 'Paid', status: 'paid', collectionMode: 'online_stripe', balanceDueCents: 1500, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'partial', title: 'Partial', status: 'partial', collectionMode: 'online_stripe', balanceDueCents: 2500, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'adjusted', title: 'Adjusted', status: 'adjusted', collectionMode: 'online_stripe', checkoutStatus: 'open', balanceDueCents: 3000, checkoutUrl: 'https://pay.example.test/adjusted', teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'stale', title: 'Stale', status: 'unpaid', collectionMode: 'online_stripe', checkoutStatus: 'stale', balanceDueCents: 3000, checkoutUrl: 'https://pay.example.test/stale', teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'adjusted-zero', title: 'Adjusted zero', status: 'adjusted', collectionMode: 'online_stripe', balanceDueCents: 0, checkoutUrl: 'https://pay.example.test/adjusted-zero', teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' },
+            { id: 'zero', title: 'Zero', status: 'unpaid', collectionMode: 'online_stripe', balanceDueCents: 0, teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }
         ]);
 
         const fees = await loadParentFeesForApp(user);
         const partialFee = fees.find((fee) => fee.id === 'partial');
 
         const adjustedFee = fees.find((fee) => fee.id === 'adjusted');
+        const staleFee = fees.find((fee) => fee.id === 'stale');
 
         expect(partialFee).toMatchObject({
             canPay: true,
@@ -562,18 +607,24 @@ describe('React app parent tools service', () => {
             checkoutInitiatable: false,
             paymentAction: 'checkoutUrl'
         });
+        expect(staleFee).toMatchObject({
+            canPay: true,
+            checkoutInitiatable: true,
+            paymentAction: 'createCheckout'
+        });
         expect(fees.find((fee) => fee.id === 'missing-team').canPay).toBe(false);
         expect(fees.find((fee) => fee.id === 'paid').canPay).toBe(false);
         expect(fees.find((fee) => fee.id === 'adjusted-zero').canPay).toBe(false);
         expect(fees.find((fee) => fee.id === 'zero').canPay).toBe(false);
         expect(canInitiateParentTeamFeeCheckout(partialFee)).toBe(true);
-        expect(isParentTeamFeePayActionAllowed({ status: 'partially_paid', balanceDueCents: 1 })).toBe(true);
-        expect(isParentTeamFeePayActionAllowed({ status: 'adjusted', balanceDueCents: 1 })).toBe(true);
-        expect(isParentTeamFeePayActionAllowed({ status: 'open', balanceDueCents: 1 })).toBe(true);
-        expect(isParentTeamFeePayActionAllowed({ status: 'adjusted', balanceDueCents: 0 })).toBe(false);
+        expect(isParentTeamFeePayActionAllowed({ status: 'partially_paid', collectionMode: 'online_stripe', balanceDueCents: 1 })).toBe(true);
+        expect(isParentTeamFeePayActionAllowed({ status: 'adjusted', collectionMode: 'online_stripe', balanceDueCents: 1 })).toBe(true);
+        expect(isParentTeamFeePayActionAllowed({ status: 'open', collectionMode: 'online_stripe', balanceDueCents: 1 })).toBe(true);
+        expect(isParentTeamFeePayActionAllowed({ status: 'unpaid', collectionMode: 'offline_manual', balanceDueCents: 1 })).toBe(false);
+        expect(isParentTeamFeePayActionAllowed({ status: 'adjusted', collectionMode: 'online_stripe', balanceDueCents: 0 })).toBe(false);
     });
 
-    it('loads calendar tools with lightweight parent schedule options and builds escaped ICS content', async () => {
+    it('reuses the shared parent schedule summary cache for calendar tools and only bypasses it on force refresh', async () => {
         const event = {
             eventKey: 'team-1::event-1::player-1',
             id: 'event-1',
@@ -587,16 +638,33 @@ describe('React app parent tools service', () => {
             childName: 'Pat Star',
             notes: 'Bring water; arrive early'
         };
-        scheduleMocks.loadParentSchedule.mockResolvedValue({
-            children: [],
-            events: [event, { id: 'event-2', teamId: 'team-1', teamName: 'Bears', type: 'practice', date: new Date('2100-06-02T18:00:00Z') }]
-        });
+        scheduleMocks.loadParentSchedule
+            .mockResolvedValueOnce({
+                children: [],
+                events: [event, { id: 'event-2', teamId: 'team-1', teamName: 'Bears', type: 'practice', date: new Date('2100-06-02T18:00:00Z') }]
+            })
+            .mockResolvedValueOnce({
+                children: [],
+                events: [event]
+            });
 
         await expect(loadParentCalendarTools(user)).resolves.toMatchObject({
             events: [event, { id: 'event-2', teamId: 'team-1', teamName: 'Bears', type: 'practice', date: new Date('2100-06-02T18:00:00Z') }],
             teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 2 }]
         });
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(user, {
+        await expect(loadParentCalendarTools(user)).resolves.toMatchObject({
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 2 }]
+        });
+        await expect(loadParentCalendarTools(user, { force: true })).resolves.toMatchObject({
+            events: [event],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(1, user, {
+            hydrateDetails: false,
+            expandStaffPlayers: false
+        });
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenNthCalledWith(2, user, {
             hydrateDetails: false,
             expandStaffPlayers: false
         });
@@ -677,17 +745,16 @@ describe('React app parent tools service', () => {
 
     it('loads a linked registration detail model for in-app review', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
-        dbMocks.listTeamRegistrationForms.mockResolvedValue([
-            {
-                id: 'form-1',
-                programName: 'Summer Camp',
-                status: 'published',
-                finalAmountDueCents: 12000,
-                checkoutUrl: 'https://pay.example.test/camp',
-                options: [{ id: 'opt-1', title: 'Full Day' }],
-                paymentNotice: 'Online checkout available.'
-            }
-        ]);
+        dbMocks.listTeamRegistrationForms.mockRejectedValue(new Error('registration detail should not scan all forms'));
+        dbMocks.getTeamRegistrationForm.mockResolvedValue({
+            id: 'form-1',
+            programName: 'Summer Camp',
+            status: 'published',
+            finalAmountDueCents: 12000,
+            checkoutUrl: 'https://pay.example.test/camp',
+            options: [{ id: 'opt-1', title: 'Full Day' }],
+            paymentNotice: 'Online checkout available.'
+        });
 
         await expect(loadParentRegistrationDetail(user, 'team-1', 'form-1')).resolves.toMatchObject({
             teamName: 'Bears',
@@ -698,19 +765,20 @@ describe('React app parent tools service', () => {
             options: [{ id: 'opt-1', title: 'Full Day' }],
             paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }]
         });
+        expect(dbMocks.getTeamRegistrationForm).toHaveBeenCalledWith('team-1', 'form-1');
+        expect(dbMocks.listTeamRegistrationForms).not.toHaveBeenCalled();
     });
 
     it('loads the staff registration detail model only for team staff', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-coach', name: 'Coach Wolves' });
-        dbMocks.listTeamRegistrationForms.mockResolvedValue([
-            {
-                id: 'form-review',
-                programName: 'Travel Tryouts',
-                status: 'published',
-                finalAmountDueCents: 15000,
-                options: [{ id: 'opt-1', title: 'Travel' }]
-            }
-        ]);
+        dbMocks.listTeamRegistrationForms.mockRejectedValue(new Error('registration detail should not scan all forms'));
+        dbMocks.getTeamRegistrationForm.mockResolvedValue({
+            id: 'form-review',
+            programName: 'Travel Tryouts',
+            status: 'published',
+            finalAmountDueCents: 15000,
+            options: [{ id: 'opt-1', title: 'Travel' }]
+        });
 
         await expect(loadStaffRegistrationDetail(user, 'team-coach', 'form-review')).resolves.toMatchObject({
             teamName: 'Coach Wolves',
@@ -718,6 +786,8 @@ describe('React app parent tools service', () => {
             legacyUrl: 'https://allplays.ai/registration.html?teamId=team-coach&formId=form-review',
             options: [{ id: 'opt-1', title: 'Travel' }]
         });
+        expect(dbMocks.getTeamRegistrationForm).toHaveBeenCalledWith('team-coach', 'form-review');
+        expect(dbMocks.listTeamRegistrationForms).not.toHaveBeenCalled();
         await expect(loadStaffRegistrationDetail({ ...user, coachOf: [] }, 'team-coach', 'form-review')).rejects.toThrow('Admin access is required to review registrations.');
     });
 
@@ -871,6 +941,7 @@ describe('React app parent tools service', () => {
             feeSnapshot: { finalAmountDueCents: 9900 },
             options: [{ id: 'opt-public', title: 'Clinic' }]
         });
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-public', 'registrationForms', 'form-public');
         expect(firebaseMocks.getDoc).toHaveBeenCalledWith(expect.objectContaining({
             path: 'teams/team-public/registrationForms/form-public'
         }));
@@ -946,7 +1017,7 @@ describe('React app parent tools service', () => {
                 },
                 {
                     id: 'folder-2',
-                    itemCount: 1,
+                    itemCount: 0,
                     itemsLoaded: false,
                     items: []
                 },
@@ -958,9 +1029,8 @@ describe('React app parent tools service', () => {
                 }
             ]
         });
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(2);
-        expect(dbMocks.getTeamMediaItems).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1');
-        expect(dbMocks.getTeamMediaItems).toHaveBeenNthCalledWith(2, 'team-1', 'folder-2');
+        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledWith('team-1', 'folder-1');
 
         await expect(loadTeamMediaForApp(user, 'team-1', { folderIds: ['folder-2'] })).resolves.toMatchObject({
             folders: [
@@ -969,7 +1039,7 @@ describe('React app parent tools service', () => {
                 { id: 'folder-3', itemCount: 2, itemsLoaded: false, items: [] }
             ]
         });
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(3);
+        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(2);
         expect(dbMocks.getTeamMediaItems).toHaveBeenLastCalledWith('team-1', 'folder-2');
 
         await expect(createTeamMediaAlbumForApp('team-1', { name: '  Spring photos  ', visibility: 'private' })).resolves.toBe('folder-new');
