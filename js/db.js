@@ -6108,23 +6108,39 @@ export async function updateChatMuted(userId, teamId, conversationId = DEFAULT_T
     const userRef = doc(db, 'users', userId);
     const mutedAt = Timestamp.now();
     const updates = {
-        [`teamChatState.${teamId}.mutedConversations.${conversationId}`]: mutedAt
+        teamChatState: {
+            [teamId]: {
+                mutedConversations: {
+                    [conversationId]: mutedAt
+                }
+            }
+        }
     };
     if (isDefaultTeamConversation(conversationId)) {
-        updates[`chatMuted.${teamId}`] = mutedAt;
+        updates.chatMuted = {
+            [teamId]: mutedAt
+        };
     }
-    return await updateDoc(userRef, updates);
+    return await setDoc(userRef, updates, { merge: true });
 }
 
 export async function clearChatMuted(userId, teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     const userRef = doc(db, 'users', userId);
     const updates = {
-        [`teamChatState.${teamId}.mutedConversations.${conversationId}`]: deleteField()
+        teamChatState: {
+            [teamId]: {
+                mutedConversations: {
+                    [conversationId]: deleteField()
+                }
+            }
+        }
     };
     if (isDefaultTeamConversation(conversationId)) {
-        updates[`chatMuted.${teamId}`] = deleteField();
+        updates.chatMuted = {
+            [teamId]: deleteField()
+        };
     }
-    return await updateDoc(userRef, updates);
+    return await setDoc(userRef, updates, { merge: true });
 }
 
 /**

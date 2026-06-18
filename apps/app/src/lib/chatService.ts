@@ -183,6 +183,7 @@ export type ChatInboxPreviewUpdate = {
   teamId: string;
   lastMessage: ChatMessage | null;
   preferredConversationId: string | null;
+  isMuted: boolean;
 };
 
 type TeamChatStateEntry = {
@@ -677,7 +678,8 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
           lastMessage: preview.message,
           preferredConversationId: preview.conversationId && !isDefaultTeamConversation(preview.conversationId)
             ? preview.conversationId
-            : null
+            : null,
+          isMuted: isConversationMuted(profile, team.id, preview.conversationId || DEFAULT_TEAM_CONVERSATION_ID)
         });
       } catch (error) {
         console.warn('[chat-service] Deferred inbox preview failed:', sanitizeErrorForLogging(error));

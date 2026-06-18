@@ -59,6 +59,7 @@ function buildChatStateUpdater(functionName, dependencies) {
         'db',
         'doc',
         'updateDoc',
+        'setDoc',
         'Timestamp',
         'deleteField',
         'DEFAULT_TEAM_CONVERSATION_ID',
@@ -68,6 +69,7 @@ function buildChatStateUpdater(functionName, dependencies) {
         dependencies.db,
         dependencies.doc,
         dependencies.updateDoc,
+        dependencies.setDoc,
         dependencies.Timestamp,
         dependencies.deleteField,
         dependencies.DEFAULT_TEAM_CONVERSATION_ID,
@@ -199,11 +201,12 @@ describe('chat user state persistence helpers', () => {
     it('stores per-conversation mute state in the team chat state map', async () => {
         const mutedAt = { seconds: 789 };
         const doc = vi.fn(() => ({ path: 'users/user-1' }));
-        const updateDoc = vi.fn().mockResolvedValue(undefined);
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const updateChatMuted = buildChatStateUpdater('updateChatMuted', {
             db: {},
             doc,
-            updateDoc,
+            updateDoc: vi.fn(),
+            setDoc,
             Timestamp: { now: () => mutedAt },
             deleteField: vi.fn(),
             DEFAULT_TEAM_CONVERSATION_ID: 'team',
@@ -212,19 +215,54 @@ describe('chat user state persistence helpers', () => {
 
         await updateChatMuted('user-1', 'team-1', 'staff-conversation');
 
-        expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1' }, {
-            'teamChatState.team-1.mutedConversations.staff-conversation': mutedAt
+        expect(setDoc).toHaveBeenCalledWith({ path: 'users/user-1' }, {
+            teamChatState: {
+                'team-1': {
+                    mutedConversations: {
+                        'staff-conversation': mutedAt
+                    }
+                }
+            }
+        }, { merge: true });
+    });
+
+    it('stores literal conversation ids when muting email threads with dots in the key', async () => {
+        const mutedAt = { seconds: 654 };
+        const doc = vi.fn(() => ({ path: 'users/user-1' }));
+        const setDoc = vi.fn().mockResolvedValue(undefined);
+        const updateChatMuted = buildChatStateUpdater('updateChatMuted', {
+            db: {},
+            doc,
+            updateDoc: vi.fn(),
+            setDoc,
+            Timestamp: { now: () => mutedAt },
+            deleteField: vi.fn(),
+            DEFAULT_TEAM_CONVERSATION_ID: 'team',
+            isDefaultTeamConversation: (conversationId) => conversationId === 'team'
         });
+
+        await updateChatMuted('user-1', 'team-1', 'group_email%3Apat%40example.com');
+
+        expect(setDoc).toHaveBeenCalledWith({ path: 'users/user-1' }, {
+            teamChatState: {
+                'team-1': {
+                    mutedConversations: {
+                        'group_email%3Apat%40example.com': mutedAt
+                    }
+                }
+            }
+        }, { merge: true });
     });
 
     it('preserves legacy team chat mute state for the default conversation only', async () => {
         const mutedAt = { seconds: 987 };
         const doc = vi.fn(() => ({ path: 'users/user-1' }));
-        const updateDoc = vi.fn().mockResolvedValue(undefined);
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const updateChatMuted = buildChatStateUpdater('updateChatMuted', {
             db: {},
             doc,
-            updateDoc,
+            updateDoc: vi.fn(),
+            setDoc,
             Timestamp: { now: () => mutedAt },
             deleteField: vi.fn(),
             DEFAULT_TEAM_CONVERSATION_ID: 'team',
@@ -233,20 +271,29 @@ describe('chat user state persistence helpers', () => {
 
         await updateChatMuted('user-1', 'team-1', 'team');
 
-        expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1' }, {
-            'teamChatState.team-1.mutedConversations.team': mutedAt,
-            'chatMuted.team-1': mutedAt
-        });
+        expect(setDoc).toHaveBeenCalledWith({ path: 'users/user-1' }, {
+            teamChatState: {
+                'team-1': {
+                    mutedConversations: {
+                        team: mutedAt
+                    }
+                }
+            },
+            chatMuted: {
+                'team-1': mutedAt
+            }
+        }, { merge: true });
     });
 
     it('clears only the selected conversation mute from team chat state', async () => {
         const deleted = Symbol('deleteField');
         const doc = vi.fn(() => ({ path: 'users/user-1' }));
-        const updateDoc = vi.fn().mockResolvedValue(undefined);
+        const setDoc = vi.fn().mockResolvedValue(undefined);
         const clearChatMuted = buildChatStateUpdater('clearChatMuted', {
             db: {},
             doc,
-            updateDoc,
+            updateDoc: vi.fn(),
+            setDoc,
             Timestamp: { now: vi.fn() },
             deleteField: vi.fn(() => deleted),
             DEFAULT_TEAM_CONVERSATION_ID: 'team',
@@ -255,8 +302,14 @@ describe('chat user state persistence helpers', () => {
 
         await clearChatMuted('user-1', 'team-1', 'staff-conversation');
 
-        expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1' }, {
-            'teamChatState.team-1.mutedConversations.staff-conversation': deleted
-        });
+        expect(setDoc).toHaveBeenCalledWith({ path: 'users/user-1' }, {
+            teamChatState: {
+                'team-1': {
+                    mutedConversations: {
+                        'staff-conversation': deleted
+                    }
+                }
+            }
+        }, { merge: true });
     });
 });

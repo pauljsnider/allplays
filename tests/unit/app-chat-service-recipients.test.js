@@ -755,4 +755,53 @@ describe('React app chat recipient service', () => {
             isMuted: true
         }));
     });
+
+
+    it('loadChatInbox includes deferred preview mute state for non-default conversations', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'coach@example.com',
+            teamIds: ['team-1'],
+            teamChatState: {
+                'team-1': {
+                    mutedConversations: {
+                        'staff-conversation': new Date('2026-06-01T12:00:00Z')
+                    }
+                }
+            }
+        });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+            { id: 'team-1', name: 'Bears', sport: 'Basketball', ownerId: 'user-1' }
+        ]);
+        dbMocks.getParentTeams.mockResolvedValue([]);
+        dbMocks.getUnreadChatCounts.mockResolvedValue({});
+        dbMocks.getChatConversations.mockResolvedValue([
+            { id: 'team', type: 'team', updatedAt: new Date('2026-06-01T11:00:00Z') },
+            { id: 'staff-conversation', type: 'group', updatedAt: new Date('2026-06-01T12:00:00Z') }
+        ]);
+        dbMocks.getChatMessages.mockImplementation(async (_teamId, options = {}) => {
+            if (options.conversationId === 'staff-conversation') {
+                return [{ id: 'msg-1', text: 'Staff note', createdAt: new Date('2026-06-01T12:00:00Z') }];
+            }
+            return [];
+        });
+
+        const previews = [];
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        await loadChatInbox({
+            uid: 'user-1',
+            email: 'coach@example.com',
+            displayName: 'Coach One',
+            roles: ['coach']
+        }, {
+            includeLastMessages: false,
+            onPreview: (preview) => previews.push(preview)
+        });
+        await vi.waitFor(() => {
+            expect(previews).toContainEqual(expect.objectContaining({
+            teamId: 'team-1',
+            preferredConversationId: 'staff-conversation',
+            isMuted: true
+        }));
+        });
+    });
 });

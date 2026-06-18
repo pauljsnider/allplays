@@ -545,7 +545,8 @@ describe('React app messages integration', () => {
                 options.onPreview?.({
                     teamId: 'team-1',
                     lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' }),
-                    preferredConversationId: null
+                    preferredConversationId: null,
+                    isMuted: false
                 });
             });
             return {
@@ -2138,6 +2139,88 @@ describe('React app messages integration', () => {
 
         await click(container, 'Unmute notifications');
         expect(chatMocks.unmuteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
+    });
+
+
+    it('keeps the updated mute state after switching away and back to a muted staff conversation', async () => {
+        layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 0,
+                    isMuted: false,
+                    preferredConversationId: 'staff-conversation',
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Staff note' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 0,
+                    isMuted: false,
+                    lastMessage: chatMessage({ id: 'last-2', text: 'Travel roster posted.' })
+                }
+            ]
+        });
+        chatMocks.loadChatTeamContext.mockImplementation(async (requestedTeamId) => ({
+            team: {
+                id: requestedTeamId,
+                name: requestedTeamId === 'team-1' ? 'Bears' : 'Thunder',
+                sport: requestedTeamId === 'team-1' ? 'Basketball' : 'Soccer'
+            },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: true
+        }));
+        chatMocks.loadChatConversations.mockImplementation(async (requestedTeamId) => (
+            requestedTeamId === 'team-1'
+                ? [
+                    { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+                    { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+                ]
+                : [
+                    { id: 'team', type: 'team', name: 'Thunder Team Chat', participantIds: [], participantRoles: ['team'] }
+                ]
+        ));
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((requestedTeamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: `msg-${requestedTeamId}-${conversationId}`,
+                    senderId: 'coach-1',
+                    senderName: 'Coach Jamie',
+                    text: conversationId === 'staff-conversation' ? 'Staff note' : 'Travel roster posted.'
+                })
+            ], { id: `cursor-${requestedTeamId}-${conversationId}` });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
+
+        expect(buttonByText(container, 'Mute notifications')).toBeTruthy();
+        await click(container, 'Mute notifications');
+        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'staff-conversation');
+        expect(buttonByText(container, 'Unmute notifications')).toBeTruthy();
+
+        const thunderLink = container.querySelector('a[href="/messages/team-2"]');
+        await act(async () => {
+            thunderLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+        expect(buttonByText(container, 'Mute notifications')).toBeTruthy();
+
+        const bearsLink = container.querySelector('a[href="/messages/team-1?conversationId=staff-conversation"]');
+        await act(async () => {
+            bearsLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+
+        expect(buttonByText(container, 'Unmute notifications')).toBeTruthy();
     });
 
     it('rolls back the mute toggle when the server write fails', async () => {

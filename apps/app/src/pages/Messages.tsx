@@ -239,6 +239,9 @@ export function Messages({ auth }: { auth: AuthState }) {
                 teamId={activeTeamId}
                 inboxTeam={teams.find((team) => team.id === activeTeamId)}
                 preferredConversationId={teamId === activeTeamId ? preferredConversationId : ''}
+                onInboxMuteChange={(nextConversationId, nextIsMuted) => {
+                  setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
+                }}
                 embedded
               />
             ) : (
@@ -257,6 +260,9 @@ export function Messages({ auth }: { auth: AuthState }) {
         teamId={activeTeamId}
         inboxTeam={teams.find((team) => team.id === activeTeamId)}
         preferredConversationId={preferredConversationId}
+        onInboxMuteChange={(nextConversationId, nextIsMuted) => {
+          setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
+        }}
       />
     );
   }
@@ -454,12 +460,14 @@ function ChatWindow({
   teamId,
   inboxTeam,
   preferredConversationId = '',
+  onInboxMuteChange,
   embedded = false
 }: {
   auth: AuthState;
   teamId: string;
   inboxTeam?: ChatTeam;
   preferredConversationId?: string;
+  onInboxMuteChange?: (conversationId: string, isMuted: boolean) => void;
   embedded?: boolean;
 }) {
   const navigate = useNavigate();
@@ -1484,6 +1492,7 @@ function ChatWindow({
     const next = !isMuted;
     const conversationId = selectedConversationId || DEFAULT_TEAM_CONVERSATION_ID;
     setIsMuted(next);
+    onInboxMuteChange?.(conversationId, next);
     try {
       if (next) {
         await muteTeamChat(auth.user.uid, teamId, conversationId);
@@ -1492,8 +1501,9 @@ function ChatWindow({
       }
     } catch {
       setIsMuted(!next);
+      onInboxMuteChange?.(conversationId, !next);
     }
-  }, [auth.user?.uid, isMuted, selectedConversationId, teamId]);
+  }, [auth.user?.uid, isMuted, onInboxMuteChange, selectedConversationId, teamId]);
 
   if (loadingContext) {
     return <MessagesPageSkeleton embedded={embedded} />;
@@ -1780,14 +1790,15 @@ export function mergeInboxTeams(nextTeams: ChatTeam[], previewUpdates: Map<strin
     return {
       ...team,
       lastMessage: previewUpdate.lastMessage,
-      preferredConversationId: previewUpdate.preferredConversationId
+      preferredConversationId: previewUpdate.preferredConversationId,
+      isMuted: previewUpdate.isMuted
     };
   }));
 }
 
 function mergeInboxPreview(
   teams: ChatTeam[],
-  previewUpdate: { teamId: string; lastMessage: ChatMessage | null; preferredConversationId: string | null; }
+  previewUpdate: { teamId: string; lastMessage: ChatMessage | null; preferredConversationId: string | null; isMuted: boolean; }
 ) {
   let changed = false;
   const nextTeams = teams.map((team) => {
@@ -1796,11 +1807,32 @@ function mergeInboxPreview(
     return {
       ...team,
       lastMessage: previewUpdate.lastMessage,
-      preferredConversationId: previewUpdate.preferredConversationId
+      preferredConversationId: previewUpdate.preferredConversationId,
+      isMuted: previewUpdate.isMuted
     };
   });
   if (!changed) return teams;
   return sortInboxTeams(nextTeams);
+}
+
+function updateInboxTeamMuteState(
+  teams: ChatTeam[],
+  teamId: string,
+  conversationId: string,
+  isMuted: boolean
+) {
+  const normalizedConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).trim() || DEFAULT_TEAM_CONVERSATION_ID;
+  let changed = false;
+  const nextTeams = teams.map((team) => {
+    if (team.id !== teamId) return team;
+    changed = true;
+    return {
+      ...team,
+      preferredConversationId: isDefaultTeamConversation(normalizedConversationId) ? null : normalizedConversationId,
+      isMuted
+    };
+  });
+  return changed ? nextTeams : teams;
 }
 
 function sortInboxTeams(teams: ChatTeam[]) {
@@ -1844,7 +1876,10 @@ function resolveMutedState(
     if (chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]) {
       return true;
     }
-    if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
+  }
+  if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
+    const inboxConversationId = inboxTeam.preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID;
+    if (inboxConversationId === conversationId) {
       return inboxTeam.isMuted;
     }
   }
