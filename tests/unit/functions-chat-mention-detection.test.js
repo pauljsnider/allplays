@@ -174,4 +174,41 @@ describe('buildTeamChatNotificationPlan', () => {
         expect(plan.mentionTargets.map((target) => target.uid).sort()).toEqual(['u1', 'u2']);
         expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['u4']);
     });
+
+    it('handles a large mixed team fixture from one preloaded recipient context', () => {
+        const mentionedUserIds = ['user-12', 'user-87', 'user-301'];
+        const members = Array.from({ length: 500 }, (_, index) => ({
+            uid: `user-${index}`,
+            displayName: `Player ${index}`
+        }));
+        members[12].displayName = 'Alice';
+        members[87].displayName = 'Bob Smith';
+        members[301].displayName = 'Carol';
+
+        const liveChatTargets = members.map((member) => ({ uid: member.uid, token: `live-${member.uid}` }));
+        const mentionTargets = members
+            .filter((member) => mentionedUserIds.includes(member.uid))
+            .map((member) => ({ uid: member.uid, token: `mention-${member.uid}` }));
+
+        const plan = buildTeamChatNotificationPlan({
+            text: 'Nice work @alice @bob @carol',
+            actorUid: 'user-0',
+            recipientContext: {
+                members,
+                mutedUids: ['user-111', 'user-222'],
+                targetsByCategory: {
+                    mentions: mentionTargets,
+                    liveChat: liveChatTargets
+                }
+            }
+        });
+
+        expect(plan.mentionedUids.sort()).toEqual(mentionedUserIds.sort());
+        expect(plan.mentionTargets).toHaveLength(3);
+        expect(plan.liveChatTargets).toHaveLength(494);
+        expect(plan.liveChatTargets.some((target) => target.uid === 'user-0')).toBe(false);
+        expect(plan.liveChatTargets.some((target) => target.uid === 'user-111')).toBe(false);
+        expect(plan.liveChatTargets.some((target) => target.uid === 'user-222')).toBe(false);
+        expect(plan.liveChatTargets.some((target) => mentionedUserIds.includes(target.uid))).toBe(false);
+    });
 });
