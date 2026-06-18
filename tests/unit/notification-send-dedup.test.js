@@ -108,6 +108,11 @@ function buildSendCategoryNotificationHarness({
     const buildNotificationLink = vi.fn(({ category, teamId, gameId }) => `https://allplays.ai/${category}/${teamId}/${gameId || ''}`);
     const buildNotificationAppRoute = vi.fn(({ category, teamId, gameId, eventId }) => `/${category}/${teamId}/${gameId || eventId || ''}`);
     const pruneInvalidTokens = vi.fn(async () => {});
+    const writeNotificationInboxRecords = vi.fn(async () => ({
+        writeCount: targets.length,
+        cleanupCount: 0,
+        failureCount: 0
+    }));
     const functions = {
         logger: {
             info: vi.fn()
@@ -122,6 +127,7 @@ function buildSendCategoryNotificationHarness({
         'buildNotificationAppRoute',
         'admin',
         'pruneInvalidTokens',
+        'writeNotificationInboxRecords',
         'functions',
         `${sendSource}\nreturn sendCategoryNotification;`
     );
@@ -134,6 +140,7 @@ function buildSendCategoryNotificationHarness({
         buildNotificationAppRoute,
         admin,
         pruneInvalidTokens,
+        writeNotificationInboxRecords,
         functions
     );
 
@@ -145,6 +152,7 @@ function buildSendCategoryNotificationHarness({
         buildNotificationLink,
         buildNotificationAppRoute,
         pruneInvalidTokens,
+        writeNotificationInboxRecords,
         functions
     };
 }
