@@ -3,6 +3,11 @@ import { discoverPublicTeams } from './db.js?v=50';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=2';
 import { isTeamActive } from './team-visibility.js?v=2';
 import {
+    executeBoundedPlayerSearch,
+    playerSearchFirestoreQueryBudget,
+    playerSearchResultLimit
+} from './player-search-budget.js?v=1';
+import {
     db,
     collection,
     getDocs,
@@ -17,6 +22,7 @@ import {
 let cachedAccessibleTeams = null;
 let cachedAccessibleTeamsLoadedAt = 0;
 let cachedAccessibleTeamsUserKey = '';
+const playerSearchQueryLimit = playerSearchResultLimit;
 const playerSearchTeamLimit = 8;
 const teamSearchQueryLimit = 20;
 
@@ -192,7 +198,7 @@ function parseTeamAndPlayerIdFromPath(path) {
     return { teamId: parts[tIdx + 1] || '', playerId: parts[pIdx + 1] || '' };
 }
 
-function buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric) {
+function buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric, completedAllQueries) {
     const rejected = snaps.filter(s => s.status === 'rejected').map(s => s.reason).filter(Boolean);
     const hasFulfilled = snaps.some(s => s.status === 'fulfilled');
 
@@ -209,8 +215,9 @@ function buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric) {
     }
 
     const exhaustiveForNarrowerQueries = !isNumeric
+        && completedAllQueries
         && rejected.length === 0
-        && snaps.slice(0, nameQueryCount).every(s => s.status === 'fulfilled' && (s.value.docs || []).length < 20);
+        && snaps.slice(0, nameQueryCount).every(s => s.status === 'fulfilled' && (s.value.docs || []).length < playerSearchQueryLimit);
 
     return {
         docs: Array.from(byPath.values()),
@@ -248,31 +255,36 @@ async function loadPlayerSearchDocsByTeam(prefixes, rawQuery, isNumeric, teamsBy
         return { docs: [], exhaustiveForNarrowerQueries: false, rejected: [] };
     }
 
-    const nameQueryCount = prefixes.length * teamIds.length;
-    const snaps = await Promise.allSettled(teamIds.flatMap((teamId) => {
-        const playersRef = collection(db, `teams/${teamId}/players`);
-        const scopedQueries = prefixes.map((prefix) => getDocs(query(
-            playersRef,
-            orderBy('name'),
-            where('name', '>=', prefix),
-            where('name', '<=', `${prefix}\uf8ff`),
-            limit(20)
-        )));
-
-        if (isNumeric) {
-            scopedQueries.push(getDocs(query(
+    const { snapshots, nameQueryCount, completedAllQueries } = await executeBoundedPlayerSearch({
+        teamIds,
+        prefixes,
+        rawQuery,
+        isNumeric,
+        queryLimit: playerSearchQueryLimit,
+        queryBudget: playerSearchFirestoreQueryBudget,
+        runNameQuery: (teamId, prefix) => {
+            const playersRef = collection(db, `teams/${teamId}/players`);
+            return getDocs(query(
+                playersRef,
+                orderBy('name'),
+                where('name', '>=', prefix),
+                where('name', '<=', `${prefix}\uf8ff`),
+                limit(playerSearchQueryLimit)
+            ));
+        },
+        runNumberQuery: (teamId, numericQuery) => {
+            const playersRef = collection(db, `teams/${teamId}/players`);
+            return getDocs(query(
                 playersRef,
                 orderBy('number'),
-                where('number', '>=', rawQuery),
-                where('number', '<=', `${rawQuery}\uf8ff`),
-                limit(20)
-            )));
+                where('number', '>=', numericQuery),
+                where('number', '<=', `${numericQuery}\uf8ff`),
+                limit(playerSearchQueryLimit)
+            ));
         }
+    });
 
-        return scopedQueries;
-    }));
-
-    return buildPlayerSearchDocsFromSnapshots(snaps, nameQueryCount, isNumeric);
+    return buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric, completedAllQueries);
 }
 
 async function loadPlayerSearchDocs(prefixes, rawQuery, isNumeric, teamsById) {

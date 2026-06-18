@@ -1,5 +1,10 @@
 import { isTeamActive } from '../../../../js/team-visibility.js';
 import {
+  executeBoundedPlayerSearch,
+  playerSearchFirestoreQueryBudget,
+  playerSearchResultLimit
+} from '../../../../js/player-search-budget.js';
+import {
   db,
   collection,
   doc,
@@ -15,7 +20,7 @@ import { searchHelpKnowledge } from './helpKnowledgeService';
 import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
-const playerSearchQueryLimit = 20;
+const playerSearchQueryLimit = playerSearchResultLimit;
 const playerSearchTeamLimit = 8;
 const teamSearchQueryLimit = 20;
 
@@ -413,18 +418,9 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
   if (cachedEntry?.promise) return cachedEntry.promise;
 
   if (!isNumeric) {
-    const cachedPrefixEntry = findReusablePlayerSearchCacheEntry(scopeKey, normalizedQuery);
-    if (cachedPrefixEntry?.sourceDocs) {
-      const players = buildAppSearchPlayersFromDocs(cachedPrefixEntry.sourceDocs, teamsById, user, tokens);
-      playerSearchCache.set(cacheKey, {
-        scopeKey,
-        normalizedQuery,
-        isNumeric,
-        players,
-        sourceDocs: cachedPrefixEntry.sourceDocs,
-        exhaustiveForNarrowerQueries: true
-      });
-      return players;
+    const cachedPlayers = getCachedAppPlayerSearchResults(rawQuery, teamsById, user);
+    if (cachedPlayers) {
+      return cachedPlayers;
     }
   }
 
@@ -454,6 +450,36 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
   });
 
   return playerSearchPromise;
+}
+
+export function hasSatisfiedAppPlayerSearchResultBudget(players: AppSearchPlayer[] = []) {
+  return players.length >= playerSearchQueryLimit;
+}
+
+export function getCachedAppPlayerSearchResults(queryText: string, teamsById: Map<string, AppSearchTeam>, user: AuthUser | null): AppSearchPlayer[] | null {
+  const rawQuery = String(queryText || '').trim();
+  const normalizedQuery = normalizeSearchQuery(rawQuery);
+  if (!normalizedQuery || /^[0-9]+$/.test(rawQuery)) return null;
+
+  const scopeKey = getPlayerSearchScopeKey(teamsById, user);
+  const cacheKey = `${scopeKey}::${normalizedQuery}`;
+  const cachedEntry = playerSearchCache.get(cacheKey);
+  if (cachedEntry?.players) return cachedEntry.players;
+
+  const cachedPrefixEntry = findReusablePlayerSearchCacheEntry(scopeKey, normalizedQuery);
+  if (!cachedPrefixEntry?.sourceDocs) return null;
+
+  const tokens = splitSearchTokens(rawQuery);
+  const players = buildAppSearchPlayersFromDocs(cachedPrefixEntry.sourceDocs, teamsById, user, tokens);
+  playerSearchCache.set(cacheKey, {
+    scopeKey,
+    normalizedQuery,
+    isNumeric: false,
+    players,
+    sourceDocs: cachedPrefixEntry.sourceDocs,
+    exhaustiveForNarrowerQueries: true
+  });
+  return players;
 }
 
 function buildAppSearchHelpResults(
@@ -835,7 +861,7 @@ function canReusePlayerSearchPrefixes(cachedQuery: string, nextQuery: string) {
   return cachedTokens.every((token, index) => nextTokens[index]?.startsWith(token));
 }
 
-function buildPlayerSearchDocsFromSnapshots(snapshots: any[], nameQueryCount: number, isNumeric: boolean) {
+function buildPlayerSearchDocsFromSnapshots(snapshots: any[], nameQueryCount: number, isNumeric: boolean, completedAllQueries: boolean) {
   const rejected = snapshots.filter((snapshot) => snapshot.status === 'rejected').map((snapshot: any) => snapshot.reason).filter(Boolean);
   const hasFulfilled = snapshots.some((snapshot) => snapshot.status === 'fulfilled');
 
@@ -852,6 +878,7 @@ function buildPlayerSearchDocsFromSnapshots(snapshots: any[], nameQueryCount: nu
   });
 
   const exhaustiveForNarrowerQueries = !isNumeric
+    && completedAllQueries
     && rejected.length === 0
     && snapshots.slice(0, nameQueryCount).every((snapshot: any) => snapshot.status === 'fulfilled' && (snapshot.value?.docs || []).length < playerSearchQueryLimit);
 
@@ -891,31 +918,36 @@ async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], 
     return { docs: [], exhaustiveForNarrowerQueries: false, rejected: [] };
   }
 
-  const nameQueryCount = prefixes.length * cappedTeamIds.length;
-  const snapshots = await Promise.allSettled(cappedTeamIds.flatMap((teamId) => {
-    const playersRef = collection(db, `teams/${teamId}/players`);
-    const scopedQueries = prefixes.map((prefix) => getDocs(query(
-      playersRef,
-      orderBy('name'),
-      where('name', '>=', prefix),
-      where('name', '<=', `${prefix}\uf8ff`),
-      limit(playerSearchQueryLimit)
-    )));
-
-    if (isNumeric) {
-      scopedQueries.push(getDocs(query(
+  const { snapshots, nameQueryCount, completedAllQueries } = await executeBoundedPlayerSearch({
+    teamIds: cappedTeamIds,
+    prefixes,
+    rawQuery,
+    isNumeric,
+    queryLimit: playerSearchQueryLimit,
+    queryBudget: playerSearchFirestoreQueryBudget,
+    runNameQuery: (teamId: string, prefix: string) => {
+      const playersRef = collection(db, `teams/${teamId}/players`);
+      return getDocs(query(
+        playersRef,
+        orderBy('name'),
+        where('name', '>=', prefix),
+        where('name', '<=', `${prefix}\uf8ff`),
+        limit(playerSearchQueryLimit)
+      ));
+    },
+    runNumberQuery: (teamId: string, numericQuery: string) => {
+      const playersRef = collection(db, `teams/${teamId}/players`);
+      return getDocs(query(
         playersRef,
         orderBy('number'),
-        where('number', '>=', rawQuery),
-        where('number', '<=', `${rawQuery}\uf8ff`),
+        where('number', '>=', numericQuery),
+        where('number', '<=', `${numericQuery}\uf8ff`),
         limit(playerSearchQueryLimit)
-      )));
+      ));
     }
+  });
 
-    return scopedQueries;
-  }));
-
-  return buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric);
+  return buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric, completedAllQueries);
 }
 
 async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean, teamsById: Map<string, AppSearchTeam> = new Map()) {
