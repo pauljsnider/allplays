@@ -70,7 +70,10 @@ vi.mock('../../apps/app/src/components/NotificationInboxSheet', () => ({
                                 <button
                                     type="button"
                                     data-testid={`notification-item-${item.id}`}
-                                    onClick={() => void onMarkRead(uid, item.id).then(onClose)}
+                                    onClick={() => {
+                                        onClose();
+                                        void onMarkRead(uid, item.id).catch(() => undefined);
+                                    }}
                                 >
                                     {item.text}
                                 </button>
@@ -212,16 +215,60 @@ describe('Notification bell in AppShell', () => {
 
         renderShell(true);
 
-        // Open the inbox
         fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
         await waitFor(() => screen.getByRole('dialog', { name: 'Notifications' }));
 
-        // Click the notification item
         fireEvent.click(screen.getByTestId('notification-item-notif-42'));
 
         await waitFor(() => {
             expect(inboxServiceMocks.markNotificationRead).toHaveBeenCalledWith('user-1', 'notif-42');
         });
+    });
+
+    it('closes the mobile inbox immediately when mark-read is delayed', async () => {
+        inboxServiceMocks.subscribeToNotificationInbox.mockImplementation(
+            (_uid: string, callback: (items: Array<{ id: string; text: string; appRoute: string; readAt: unknown }>) => void) => {
+                callback([
+                    { id: 'notif-slow', text: 'Game starting now', appRoute: '/games/game-1', readAt: null },
+                ]);
+                return vi.fn();
+            }
+        );
+        inboxServiceMocks.markNotificationRead.mockImplementation(() => new Promise<void>(() => undefined));
+
+        renderShell(false);
+
+        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+        await waitFor(() => screen.getByRole('dialog', { name: 'Notifications' }));
+
+        fireEvent.click(screen.getByTestId('notification-item-notif-slow'));
+
+        expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+        expect(inboxServiceMocks.markNotificationRead).toHaveBeenCalledWith('user-1', 'notif-slow');
+    });
+
+    it('closes the mobile inbox immediately when mark-read rejects', async () => {
+        inboxServiceMocks.subscribeToNotificationInbox.mockImplementation(
+            (_uid: string, callback: (items: Array<{ id: string; text: string; appRoute: string; readAt: unknown }>) => void) => {
+                callback([
+                    { id: 'notif-fail', text: 'Schedule update', appRoute: '/schedule/game-2', readAt: null },
+                ]);
+                return vi.fn();
+            }
+        );
+        inboxServiceMocks.markNotificationRead.mockRejectedValue(new Error('offline'));
+
+        renderShell(false);
+
+        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+        await waitFor(() => screen.getByRole('dialog', { name: 'Notifications' }));
+
+        fireEvent.click(screen.getByTestId('notification-item-notif-fail'));
+
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+        });
+        expect(inboxServiceMocks.markNotificationRead).toHaveBeenCalledWith('user-1', 'notif-fail');
     });
 
     it('closes the inbox sheet when close is triggered', async () => {
