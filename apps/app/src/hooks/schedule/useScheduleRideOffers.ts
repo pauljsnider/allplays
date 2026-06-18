@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toAppServiceError } from '../../lib/appErrors';
 import {
   cancelParentScheduleRideRequest,
   createParentScheduleRideOffer,
@@ -16,6 +17,7 @@ import {
   type RideRequestStatus,
   type ScheduleRideOffer
 } from '../../lib/scheduleLogic';
+import { useAsyncOperation } from '../../lib/useAsyncOperation';
 import { useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEventDetailContext';
 
 type RideChildChoice = {
@@ -50,10 +52,24 @@ function resolveRideChildIdForOffer(
   return childChoices[0]?.childId || '';
 }
 
+function getRideOffersErrorMessage(error: unknown, fallbackMessage: string) {
+  const mappedError = toAppServiceError(error, fallbackMessage);
+  if (mappedError.type === 'network') {
+    const explicitMessage = String(mappedError.message || '').trim();
+    if (explicitMessage && !/(failed to fetch|load failed|network|offline|timed out|timeout|unreachable|connection)/i.test(explicitMessage)) {
+      return explicitMessage;
+    }
+    return `${fallbackMessage.replace(/\.$/, '')} while offline. Check your connection and try again.`;
+  }
+  if (mappedError.type === 'permission') return 'You do not have permission to update rideshare for this event.';
+  if (mappedError.type === 'not_found') return 'This event is no longer available for rideshare. Refresh the page and try again.';
+  if (mappedError.type === 'validation') return mappedError.message;
+  return mappedError.message || fallbackMessage;
+}
+
 export function useScheduleRideOffers() {
   const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();
   const [offers, setOffers] = useState<ScheduleRideOffer[]>([]);
-  const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [seatCapacity, setSeatCapacity] = useState('3');
   const [direction, setDirection] = useState<RideOfferDirection>('to');
@@ -61,14 +77,27 @@ export function useScheduleRideOffers() {
   const [selectedChildByOffer, setSelectedChildByOffer] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const eventRef = useRef(event);
   const updateEventsRef = useRef(updateEvents);
+  const offersRef = useRef<ScheduleRideOffer[]>([]);
+  const {
+    loading,
+    error: loadError,
+    run: runLoadOffers
+  } = useAsyncOperation();
+  const {
+    error: actionError,
+    run: runRideMutation
+  } = useAsyncOperation();
 
   useEffect(() => {
     eventRef.current = event;
     updateEventsRef.current = updateEvents;
   }, [event, updateEvents]);
+
+  useEffect(() => {
+    offersRef.current = offers;
+  }, [offers]);
 
   const childChoices = useMemo(() => getRideChildChoices(childEvents), [childEvents]);
   const summary = loading && !offers.length ? event.rideshareSummary : summarizeParentScheduleRideOffers(offers);
@@ -85,41 +114,50 @@ export function useScheduleRideOffers() {
 
   const refreshOffers = useCallback(async (showLoading = true) => {
     const currentEvent = eventRef.current;
-    if (showLoading) setLoading(true);
-    setError(null);
-    try {
-      const loaded = await loadParentScheduleRideOffers(currentEvent);
-      setOffers(loaded);
-      syncSummary(loaded);
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load rideshare offers.');
-      setOffers([]);
-      syncSummary([]);
-    } finally {
-      if (showLoading) setLoading(false);
-    }
-  }, [syncSummary]);
+    const hadOffers = offersRef.current.length > 0;
+    return runLoadOffers(
+      () => loadParentScheduleRideOffers(currentEvent),
+      {
+        clearError: true,
+        getErrorMessage: (loadError) => getRideOffersErrorMessage(loadError, 'Unable to load rideshare offers.'),
+        rethrow: false,
+        onSuccess: (loaded) => {
+          setOffers(loaded);
+          offersRef.current = loaded;
+          syncSummary(loaded);
+        },
+        onError: () => {
+          if (showLoading || !hadOffers) {
+            setOffers([]);
+            offersRef.current = [];
+            syncSummary([]);
+          }
+        }
+      }
+    );
+  }, [runLoadOffers, syncSummary]);
 
   useEffect(() => {
     setSelectedChildByOffer({});
     setMessage(null);
-    refreshOffers();
+    void refreshOffers();
   }, [event.teamId, event.id, refreshOffers]);
 
   const runRideAction = useCallback(async (actionKey: string, action: () => Promise<void>, successMessage: string) => {
     setSubmitting(actionKey);
     setMessage(null);
-    setError(null);
-    try {
+    await runRideMutation(async () => {
       await action();
       await refreshOffers(false);
-      setMessage(successMessage);
-    } catch (actionError: any) {
-      setError(actionError?.message || 'Unable to update rideshare.');
-    } finally {
-      setSubmitting(null);
-    }
-  }, [refreshOffers]);
+    }, {
+      getErrorMessage: (actionError) => getRideOffersErrorMessage(actionError, 'Unable to update rideshare.'),
+      rethrow: false,
+      onSuccess: () => {
+        setMessage(successMessage);
+      },
+      onFinally: () => setSubmitting(null)
+    });
+  }, [refreshOffers, runRideMutation]);
 
   const submit = async () => {
     if (!auth.user) return;
@@ -200,7 +238,8 @@ export function useScheduleRideOffers() {
     summary,
     submitting,
     message,
-    error,
+    error: actionError || loadError,
+    retry: () => refreshOffers(),
     submit,
     selectChildForOffer,
     requestSpot,

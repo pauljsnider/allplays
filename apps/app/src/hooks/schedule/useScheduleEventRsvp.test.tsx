@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { submitParentScheduleRsvp } from '../../lib/scheduleService';
@@ -87,7 +87,36 @@ function renderProbe(availabilityNote = 'Running late') {
 
 describe('useScheduleEventRsvp', () => {
     afterEach(() => {
+        cleanup();
         vi.clearAllMocks();
+    });
+
+    it('does not submit when the parent is signed out', async () => {
+        function Harness() {
+            const [events, setEvents] = useState([buildEvent()]);
+
+            return (
+                <ScheduleEventDetailProvider
+                    value={{
+                        auth: { ...auth, user: null },
+                        event: events[0],
+                        childEvents: events,
+                        refreshEvent: vi.fn(),
+                        updateEvents: (updater) => setEvents((current) => updater(current))
+                    }}
+                >
+                    <RsvpProbe availabilityNote="Running late" />
+                </ScheduleEventDetailProvider>
+            );
+        }
+
+        render(<Harness />);
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+
+        await waitFor(() => {
+            expect(submitParentScheduleRsvp).not.toHaveBeenCalled();
+        });
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('not_responded');
     });
 
     it('submits RSVP updates and patches the shared event state on success', async () => {
@@ -95,7 +124,7 @@ describe('useScheduleEventRsvp', () => {
 
         renderProbe('Running late');
 
-        expect(screen.getByTestId('can-submit')).toHaveTextContent('true');
+        expect(screen.getByTestId('can-submit').textContent).toBe('true');
         fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
 
         await waitFor(() => {
@@ -104,9 +133,9 @@ describe('useScheduleEventRsvp', () => {
         await waitFor(() => {
             expect(screen.getByText('Avery Smith marked going.')).toBeTruthy();
         });
-        expect(screen.getByTestId('current-rsvp')).toHaveTextContent('going');
-        expect(screen.getByTestId('current-note')).toHaveTextContent('Running late');
-        expect(screen.getByTestId('submitting')).toHaveTextContent('');
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('going');
+        expect(screen.getByTestId('current-note').textContent).toBe('Running late');
+        expect(screen.getByTestId('submitting').textContent).toBe('');
     });
 
     it('surfaces submission failures without mutating shared event state', async () => {
@@ -118,7 +147,7 @@ describe('useScheduleEventRsvp', () => {
         await waitFor(() => {
             expect(screen.getByText('Unable to save RSVP.')).toBeTruthy();
         });
-        expect(screen.getByTestId('current-rsvp')).toHaveTextContent('not_responded');
-        expect(screen.getByTestId('current-note')).toHaveTextContent('');
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('not_responded');
+        expect(screen.getByTestId('current-note').textContent).toBe('');
     });
 });

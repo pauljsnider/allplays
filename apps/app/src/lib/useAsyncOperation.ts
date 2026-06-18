@@ -4,9 +4,9 @@ type UseAsyncOperationRunOptions<T> = {
     clearError?: boolean;
     errorMessage?: string;
     getErrorMessage?: (error: unknown) => string;
-    onSuccess?: (value: T) => void;
-    onError?: (error: unknown) => void;
-    onFinally?: () => void;
+    onSuccess?: (value: T) => void | Promise<void>;
+    onError?: (error: unknown) => void | Promise<void>;
+    onFinally?: () => void | Promise<void>;
     rethrow?: boolean;
 };
 
@@ -44,18 +44,18 @@ export function useAsyncOperation() {
 
         try {
             const value = await operation();
-            onSuccess?.(value);
+            await onSuccess?.(value);
             return value;
         } catch (error) {
             setError(errorMessage || getErrorMessage?.(error) || getDefaultErrorMessage(error));
-            onError?.(error);
+            await onError?.(error);
             if (rethrow) {
                 throw error;
             }
             return null;
         } finally {
             setLoading(false);
-            onFinally?.();
+            await onFinally?.();
         }
     }, []);
 

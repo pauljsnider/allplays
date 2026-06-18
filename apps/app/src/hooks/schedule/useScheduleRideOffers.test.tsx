@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import {
@@ -68,6 +68,7 @@ function RideOffersProbe({ onSwitchEvent }: { onSwitchEvent?: () => void }) {
         <div>
             <div data-testid="event-id">{event.id}</div>
             <div data-testid="loading">{String(rideOffers.loading)}</div>
+            <div data-testid="submitting">{String(rideOffers.submitting || '')}</div>
             <div data-testid="offers-count">{String(rideOffers.offers.length)}</div>
             <div data-testid="summary-count">{String(event.rideshareSummary?.offerCount || 0)}</div>
             <div>{rideOffers.message || ''}</div>
@@ -106,7 +107,54 @@ function renderProbe() {
 
 describe('useScheduleRideOffers', () => {
     afterEach(() => {
+        cleanup();
         vi.clearAllMocks();
+    });
+
+    it('keeps the rideshare action busy until the refresh finishes', async () => {
+        let resolveRefresh: (value: any) => void = () => {
+            throw new Error('Expected ride-offer refresh resolver to be captured.');
+        };
+        vi.mocked(loadParentScheduleRideOffers)
+            .mockResolvedValueOnce([] as any)
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveRefresh = resolve;
+            }));
+        vi.mocked(createParentScheduleRideOffer).mockResolvedValue(undefined as any);
+
+        renderProbe();
+
+        await waitFor(() => {
+            expect(loadParentScheduleRideOffers).toHaveBeenCalledTimes(1);
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Create offer' }));
+
+        await waitFor(() => {
+            expect(createParentScheduleRideOffer).toHaveBeenCalledTimes(1);
+        });
+        expect(screen.getByTestId('loading').textContent).toBe('true');
+        expect(screen.getByTestId('submitting').textContent).toBe('create-offer');
+        expect(screen.getByTestId('offers-count').textContent).toBe('0');
+
+        resolveRefresh([
+            {
+                id: 'offer-1',
+                driverUserId: 'parent-1',
+                driverName: 'Parent One',
+                seatCapacity: 3,
+                seatCountConfirmed: 1,
+                direction: 'to',
+                status: 'open',
+                requests: []
+            }
+        ] as any);
+
+        await waitFor(() => {
+            expect(screen.getByText('Ride offer saved.')).toBeTruthy();
+        });
+        expect(screen.getByTestId('submitting').textContent).toBe('');
+        expect(screen.getByTestId('offers-count').textContent).toBe('1');
     });
 
     it('loads and refreshes ride offers after a successful offer submission', async () => {
@@ -143,13 +191,24 @@ describe('useScheduleRideOffers', () => {
         await waitFor(() => {
             expect(screen.getByText('Ride offer saved.')).toBeTruthy();
         });
-        expect(screen.getByTestId('offers-count')).toHaveTextContent('1');
-        expect(screen.getByTestId('summary-count')).toHaveTextContent('1');
+        expect(screen.getByTestId('offers-count').textContent).toBe('1');
+        expect(screen.getByTestId('summary-count').textContent).toBe('1');
         expect(summarizeParentScheduleRideOffers).toHaveBeenCalled();
     });
 
     it('surfaces ride-offer submission failures without changing shared summary state', async () => {
-        vi.mocked(loadParentScheduleRideOffers).mockResolvedValue([] as any);
+        vi.mocked(loadParentScheduleRideOffers).mockResolvedValue([
+            {
+                id: 'offer-1',
+                driverUserId: 'parent-1',
+                driverName: 'Parent One',
+                seatCapacity: 3,
+                seatCountConfirmed: 1,
+                direction: 'to',
+                status: 'open',
+                requests: []
+            }
+        ] as any);
         vi.mocked(createParentScheduleRideOffer).mockRejectedValue(new Error('Unable to save ride offer.'));
 
         renderProbe();
@@ -163,8 +222,8 @@ describe('useScheduleRideOffers', () => {
         await waitFor(() => {
             expect(screen.getByText('Unable to save ride offer.')).toBeTruthy();
         });
-        expect(screen.getByTestId('offers-count')).toHaveTextContent('0');
-        expect(screen.getByTestId('summary-count')).toHaveTextContent('0');
+        expect(screen.getByTestId('offers-count').textContent).toBe('1');
+        expect(screen.getByTestId('summary-count').textContent).toBe('1');
     });
 
     it('reloads ride offers when the selected schedule event changes', async () => {
@@ -192,12 +251,36 @@ describe('useScheduleRideOffers', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Switch event' }));
 
         await waitFor(() => {
-            expect(screen.getByTestId('event-id')).toHaveTextContent('game-2');
+            expect(screen.getByTestId('event-id').textContent).toBe('game-2');
         });
         await waitFor(() => {
             expect(loadParentScheduleRideOffers).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-2' }));
         });
-        expect(screen.getByTestId('offers-count')).toHaveTextContent('1');
-        expect(screen.getByTestId('summary-count')).toHaveTextContent('1');
+        expect(screen.getByTestId('offers-count').textContent).toBe('1');
+        expect(screen.getByTestId('summary-count').textContent).toBe('1');
+    });
+
+    it('surfaces rideshare load failures instead of treating them like an empty state', async () => {
+        vi.mocked(loadParentScheduleRideOffers).mockRejectedValue(new Error('Unable to load rideshare offers.'));
+
+        renderProbe();
+
+        await waitFor(() => {
+            expect(screen.getByText('Unable to load rideshare offers.')).toBeTruthy();
+        });
+        expect(screen.getByTestId('offers-count').textContent).toBe('0');
+        expect(screen.getByTestId('summary-count').textContent).toBe('0');
+    });
+
+    it('preserves explicit rideshare availability errors during load failures', async () => {
+        vi.mocked(loadParentScheduleRideOffers).mockRejectedValue(new Error('Rideshare unavailable.'));
+
+        renderProbe();
+
+        await waitFor(() => {
+            expect(screen.getByText('Rideshare unavailable.')).toBeTruthy();
+        });
+        expect(screen.getByTestId('offers-count').textContent).toBe('0');
+        expect(screen.getByTestId('summary-count').textContent).toBe('0');
     });
 });

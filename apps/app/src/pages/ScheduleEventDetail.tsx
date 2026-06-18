@@ -74,6 +74,8 @@ import {
   type ScheduleHubDestination,
   type ScheduleHubIcon
 } from '../lib/scheduleHub';
+import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import {
   canRequestScheduleRide,
@@ -252,6 +254,21 @@ export function getAvailabilityNoteSaveState(rsvp: RsvpResponse, availabilityNot
   };
 }
 
+function getScheduleEventDetailLoadErrorMessage(error: AppServiceError, hasExistingEvent: boolean) {
+  if (hasExistingEvent) {
+    if (error.type === 'network') return 'Unable to refresh this event while offline. Showing the last loaded details.';
+    if (error.type === 'permission') return 'Unable to refresh this event because access was denied. Showing the last loaded details.';
+    if (error.type === 'not_found') return 'Unable to refresh this event because it is no longer available. Showing the last loaded details.';
+    if (error.type === 'validation') return error.message;
+    return 'Unable to refresh this event. Showing the last loaded details. Try again.';
+  }
+  if (error.type === 'network') return 'Unable to load this event while offline. Check your connection and try again.';
+  if (error.type === 'permission') return 'You do not have permission to view this event.';
+  if (error.type === 'not_found') return 'This event is not available for your account.';
+  if (error.type === 'validation') return error.message;
+  return error.message || 'Unable to load event details.';
+}
+
 type AttentionItem = {
   title: string;
   detail: string;
@@ -286,8 +303,6 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [selectedChildId, setSelectedChildId] = useState(searchParams.get('childId') || '');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<EventDetailSectionId>(() => parseEventDetailSection(searchParams.get('section')));
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -298,6 +313,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [staffRsvpSubmittingPlayerId, setStaffRsvpSubmittingPlayerId] = useState<string | null>(null);
   const [staffRsvpStatus, setStaffRsvpStatus] = useState<StaffRsvpOverrideStatus | null>(null);
   const [staffRsvpRefreshToken, setStaffRsvpRefreshToken] = useState(0);
+  const [initialLoadPending, setInitialLoadPending] = useState(true);
+  const hasLoadedEventRef = useRef(false);
+  const { loading, error, clearError, setError, run: runPrimaryLoad } = useAsyncOperation();
 
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
@@ -329,27 +347,47 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     replaceEventRouteParams({ childId });
   };
 
-  const loadEvent = async () => {
-    if (!auth.user) return;
-    setLoading(true);
-    setError(null);
-    setStatusMessage(null);
-    try {
-      const result = await loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId });
-      setEvents(result.events);
-      if (!selectedChildId && result.events[0]?.childId) {
-        setSelectedChildId(result.events[0].childId);
-      }
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load event details.');
-      setEvents([]);
-    } finally {
-      setLoading(false);
+  const loadEvent = useCallback(async () => {
+    if (!auth.user) {
+      setInitialLoadPending(false);
+      return;
     }
-  };
+    setStatusMessage(null);
+    clearError();
+    const hasExistingEvent = hasLoadedEventRef.current;
+    try {
+      await runPrimaryLoad(
+        () => loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId }),
+        {
+          getErrorMessage: (loadError) => getScheduleEventDetailLoadErrorMessage(
+            toAppServiceError(loadError, 'Unable to load event details.'),
+            hasExistingEvent
+          ),
+          rethrow: false,
+          onSuccess: (result) => {
+            setEvents(result.events);
+            hasLoadedEventRef.current = result.events.length > 0;
+            if (!selectedChildId && result.events[0]?.childId) {
+              setSelectedChildId(result.events[0].childId);
+            }
+          },
+          onError: () => {
+            if (!hasExistingEvent) {
+              setEvents([]);
+              hasLoadedEventRef.current = false;
+            }
+          }
+        }
+      );
+    } finally {
+      setInitialLoadPending(false);
+    }
+  }, [auth.user, clearError, decodedEventId, decodedTeamId, runPrimaryLoad, selectedChildId]);
 
   useEffect(() => {
-    loadEvent();
+    hasLoadedEventRef.current = false;
+    setInitialLoadPending(true);
+    void loadEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
 
@@ -514,7 +552,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  if (loading) {
+  if (loading || initialLoadPending) {
     return <EventDetailPageSkeleton />;
   }
 
@@ -526,6 +564,15 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           Schedule
         </Link>
         <Status tone="error" message={error || 'This event is not available for your account.'} />
+        {error ? (
+          <button
+            type="button"
+            className="secondary-button min-h-9 w-fit px-3 text-xs"
+            onClick={() => void loadEvent()}
+          >
+            Try again
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -558,7 +605,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
       auth,
       event: selectedEvent,
       childEvents: events,
-      refreshEvent: loadEvent,
+      refreshEvent: () => void loadEvent(),
       updateEvents
     }}>
       <div className="event-detail-page space-y-3">
@@ -1349,6 +1396,17 @@ function RideshareSection({ auth, event }: {
           <div className="mt-2 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-600">
             <RefreshCw className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
             Loading rideshare offers
+          </div>
+        ) : rideOffers.error && !rideOffers.offers.length ? (
+          <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <div className="text-sm font-semibold text-rose-700">Rideshare could not be loaded for this event.</div>
+            <button
+              type="button"
+              className="secondary-button mt-3 min-h-9 w-fit px-3 text-xs"
+              onClick={() => void rideOffers.retry()}
+            >
+              Retry rideshare
+            </button>
           </div>
         ) : rideOffers.offers.length ? (
           <div className="mt-2 space-y-3">
