@@ -285,6 +285,7 @@ type FirestoreDocument = Record<string, any> & { id: string };
 
 const teamDetailBaseSnapshotCache = new Map<string, TeamDetailBaseSnapshot>();
 type RelevantTeamMembersCacheEntry = {
+  inviteStateKey: string;
   baseMembersPromise: Promise<any[]> | null;
   baseMembers: any[];
   membersById: Map<string, any>;
@@ -656,6 +657,7 @@ function collectRelevantTeamMemberEmails(team: any, players: any[] = [], invites
 
 function createRelevantTeamMembersCacheEntry(): RelevantTeamMembersCacheEntry {
   return {
+    inviteStateKey: '',
     baseMembersPromise: null,
     baseMembers: [],
     membersById: new Map<string, any>(),
@@ -663,6 +665,29 @@ function createRelevantTeamMembersCacheEntry(): RelevantTeamMembersCacheEntry {
     loadedInviteEmails: new Set<string>(),
     inviteEmailPromises: new Map<string, Promise<void>>()
   };
+}
+
+function buildRelevantTeamMemberInviteStateKey(pendingAdminInvites: any[] = [], pendingParentInvites: any[] = []) {
+  return [...pendingAdminInvites, ...pendingParentInvites]
+    .map((invite) => [
+      cleanString(invite?.type).toLowerCase(),
+      cleanString(invite?.email).toLowerCase(),
+      cleanString(invite?.playerId),
+      cleanString(invite?.code).toUpperCase()
+    ].join(':'))
+    .filter(Boolean)
+    .sort()
+    .join('|');
+}
+
+function resetRelevantTeamMembersCacheEntry(entry: RelevantTeamMembersCacheEntry, inviteStateKey: string) {
+  entry.inviteStateKey = inviteStateKey;
+  entry.baseMembersPromise = null;
+  entry.baseMembers = [];
+  entry.membersById.clear();
+  entry.membersByEmail.clear();
+  entry.loadedInviteEmails.clear();
+  entry.inviteEmailPromises.clear();
 }
 
 function mergeRelevantTeamMembers(entry: RelevantTeamMembersCacheEntry, members: any[] = []) {
@@ -696,6 +721,11 @@ async function loadRelevantTeamMembers({
   if (!cacheEntry) {
     cacheEntry = createRelevantTeamMembersCacheEntry();
     relevantTeamMembersCache.set(normalizedTeamId, cacheEntry);
+  }
+
+  const inviteStateKey = buildRelevantTeamMemberInviteStateKey(pendingAdminInvites, pendingParentInvites);
+  if (cacheEntry.inviteStateKey !== inviteStateKey) {
+    resetRelevantTeamMembersCacheEntry(cacheEntry, inviteStateKey);
   }
 
   const userIds = collectRelevantTeamMemberUserIds(team, players);
