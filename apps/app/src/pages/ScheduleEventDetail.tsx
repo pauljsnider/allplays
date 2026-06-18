@@ -351,7 +351,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     setStatusMessage(null);
     clearError();
     const hasExistingEvent = hasLoadedEventRef.current;
-    return runPrimaryLoad(
+    await runPrimaryLoad(
       () => loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId }),
       {
         getErrorMessage: (loadError) => getScheduleEventDetailLoadErrorMessage(
@@ -596,7 +596,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
       auth,
       event: selectedEvent,
       childEvents: events,
-      refreshEvent: loadEvent,
+      refreshEvent: () => void loadEvent(),
       updateEvents
     }}>
       <div className="event-detail-page space-y-3">

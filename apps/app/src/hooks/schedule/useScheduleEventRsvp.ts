@@ -23,7 +23,8 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
   const canSubmit = Boolean(event.isDbGame && !event.isCancelled && !event.availabilityLocked);
 
   const submit = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
-    if (!auth.user || !canSubmit) return;
+    const currentUser = auth.user;
+    if (!currentUser || !canSubmit) return;
 
     setSubmitting(response);
     setMessage(null);
@@ -32,7 +33,7 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
       const previousRsvp = normalizeRsvpResponse(event.myRsvp);
       const previousNote = String(event.myRsvpNote || '').trim();
       const note = String(availabilityNote || '').trim();
-      const summary = await submitParentScheduleRsvp(event, auth.user, response, note);
+      const summary = await submitParentScheduleRsvp(event, currentUser, response, note);
 
       updateEvents((current) => current.map((currentEvent) => {
         if (currentEvent.teamId !== event.teamId || currentEvent.id !== event.id) return currentEvent;
