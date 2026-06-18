@@ -361,7 +361,8 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
 
   const redeem = async (event: FormEvent) => {
     event.preventDefault();
-    if (!auth.user?.uid) {
+    const currentUser = auth.user;
+    if (!currentUser?.uid) {
       setActionError(toAppServiceError(new Error('Sign in to redeem an invite code.'), 'Sign in to redeem an invite code.'));
       return;
     }
@@ -370,9 +371,9 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
     setMessage('');
     await redeemOperation.run(
       () => redeemSignedInInvite({
-        userId: auth.user.uid,
+        userId: currentUser.uid,
         code: redeemCode,
-        email: auth.user.email,
+        email: currentUser.email,
         refresh: auth.refresh
       }),
       {
