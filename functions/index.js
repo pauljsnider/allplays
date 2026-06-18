@@ -579,10 +579,11 @@ async function queueDueRegistrationFailedPaymentReminders() {
   return results;
 }
 
-async function reserveRegistrationCheckoutCapacityForRetry(input) {
+async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) {
   const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const retryCapacityReservationId = String(options.retryCapacityReservationId || '').trim();
 
   return firestore.runTransaction(async (transaction) => {
     const [formSnap, registrationSnap] = await Promise.all([
@@ -633,14 +634,18 @@ async function reserveRegistrationCheckoutCapacityForRetry(input) {
     transaction.set(registrationRef, {
       registrationCapacityReleased: false,
       capacityReleasedAt: admin.firestore.FieldValue.delete(),
+      retryCapacityReservationId: retryCapacityReservationId || admin.firestore.FieldValue.delete(),
       updatedAt: now
     }, { merge: true });
 
-    return { reserved: true };
+    return {
+      reserved: true,
+      retryCapacityReservationId: retryCapacityReservationId || null
+    };
   });
 }
 
-async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
+async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, options = {}) {
   const formRef = buildRegistrationFormRef(input);
   const registrationRef = buildRegistrationRef(input);
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -667,8 +672,14 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
       return { released: false, reason: 'already-paid' };
     }
 
+    const retryCapacityReservationId = String(options.retryCapacityReservationId || '').trim();
+    const hasMatchingRetryCapacityReservation = Boolean(
+      retryCapacityReservationId
+      && String(registration.retryCapacityReservationId || '').trim() === retryCapacityReservationId
+    );
     const registrationUpdate = {
       ...statusUpdate,
+      retryCapacityReservationId: admin.firestore.FieldValue.delete(),
       updatedAt: now
     };
 
@@ -681,14 +692,20 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}) {
     const canReleasePreCheckoutReservation = !registration.checkoutStatus
       && !registration.paymentStatus
       && ['pending', 'waitlisted'].includes(registration.status);
-    if (!checkoutIsOpen && !canReleasePreCheckoutReservation) {
+    const canReleaseRetryCapacityReservation = hasMatchingRetryCapacityReservation && registration.status === 'pending';
+    if (!checkoutIsOpen && !canReleasePreCheckoutReservation && !canReleaseRetryCapacityReservation) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not releasable.');
     }
     if (canReleasePreCheckoutReservation && !registrationCheckoutAttemptStrictlyMatches(registration, input)) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to release this reservation.');
     }
+    if (canReleaseRetryCapacityReservation && !registrationCheckoutAttemptStrictlyMatches(registration, input)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to release this reservation.');
+    }
     if (!canReleasePreCheckoutReservation && !registrationCheckoutAttemptMatches(registration, input)) {
-      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
+      if (!canReleaseRetryCapacityReservation) {
+        throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
+      }
     }
 
     const selectedOption = registration.selectedOption || {};
@@ -2022,8 +2039,12 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   if (!registrationCheckoutAttemptMatches(registration, input)) {
     throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
   }
+  const retryCapacityReservationId = input.retryPayment ? crypto.randomUUID() : '';
+  let retryCapacityReservation = { reserved: false, retryCapacityReservationId: null };
   if (input.retryPayment && registration.registrationCapacityReleased === true) {
-    await reserveRegistrationCheckoutCapacityForRetry(input);
+    retryCapacityReservation = await reserveRegistrationCheckoutCapacityForRetry(input, {
+      retryCapacityReservationId
+    });
   }
   if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
     return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
@@ -2033,24 +2054,43 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   const { appUrl } = getStripeConfig();
   const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, input);
   const title = registration.programName || form.programName || form.title || form.name || 'Program registration';
-  const session = await stripe.checkout.sessions.create({
-    mode: 'payment',
-    line_items: [{
-      price_data: {
-        currency,
-        unit_amount: amountCents,
-        product_data: {
-          name: title
-        }
-      },
-      quantity: 1
-    }],
-    success_url: successUrl,
-    cancel_url: cancelUrl,
-    customer_email: getRegistrationCustomerEmail(registration),
-    client_reference_id: `${input.teamId}:${input.formId}:${input.registrationId}`,
-    metadata: buildRegistrationCheckoutMetadata({ input, registration })
-  });
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency,
+          unit_amount: amountCents,
+          product_data: {
+            name: title
+          }
+        },
+        quantity: 1
+      }],
+      success_url: successUrl,
+      cancel_url: cancelUrl,
+      customer_email: getRegistrationCustomerEmail(registration),
+      client_reference_id: `${input.teamId}:${input.formId}:${input.registrationId}`,
+      metadata: buildRegistrationCheckoutMetadata({ input, registration })
+    });
+  } catch (error) {
+    if (retryCapacityReservation.reserved) {
+      try {
+        await releaseRegistrationCheckoutCapacity(input, {}, {
+          retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId
+        });
+      } catch (releaseError) {
+        functions.logger.error('Failed to roll back registration retry capacity after Stripe checkout creation failed.', {
+          teamId: input.teamId,
+          formId: input.formId,
+          registrationId: input.registrationId,
+          releaseError: releaseError?.message || releaseError
+        });
+      }
+    }
+    throw error;
+  }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
   await buildRegistrationRef(input).set({
@@ -2064,6 +2104,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     checkoutAmountCents: amountCents,
     checkoutAttemptToken: input.checkoutAttemptToken || null,
     checkoutCreatedAt: now,
+    retryCapacityReservationId: admin.firestore.FieldValue.delete(),
     updatedAt: now
   }, { merge: true });
 
