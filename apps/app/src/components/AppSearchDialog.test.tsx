@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSearchDialog } from './AppSearchDialog';
-import type { AppSearchTeam } from '../lib/searchService';
+import type { AppSearchPlayer, AppSearchTeam } from '../lib/searchService';
 import type { AuthState } from '../lib/types';
 
 const { navigateMock, preloadSearchRouteMock } = vi.hoisted(() => ({
@@ -39,7 +39,7 @@ const {
   loadAppSearchTeamsMock: vi.fn(async (): Promise<AppSearchTeam[]> => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
   searchAppTeamsMock: vi.fn<(query: string, teams: AppSearchTeam[], user: AuthState['user']) => Promise<AppSearchTeam[]>>(),
   searchAppPlayersMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => Promise<never[]>>(),
-  getCachedAppPlayerSearchResultsMock: vi.fn(() => null),
+  getCachedAppPlayerSearchResultsMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => AppSearchPlayer[] | null>(() => null),
   hasSatisfiedAppPlayerSearchResultBudgetMock: vi.fn(() => false),
 }));
 
