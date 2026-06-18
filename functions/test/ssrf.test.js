@@ -1,4 +1,4 @@
-import { test } from 'vitest';
+import test from 'node:test';
 import assert from 'node:assert';
 import { promises as dns } from 'node:dns';
 import * as https from 'node:https';
