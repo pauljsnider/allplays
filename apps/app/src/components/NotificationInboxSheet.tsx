@@ -13,14 +13,17 @@ interface NotificationInboxSheetProps {
 export function NotificationInboxSheet({ items, inboxState, uid, onClose, onMarkRead }: NotificationInboxSheetProps) {
     const navigate = useNavigate();
 
-    const handleItemClick = async (item: NotificationInboxItem) => {
-        if (!item.readAt) {
-            await onMarkRead(uid, item.id);
-        }
+    const handleItemClick = (item: NotificationInboxItem) => {
         if (item.appRoute) {
             navigate(item.appRoute);
         }
         onClose();
+
+        if (!item.readAt) {
+            void onMarkRead(uid, item.id).catch((error) => {
+                console.error('Failed to mark notification read:', error);
+            });
+        }
     };
 
     const renderBody = () => {

@@ -65,10 +65,77 @@ describe('Notification inbox review regressions', () => {
 
         await waitFor(() => {
             expect(onMarkRead).toHaveBeenCalledWith('user-1', 'notif-1');
-            expect(navigateMock).toHaveBeenCalledWith('/messages');
-            expect(onClose).toHaveBeenCalled();
         });
+        expect(navigateMock).toHaveBeenCalledWith('/messages');
+        expect(onClose).toHaveBeenCalled();
         expect(navigateMock.mock.invocationCallOrder[0]).toBeLessThan(onClose.mock.invocationCallOrder[0]);
+        expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(onMarkRead.mock.invocationCallOrder[0]);
+    });
+
+    it('navigates and closes immediately when mark-read never resolves', () => {
+        const onClose = vi.fn();
+        const onMarkRead = vi.fn(() => new Promise<void>(() => undefined));
+
+        render(
+            <NotificationInboxSheet
+                items={[
+                    {
+                        id: 'notif-pending',
+                        type: 'live_score',
+                        text: 'Live score update',
+                        appRoute: '/games/game-1',
+                        createdAt: null,
+                        readAt: null,
+                    },
+                ]}
+                inboxState="ready"
+                uid="user-1"
+                onClose={onClose}
+                onMarkRead={onMarkRead}
+            />
+        );
+
+        fireEvent.click(screen.getByTestId('notification-item-notif-pending'));
+
+        expect(navigateMock).toHaveBeenCalledWith('/games/game-1');
+        expect(onClose).toHaveBeenCalled();
+        expect(onMarkRead).toHaveBeenCalledWith('user-1', 'notif-pending');
+        expect(navigateMock.mock.invocationCallOrder[0]).toBeLessThan(onClose.mock.invocationCallOrder[0]);
+        expect(onClose.mock.invocationCallOrder[0]).toBeLessThan(onMarkRead.mock.invocationCallOrder[0]);
+    });
+
+    it('still navigates when mark-read rejects and logs the failure', async () => {
+        const onClose = vi.fn();
+        const rejection = new Error('offline');
+        const onMarkRead = vi.fn(() => Promise.reject(rejection));
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+        render(
+            <NotificationInboxSheet
+                items={[
+                    {
+                        id: 'notif-error',
+                        type: 'schedule',
+                        text: 'Schedule changed',
+                        appRoute: '/schedule/game-2',
+                        createdAt: null,
+                        readAt: null,
+                    },
+                ]}
+                inboxState="ready"
+                uid="user-1"
+                onClose={onClose}
+                onMarkRead={onMarkRead}
+            />
+        );
+
+        fireEvent.click(screen.getByTestId('notification-item-notif-error'));
+
+        expect(navigateMock).toHaveBeenCalledWith('/schedule/game-2');
+        expect(onClose).toHaveBeenCalled();
+        await waitFor(() => {
+            expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to mark notification read:', rejection);
+        });
     });
 
     it('logs Firestore subscription errors when no error callback is provided', () => {
