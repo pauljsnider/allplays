@@ -3196,6 +3196,29 @@ async function getCandidateUsersForTeam(teamId) {
   }));
 }
 
+async function getUserRecordsByIds(userIds) {
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter(Boolean)
+  ));
+  if (!uniqueUserIds.length) return new Map();
+
+  const records = new Map();
+  const batchSize = 250;
+  for (let index = 0; index < uniqueUserIds.length; index += batchSize) {
+    const userIdChunk = uniqueUserIds.slice(index, index + batchSize);
+    const refs = userIdChunk.map((uid) => firestore.doc(`users/${uid}`));
+    const snaps = await firestore.getAll(...refs);
+    snaps.forEach((snap, snapIndex) => {
+      if (!snap.exists) return;
+      records.set(userIdChunk[snapIndex], snap.data() || {});
+    });
+  }
+
+  return records;
+}
+
 async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null) {
   const queryTasks = users
     .filter((user) => user?.uid && user.uid !== actorUid && notificationAudienceAllowsRoles(category, user.roles))
@@ -4019,20 +4042,145 @@ function detectMentionedUids(text, members) {
   return [...mentioned];
 }
 
-async function getMutedUserIdsForTeam(teamId, userIds) {
-  if (!userIds.length) return new Set();
-  const snaps = await Promise.all(
-    userIds.map((uid) => firestore.doc(`users/${uid}`).get().catch(() => null))
-  );
-  const muted = new Set();
-  snaps.forEach((snap, index) => {
-    if (!snap || !snap.exists) return;
-    const chatMuted = snap.data()?.chatMuted;
-    if (chatMuted && chatMuted[teamId]) {
-      muted.add(userIds[index]);
-    }
+async function buildTeamChatNotificationContext(teamId) {
+  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) {
+    return {
+      members: [],
+      mutedUids: [],
+      targetsByCategory: {
+        mentions: [],
+        liveChat: []
+      }
+    };
+  }
+
+  const team = teamSnap.data() || {};
+  const users = new Map();
+  const addRole = (uid, role) => {
+    const normalizedUid = String(uid || '').trim();
+    if (!normalizedUid) return;
+    const entry = users.get(normalizedUid) || { uid: normalizedUid, roles: new Set() };
+    entry.roles.add(role);
+    users.set(normalizedUid, entry);
+  };
+
+  addRole(team.ownerId, 'staff');
+
+  const [parentSnap, indexedTargetSnap, adminUserIds] = await Promise.all([
+    firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).get(),
+    firestore.collection(`teams/${teamId}/notificationTargets`).get(),
+    getUserIdsByEmails(team.adminEmails || [])
+  ]);
+
+  parentSnap.forEach((docSnap) => addRole(docSnap.id, 'parent'));
+  adminUserIds.forEach((uid) => addRole(uid, 'staff'));
+
+  const members = Array.from(users.values()).map((entry) => ({
+    uid: entry.uid,
+    roles: Array.from(entry.roles)
+  }));
+  const userRecords = await getUserRecordsByIds(members.map((member) => member.uid));
+
+  const categories = ['mentions', 'liveChat'];
+  const eligibleUidsByCategory = categories.reduce((accumulator, category) => {
+    accumulator[category] = new Set(
+      members
+        .filter((member) => notificationAudienceAllowsRoles(category, member.roles))
+        .map((member) => member.uid)
+    );
+    return accumulator;
+  }, {});
+
+  const indexedTargetsByCategory = {
+    mentions: [],
+    liveChat: []
+  };
+  const indexedUserIdsByCategory = {
+    mentions: new Set(),
+    liveChat: new Set()
+  };
+
+  indexedTargetSnap.forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const uid = String(data.uid || '').trim();
+    const deviceId = String(data.deviceId || '').trim();
+    const token = String(data.token || '').trim();
+    if (!uid || !deviceId || !token) return;
+
+    categories.forEach((category) => {
+      if (data.categories?.[category] !== true) return;
+      if (!eligibleUidsByCategory[category].has(uid)) return;
+      indexedTargetsByCategory[category].push({ uid, deviceId, token, teamId });
+      indexedUserIdsByCategory[category].add(uid);
+    });
   });
-  return muted;
+
+  const fallbackTargetsByCategory = {
+    mentions: [],
+    liveChat: []
+  };
+
+  for (const category of categories) {
+    const missingUsers = members.filter((member) => (
+      eligibleUidsByCategory[category].has(member.uid)
+      && !indexedUserIdsByCategory[category].has(member.uid)
+    ));
+    if (!missingUsers.length) continue;
+    fallbackTargetsByCategory[category] = await getLegacyTargetsForCategory(teamId, category, missingUsers, null);
+  }
+
+  const hydratedMembers = members.map((member) => {
+    const userRecord = userRecords.get(member.uid) || {};
+    const chatMuted = userRecord.chatMuted;
+    return {
+      ...member,
+      displayName: String(userRecord.displayName || userRecord.fullName || userRecord.name || '').trim(),
+      muted: Boolean(chatMuted && chatMuted[teamId])
+    };
+  });
+
+  return {
+    members: hydratedMembers,
+    mutedUids: hydratedMembers.filter((member) => member.muted).map((member) => member.uid),
+    targetsByCategory: {
+      mentions: [...indexedTargetsByCategory.mentions, ...fallbackTargetsByCategory.mentions],
+      liveChat: [...indexedTargetsByCategory.liveChat, ...fallbackTargetsByCategory.liveChat]
+    }
+  };
+}
+
+function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext }) {
+  const context = recipientContext || {
+    members: [],
+    mutedUids: [],
+    targetsByCategory: { mentions: [], liveChat: [] }
+  };
+  const mentionTargets = Array.isArray(context.targetsByCategory?.mentions)
+    ? context.targetsByCategory.mentions
+    : [];
+  const liveChatTargets = Array.isArray(context.targetsByCategory?.liveChat)
+    ? context.targetsByCategory.liveChat
+    : [];
+  const mentionEligibleUids = new Set(mentionTargets.map((target) => target.uid));
+  const mentionMembers = Array.isArray(context.members)
+    ? context.members.filter((member) => mentionEligibleUids.has(member.uid))
+    : [];
+  const mentionedUids = text
+    ? detectMentionedUids(text, mentionMembers).filter((uid) => uid !== actorUid)
+    : [];
+  const mentionedSet = new Set(mentionedUids);
+  const mutedSet = new Set(Array.isArray(context.mutedUids) ? context.mutedUids : []);
+
+  return {
+    mentionedUids,
+    mentionTargets: mentionTargets.filter((target) => target.uid !== actorUid && mentionedSet.has(target.uid)),
+    liveChatTargets: liveChatTargets.filter((target) => (
+      target.uid !== actorUid
+      && !mentionedSet.has(target.uid)
+      && !mutedSet.has(target.uid)
+    ))
+  };
 }
 
 exports.notifyTeamChatMessageCreated = functions.firestore
@@ -4051,39 +4199,24 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
       : 'sent a photo';
 
+    const recipientContext = await buildTeamChatNotificationContext(teamId);
+    const notificationPlan = buildTeamChatNotificationPlan({
+      text,
+      actorUid,
+      recipientContext
+    });
+
     // Detect @mentions and send targeted mentions-category pushes
-    let mentionedUids = [];
-    if (text) {
-      const allTargets = await getTargetsForCategory(teamId, 'mentions', null);
-      const members = allTargets.map((t) => ({ uid: t.uid, displayName: '' }));
-      // Also fetch candidate users to get display names for matching
-      const candidateUsers = await getCandidateUsersForTeam(teamId);
-      const candidateUids = candidateUsers.map((user) => user.uid);
-      const memberMap = new Map(members.map((m) => [m.uid, m]));
-      const userProfileTasks = candidateUids.map(async (uid) => {
-        const userSnap = await firestore.doc(`users/${uid}`).get();
-        const userDoc = userSnap.exists ? (userSnap.data() || {}) : {};
-        const displayName = String(userDoc.displayName || userDoc.fullName || userDoc.name || '').trim();
-        if (memberMap.has(uid)) {
-          memberMap.get(uid).displayName = displayName;
-        }
-      });
-      await Promise.all(userProfileTasks);
-      mentionedUids = detectMentionedUids(text, [...memberMap.values()])
-        .filter((uid) => uid !== actorUid);
-    }
+    const mentionedUids = notificationPlan.mentionedUids;
 
     const results = [];
 
     if (mentionedUids.length) {
       await snapshot.ref.update({ mentionedUids });
       // Send mentions push only to the mentioned users (those who have mentions enabled)
-      const mentionTargets = await getTargetsForCategory(teamId, 'mentions', actorUid);
-      const mentionedSet = new Set(mentionedUids);
-      const filteredMentionTargets = mentionTargets.filter((t) => mentionedSet.has(t.uid));
-      if (filteredMentionTargets.length) {
+      if (notificationPlan.mentionTargets.length) {
         results.push(await sendDirectTargetsNotification({
-          targets: filteredMentionTargets,
+          targets: notificationPlan.mentionTargets,
           category: 'mentions',
           title: `${senderName} mentioned you`,
           body,
@@ -4092,24 +4225,17 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       }
     }
 
-    const liveChatTargets = await getTargetsForCategory(teamId, 'liveChat', actorUid);
-    if (!liveChatTargets.length) {
+    if (!notificationPlan.liveChatTargets.length) {
       return results.length ? results : null;
     }
 
-    const mutedUids = await getMutedUserIdsForTeam(
-      teamId,
-      [...new Set(liveChatTargets.map((target) => target.uid))]
-    );
-
     // liveChat push — skip users who already got a mentions push or muted this conversation
-    results.push(await sendCategoryNotification({
-      teamId,
+    results.push(await sendDirectTargetsNotification({
+      targets: notificationPlan.liveChatTargets,
       category: 'liveChat',
       title: `${senderName}: Team Chat`,
       body,
-      actorUid,
-      excludeUids: [...new Set([...mentionedUids, ...mutedUids])]
+      teamId
     }));
 
     return results;
