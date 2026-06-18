@@ -38,7 +38,7 @@ const {
   getKnownAppSearchTeamsMock: vi.fn((): AppSearchTeam[] => []),
   loadAppSearchTeamsMock: vi.fn(async (): Promise<AppSearchTeam[]> => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
   searchAppTeamsMock: vi.fn<(query: string, teams: AppSearchTeam[], user: AuthState['user']) => Promise<AppSearchTeam[]>>(),
-  searchAppPlayersMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => Promise<never[]>>(),
+  searchAppPlayersMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => Promise<AppSearchPlayer[]>>(),
   getCachedAppPlayerSearchResultsMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => AppSearchPlayer[] | null>(() => null),
   hasSatisfiedAppPlayerSearchResultBudgetMock: vi.fn(() => false),
 }));
