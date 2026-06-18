@@ -1,9 +1,9 @@
 // Mobile-first basketball tracker, now backed by Firebase like track.html.
-import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=45';
-import { db } from './firebase.js?v=17';
+import { getTeam, getTeams, getGame, getPlayers, getConfigs, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, subscribeLiveChat, postLiveChatMessage, setGameLiveStatus } from './db.js?v=50';
+import { db } from './firebase.js?v=18';
 import { getUrlParams, escapeHtml } from './utils.js?v=9';
-import { checkAuth } from './auth.js?v=22';
-import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=17';
+import { checkAuth } from './auth.js?v=25';
+import { writeBatch, doc, setDoc, addDoc, onSnapshot, serverTimestamp } from './firebase.js?v=18';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
 import { isVoiceRecognitionSupported, normalizeGameNoteText, appendGameSummaryLine, buildGameNoteLogText } from './live-tracker-notes.js?v=1';
@@ -389,6 +389,7 @@ const els = {
   onCourtCount: q('#on-court-count-mobile'),
   startStop: q('#start-stop'),
   undoMini: q('#undo-mini'),
+  periodButtons: q('#period-buttons'),
   preTab: q('#pre-game-tab'),
   liveTab: q('#live-tab'),
   oppTab: q('#opponents-tab'),
@@ -834,10 +835,7 @@ function renderOpponents() {
   });
   els.oppCards.querySelectorAll('[data-opp-del]').forEach(btn => {
     btn.addEventListener('click', () => {
-      state.opp = state.opp.filter(o => o.id !== btn.dataset.oppDel);
-      scheduleOpponentStatsSync();
-      scheduleLiveHasData();
-      renderOpponents();
+      removeOpponentEntry(btn.dataset.oppDel);
     });
   });
   els.oppCards.querySelectorAll('[data-opp-stat]').forEach(btn => {
@@ -867,6 +865,36 @@ function updateOpponentLinkVisibility() {
   const isLinked = !!currentGame?.opponentTeamId;
   const shouldHide = isLinked && hasOppPlayers;
   els.oppTeamSection.classList.toggle('hidden', shouldHide);
+}
+
+function getOpponentRecordedPoints(opp) {
+  if (!opp?.stats) return 0;
+  return Object.entries(opp.stats).reduce((total, [key, value]) => {
+    if (!isPointsColumn(key)) return total;
+    return total + Number(value || 0);
+  }, 0);
+}
+
+function removeOpponentEntry(opponentId) {
+  const opp = state.opp.find(entry => entry.id === opponentId);
+  if (!opp) return;
+
+  saveHistory(`Remove opponent ${opp.name || opp.number || 'player'}`);
+
+  const awayBefore = state.away;
+  state.opp = state.opp.filter(entry => entry.id !== opponentId);
+  state.away = safeDecrement(state.away, getOpponentRecordedPoints(opp));
+  state.log = state.log.filter(entry => entry?.undoData?.playerId !== opponentId || !entry.undoData?.isOpponent);
+
+  persistLocalTrackerState();
+  if (state.away !== awayBefore) {
+    scheduleScoreSync();
+  }
+  scheduleOpponentStatsSync();
+  scheduleLiveHasData();
+  renderHeader();
+  renderOpponents();
+  renderLog();
 }
 
 async function ensureTeamsCache() {
@@ -2188,12 +2216,22 @@ function setPeriod(p) {
 }
 
 function applyPeriodButtons() {
-  const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig }).slice(0, 5);
-  const fallbackLabel = labels[0] || getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
-  document.querySelectorAll('.period-btn').forEach((button, index) => {
-    const label = labels[index] || fallbackLabel;
-    button.dataset.period = label;
-    button.textContent = label;
+  if (!els.periodButtons) return;
+
+  const labels = getSportPeriodLabels({ game: currentGame, team: currentTeam, config: currentConfig });
+  const fallbackLabel = getDefaultLivePeriod({ game: currentGame, team: currentTeam, config: currentConfig });
+  const resolvedLabels = labels.length ? labels : [fallbackLabel];
+  const activePeriod = resolvedLabels.includes(state.period) ? state.period : resolvedLabels[0];
+
+  els.periodButtons.innerHTML = resolvedLabels.map((label) => `
+    <button
+      class="pill px-2 py-1.5 border period-btn ${label === activePeriod ? 'bg-teal text-ink border-teal font-bold' : 'bg-white border-slate/10 font-semibold'}"
+      data-period="${escapeHtml(label)}"
+    >${escapeHtml(label)}</button>
+  `).join('');
+
+  els.periodButtons.querySelectorAll('.period-btn').forEach((button) => {
+    button.addEventListener('click', () => setPeriod(button.dataset.period));
   });
 }
 
@@ -2289,7 +2327,6 @@ function attachEvents() {
     persistLocalTrackerState();
     broadcastLineupUpdate('Lineup cleared');
   });
-  document.querySelectorAll('.period-btn').forEach(b => b.addEventListener('click', () => setPeriod(b.dataset.period)));
   els.livePlayers.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-stat]');
     if (!btn) return;

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@capacitor/core', () => ({
@@ -45,6 +46,8 @@ vi.mock('../../js/db.js', () => ({
 vi.mock('../../js/firebase.js', () => ({
     collection: vi.fn((db, name) => ({ db, name })),
     db: {},
+    doc: vi.fn((db, ...segments) => ({ db, path: segments.join('/'), id: segments.at(-1) })),
+    getDoc: vi.fn(),
     getDocs: vi.fn(),
     query: vi.fn((...parts) => parts),
     where: vi.fn((field, op, value) => ({ field, op, value }))
@@ -54,22 +57,57 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
+vi.mock('../../js/stat-leaderboards.js', async () => {
+    const actual = await vi.importActual('../../js/stat-leaderboards.js');
+    return {
+        ...actual,
+        buildPlayerLeaderboardSnapshot: vi.fn(actual.buildPlayerLeaderboardSnapshot),
+        selectAnalyticsConfig: vi.fn(actual.selectAnalyticsConfig)
+    };
+});
+
+vi.mock('../../js/player-tracking-summary.js', async () => {
+    const actual = await vi.importActual('../../js/player-tracking-summary.js');
+    return {
+        ...actual,
+        getVisiblePlayerTrackingSummary: vi.fn(actual.getVisiblePlayerTrackingSummary)
+    };
+});
+
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-allplays' } } },
     getNativeAuthIdToken: vi.fn()
 }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
-import { collection, getDocs, query, where } from '../../js/firebase.js';
+import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buildAdminAcceptInviteUrl, buildPublicTeamGamesIcsUrl, buildRosterParentInviteSummaries, buildTeamDetailModel, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateTeamSettingsForApp } from '../../apps/app/src/lib/teamDetailService.ts';
+import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
 import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
+import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
+import { getVisiblePlayerTrackingSummary } from '../../js/player-tracking-summary.js';
 
 beforeEach(() => {
     __resetTeamDetailBaseSnapshotCacheForTests();
     vi.clearAllMocks();
+    getDoc.mockResolvedValue({
+        id: '',
+        exists: () => false,
+        data: () => ({})
+    });
 });
 
 describe('React app team detail model', () => {
+
+    it('uses the non-cache-busted firebase module path so the app build can resolve it', async () => {
+        const source = await import('node:fs/promises').then(async ({ readFile }) => {
+            const { resolve, dirname } = await import('node:path');
+            const testFilePath = fileURLToPath(import.meta.url);
+            return readFile(resolve(dirname(testFilePath), '../../apps/app/src/lib/teamDetailService.ts'), 'utf8');
+        });
+
+        expect(source).toContain("from '../../../../js/firebase.js';");
+        expect(source).not.toContain("firebase.js?v=");
+    });
 
     it('creates one normalized admin invite for the app and builds fallback links', async () => {
         inviteAdmin.mockResolvedValue({ code: ' CODE 1 ', teamName: 'Bears', existingUser: false });
@@ -354,6 +392,87 @@ describe('React app team detail model', () => {
                 latestPendingCode: ''
             }
         ]);
+    });
+
+    it('loads roster parent invites from targeted linked users instead of scanning all users', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Pat Star',
+                parents: [{ userId: 'parent-1', email: 'parent1@example.com' }]
+            },
+            {
+                id: 'player-2',
+                name: 'Sam Wing'
+            }
+        ]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            if (ref.path === 'users/parent-1') {
+                return { id: 'parent-1', exists: () => true, data: () => ({ email: 'parent1@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
+        const future = Date.now() + 60_000;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                return {
+                    docs: [
+                        { id: 'invite-1', data: () => ({ email: 'pending@example.com', playerId: 'player-1', teamId: 'team-1', code: 'PENDING1', type: 'parent_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                    ]
+                };
+            }
+            if (filter.field === 'email') {
+                return { docs: [] };
+            }
+            if (filter.field === 'parentTeamIds') {
+                return { docs: [] };
+            }
+            if (filter.field === 'parentPlayerKeys' && filter.value === 'team-1::player-2') {
+                return {
+                    docs: [
+                        { id: 'parent-2', data: () => ({ email: 'parent2@example.com', parentPlayerKeys: ['team-1::player-2'] }) }
+                    ]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const summaries = await loadTeamRosterParentInvites('team-1', { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] });
+
+        expect(summaries).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 1,
+                latestPendingCode: 'PENDING1'
+            },
+            {
+                playerId: 'player-2',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 0,
+                latestPendingCode: ''
+            }
+        ]);
+        expect(getAllUsers).not.toHaveBeenCalled();
+        expect(doc).toHaveBeenCalledWith({}, 'users', 'coach-1');
+        expect(doc).toHaveBeenCalledWith({}, 'users', 'parent-1');
+        expect(doc).not.toHaveBeenCalledWith({}, 'users', 'parent-2');
+        expect(where).toHaveBeenCalledWith('parentPlayerKeys', 'array-contains', 'team-1::player-2');
     });
 
     it('wraps scorekeeper and roster active-state mutations with app validation', async () => {
@@ -655,6 +774,9 @@ describe('React app team detail model', () => {
     });
 
     it('builds read-only stat tracker config summaries for migrated and legacy shapes', () => {
+        const now = new Date('2026-06-12T18:00:00Z').getTime();
+        const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(now);
+
         const model = buildTeamDetailModel({
             teamId: 'team-1',
             team: {
@@ -667,6 +789,7 @@ describe('React app team detail model', () => {
                 { id: 'game-1', opponent: 'Falcons', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-basketball' },
                 { id: 'game-2', opponent: 'Tigers', date: new Date('2100-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' },
                 { id: 'game-3', opponent: 'Orphans', date: new Date('2100-06-03T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-missing' },
+                { id: 'live-game', opponent: 'Long Match', date: new Date(now - 4 * 60 * 60 * 1000), status: 'scheduled', liveStatus: 'live', statTrackerConfigId: 'cfg-legacy' },
                 { id: 'stale-game', opponent: 'Past Tigers', date: new Date('2020-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' }
             ],
             configs: [
@@ -693,6 +816,7 @@ describe('React app team detail model', () => {
             ],
             user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] }
         });
+        dateNowSpy.mockRestore();
 
         expect(model.statTrackerConfigs).toEqual([
             expect.objectContaining({
@@ -703,6 +827,7 @@ describe('React app team detail model', () => {
                 columnCount: 2,
                 columnNames: ['GOALS', 'SHOTS'],
                 assignedUpcomingGames: [
+                    expect.objectContaining({ gameId: 'live-game', title: 'vs. Long Match' }),
                     expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })
                 ]
             }),
@@ -719,7 +844,10 @@ describe('React app team detail model', () => {
             })
         ]);
         expect(model.statTrackerConfigs.find((config) => config.id === 'cfg-legacy').assignedUpcomingGames)
-            .toEqual([expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })]);
+            .toEqual([
+                expect.objectContaining({ gameId: 'live-game', title: 'vs. Long Match' }),
+                expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })
+            ]);
         expect(model.upcomingEvents.find((event) => event.id === 'game-1')).toMatchObject({
             statTrackerConfigId: 'cfg-basketball',
             statTrackerConfigLabel: 'Varsity Basketball',
@@ -827,7 +955,6 @@ describe('React app team detail model', () => {
         getConfigs.mockResolvedValue([]);
         getAggregatedStatsForGames.mockResolvedValue({});
         getAdSpaceSponsors.mockResolvedValue([]);
-        getAllUsers.mockResolvedValue([{ id: 'video-1', fullName: 'Video Parent', email: 'video@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }]);
         getLocalAttractionSponsors.mockResolvedValue([]);
         const future = Date.now() + 60_000;
         const past = Date.now() - 60_000;
@@ -856,6 +983,8 @@ describe('React app team detail model', () => {
         expect(getPlayerTrackingStatuses).not.toHaveBeenCalled();
         expect(getLocalAttractionSponsors).not.toHaveBeenCalled();
         expect(getAdSpaceSponsors).not.toHaveBeenCalled();
+        expect(buildPlayerLeaderboardSnapshot).not.toHaveBeenCalled();
+        expect(getVisiblePlayerTrackingSummary).not.toHaveBeenCalled();
 
         getDocs.mockClear();
         getAllUsers.mockClear();
@@ -863,6 +992,8 @@ describe('React app team detail model', () => {
         expect(parentModel.staffPermissions).toBeNull();
         expect(getDocs).not.toHaveBeenCalled();
         expect(getAllUsers).not.toHaveBeenCalled();
+        expect(buildPlayerLeaderboardSnapshot).not.toHaveBeenCalled();
+        expect(getVisiblePlayerTrackingSummary).not.toHaveBeenCalled();
     });
 
     it('reuses the initial base snapshot for deferred insights and staff permissions', async () => {
@@ -870,8 +1001,8 @@ describe('React app team detail model', () => {
             id: 'team-1',
             name: 'Bears',
             sport: 'Basketball',
-            ownerId: 'owner-1',
-            adminEmails: ['coach@example.com'],
+            ownerId: 'coach-1',
+            adminEmails: [],
             teamPermissions: { videography: { mode: 'selected', memberIds: ['video-1'] } }
         });
         getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', photoUrl: 'https://img.example.test/player.png' }]);
@@ -887,7 +1018,15 @@ describe('React app team detail model', () => {
         getAggregatedStatsForGames.mockResolvedValue({ 'player-1': { pts: 88 } });
         getPublicTrackingItems.mockResolvedValue([{ id: 'item-1', title: 'Bring ball', public: true }]);
         getPlayerTrackingStatuses.mockResolvedValue([{ itemId: 'item-1', playerId: 'player-1', status: 'complete', public: true }]);
-        getAllUsers.mockResolvedValue([{ id: 'video-1', fullName: 'Video Parent', email: 'video@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            if (ref.path === 'users/video-1') {
+                return { id: 'video-1', exists: () => true, data: () => ({ fullName: 'Video Parent', email: 'video@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
         const future = Date.now() + 60_000;
         getDocs.mockResolvedValue({
             docs: [
@@ -909,6 +1048,8 @@ describe('React app team detail model', () => {
         expect(getPublicTrackingItems).toHaveBeenCalledWith('team-1');
         expect(getPlayerTrackingStatuses).toHaveBeenCalledWith('team-1', ['player-1']);
         expect(insights.leaderboards[0].leaders[0]).toMatchObject({ playerId: 'player-1', formattedValue: '88' });
+        expect(buildPlayerLeaderboardSnapshot).toHaveBeenCalledTimes(1);
+        expect(getVisiblePlayerTrackingSummary).toHaveBeenCalledTimes(1);
         expect(staffPermissions.pendingInvites).toEqual(['pending@example.com']);
         expect(staffPermissions.videographerGrantTargets).toEqual([
             { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: true }
@@ -916,6 +1057,141 @@ describe('React app team detail model', () => {
         expect(getLocalAttractionSponsors).toHaveBeenCalledWith('team-1');
         expect(getAdSpaceSponsors).toHaveBeenCalledWith('team-1');
         expect(sponsors.sponsors).toEqual([]);
+    });
+
+    it('reuses the same relevant member hydration across roster and more tabs for one team', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: [],
+            teamPermissions: {
+                videography: { mode: 'selected', memberIds: ['video-1'] }
+            }
+        });
+        getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star' }]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            if (ref.path === 'users/video-1') {
+                return { id: 'video-1', exists: () => true, data: () => ({ email: 'video@example.com', fullName: 'Video Parent', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
+        const future = Date.now() + 60_000;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                return { docs: [{ id: 'invite-1', data: () => ({ teamId: 'team-1', type: 'admin_invite', email: 'pending@example.com', used: false, expiresAt: { toMillis: () => future } }) }] };
+            }
+            return { docs: [] };
+        });
+
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        const rosterSummaries = await loadTeamRosterParentInvites('team-1', coachUser);
+        const staffPermissions = await loadTeamStaffPermissions('team-1', coachUser);
+
+        expect(rosterSummaries).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 0,
+                latestPendingCode: ''
+            }
+        ]);
+        expect(staffPermissions.videographerGrantTargets).toEqual([
+            { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: true }
+        ]);
+        expect(getTeam).toHaveBeenCalledTimes(1);
+        expect(getPlayers).toHaveBeenCalledTimes(1);
+        expect(getGames).toHaveBeenCalledTimes(1);
+        expect(getConfigs).toHaveBeenCalledTimes(1);
+        expect(getDoc).toHaveBeenCalledTimes(2);
+
+        const parentTeamIdQueries = getDocs.mock.calls.filter(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentTeamIds' && part?.value === 'team-1')
+        );
+        const parentPlayerKeyQueries = getDocs.mock.calls.filter(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentPlayerKeys' && part?.value === 'team-1::player-1')
+        );
+
+        expect(parentTeamIdQueries).toHaveLength(1);
+        expect(parentPlayerKeyQueries).toHaveLength(1);
+    });
+
+    it('preserves base member hydration when only admin invites change between team manager views', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: [],
+            teamPermissions: {
+                videography: { mode: 'selected', memberIds: ['video-1'] }
+            }
+        });
+        getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star' }]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            if (ref.path === 'users/video-1') {
+                return { id: 'video-1', exists: () => true, data: () => ({ email: 'video@example.com', fullName: 'Video Parent', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
+        const future = Date.now() + 60_000;
+        let teamIdQueryCount = 0;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                teamIdQueryCount += 1;
+                return {
+                    docs: [
+                        {
+                            id: `invite-${teamIdQueryCount}`,
+                            data: () => ({
+                                teamId: 'team-1',
+                                type: 'admin_invite',
+                                email: `pending${teamIdQueryCount}@example.com`,
+                                used: false,
+                                expiresAt: { toMillis: () => future }
+                            })
+                        }
+                    ]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        const firstPermissions = await loadTeamStaffPermissions('team-1', coachUser);
+        const secondPermissions = await loadTeamStaffPermissions('team-1', coachUser);
+
+        expect(firstPermissions.pendingInvites).toEqual(['pending1@example.com']);
+        expect(secondPermissions.pendingInvites).toEqual(['pending2@example.com']);
+        expect(secondPermissions.videographerGrantTargets).toEqual([
+            { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: true }
+        ]);
+
+        const parentTeamIdQueries = getDocs.mock.calls.filter(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentTeamIds' && part?.value === 'team-1')
+        );
+        const parentPlayerKeyQueries = getDocs.mock.calls.filter(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'parentPlayerKeys' && part?.value === 'team-1::player-1')
+        );
+
+        expect(parentTeamIdQueries).toHaveLength(1);
+        expect(parentPlayerKeyQueries).toHaveLength(1);
     });
 
     it('loads deferred insights and sponsors only when requested', async () => {
@@ -990,12 +1266,20 @@ describe('React app team detail model', () => {
         getTeam.mockResolvedValue({
             id: 'team-1',
             name: 'Bears',
-            ownerId: 'owner-1',
-            adminEmails: ['coach@example.com'],
+            ownerId: 'coach-1',
+            adminEmails: [],
             teamPermissions: { videography: { mode: 'selected', memberIds: ['video-1'] } }
         });
         getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star' }]);
-        getAllUsers.mockResolvedValue([{ id: 'video-1', fullName: 'Video Parent', email: 'video@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            if (ref.path === 'users/video-1') {
+                return { id: 'video-1', exists: () => true, data: () => ({ fullName: 'Video Parent', email: 'video@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
         const future = Date.now() + 60_000;
         getDocs.mockResolvedValue({
             docs: [
@@ -1009,18 +1293,98 @@ describe('React app team detail model', () => {
         expect(staffPermissions.videographerGrantTargets).toEqual([
             { userId: 'video-1', name: 'Video Parent', email: 'video@example.com', playerNames: ['Pat Star'], isGranted: true }
         ]);
-        expect(getAllUsers).toHaveBeenCalledTimes(1);
-        expect(getDocs).toHaveBeenCalledTimes(1);
+        expect(getAllUsers).not.toHaveBeenCalled();
+        expect(doc).toHaveBeenCalledWith({}, 'users', 'coach-1');
+        expect(doc).toHaveBeenCalledWith({}, 'users', 'video-1');
         expect(collection).toHaveBeenCalledWith({}, 'accessCodes');
+        expect(collection).toHaveBeenCalledWith({}, 'users');
         expect(where).toHaveBeenCalledWith('teamId', '==', 'team-1');
+        expect(where).toHaveBeenCalledWith('parentTeamIds', 'array-contains', 'team-1');
+        expect(where).toHaveBeenCalledWith('parentPlayerKeys', 'array-contains', 'team-1::player-1');
         expect(query).toHaveBeenCalledWith({ db: {}, name: 'accessCodes' }, { field: 'teamId', op: '==', value: 'team-1' });
+        expect(query).toHaveBeenCalledWith({ db: {}, name: 'users' }, { field: 'parentTeamIds', op: 'array-contains', value: 'team-1' });
+        expect(query).toHaveBeenCalledWith({ db: {}, name: 'users' }, { field: 'parentPlayerKeys', op: 'array-contains', value: 'team-1::player-1' });
 
         getDocs.mockClear();
+        getDoc.mockClear();
         getAllUsers.mockClear();
         const parentStaffPermissions = await loadTeamStaffPermissions('team-1', { uid: 'parent-1', email: 'parent@example.com', displayName: 'Parent', roles: ['parent'] });
         expect(parentStaffPermissions).toBeNull();
         expect(getDocs).not.toHaveBeenCalled();
+        expect(getDoc).not.toHaveBeenCalled();
         expect(getAllUsers).not.toHaveBeenCalled();
+    });
+
+    it('invalidates cached team detail snapshots after creating a parent invite so follow-up roster reads refresh membership state', async () => {
+        getTeam
+            .mockResolvedValueOnce({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] })
+            .mockResolvedValueOnce({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star' }]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteParent.mockResolvedValue({ code: 'ABCD1234', autoLinked: false, existingUser: false, teamName: 'Bears', playerName: 'Pat Star' });
+        const future = Date.now() + 60_000;
+        let teamIdQueryCount = 0;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                teamIdQueryCount += 1;
+                return {
+                    docs: teamIdQueryCount === 1
+                        ? []
+                        : [{ id: 'invite-1', data: () => ({ teamId: 'team-1', playerId: 'player-1', code: 'ABCD1234', type: 'parent_invite', used: false, expiresAt: { toMillis: () => future } }) }]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        const beforeInvite = await loadTeamRosterParentInvites('team-1', coachUser);
+        await createRosterParentInviteForApp('team-1', coachUser, { id: 'player-1', number: '9' });
+        const afterInvite = await loadTeamRosterParentInvites('team-1', coachUser);
+
+        expect(beforeInvite[0]).toMatchObject({ status: 'none', pendingInviteCount: 0 });
+        expect(afterInvite[0]).toMatchObject({ status: 'pending', pendingInviteCount: 1, latestPendingCode: 'ABCD1234' });
+        expect(getTeam).toHaveBeenCalledTimes(2);
+    });
+
+    it('invalidates cached team detail snapshots after creating an admin invite so follow-up staff reads refresh membership state', async () => {
+        getTeam
+            .mockResolvedValueOnce({ id: 'team-1', ownerId: 'owner-1', adminEmails: [], teamPermissions: {} })
+            .mockResolvedValueOnce({ id: 'team-1', ownerId: 'owner-1', adminEmails: [], teamPermissions: {} });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteAdmin.mockResolvedValue({ code: 'CODE123', teamName: 'Bears', existingUser: false });
+        addTeamAdminEmail.mockResolvedValue(undefined);
+        sendInviteEmail.mockResolvedValue({ success: true });
+        const future = Date.now() + 60_000;
+        let teamIdQueryCount = 0;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                teamIdQueryCount += 1;
+                return {
+                    docs: teamIdQueryCount === 1
+                        ? []
+                        : [{ id: 'invite-1', data: () => ({ teamId: 'team-1', email: 'newcoach@example.com', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) }]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const ownerUser = { uid: 'owner-1', email: 'owner@example.com', displayName: 'Owner', roles: ['coach'] };
+
+        const beforeInvite = await loadTeamStaffPermissions('team-1', ownerUser);
+        await inviteTeamAdminForApp('team-1', 'newcoach@example.com', ownerUser);
+        const afterInvite = await loadTeamStaffPermissions('team-1', ownerUser);
+
+        expect(beforeInvite.pendingInvites).toEqual([]);
+        expect(afterInvite.pendingInvites).toEqual(['newcoach@example.com']);
+        expect(getTeam).toHaveBeenCalledTimes(2);
     });
 
     it('updates only the managed basic team settings fields for app editing', async () => {
@@ -1082,5 +1446,164 @@ describe('React app team detail model', () => {
             zip: '12345',
             isPublic: true
         })).rejects.toThrow('You do not have permission to edit this team.');
+    });
+
+    it('reloads member hydration when roster parent invites add new email inputs after staff permissions were cached', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star' }
+        ]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
+        const future = Date.now() + 60_000;
+        let teamIdQueryCount = 0;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                teamIdQueryCount += 1;
+                if (teamIdQueryCount === 1) {
+                    return {
+                        docs: [
+                            { id: 'invite-1', data: () => ({ email: 'admin@example.com', teamId: 'team-1', type: 'admin_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                        ]
+                    };
+                }
+                return {
+                    docs: [
+                        { id: 'invite-2', data: () => ({ email: 'parentinvite@example.com', playerId: 'player-1', teamId: 'team-1', code: 'PARENT1', type: 'parent_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                    ]
+                };
+            }
+            if (filter.field === 'email' && filter.value === 'parentinvite@example.com') {
+                return {
+                    docs: [
+                        { id: 'parent-1', data: () => ({ email: 'parentinvite@example.com', parentOf: [{ teamId: 'team-1', playerId: 'player-1' }] }) }
+                    ]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        await loadTeamStaffPermissions('team-1', coachUser);
+        getDocs.mockClear();
+
+        const summaries = await loadTeamRosterParentInvites('team-1', coachUser);
+
+        expect(summaries).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 1,
+                latestPendingCode: 'PARENT1'
+            }
+        ]);
+        expect(where).toHaveBeenCalledWith('email', '==', 'parentinvite@example.com');
+        expect(getDocs.mock.calls.some(
+            (args) => Array.isArray(args[0]) && args[0].some((part) => part?.field === 'email' && part?.value === 'parentinvite@example.com')
+        )).toBe(true);
+    });
+
+    it('rebuilds cached member hydration when a pending parent invite becomes accepted', async () => {
+        getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star' }
+        ]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        getDoc.mockImplementation(async (ref) => {
+            if (ref.path === 'users/coach-1') {
+                return { id: 'coach-1', exists: () => true, data: () => ({ email: 'coach@example.com', fullName: 'Coach Owner' }) };
+            }
+            return { id: ref.id, exists: () => false, data: () => ({}) };
+        });
+        const future = Date.now() + 60_000;
+        let teamIdQueryCount = 0;
+        let parentTeamLookupCount = 0;
+        let parentPlayerKeyLookupCount = 0;
+        getDocs.mockImplementation(async (queryParts) => {
+            const filters = Array.isArray(queryParts) ? queryParts.slice(1) : [];
+            const filter = filters[0] || {};
+            if (filter.field === 'teamId') {
+                teamIdQueryCount += 1;
+                if (teamIdQueryCount === 1) {
+                    return {
+                        docs: [
+                            { id: 'invite-1', data: () => ({ email: 'parent@example.com', playerId: 'player-1', teamId: 'team-1', code: 'PARENT1', type: 'parent_invite', used: false, expiresAt: { toMillis: () => future } }) }
+                        ]
+                    };
+                }
+                return { docs: [] };
+            }
+            if (filter.field === 'email' && filter.value === 'parent@example.com') {
+                return {
+                    docs: [
+                        { id: 'parent-1', data: () => ({ email: 'parent@example.com' }) }
+                    ]
+                };
+            }
+            if (filter.field === 'parentTeamIds') {
+                parentTeamLookupCount += 1;
+                return {
+                    docs: parentTeamLookupCount === 1
+                        ? []
+                        : [{ id: 'parent-1', data: () => ({ email: 'parent@example.com', parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }) }]
+                };
+            }
+            if (filter.field === 'parentPlayerKeys') {
+                parentPlayerKeyLookupCount += 1;
+                return {
+                    docs: parentPlayerKeyLookupCount === 1
+                        ? []
+                        : [{ id: 'parent-1', data: () => ({ email: 'parent@example.com', parentTeamIds: ['team-1'], parentPlayerKeys: ['team-1::player-1'] }) }]
+                };
+            }
+            return { docs: [] };
+        });
+
+        const coachUser = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: ['coach'] };
+
+        const beforeAcceptance = await loadTeamRosterParentInvites('team-1', coachUser);
+        const afterAcceptance = await loadTeamRosterParentInvites('team-1', coachUser);
+
+        expect(beforeAcceptance).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'pending',
+                acceptedParentCount: 0,
+                pendingInviteCount: 1,
+                latestPendingCode: 'PARENT1'
+            }
+        ]);
+        expect(afterAcceptance).toEqual([
+            {
+                playerId: 'player-1',
+                status: 'accepted',
+                acceptedParentCount: 1,
+                pendingInviteCount: 0,
+                latestPendingCode: ''
+            }
+        ]);
+        expect(parentTeamLookupCount).toBe(2);
+        expect(parentPlayerKeyLookupCount).toBe(2);
     });
 });

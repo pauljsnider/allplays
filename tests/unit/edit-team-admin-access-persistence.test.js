@@ -78,6 +78,7 @@ class MockElement {
         this.textContent = '';
         this.href = '';
         this.files = [];
+        this.attributes = {};
         this.dataset = {};
         this.listeners = new Map();
         this.classList = new MockClassList();
@@ -107,6 +108,14 @@ class MockElement {
     }
 
     focus() {}
+
+    setAttribute(name, value) {
+        this.attributes[name] = String(value);
+    }
+
+    closest() {
+        return this;
+    }
 
     querySelectorAll(selector) {
         if (selector === '.remove-admin-btn') {
@@ -185,6 +194,7 @@ function createEnvironment(initialState, overrides = {}) {
         'team-admin-banner',
         'page-title',
         'team-create-options',
+        'team-create-mode-registration',
         'registration-import-panel',
         'registration-source-select',
         'registration-empty-state',
@@ -341,8 +351,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getAllUsers,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame } = deps.db;'
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getAllUsers,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
@@ -468,6 +478,9 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
             async updateGame(teamId, gameId, gameData) {
                 env.state.updateGameCalls = env.state.updateGameCalls || [];
                 env.state.updateGameCalls.push({ teamId, gameId, gameData: deepClone(gameData) });
+            },
+            async getRegistrationSources() {
+                return [];
             }
         },
         utils: {
@@ -615,6 +628,10 @@ describe('edit team admin access persistence', () => {
         expect(html.indexOf('id="registrationProviderName"')).toBeGreaterThan(advancedIndex);
         expect(html).toContain('Registration Provider Connection');
         expect(html).toContain('No provider login, sync job, or network call runs from these fields.');
+        expect(html).toContain('id="team-create-mode-registration"');
+        expect(html).toContain('No registration sources are configured yet. Start with a blank team or load provider data before using this import path.');
+        expect(html).toContain('registrationMode.setAttribute(\'aria-disabled\', String(registrationMode.disabled));');
+        expect(html).toContain('configuredRegistrationTeams.length === 0');
 
         const createEnv = await bootEditTeam({
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },

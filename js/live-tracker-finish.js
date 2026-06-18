@@ -27,6 +27,18 @@ export function buildOpponentStatsSnapshotFromEntries({ opponentEntries = [], co
   return opponentStats;
 }
 
+function normalizeElapsedTimeMs(value) {
+  const timeMs = Number(value);
+  if (!Number.isFinite(timeMs)) return null;
+  return Math.max(0, timeMs);
+}
+
+function getPlayerElapsedTimeMs(playerStats) {
+  return normalizeElapsedTimeMs(playerStats?.time)
+    ?? normalizeElapsedTimeMs(playerStats?.timeMs)
+    ?? 0;
+}
+
 export function buildFinishCompletionPlan({
   requestedHome,
   requestedAway,
@@ -121,7 +133,7 @@ export function buildFinishCompletionPlan({
     const baseData = {
       playerName: player.name,
       playerNumber: player.num,
-      timeMs: safeStatsByPlayerId[player.id]?.time || 0,
+      timeMs: getPlayerElapsedTimeMs(safeStatsByPlayerId[player.id]),
       participated: actuallyParticipated,
       participationStatus: actuallyParticipated ? 'appeared' : 'did-not-appear',
       participationSource: 'live-tracker-finish',

@@ -31,5 +31,6 @@ describe('player Firestore privacy rules', () => {
         expect(rules).not.toContain("affectedKeys().hasOnly(['parents'])");
         expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");
+        expect(rules).toContain("request.resource.data.parents.hasAll(resource.data.parents)");
     });
 });

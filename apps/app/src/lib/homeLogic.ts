@@ -112,6 +112,26 @@ export function getUpcomingHomeEvents(events: ParentScheduleEvent[], limit = 5, 
     .slice(0, limit);
 }
 
+type HomePlayerAggregate = {
+  nextEvent: ParentScheduleEvent | null;
+  rsvpNeeded: number;
+  packetsReady: number;
+  openAssignments: number;
+};
+
+type HomeTeamAggregate = {
+  nextEvent: ParentScheduleEvent | null;
+  eventCount: number;
+  openActions: number;
+};
+
+type HomeEventIndex = {
+  upcomingEventRows: ParentScheduleEvent[];
+  upcomingEvents: ParentScheduleEvent[];
+  playerAggregates: Map<string, HomePlayerAggregate>;
+  teamAggregates: Map<string, HomeTeamAggregate>;
+};
+
 export function buildParentHomeModel({
   children,
   events,
@@ -126,10 +146,11 @@ export function buildParentHomeModel({
   now?: Date;
 }): ParentHomeModel {
   const inboxByTeamId = new Map(inboxTeams.map((team) => [team.id, team]));
-  const players = buildHomePlayers(children, events, inboxByTeamId, now);
-  const teams = buildHomeTeams(children, events, inboxByTeamId, now);
-  const actionItems = buildHomeActionItems({ events, fees, inboxTeams, now });
-  const upcomingEvents = getUpcomingHomeEvents(events, 5, now);
+  const eventIndex = buildHomeEventIndex(events, now);
+  const players = buildHomePlayers(children, eventIndex, inboxByTeamId);
+  const teams = buildHomeTeams(children, eventIndex, inboxByTeamId);
+  const actionItems = buildHomeActionItems({ upcomingEvents: eventIndex.upcomingEventRows, fees, inboxTeams });
+  const upcomingEvents = eventIndex.upcomingEvents.slice(0, 5);
   const openFees = getOpenFees(fees);
 
   return {
@@ -149,17 +170,19 @@ export function buildParentHomeModel({
 }
 
 export function buildHomeActionItems({
-  events,
+  events = [],
+  upcomingEvents,
   fees = [],
   inboxTeams = [],
   now = new Date()
 }: {
-  events: ParentScheduleEvent[];
+  events?: ParentScheduleEvent[];
+  upcomingEvents?: ParentScheduleEvent[];
   fees?: ParentHomeFee[];
   inboxTeams?: ParentHomeInboxTeam[];
   now?: Date;
 }): ParentHomeAction[] {
-  const upcoming = events.filter((event) => isUpcomingHomeEvent(event, now));
+  const upcoming = upcomingEvents || events.filter((event) => isUpcomingHomeEvent(event, now));
   const actions: ParentHomeAction[] = [];
 
   upcoming.forEach((event) => {
@@ -255,16 +278,15 @@ export function buildHomeActionItems({
   });
 }
 
-function buildHomePlayers(children: ParentScheduleChild[], events: ParentScheduleEvent[], inboxByTeamId: Map<string, ParentHomeInboxTeam>, now: Date): ParentHomePlayer[] {
+function buildHomePlayers(children: ParentScheduleChild[], eventIndex: HomeEventIndex, inboxByTeamId: Map<string, ParentHomeInboxTeam>): ParentHomePlayer[] {
   return children.map((child) => {
-    const playerEvents = events.filter((event) => event.teamId === child.teamId && event.childId === child.playerId);
-    const upcoming = playerEvents.filter((event) => isUpcomingHomeEvent(event, now));
+    const aggregate = eventIndex.playerAggregates.get(getPlayerAggregateKey(child.teamId, child.playerId));
     return {
       ...child,
-      nextEvent: getUpcomingHomeEvents(playerEvents, 1, now)[0] || null,
-      rsvpNeeded: upcoming.filter((event) => event.isDbGame && !event.availabilityLocked && normalizeRsvpResponse(event.myRsvp) === 'not_responded').length,
-      packetsReady: upcoming.filter((event) => event.type === 'practice' && event.practiceHomePacketSummary).length,
-      openAssignments: upcoming.reduce((total, event) => total + getOpenScheduleAssignments(event.assignments).length, 0),
+      nextEvent: aggregate?.nextEvent || null,
+      rsvpNeeded: aggregate?.rsvpNeeded || 0,
+      packetsReady: aggregate?.packetsReady || 0,
+      openAssignments: aggregate?.openAssignments || 0,
       unreadCount: Number(inboxByTeamId.get(child.teamId)?.unreadCount || 0)
     };
   }).sort((a, b) => {
@@ -274,12 +296,12 @@ function buildHomePlayers(children: ParentScheduleChild[], events: ParentSchedul
   });
 }
 
-function buildHomeTeams(children: ParentScheduleChild[], events: ParentScheduleEvent[], inboxByTeamId: Map<string, ParentHomeInboxTeam>, now: Date): ParentHomeTeam[] {
+function buildHomeTeams(children: ParentScheduleChild[], eventIndex: HomeEventIndex, inboxByTeamId: Map<string, ParentHomeInboxTeam>): ParentHomeTeam[] {
   const byTeam = new Map<string, ParentHomeTeam>();
   children.forEach((child) => {
     const inbox = inboxByTeamId.get(child.teamId);
     if (!byTeam.has(child.teamId)) {
-      const teamEvents = events.filter((event) => event.teamId === child.teamId);
+      const aggregate = eventIndex.teamAggregates.get(child.teamId);
       byTeam.set(child.teamId, {
         teamId: child.teamId,
         teamName: inbox?.name || child.teamName || child.teamId,
@@ -287,8 +309,8 @@ function buildHomeTeams(children: ParentScheduleChild[], events: ParentScheduleE
         sport: inbox?.sport || null,
         photoUrl: inbox?.photoUrl || null,
         players: [],
-        nextEvent: getUpcomingHomeEvents(teamEvents, 1, now)[0] || null,
-        eventCount: dedupeEvents(teamEvents).length,
+        nextEvent: aggregate?.nextEvent || null,
+        eventCount: aggregate?.eventCount || 0,
         unreadCount: Number(inbox?.unreadCount || 0),
         openActions: 0
       });
@@ -313,12 +335,8 @@ function buildHomeTeams(children: ParentScheduleChild[], events: ParentScheduleE
   });
 
   byTeam.forEach((team) => {
-    const teamEvents = events.filter((event) => event.teamId === team.teamId && isUpcomingHomeEvent(event, now));
-    team.openActions = teamEvents.reduce((total, event) => {
-      const needsRsvp = event.isDbGame && !event.availabilityLocked && normalizeRsvpResponse(event.myRsvp) === 'not_responded' ? 1 : 0;
-      const packet = event.type === 'practice' && event.practiceHomePacketSummary ? 1 : 0;
-      return total + needsRsvp + packet + getOpenScheduleAssignments(event.assignments).length;
-    }, team.unreadCount > 0 ? 1 : 0);
+    const aggregate = eventIndex.teamAggregates.get(team.teamId);
+    team.openActions = (aggregate?.openActions || 0) + (team.unreadCount > 0 ? 1 : 0);
   });
 
   return [...byTeam.values()].sort((a, b) => {
@@ -345,6 +363,138 @@ function dedupeEvents(events: ParentScheduleEvent[]) {
     if (!byId.has(key)) byId.set(key, event);
   });
   return [...byId.values()];
+}
+
+function buildHomeEventIndex(events: ParentScheduleEvent[], now: Date): HomeEventIndex {
+  const playerBuckets = new Map<string, {
+    upcomingByKey: Map<string, ParentScheduleEvent>;
+    rsvpNeeded: number;
+    packetsReady: number;
+    openAssignments: number;
+  }>();
+  const teamBuckets = new Map<string, {
+    allByKey: Map<string, ParentScheduleEvent>;
+    upcomingByKey: Map<string, ParentScheduleEvent>;
+    openActions: number;
+  }>();
+  const upcomingByKey = new Map<string, ParentScheduleEvent>();
+  const upcomingEventRows: ParentScheduleEvent[] = [];
+
+  events.forEach((event) => {
+    const teamBucket = getOrCreateTeamBucket(teamBuckets, event.teamId);
+    const eventKey = getHomeEventDedupeKey(event);
+    if (!teamBucket.allByKey.has(eventKey)) {
+      teamBucket.allByKey.set(eventKey, event);
+    }
+
+    const playerBucket = event.childId
+      ? getOrCreatePlayerBucket(playerBuckets, getPlayerAggregateKey(event.teamId, event.childId))
+      : null;
+
+    if (!isUpcomingHomeEvent(event, now)) {
+      return;
+    }
+
+    upcomingEventRows.push(event);
+
+    if (!upcomingByKey.has(eventKey)) {
+      upcomingByKey.set(eventKey, event);
+    }
+    if (!teamBucket.upcomingByKey.has(eventKey)) {
+      teamBucket.upcomingByKey.set(eventKey, event);
+    }
+    if (playerBucket && !playerBucket.upcomingByKey.has(eventKey)) {
+      playerBucket.upcomingByKey.set(eventKey, event);
+    }
+
+    const openAssignments = getOpenScheduleAssignments(event.assignments).length;
+    const needsRsvp = event.isDbGame && !event.availabilityLocked && normalizeRsvpResponse(event.myRsvp) === 'not_responded' ? 1 : 0;
+    const packetReady = event.type === 'practice' && event.practiceHomePacketSummary ? 1 : 0;
+
+    teamBucket.openActions += needsRsvp + Number(packetReady) + openAssignments;
+
+    if (playerBucket) {
+      playerBucket.rsvpNeeded += needsRsvp;
+      playerBucket.packetsReady += Number(packetReady);
+      playerBucket.openAssignments += openAssignments;
+    }
+  });
+
+  const playerAggregates = new Map<string, HomePlayerAggregate>();
+  playerBuckets.forEach((bucket, playerKey) => {
+    playerAggregates.set(playerKey, {
+      nextEvent: sortEventsByDate([...bucket.upcomingByKey.values()])[0] || null,
+      rsvpNeeded: bucket.rsvpNeeded,
+      packetsReady: bucket.packetsReady,
+      openAssignments: bucket.openAssignments
+    });
+  });
+
+  const teamAggregates = new Map<string, HomeTeamAggregate>();
+  teamBuckets.forEach((bucket, teamId) => {
+    teamAggregates.set(teamId, {
+      nextEvent: sortEventsByDate([...bucket.upcomingByKey.values()])[0] || null,
+      eventCount: bucket.allByKey.size,
+      openActions: bucket.openActions
+    });
+  });
+
+  return {
+    upcomingEventRows,
+    upcomingEvents: sortEventsByDate([...upcomingByKey.values()]),
+    playerAggregates,
+    teamAggregates
+  };
+}
+
+function getOrCreatePlayerBucket(
+  buckets: Map<string, {
+    upcomingByKey: Map<string, ParentScheduleEvent>;
+    rsvpNeeded: number;
+    packetsReady: number;
+    openAssignments: number;
+  }>,
+  playerKey: string
+) {
+  if (!buckets.has(playerKey)) {
+    buckets.set(playerKey, {
+      upcomingByKey: new Map<string, ParentScheduleEvent>(),
+      rsvpNeeded: 0,
+      packetsReady: 0,
+      openAssignments: 0
+    });
+  }
+  return buckets.get(playerKey)!;
+}
+
+function getOrCreateTeamBucket(
+  buckets: Map<string, {
+    allByKey: Map<string, ParentScheduleEvent>;
+    upcomingByKey: Map<string, ParentScheduleEvent>;
+    openActions: number;
+  }>,
+  teamId: string
+) {
+  if (!buckets.has(teamId)) {
+    buckets.set(teamId, {
+      allByKey: new Map<string, ParentScheduleEvent>(),
+      upcomingByKey: new Map<string, ParentScheduleEvent>(),
+      openActions: 0
+    });
+  }
+  return buckets.get(teamId)!;
+}
+
+function getPlayerAggregateKey(teamId: string, playerId: string) {
+  return `${teamId}::${playerId}`;
+}
+
+function getHomeEventDedupeKey(event: ParentScheduleEvent) {
+  return `${event.teamId}::${event.id}::${event.date.toISOString()}`;
+}
+
+function sortEventsByDate(events: ParentScheduleEvent[]) {
+  return events.sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
 function getPlayerActionCount(player: Pick<ParentHomePlayer, 'rsvpNeeded' | 'packetsReady' | 'openAssignments' | 'unreadCount'>) {

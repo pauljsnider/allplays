@@ -50,7 +50,9 @@ beforeEach(() => {
     });
     dbMocks.getPlayers.mockResolvedValue([
         { id: 'player-1', name: 'Pat', number: '7' },
-        { id: 'player-2', name: 'Sam', number: '9' }
+        { id: 'player-2', name: 'Sam', number: '9' },
+        { id: 'player-3', name: 'Drew', number: '11' },
+        { id: 'player-4', name: 'Casey', number: '15' }
     ]);
     dbMocks.getConfigs.mockResolvedValue([
         { id: 'cfg-1', baseType: 'basketball', columns: ['PTS', 'REB'] }
@@ -62,7 +64,8 @@ beforeEach(() => {
     dbMocks.getTeamStatsForGame.mockResolvedValue({ turnovers: 6, assists: 11 });
     firebaseMocks.getDocs.mockResolvedValue(snapshot([
         { id: 'player-1', data: { stats: { pts: 12, reb: 5, fouls: 1 }, timeMs: 1200000 } },
-        { id: 'player-2', data: { stats: { pts: 4, reb: 2 }, timeMs: 900000 } }
+        { id: 'player-2', data: { stats: {}, timeMs: 0, didNotPlay: false } },
+        { id: 'player-3', data: { stats: {}, timeMs: 0, didNotPlay: true, participationStatus: 'did-not-appear' } }
     ]));
 });
 
@@ -85,6 +88,19 @@ describe('React app game report service', () => {
             stats: { pts: 12, reb: 5, fouls: 1 },
             timeMs: 1200000
         });
+        expect(report.visiblePlayerRows.map((player) => player.playerId)).toEqual(['player-1', 'player-2', 'player-3']);
+        expect(report.deferredPlayerRows.map((player) => player.playerId)).toEqual(['player-4']);
+        expect(report.visiblePlayerRows[1]).toMatchObject({
+            playerId: 'player-2',
+            didNotPlay: false,
+            participated: false,
+            participationStatus: '',
+            participationSource: ''
+        });
+        expect(report.visiblePlayerRows[2]).toMatchObject({
+            playerId: 'player-3',
+            didNotPlay: true
+        });
         expect(report.hasPlayingTime).toBe(true);
         expect(report.plays.map((play) => play.id)).toEqual(['play-1', 'play-2']);
         expect(report.opponentRows[0]).toMatchObject({
@@ -105,7 +121,9 @@ describe('React app game report service', () => {
 
         const report = await loadGameReportSections('team-1', 'game-1');
 
-        expect(report.playerRows).toHaveLength(2);
+        expect(report.playerRows).toHaveLength(4);
+        expect(report.visiblePlayerRows).toHaveLength(0);
+        expect(report.deferredPlayerRows).toHaveLength(4);
         expect(report.playerRows[0].stats).toEqual({});
         expect(report.plays).toEqual([]);
         expect(report.teamStats).toEqual({});

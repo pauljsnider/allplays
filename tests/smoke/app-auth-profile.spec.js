@@ -301,6 +301,27 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
         });
     });
 
+    await page.route(/\/src\/lib\/profilePhotoService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function acquireProfilePhoto() {
+                    return new File(['native-photo'], 'native-camera.jpg', { type: 'image/jpeg' });
+                }
+
+                export async function normalizeProfilePhoto(file) {
+                    return file;
+                }
+
+                export async function uploadProfilePhoto(file) {
+                    window.__appProfileCalls.uploads.push({ name: file.name, type: file.type });
+                    return 'https://example.test/avatar.png';
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/pushService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,

@@ -32,7 +32,7 @@ import {
     uploadBytes,
     getDownloadURL,
     deleteObject
-} from './firebase.js?v=17';
+} from './firebase.js?v=18';
 import { imageStorage, ensureImageAuth, requireImageAuth } from './firebase-images.js?v=6';
 import { uploadBytesResumable } from './vendor/firebase-storage.js';
 import { buildDrillDiagramUploadPaths } from './drill-upload-paths.js?v=2';
@@ -729,6 +729,40 @@ function sortTeamsByName(teams = []) {
     return [...teams].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 }
 
+function buildPublicTeamSearchPageCursor(searchText, strategyCursors = [], bufferedTeams = []) {
+    if (!bufferedTeams.length && !strategyCursors.some(Boolean)) {
+        return null;
+    }
+
+    return {
+        kind: 'public-team-search',
+        searchText,
+        strategyCursors,
+        bufferedTeams
+    };
+}
+
+function readPublicTeamSearchPageCursor(cursor, searchText, strategyCount) {
+    if (!cursor || typeof cursor !== 'object' || cursor.kind !== 'public-team-search') {
+        return {
+            strategyCursors: Array.from({ length: strategyCount }, () => null),
+            bufferedTeams: []
+        };
+    }
+
+    if (normalizePublicTeamSearchInput(cursor.searchText || '') !== searchText) {
+        return {
+            strategyCursors: Array.from({ length: strategyCount }, () => null),
+            bufferedTeams: []
+        };
+    }
+
+    return {
+        strategyCursors: Array.from({ length: strategyCount }, (_, index) => cursor.strategyCursors?.[index] || null),
+        bufferedTeams: Array.isArray(cursor.bufferedTeams) ? cursor.bufferedTeams : []
+    };
+}
+
 export async function discoverPublicTeams(options = {}) {
     const rawPageSize = Number(options.pageSize);
     const pageSize = Number.isFinite(rawPageSize)
@@ -752,21 +786,40 @@ export async function discoverPublicTeams(options = {}) {
         };
     }
 
-    const strategies = buildPublicTeamSearchStrategies(searchText);
+    let strategies = buildPublicTeamSearchStrategies(searchText);
     if (!strategies.length) {
         return { teams: [], nextCursor: null };
     }
 
+    const previousPageCursor = readPublicTeamSearchPageCursor(cursor, searchText, strategies.length);
+    if (previousPageCursor.bufferedTeams.length >= pageSize) {
+        const teams = previousPageCursor.bufferedTeams.slice(0, pageSize);
+        const bufferedTeams = previousPageCursor.bufferedTeams.slice(pageSize);
+        return {
+            teams,
+            nextCursor: buildPublicTeamSearchPageCursor(searchText, previousPageCursor.strategyCursors, bufferedTeams)
+        };
+    }
+
+    strategies = strategies.map((strategy, index) => ({
+        ...strategy,
+        startAfterConstraint: previousPageCursor.strategyCursors[index]
+            ? [startAfterQuery(previousPageCursor.strategyCursors[index])]
+            : []
+    }));
     const snapshots = await Promise.all(strategies.map((strategy) => getDocs(query(
         teamsRef,
         where('isPublic', '==', true),
         where(strategy.field, '>=', strategy.start),
         where(strategy.field, '<=', strategy.end),
         orderBy(strategy.field),
+        ...strategy.startAfterConstraint,
         limitQuery(pageSize)
     ))));
 
-    const teamsById = new Map();
+    const teamsById = new Map(previousPageCursor.bufferedTeams
+        .filter((team) => team?.id)
+        .map((team) => [team.id, team]));
     snapshots.forEach((snapshot, index) => {
         const strategy = strategies[index];
         snapshot.docs.forEach((teamDoc) => {
@@ -778,9 +831,19 @@ export async function discoverPublicTeams(options = {}) {
         });
     });
 
+    const sortedTeams = filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())), false);
+    const teams = sortedTeams.slice(0, pageSize);
+    const bufferedTeams = sortedTeams.slice(pageSize);
+    const strategyCursors = snapshots.map((snapshot, index) => snapshot.docs.length
+        ? snapshot.docs[snapshot.docs.length - 1]
+        : previousPageCursor.strategyCursors[index] || null);
+    const hasMorePages = bufferedTeams.length > 0 || snapshots.some((snapshot) => snapshot.docs.length === pageSize);
+
     return {
-        teams: filterTeamsByActive(sortTeamsByName(Array.from(teamsById.values())).slice(0, pageSize), false),
-        nextCursor: null
+        teams,
+        nextCursor: hasMorePages
+            ? buildPublicTeamSearchPageCursor(searchText, strategyCursors, bufferedTeams)
+            : null
     };
 }
 
@@ -890,7 +953,27 @@ export async function getTeamMediaItems(teamId, folderId = null) {
         .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
         .filter((item) => item.deleted !== true)
         .filter((item) => !folderId || item.folderId === folderId);
-    return sortByMediaOrder(items);
+
+    const resolvedItems = await Promise.all(items.map(async (item) => {
+        if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
+        if (String(item.downloadUrl || item.url || item.src || '').trim()) return item;
+        if (!item.storagePath) return item;
+        try {
+            const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
+            updateDoc(doc(db, `teams/${teamId}/mediaItems`, item.id), {
+                downloadUrl,
+                updatedAt: serverTimestamp()
+            }).catch((error) => {
+                console.warn('Unable to backfill cached team media download URL:', error);
+            });
+            return { ...item, downloadUrl };
+        } catch (error) {
+            console.warn('Unable to resolve team media download URL:', error);
+            return item;
+        }
+    }));
+
+    return sortByMediaOrder(resolvedItems);
 }
 
 export async function createTeamMediaFolder(teamId, draft = {}) {
@@ -1023,14 +1106,14 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const url = await getDownloadURL(snapshot.ref);
+    const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
         type: 'photo',
-        url,
         storagePath,
+        downloadUrl,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type || 'image/jpeg',
@@ -1069,15 +1152,15 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const url = await getDownloadURL(snapshot.ref);
+    const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
         fileName: String(file.name || '').trim(),
         type: 'file',
-        url,
         storagePath,
+        downloadUrl,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type,
@@ -1410,6 +1493,11 @@ export async function upsertNotificationDeviceToken(userId, { token, platform = 
         createdAt: Timestamp.now()
     }, { merge: true });
     return deviceId;
+}
+
+export async function getRegistrationSources() {
+    const snapshot = await getDocs(collection(db, "registrationSources"));
+    return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
 }
 
 export async function getAllUsers() {
@@ -2110,6 +2198,16 @@ export async function listTeamRegistrationForms(teamId) {
     return snapshot.docs
         .map((formDoc) => ({ id: formDoc.id, ...formDoc.data() }))
         .sort((a, b) => String(a.name || a.title || a.id).localeCompare(String(b.name || b.title || b.id)));
+}
+
+export async function getTeamRegistrationForm(teamId, formId) {
+    if (!teamId || !formId) return null;
+    const formSnap = await getDoc(doc(db, 'teams', teamId, 'registrationForms', formId));
+    if (!formSnap.exists()) return null;
+    return {
+        id: formSnap.id,
+        ...formSnap.data()
+    };
 }
 
 export async function listTeamRegistrationReviews(teamId, formId, status = 'all') {
@@ -4496,9 +4594,84 @@ export async function listTeamFeeRecipients(teamId, batchId) {
     if (!teamId || !batchId) return [];
     const recipientsRef = collection(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients');
     const snapshot = await getDocs(recipientsRef);
-    return snapshot.docs
-        .map((recipientDoc) => ({ id: recipientDoc.id, ...recipientDoc.data() }))
+    const recipients = await Promise.all(snapshot.docs.map(async (recipientDoc) => {
+        const recipient = { id: recipientDoc.id, ...recipientDoc.data() };
+        if (recipient?.hasAdminBilling !== true) return recipient;
+
+        try {
+            const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientDoc.id, 'adminBilling', 'latest');
+            const adminBillingSnap = await getDoc(adminBillingRef);
+            if (!adminBillingSnap.exists()) return recipient;
+            return {
+                ...recipient,
+                adminBilling: adminBillingSnap.data() || {}
+            };
+        } catch (error) {
+            console.warn('Unable to load team fee admin billing metadata:', error);
+            return recipient;
+        }
+    }));
+
+    return recipients
         .sort((a, b) => String(a.playerName || a.childName || a.parentName || a.parentEmail || '').localeCompare(String(b.playerName || b.childName || b.parentName || b.parentEmail || '')));
+}
+
+const PRIVATE_TEAM_FEE_RECIPIENT_FIELDS = new Set([
+    'stripeCheckoutSessionId',
+    'stripePaymentIntentId',
+    'stripeCustomerId',
+    'stripeChargeId',
+    'stripeRefundId',
+    'stripeLastRefundId',
+    'stripeEventId',
+    'checkoutSessionId',
+    'paymentIntentId',
+    'receiptEmail',
+    'eventId',
+    'refundedBy',
+    'recordedBy',
+    'adjustedBy',
+    'canceledBy',
+    'internalNote',
+    'adminNote',
+    'note',
+    'reason'
+]);
+
+function sanitizeTeamFeeRecipientValue(value, { topLevel = false } = {}) {
+    if (Array.isArray(value)) {
+        return value.map((item) => sanitizeTeamFeeRecipientValue(item));
+    }
+    if (!value || typeof value !== 'object') return value;
+
+    return Object.fromEntries(Object.entries(value)
+        .filter(([key]) => topLevel && key === 'notes' ? true : !PRIVATE_TEAM_FEE_RECIPIENT_FIELDS.has(key))
+        .map(([key, childValue]) => [key, sanitizeTeamFeeRecipientValue(childValue)]));
+}
+
+function deriveTeamFeeAdminBillingPayload(recipientUpdates = {}, ledgerEntries = []) {
+    const canceled = recipientUpdates?.canceled && typeof recipientUpdates.canceled === 'object'
+        ? recipientUpdates.canceled
+        : null;
+    const cancellationEntry = Array.isArray(ledgerEntries)
+        ? ledgerEntries.find((entry) => entry?.type === 'cancellation')
+        : null;
+
+    if ((recipientUpdates?.status || '') !== 'canceled' && !canceled && !cancellationEntry) {
+        return null;
+    }
+
+    const reason = String(canceled?.note || cancellationEntry?.reason || '').trim();
+    const canceledBy = canceled?.canceledBy || cancellationEntry?.canceledBy || null;
+    if (!reason && !canceledBy) {
+        return null;
+    }
+
+    return {
+        type: 'cancellation',
+        ...(reason ? { reason } : {}),
+        ...(canceledBy ? { canceledBy } : {})
+    };
 }
 
 export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updates = {}) {
@@ -4507,16 +4680,33 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     }
 
     const recipientRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId);
-    const { ledgerEntries = [], ...recipientUpdates } = updates;
+    const adminBillingRef = doc(db, 'teams', teamId, 'feeBatches', batchId, 'feeRecipients', recipientId, 'adminBilling', 'latest');
+    const { ledgerEntries = [], adminBilling = null, ...unsafeRecipientUpdates } = updates;
+    const recipientUpdates = sanitizeTeamFeeRecipientValue(unsafeRecipientUpdates, { topLevel: true });
+    const safeLedgerEntries = Array.isArray(ledgerEntries) ? sanitizeTeamFeeRecipientValue(ledgerEntries) : [];
     const isManualPaymentUpdate = Object.prototype.hasOwnProperty.call(recipientUpdates, 'manualPayment')
-        || (Array.isArray(ledgerEntries) && ledgerEntries.some((entry) => entry?.type === 'offline_payment'));
+        || safeLedgerEntries.some((entry) => entry?.type === 'offline_payment');
+    const explicitAdminBilling = adminBilling && typeof adminBilling === 'object' && !Array.isArray(adminBilling)
+        ? adminBilling
+        : null;
+    const adminBillingDetails = explicitAdminBilling || deriveTeamFeeAdminBillingPayload(unsafeRecipientUpdates, ledgerEntries);
+    const hasAdminBilling = Boolean(adminBillingDetails);
 
     const updatePayload = {
         ...recipientUpdates,
         teamId,
         batchId,
+        ...(hasAdminBilling ? { hasAdminBilling: true } : {}),
         updatedAt: serverTimestamp()
     };
+
+    const adminBillingPayload = hasAdminBilling ? {
+        ...adminBillingDetails,
+        teamId,
+        batchId,
+        recipientId,
+        updatedAt: serverTimestamp()
+    } : null;
 
     const invalidatesOnlineCheckout = [
         'status',
@@ -4543,8 +4733,8 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         updatePayload.checkoutAmountCents = deleteField();
     }
 
-    if (Array.isArray(ledgerEntries) && ledgerEntries.length > 0) {
-        updatePayload.paymentLedger = arrayUnion(...ledgerEntries);
+    if (safeLedgerEntries.length > 0) {
+        updatePayload.paymentLedger = arrayUnion(...safeLedgerEntries);
     }
 
     if (isManualPaymentUpdate) {
@@ -4560,7 +4750,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
             const priorPaidCents = Number.isFinite(Number(priorPaidRaw)) ? Math.max(0, Number(priorPaidRaw)) : 0;
             const remainingBalanceCents = Math.max(0, amountDueCents - priorPaidCents);
             const manualPaymentAmountRaw = recipientUpdates.manualPayment?.amountPaidCents
-                ?? ledgerEntries.find((entry) => entry?.type === 'offline_payment')?.amountCents;
+                ?? safeLedgerEntries.find((entry) => entry?.type === 'offline_payment')?.amountCents;
             const manualPaymentAmountCents = Number(manualPaymentAmountRaw);
 
             if (!Number.isFinite(manualPaymentAmountCents)) {
@@ -4571,11 +4761,17 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
             }
 
             transaction.update(recipientRef, updatePayload);
+            if (adminBillingPayload) {
+                transaction.set(adminBillingRef, adminBillingPayload, { merge: true });
+            }
         });
         return;
     }
 
     await updateDoc(recipientRef, updatePayload);
+    if (adminBillingPayload) {
+        await setDoc(adminBillingRef, adminBillingPayload, { merge: true });
+    }
 }
 
 export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user = {}) {
@@ -5901,26 +6097,50 @@ export async function toggleChatReaction(teamId, messageId, reactionKey, userId,
  */
 export async function updateChatLastRead(userId, teamId) {
     const userRef = doc(db, 'users', userId);
-    const fieldPath = `chatLastRead.${teamId}`;
+    const lastReadAt = Timestamp.now();
     return await updateDoc(userRef, {
-        [fieldPath]: Timestamp.now()
+        [`chatLastRead.${teamId}`]: lastReadAt,
+        [`teamChatState.${teamId}.lastReadAt`]: lastReadAt
     });
 }
 
-export async function updateChatMuted(userId, teamId) {
+export async function updateChatMuted(userId, teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     const userRef = doc(db, 'users', userId);
-    const fieldPath = `chatMuted.${teamId}`;
-    return await updateDoc(userRef, {
-        [fieldPath]: Timestamp.now()
-    });
+    const mutedAt = Timestamp.now();
+    const updates = {
+        teamChatState: {
+            [teamId]: {
+                mutedConversations: {
+                    [conversationId]: mutedAt
+                }
+            }
+        }
+    };
+    if (isDefaultTeamConversation(conversationId)) {
+        updates.chatMuted = {
+            [teamId]: mutedAt
+        };
+    }
+    return await setDoc(userRef, updates, { merge: true });
 }
 
-export async function clearChatMuted(userId, teamId) {
+export async function clearChatMuted(userId, teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     const userRef = doc(db, 'users', userId);
-    const fieldPath = `chatMuted.${teamId}`;
-    return await updateDoc(userRef, {
-        [fieldPath]: deleteField()
-    });
+    const updates = {
+        teamChatState: {
+            [teamId]: {
+                mutedConversations: {
+                    [conversationId]: deleteField()
+                }
+            }
+        }
+    };
+    if (isDefaultTeamConversation(conversationId)) {
+        updates.chatMuted = {
+            [teamId]: deleteField()
+        };
+    }
+    return await setDoc(userRef, updates, { merge: true });
 }
 
 /**
@@ -5932,7 +6152,7 @@ export async function clearChatMuted(userId, teamId) {
 export async function getUnreadChatCount(userId, teamId) {
     const userDoc = await getDoc(doc(db, 'users', userId));
     const userData = userDoc.data();
-    const lastRead = userData?.chatLastRead?.[teamId] || null;
+    const lastRead = userData?.teamChatState?.[teamId]?.lastReadAt || userData?.chatLastRead?.[teamId] || null;
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
     const unreadConstraints = [];
 
@@ -7896,4 +8116,3 @@ export async function revokeFamilyShareToken(tokenId) {
         updatedAt: Timestamp.now()
     });
 }
-

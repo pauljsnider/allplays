@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => {
@@ -12,7 +13,7 @@ const mocks = vi.hoisted(() => {
   return { transactionSet, transactionGet, transactionDelete, runTransactionMock };
 });
 
-vi.mock('../../../../js/firebase.js', () => ({
+vi.mock('./adapters/legacyScheduleDb', () => ({
   db: {},
   doc: vi.fn((first: any, ...rest: any[]) => ({ path: typeof first?.path === 'string' ? [first.path, ...rest].filter(Boolean).join('/') : rest.filter(Boolean).join('/') })),
   collection: vi.fn((_db: unknown, path: string) => ({ path })),
@@ -22,10 +23,7 @@ vi.mock('../../../../js/firebase.js', () => ({
   getDocs: vi.fn(),
   runTransaction: mocks.runTransactionMock,
   increment: vi.fn((value: number) => ({ __increment: value })),
-  serverTimestamp: vi.fn(() => ({ __serverTimestamp: true }))
-}));
-
-vi.mock('../../../../js/db.js', () => ({
+  serverTimestamp: vi.fn(() => ({ __serverTimestamp: true })),
   getAssignmentClaims: vi.fn(),
   claimOpenOfficiatingSlot: vi.fn(),
   getGame: vi.fn(),
@@ -42,7 +40,6 @@ vi.mock('../../../../js/db.js', () => ({
   getTeams: vi.fn(),
   addGame: vi.fn(),
   addPractice: vi.fn(),
-  getTrackedCalendarEventUids: vi.fn(),
   createRideOffer: vi.fn(),
   claimAssignmentSlot: vi.fn(),
   respondToOfficiatingAssignment: vi.fn(),
@@ -60,46 +57,77 @@ vi.mock('../../../../js/db.js', () => ({
   upsertPracticePacketCompletion: vi.fn()
 }));
 
-vi.mock('../../../../js/schedule-notifications.js', () => ({
+vi.mock('./adapters/legacyScheduleHelpers', () => ({
   sendPublicRsvpReminderEmails: vi.fn(),
-  buildScheduleNotificationTargets: vi.fn(),
-  postScheduleNotificationTargets: vi.fn()
-}));
-vi.mock('../../../../js/utils.js', () => ({
+  normalizeOfficialLinkEmail: vi.fn((value: unknown) => String(value || '').trim().toLowerCase()),
+  normalizeOfficialLinkPhone: vi.fn((value: unknown) => String(value || '').replace(/\D+/g, '')),
+  getAssignedOfficiatingSlots: vi.fn((game: any, user: any) => {
+    const email = String(user?.email || '').trim().toLowerCase();
+    const phone = String(user?.phone || '').replace(/\D+/g, '');
+    return Array.isArray(game?.officiatingSlots)
+      ? game.officiatingSlots.filter((slot: any) => {
+        const slotEmail = String(slot?.officialEmail || '').trim().toLowerCase();
+        const slotPhone = String(slot?.officialPhone || '').replace(/\D+/g, '');
+        return Boolean((slotEmail && slotEmail === email) || (slotPhone && slotPhone === phone));
+      })
+      : [];
+  }),
+  getOpenOfficiatingSlots: vi.fn((game: any) => Array.isArray(game?.officiatingSlots)
+    ? game.officiatingSlots.filter((slot: any) => String(slot?.status || '').toLowerCase() === 'open')
+    : []),
   expandRecurrence: vi.fn(),
   extractOpponent: vi.fn(),
   fetchAndParseCalendar: vi.fn(),
   getCalendarEventTrackingId: vi.fn(),
   isPracticeEvent: vi.fn(),
-  isTrackedCalendarEvent: vi.fn()
+  isTrackedCalendarEvent: vi.fn(),
+  filterVisiblePracticeSessions: vi.fn((items) => items),
+  buildPracticePacketCompletionPayload: vi.fn(),
+  resolveMyRsvpByChildForGame: vi.fn(),
+  buildGameDayRsvpBreakdown: vi.fn(),
+  getPeriodsForFormation: vi.fn(() => []),
+  getEventRideshareSummary: vi.fn(),
+  mergeAssignmentsWithClaims: vi.fn(),
+  hasScorekeepingTeamAccess: vi.fn(),
+  isTeamActive: vi.fn(() => true)
 }));
-vi.mock('../../../../js/parent-dashboard-practice-sessions.js', () => ({ filterVisiblePracticeSessions: vi.fn((items) => items) }));
-vi.mock('../../../../js/parent-dashboard-packets.js', () => ({ buildPracticePacketCompletionPayload: vi.fn() }));
-vi.mock('../../../../js/parent-dashboard-rsvp.js', () => ({ resolveMyRsvpByChildForGame: vi.fn() }));
-vi.mock('../../../../js/availability-preferences.js', () => ({
+
+vi.mock('./adapters/legacyAvailability', () => ({
   buildAvailabilityNoteRows: vi.fn(),
   canViewAvailabilityNotes: vi.fn(),
   formatAvailabilityCutoff: vi.fn(),
   isAvailabilityLocked: vi.fn(),
   normalizeAvailabilityPreferences: vi.fn()
 }));
-vi.mock('../../../../js/rideshare-helpers.js', () => ({ getEventRideshareSummary: vi.fn() }));
-vi.mock('../../../../js/snack-helpers.js', () => ({ mergeAssignmentsWithClaims: vi.fn() }));
-vi.mock('../../../../js/team-access.js', () => ({ hasScorekeepingTeamAccess: vi.fn() }));
-vi.mock('../../../../js/team-visibility.js', () => ({ isTeamActive: vi.fn(() => true) }));
 vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(), saveProfileDocument: vi.fn() }));
 vi.mock('./authService', () => ({ firebaseAuth: {}, getNativeAuthIdToken: vi.fn() }));
 vi.mock('./uxTiming', () => ({ startUxTimer: vi.fn(() => ({ end: vi.fn() })) }));
 vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
-vi.mock('./appDataCache', () => ({ getCachedAppData: vi.fn(), loadCachedAppData: vi.fn(), clearAppDataCache: vi.fn() }));
+vi.mock('./appDataCache', () => ({
+  getCachedAppData: vi.fn(),
+  loadCachedAppData: vi.fn(),
+  clearAppDataCache: vi.fn(),
+  getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
+}));
 
-import { broadcastLiveEvent, claimOpenOfficiatingSlot, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance } from '../../../../js/db.js';
-import { getDocs } from '../../../../js/firebase.js';
-import { fetchAndParseCalendar } from '../../../../js/utils.js';
+import { broadcastLiveEvent, claimOpenOfficiatingSlot, releaseAssignmentClaim, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
+import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
+
+it('keeps schedule workflows behind typed legacy adapters', () => {
+  const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
+  const scheduleEventDetailSource = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+
+  expect(scheduleServiceSource).not.toContain("../../../../js/");
+  expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
+  expect(scheduleServiceSource).toContain("./adapters/legacyScheduleHelpers");
+  expect(scheduleServiceSource).toContain("./adapters/legacyAvailability");
+  expect(scheduleEventDetailSource).not.toContain("../../../../js/");
+  expect(scheduleEventDetailSource).toContain("../lib/adapters/legacyScheduleHelpers");
+});
 
 describe('parent game route resolution', () => {
   beforeEach(() => {
@@ -311,6 +339,19 @@ describe('official assignments app service', () => {
     expect(respondToOfficiatingAssignment).toHaveBeenNthCalledWith(2, 'team-alpha', 'game-assigned', 'center', 'declined');
     expect(claimOpenOfficiatingSlot).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'line', user);
   });
+});
+
+it('releases parent assignment claims through the legacy adapter using the active auth user contract', async () => {
+  await releaseParentScheduleAssignmentClaim({
+    id: 'game-assigned',
+    teamId: 'team-alpha',
+    type: 'game',
+    isDbGame: true,
+    isCancelled: false,
+    assignments: [{ role: 'Team Snack' }]
+  } as any, 'Team Snack');
+
+  expect(releaseAssignmentClaim).toHaveBeenCalledWith('team-alpha', 'game-assigned', 'Team Snack');
 });
 
 describe('live game clock state', () => {

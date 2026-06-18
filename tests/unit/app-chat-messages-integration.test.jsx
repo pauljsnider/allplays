@@ -538,6 +538,49 @@ describe('React app messages integration', () => {
         expect(chatMocks.loadChatInbox).toHaveBeenCalledTimes(1);
     });
 
+    it('renders inbox rows before deferred preview hydration finishes, then updates the preview copy', async () => {
+        const deferredPreview = createDeferred();
+        chatMocks.loadChatInbox.mockImplementationOnce(async (_user, options = {}) => {
+            deferredPreview.promise.then(() => {
+                options.onPreview?.({
+                    teamId: 'team-1',
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' }),
+                    preferredConversationId: null,
+                    isMuted: false
+                });
+            });
+            return {
+                teams: [
+                    {
+                        id: 'team-1',
+                        name: 'Bears',
+                        sport: 'Basketball',
+                        role: 'Admin',
+                        canModerate: true,
+                        unreadCount: 2,
+                        lastMessage: null,
+                        preferredConversationId: null
+                    }
+                ]
+            };
+        });
+
+        const { container } = await renderMessages('/messages');
+
+        expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(auth.user, expect.objectContaining({ includeLastMessages: false, onPreview: expect.any(Function) }));
+        expect(container.textContent).toContain('Bears');
+        expect(container.textContent).toContain('No messages yet');
+        expect(container.textContent).not.toContain('Practice packet posted.');
+
+        await act(async () => {
+            deferredPreview.resolve();
+            await deferredPreview.promise;
+        });
+        await flush();
+
+        expect(container.textContent).toContain('Coach Jamie: Practice packet posted.');
+    });
+
     it('refreshes the inbox and keeps the latest preview copy visible', async () => {
         chatMocks.loadChatInbox
             .mockResolvedValueOnce({
@@ -672,14 +715,49 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Thunder');
     });
 
-    it('auto-selects the first filtered team in the desktop messages workspace', async () => {
+    it('keeps the current desktop thread selected while filtering the inbox', async () => {
         layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Parent',
+                    canModerate: false,
+                    unreadCount: 0,
+                    lastMessage: chatMessage({ id: 'last-2', senderName: 'Morgan', text: 'Tournament schedule changed.' })
+                }
+            ]
+        });
         const { container } = await renderMessages('/messages');
+        const search = container.querySelector('input[placeholder="Search team chats"]');
 
         expect(container.querySelector('.messages-list-pane')).toBeTruthy();
         expect(container.querySelector('.chat-window-embedded')).toBeTruthy();
         expect(chatMocks.loadChatTeamContext).toHaveBeenCalledWith('team-1', auth.user);
+        const initialContextLoadCount = chatMocks.loadChatTeamContext.mock.calls.length;
+        const initialSubscriptionCount = chatMocks.subscribeToTeamChatMessages.mock.calls.length;
         expect(container.textContent).toContain('Bring both jerseys.');
+
+        await setFieldValue(search, 'soccer');
+
+        const visibleInboxRows = Array.from(container.querySelectorAll('.message-row')).map((row) => row.textContent);
+        expect(visibleInboxRows).toHaveLength(1);
+        expect(visibleInboxRows[0]).toContain('Thunder');
+        expect(container.textContent).toContain('Bring both jerseys.');
+        expect(chatMocks.loadChatTeamContext).toHaveBeenCalledTimes(initialContextLoadCount);
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenCalledTimes(initialSubscriptionCount);
+        expect(chatMocks.loadChatTeamContext).not.toHaveBeenCalledWith('team-2', auth.user);
     });
 
     it('does not reload the desktop thread when typing in the search box', async () => {
@@ -1956,14 +2034,28 @@ describe('React app messages integration', () => {
         }));
     });
 
-    it('loads deep-linked mute state from the team context profile when inbox data is unavailable', async () => {
+    it('loads deep-linked mute state from the conversation-keyed team chat profile when inbox data is unavailable', async () => {
         chatMocks.loadChatTeamContext.mockResolvedValueOnce({
             team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
-            profile: { fullName: 'Pat Parent', photoUrl: '', chatMuted: { 'team-1': new Date('2026-06-01T12:00:00Z') } },
+            profile: {
+                fullName: 'Pat Parent',
+                photoUrl: '',
+                teamChatState: {
+                    'team-1': {
+                        mutedConversations: {
+                            'staff-conversation': new Date('2026-06-01T12:00:00Z')
+                        }
+                    }
+                }
+            },
             canModerate: true
         });
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+        ]);
 
-        const { container } = await renderMessages('/messages/team-1');
+        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
 
         expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
         expect(buttonByText(container, 'Unmute notifications')).toBeTruthy();
@@ -2038,15 +2130,97 @@ describe('React app messages integration', () => {
         expect(buttonByText(container, 'Unmute notifications')).toBeTruthy();
     });
 
-    it('mute toggle button calls muteTeamChat then unmuteTeamChat when pressed twice', async () => {
+    it('mute toggle button calls muteTeamChat then unmuteTeamChat for the active conversation', async () => {
         const { container } = await renderMessages('/messages/team-1');
 
         await click(container, 'Mute notifications');
-        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
         expect(chatMocks.unmuteTeamChat).not.toHaveBeenCalled();
 
         await click(container, 'Unmute notifications');
-        expect(chatMocks.unmuteTeamChat).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(chatMocks.unmuteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
+    });
+
+
+    it('keeps the updated mute state after switching away and back to a muted staff conversation', async () => {
+        layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 0,
+                    isMuted: false,
+                    preferredConversationId: 'staff-conversation',
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Staff note' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 0,
+                    isMuted: false,
+                    lastMessage: chatMessage({ id: 'last-2', text: 'Travel roster posted.' })
+                }
+            ]
+        });
+        chatMocks.loadChatTeamContext.mockImplementation(async (requestedTeamId) => ({
+            team: {
+                id: requestedTeamId,
+                name: requestedTeamId === 'team-1' ? 'Bears' : 'Thunder',
+                sport: requestedTeamId === 'team-1' ? 'Basketball' : 'Soccer'
+            },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: true
+        }));
+        chatMocks.loadChatConversations.mockImplementation(async (requestedTeamId) => (
+            requestedTeamId === 'team-1'
+                ? [
+                    { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+                    { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+                ]
+                : [
+                    { id: 'team', type: 'team', name: 'Thunder Team Chat', participantIds: [], participantRoles: ['team'] }
+                ]
+        ));
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((requestedTeamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: `msg-${requestedTeamId}-${conversationId}`,
+                    senderId: 'coach-1',
+                    senderName: 'Coach Jamie',
+                    text: conversationId === 'staff-conversation' ? 'Staff note' : 'Travel roster posted.'
+                })
+            ], { id: `cursor-${requestedTeamId}-${conversationId}` });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
+
+        expect(buttonByText(container, 'Mute notifications')).toBeTruthy();
+        await click(container, 'Mute notifications');
+        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'staff-conversation');
+        expect(buttonByText(container, 'Unmute notifications')).toBeTruthy();
+
+        const thunderLink = container.querySelector('a[href="/messages/team-2"]');
+        await act(async () => {
+            thunderLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+        expect(buttonByText(container, 'Mute notifications')).toBeTruthy();
+
+        const bearsLink = container.querySelector('a[href="/messages/team-1?conversationId=staff-conversation"]');
+        await act(async () => {
+            bearsLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+
+        expect(buttonByText(container, 'Unmute notifications')).toBeTruthy();
     });
 
     it('rolls back the mute toggle when the server write fails', async () => {
@@ -2055,7 +2229,7 @@ describe('React app messages integration', () => {
 
         await click(container, 'Mute notifications');
 
-        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1');
+        expect(chatMocks.muteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
         expect(buttonByText(container, 'Mute notifications')).toBeTruthy();
     });
 
@@ -2079,5 +2253,104 @@ describe('React app messages integration', () => {
 
         const bellOffIcon = container.querySelector('svg[aria-label="Notifications muted"]');
         expect(bellOffIcon).toBeTruthy();
+    });
+
+    it('does not reload Team Email drafts/templates/history when the sheet is reopened for the same team (issue #2377)', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+
+        // Open the email sheet for the first time — all three loads should fire.
+        await click(container, 'Team Email');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1);
+        expect(chatMocks.loadTeamEmailTemplates).toHaveBeenCalledTimes(1);
+        expect(chatMocks.loadSentTeamEmails).toHaveBeenCalledTimes(1);
+
+        // Close and immediately reopen — no additional Firestore reads.
+        await click(container, 'Close Team Email');
+        await click(container, 'Team Email');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1);
+        expect(chatMocks.loadTeamEmailTemplates).toHaveBeenCalledTimes(1);
+        expect(chatMocks.loadSentTeamEmails).toHaveBeenCalledTimes(1);
+
+        // Close and reopen a third time — still no extra reads.
+        await click(container, 'Close Team Email');
+        await click(container, 'Team Email');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1);
+        expect(chatMocks.loadTeamEmailTemplates).toHaveBeenCalledTimes(1);
+        expect(chatMocks.loadSentTeamEmails).toHaveBeenCalledTimes(1);
+    });
+
+    it('reloads Team Email resources for a new team after switching teams (issue #2377)', async () => {
+        layoutMocks.isDesktopWeb = true;
+        chatMocks.loadChatInbox.mockResolvedValueOnce({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 2,
+                    lastMessage: chatMessage({ id: 'last-1', text: 'Practice packet posted.' })
+                },
+                {
+                    id: 'team-2',
+                    name: 'Thunder',
+                    sport: 'Soccer',
+                    role: 'Admin',
+                    canModerate: true,
+                    unreadCount: 0,
+                    lastMessage: chatMessage({ id: 'last-2', senderName: 'Coach Taylor', text: 'Travel roster posted.' })
+                }
+            ]
+        });
+        chatMocks.loadChatTeamContext.mockImplementation(async (requestedTeamId) => ({
+            team: {
+                id: requestedTeamId,
+                name: requestedTeamId === 'team-1' ? 'Bears' : 'Thunder',
+                sport: requestedTeamId === 'team-1' ? 'Basketball' : 'Soccer'
+            },
+            profile: { fullName: 'Pat Parent', photoUrl: '' },
+            canModerate: true
+        }));
+        chatMocks.loadChatConversations.mockImplementation(async (requestedTeamId) => ([
+            {
+                id: 'team',
+                type: 'team',
+                name: requestedTeamId === 'team-1' ? 'Bears Team Chat' : 'Thunder Team Chat',
+                participantIds: [],
+                participantRoles: ['team']
+            }
+        ]));
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((requestedTeamId, _conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: `msg-${requestedTeamId}`,
+                    senderId: requestedTeamId === 'team-1' ? 'coach-1' : 'coach-2',
+                    senderName: requestedTeamId === 'team-1' ? 'Coach Jamie' : 'Coach Taylor',
+                    text: requestedTeamId === 'team-1' ? 'Bring both jerseys.' : 'Travel roster posted.'
+                })
+            ], { id: `cursor-${requestedTeamId}` });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages');
+
+        // Open email sheet for team-1 — first load.
+        await click(container, 'Team Email');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(1);
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1');
+        await click(container, 'Close Team Email');
+
+        // Switch to team-2 via the inbox pane.
+        const thunderLink = container.querySelector('a[href="/messages/team-2"]');
+        await act(async () => {
+            thunderLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
+        });
+        await flush();
+
+        // Open email sheet for team-2 — cache was invalidated on team switch, so a fresh load fires.
+        await click(container, 'Team Email');
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenCalledTimes(2);
+        expect(chatMocks.loadTeamEmailDrafts).toHaveBeenLastCalledWith('team-2');
     });
 });

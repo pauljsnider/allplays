@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
+  Bell,
   CalendarDays,
   CalendarPlus,
   ClipboardList,
@@ -27,9 +28,19 @@ import {
 } from 'lucide-react';
 import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
+import { openPublicUrl } from '../lib/publicActions';
+import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
+import {
+  countUnread,
+  markNotificationRead,
+  subscribeToNotificationInbox,
+  type NotificationInboxItem
+} from '../lib/notificationInboxService';
 import type { AuthState, NavItem } from '../lib/types';
-import { AppSearchDialog } from './AppSearchDialog';
 import { RoleBadge } from './Badges';
+
+const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
+const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').then((module) => ({ default: module.NotificationInboxSheet })));
 
 const navItems: NavItem[] = [
   { label: 'Home', path: '/home', icon: Home },
@@ -58,6 +69,9 @@ interface AppShellProps {
 export function AppShell({ auth, children }: AppShellProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxItems, setInboxItems] = useState<NotificationInboxItem[]>([]);
+  const [inboxState, setInboxState] = useState<'loading' | 'ready' | 'error'>('loading');
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
@@ -65,6 +79,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const isAiRoute = location.pathname === '/ai';
   const isMobileChatDetail = !isDesktopWeb && location.pathname.startsWith('/messages/') && location.pathname !== '/messages';
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
+  const unreadCount = countUnread(inboxItems);
 
   useEffect(() => {
     const startedAt = routeStartedAtRef.current;
@@ -89,12 +104,49 @@ export function AppShell({ auth, children }: AppShellProps) {
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, []);
 
+  useEffect(() => {
+    const onNativeBackDismiss = (event: Event) => {
+      if (searchOpen) {
+        setSearchOpen(false);
+        event.preventDefault();
+        return;
+      }
+      if (addTeamOpen) {
+        setAddTeamOpen(false);
+        event.preventDefault();
+      }
+      if (inboxOpen) {
+        setInboxOpen(false);
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener(APP_BACK_DISMISS_EVENT, onNativeBackDismiss);
+    return () => window.removeEventListener(APP_BACK_DISMISS_EVENT, onNativeBackDismiss);
+  }, [addTeamOpen, inboxOpen, searchOpen]);
+
+  useEffect(() => {
+    const uid = auth.user?.uid;
+    if (!uid) return;
+    setInboxState('loading');
+    const unsubscribe = subscribeToNotificationInbox(
+      uid,
+      (items) => {
+        setInboxItems(items);
+        setInboxState('ready');
+      },
+      () => {
+        setInboxState('error');
+      }
+    );
+    return unsubscribe;
+  }, [auth.user?.uid]);
+
   const addWorkflows = buildAddWorkflows();
 
   const handleAddWorkflow = async (workflow: AddWorkflow) => {
     setAddTeamOpen(false);
     if (workflow.kind === 'website') {
-      const { openPublicUrl } = await import('../lib/publicActions');
       await openPublicUrl(workflow.href);
       return;
     }
@@ -134,10 +186,30 @@ export function AppShell({ auth, children }: AppShellProps) {
                 </button>
                 <button
                   type="button"
+                  className="ghost-button !h-10 !min-h-10 relative"
+                  onClick={() => setInboxOpen(true)}
+                  aria-label="Notifications"
+                  title="Notifications"
+                  data-testid="app-shell-notifications-trigger"
+                >
+                  <Bell className="h-5 w-5" aria-hidden="true" />
+                  {unreadCount > 0 && (
+                    <span
+                      className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-500 px-1 text-[10px] font-black text-white"
+                      aria-label={`${unreadCount} unread`}
+                      data-testid="notification-unread-badge"
+                    >
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
                   className="ghost-button !h-10 !min-h-10"
                   onClick={() => setSearchOpen(true)}
                   aria-label="Search"
                   title="Search (Ctrl+K / Cmd+K)"
+                  data-testid="app-shell-search-trigger"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
                   Search
@@ -217,10 +289,31 @@ export function AppShell({ auth, children }: AppShellProps) {
                 </button>
                 <button
                   type="button"
+                  className="ghost-button !h-10 !min-h-10 !w-10 !p-0 relative"
+                  onClick={() => setInboxOpen(true)}
+                  aria-label="Notifications"
+                  title="Notifications"
+                  data-testid="app-shell-notifications-trigger"
+                >
+                  <Bell className="h-5 w-5" aria-hidden="true" />
+                  <span className="sr-only">Notifications</span>
+                  {unreadCount > 0 && (
+                    <span
+                      className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-500 px-1 text-[10px] font-black text-white"
+                      aria-label={`${unreadCount} unread`}
+                      data-testid="notification-unread-badge"
+                    >
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
                   className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
                   onClick={() => setSearchOpen(true)}
                   aria-label="Search"
                   title="Search (Ctrl+K / Cmd+K)"
+                  data-testid="app-shell-search-trigger"
                 >
                   <Search className="h-5 w-5" aria-hidden="true" />
                   <span className="sr-only">Search</span>
@@ -274,7 +367,23 @@ export function AppShell({ auth, children }: AppShellProps) {
         </>
       )}
 
-      {searchOpen ? <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} /> : null}
+      {inboxOpen ? (
+        <Suspense fallback={null}>
+          <NotificationInboxSheet
+            items={inboxItems}
+            inboxState={inboxState}
+            uid={auth.user?.uid ?? ''}
+            onClose={() => setInboxOpen(false)}
+            onMarkRead={markNotificationRead}
+          />
+        </Suspense>
+      ) : null}
+
+      {searchOpen ? (
+        <Suspense fallback={null}>
+          <AppSearchDialog auth={auth} open={searchOpen} onClose={() => setSearchOpen(false)} />
+        </Suspense>
+      ) : null}
 
       {addTeamOpen ? (
         <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add workflow">

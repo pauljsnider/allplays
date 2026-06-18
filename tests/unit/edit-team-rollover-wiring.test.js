@@ -237,6 +237,7 @@ async function loadEditTeamHarness({ copyRejects = false } = {}) {
         inviteAdmin: vi.fn(),
         addTeamAdminEmail: vi.fn(),
         getAllUsers: vi.fn(async () => []),
+        getRegistrationSources: vi.fn(async () => []),
         getDefaultStatConfigForSport: vi.fn(() => ({ name: 'Basketball defaults' })),
         renderHeader: vi.fn(),
         renderFooter: vi.fn(),

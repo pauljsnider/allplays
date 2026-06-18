@@ -8,12 +8,15 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
-async function waitForTeamsRoute(page, readyLocator) {
+async function waitForTeamsRoute(page, readyLocator, { requireSearchInput = true } = {}) {
     const searchInput = page.getByPlaceholder('Search teams or players');
+    const teamsLoadingState = page.getByText(/^Loading teams$/);
     await expect(async () => {
         await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
-        await expect(page.getByText('Loading teams')).toHaveCount(0, { timeout: 3000 });
-        await expect(searchInput).toBeVisible({ timeout: 3000 });
+        await expect(teamsLoadingState).toHaveCount(0, { timeout: 3000 });
+        if (requireSearchInput) {
+            await expect(searchInput).toBeVisible({ timeout: 3000 });
+        }
         if (readyLocator) {
             await expect(readyLocator).toBeVisible({ timeout: 3000 });
         }
@@ -120,6 +123,10 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
 
                 export async function loadParentTeamsSummary(...args) {
                     return loadParentHome(...args);
+                }
+
+                export async function loadParentScheduleSummary() {
+                    return [];
                 }
 
                 export async function loadParentHomeWithSecondaryData(...args) {
@@ -307,19 +314,31 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                         return {
                             team: {
                                 id: 'team-empty',
+                                ownerId: 'owner-empty',
                                 name: 'Empty Team',
                                 sport: 'Soccer',
                                 photoUrl: null,
                                 description: '',
                                 zip: '',
+                                isPublic: true,
+                                active: true,
                                 leagueUrl: null,
                                 bracketUrl: null,
                                 streamUrl: null,
                                 websiteUrl: 'https://allplays.ai/team.html#teamId=team-empty',
+                                editTeamUrl: 'https://allplays.ai/edit-team.html#teamId=team-empty',
                                 mediaUrl: 'https://allplays.ai/team-media.html#teamId=team-empty',
-                                registrationProvider: []
+                                registrationProvider: [],
+                                scheduleNotifications: {
+                                    enabled: true,
+                                    reminderHours: 24,
+                                    delivery: 'team_chat',
+                                    hasExplicitReminderHours: true,
+                                    summary: 'Team default reminder window: 24 hours before event start.'
+                                }
                             },
                             players: [],
+                            inactivePlayers: [],
                             linkedPlayers: [],
                             upcomingEvents: [],
                             recentResults: [],
@@ -329,6 +348,10 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                             leaderboards: [],
                             trackingSummaries: [],
                             sponsors: [],
+                            statTrackerConfigs: [],
+                            canManageTeam: false,
+                            canManageAdmins: false,
+                            staffPermissions: null,
                             counts: { games: 0, practices: 0, completedGames: 0 }
                         };
                     }
@@ -337,24 +360,36 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                     return {
                         team: {
                             id: 'team-1',
+                            ownerId: 'owner-1',
                             name: 'Bears',
                             sport: 'Basketball',
                             photoUrl: 'https://img.example.test/bears.png',
                             description: 'Parent-facing team page',
                             zip: '66210',
+                            isPublic: true,
+                            active: true,
                             leagueUrl: 'https://league.example.test/standings',
                             bracketUrl: 'https://bracket.example.test/official',
                             streamUrl: 'https://youtube.example.test/watch',
                             websiteUrl: 'https://allplays.ai/team.html#teamId=team-1',
+                            editTeamUrl: 'https://allplays.ai/edit-team.html#teamId=team-1',
                             mediaUrl: 'https://allplays.ai/team-media.html#teamId=team-1',
-                            registrationProvider: [{ label: 'Provider', value: 'Sports Connect' }]
+                            registrationProvider: [{ label: 'Provider', value: 'Sports Connect' }],
+                            scheduleNotifications: {
+                                enabled: true,
+                                reminderHours: 24,
+                                delivery: 'team_chat',
+                                hasExplicitReminderHours: true,
+                                summary: 'Team default reminder window: 24 hours before event start.'
+                            }
                         },
                         players: [
-                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true },
-                            { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: null, position: 'Forward', isLinked: false }
+                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true },
+                            { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: null, position: 'Forward', isLinked: false, active: true }
                         ],
+                        inactivePlayers: [],
                         linkedPlayers: [
-                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true }
+                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true }
                         ],
                         upcomingEvents: [
                             { id: 'game-next', type: 'game', title: 'vs. Falcons', date: nextDate, location: 'Main Gym', opponent: 'Falcons', status: '', homeScore: null, awayScore: null, isCancelled: false }
@@ -371,11 +406,93 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                             { id: 'item-2', title: 'Upload waiver', description: '', isComplete: false }
                         ] }],
                         sponsors: [{ id: 'sponsor-1', name: 'Pizza Place', description: 'After the game', imageUrl: 'https://img.example.test/pizza.png', websiteUrl: 'https://pizza.example.test' }],
+                        statTrackerConfigs: [],
+                        canManageTeam: false,
+                        canManageAdmins: false,
+                        staffPermissions: null,
                         counts: { games: 8, practices: 3, completedGames: 6 }
                     };
                 }
 
                 export async function reactivateRosterPlayerForApp() {}
+            `
+        });
+    });
+}
+
+async function mockPublicTeamsBrowseModule(page) {
+    await page.addInitScript(() => {
+        window.__publicTeamSearchCalls = [];
+    });
+
+    await page.route(/\/src\/lib\/publicTeamsService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                const firstPage = [
+                    {
+                        teamId: 'search-atl-1',
+                        teamName: 'Atlanta Fire',
+                        photoUrl: '',
+                        role: 'Public',
+                        sport: 'Soccer',
+                        location: 'Atlanta, GA',
+                        players: [],
+                        eventCount: 0,
+                        unreadCount: 0,
+                        openActions: 0,
+                        nextEvent: null,
+                        appAccess: true,
+                        webAccess: true,
+                        isPublic: true,
+                    }
+                ];
+                const secondPage = [
+                    {
+                        teamId: 'search-atl-2',
+                        teamName: 'Atlanta United 2',
+                        photoUrl: '',
+                        role: 'Public',
+                        sport: 'Soccer',
+                        location: 'Atlanta, GA',
+                        players: [],
+                        eventCount: 0,
+                        unreadCount: 0,
+                        openActions: 0,
+                        nextEvent: null,
+                        appAccess: true,
+                        webAccess: true,
+                        isPublic: true,
+                    },
+                    {
+                        teamId: 'search-kc-1',
+                        teamName: 'Kansas City Current',
+                        photoUrl: '',
+                        role: 'Public',
+                        sport: 'Soccer',
+                        location: 'Kansas City, MO',
+                        players: [],
+                        eventCount: 0,
+                        unreadCount: 0,
+                        openActions: 0,
+                        nextEvent: null,
+                        appAccess: true,
+                        webAccess: true,
+                        isPublic: true,
+                    }
+                ];
+
+                export async function getPublicTeamsPage({ searchText, cursor = null } = {}) {
+                    window.__publicTeamSearchCalls.push({ searchText, cursor });
+                    if (searchText === 'atlanta' && cursor === null) {
+                        return { teams: firstPage, nextCursor: 'search-page-2' };
+                    }
+                    if (searchText === 'atlanta' && cursor === 'search-page-2') {
+                        return { teams: secondPage, nextCursor: null };
+                    }
+                    return { teams: [], nextCursor: null };
+                }
             `
         });
     });
@@ -434,21 +551,53 @@ test.describe('mobile My Teams', () => {
         await mockTeamsModules(page, { scenario: 'empty' });
         await page.goto(appUrl(baseURL, '/teams?scenario=empty'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByRole('heading', { name: 'No teams linked yet' })).toBeVisible();
+        const emptyHeading = page.getByRole('heading', { name: 'No teams linked yet' });
+        await waitForTeamsRoute(page, emptyHeading, { requireSearchInput: false });
+        const emptyState = page.locator('section').filter({ hasText: 'No teams available' });
         await expect(page.getByText('No teams available')).toBeVisible();
         await expect(page.getByRole('link', { name: 'Accept invite' })).toHaveAttribute('href', '#/accept-invite');
-        await page.locator('a[href="https://allplays.ai/teams.html"]').click();
-        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/teams.html');
-        await expect(page.getByText('Loading teams')).toHaveCount(0);
+        await emptyState.getByRole('link', { name: 'Browse teams' }).click();
+        await expect(page).toHaveURL(/#\/teams\/browse$/);
+        await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
+        await expect(page.getByText(/^Loading teams$/)).toHaveCount(0);
+    });
+
+    test('browse teams paginates searched results on mobile without clearing the query', async ({ page, baseURL }) => {
+        await mockTeamsModules(page, { scenario: 'empty' });
+        await mockPublicTeamsBrowseModule(page);
+        await page.goto(appUrl(baseURL, '/teams/browse'), { waitUntil: 'domcontentloaded' });
+
+        await expect(page.getByRole('heading', { name: 'Discover Public Teams' })).toBeVisible();
+        const searchInput = page.getByPlaceholder('Search by team, city, state, or zip');
+        await searchInput.fill('atlanta');
+        await page.getByRole('button', { name: 'Search public teams' }).click();
+
+        await expect(page.getByText('Atlanta Fire')).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__publicTeamSearchCalls.at(-1))).toEqual({ searchText: 'atlanta', cursor: null });
+
+        await page.getByRole('button', { name: 'Load more teams' }).click();
+
+        await expect(page.getByText('Atlanta United 2')).toBeVisible();
+        await expect(page.getByText('Kansas City Current')).toBeVisible();
+        await expect(searchInput).toHaveValue('atlanta');
+        await expect(page.getByRole('heading', { level: 3 })).toHaveCount(2);
+        await expect(page.getByRole('button', { name: 'Load more teams' })).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => window.__publicTeamSearchCalls.at(-1))).toEqual({ searchText: 'atlanta', cursor: 'search-page-2' });
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        await expect(page).toHaveURL(/#\/teams\/browse$/);
     });
 
     test('shows load failures without trapping the user in loading state', async ({ page, baseURL }) => {
         await mockTeamsModules(page, { scenario: 'error' });
         await page.goto(appUrl(baseURL, '/teams?scenario=error'), { waitUntil: 'domcontentloaded' });
 
-        await expect(page.getByText('Team service down')).toBeVisible();
-        await expect(page.getByText('No teams available')).toBeVisible();
-        await expect(page.getByText('Loading teams')).toHaveCount(0);
+        await waitForTeamsRoute(page, page.getByText('Teams could not load'), { requireSearchInput: false });
+        await expect(page.getByText('Teams could not load')).toBeVisible();
+        await expect(page.getByText('Try loading teams again to restore your team dashboard.')).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Retry team load' })).toBeVisible();
+        await expect(page.getByText(/^Loading teams$/)).toHaveCount(0);
+        await expect(page.getByText('No teams available')).toHaveCount(0);
     });
 
     test('team detail tabs expose parent-facing team page features', async ({ page, baseURL }) => {

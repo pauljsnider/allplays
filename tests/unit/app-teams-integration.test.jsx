@@ -375,14 +375,16 @@ describe('React app Teams page', () => {
         expect(hrefs).toContain('/players/team-multi/player-2');
     });
 
-    it('shows clear empty and error states instead of a spinner', async () => {
+    it('shows clear retryable error UI instead of a spinner when the initial load fails', async () => {
         homeMocks.loadParentTeamsSummary.mockRejectedValueOnce(new Error('Team service down'));
 
         const { container } = await renderTeams('/teams');
 
-        await waitForText(container, 'Team service down');
-        expect(container.textContent).toContain('No teams available');
+        await waitForText(container, 'Teams could not load');
+        expect(container.textContent).toContain('Try loading teams again to restore your team dashboard.');
+        expect(buttonByText(container, 'Retry')).toBeTruthy();
         expect(container.textContent).not.toContain('Loading teams');
+        expect(container.textContent).not.toContain('No teams available');
     });
 
     it('handles signed-in accounts that do not have team access yet', async () => {
@@ -412,5 +414,129 @@ describe('React app Teams page', () => {
         expect(getHrefs(container)).toContain('/teams/browse');
         expect(container.textContent).not.toContain('Loading teams');
         expect(container.textContent).not.toContain('Website tools available');
+    });
+
+    it('auto-navigates to the team hub when the user has exactly one team', async () => {
+        const singleTeamModel = {
+            players: [],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: { players: 1, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 },
+            teams: [
+                {
+                    teamId: 'team-solo',
+                    teamName: 'Solo Bears',
+                    role: 'Parent',
+                    sport: 'Basketball',
+                    photoUrl: null,
+                    players: [{ teamId: 'team-solo', teamName: 'Solo Bears', playerId: 'player-1', playerName: 'Alex Star' }],
+                    nextEvent: null,
+                    eventCount: 3,
+                    unreadCount: 0,
+                    openActions: 0
+                }
+            ]
+        };
+        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(singleTeamModel);
+        homeMocks.loadParentHomeSummary.mockResolvedValueOnce(singleTeamModel);
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        mountedRoots.add(root);
+
+        function TeamHubRoute() {
+            return React.createElement('div', { 'data-testid': 'team-hub' }, 'Team hub stub');
+        }
+
+        await act(async () => {
+            root.render(React.createElement(
+                MemoryRouter,
+                { initialEntries: ['/teams'] },
+                React.createElement(
+                    Routes,
+                    null,
+                    React.createElement(Route, { path: '/teams', element: React.createElement(Teams, { auth }) }),
+                    React.createElement(Route, { path: '/teams/:teamId', element: React.createElement(TeamHubRoute) })
+                )
+            ));
+        });
+
+        await waitForText(container, 'Team hub stub');
+        expect(container.textContent).not.toContain('Choose a team');
+        expect(container.textContent).not.toContain('Loading teams');
+    });
+
+    it('does not auto-navigate away from an explicitly selected team while richer team data is still loading', async () => {
+        const singleTeamModel = {
+            players: [],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: { players: 1, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 },
+            teams: [
+                {
+                    teamId: 'team-solo',
+                    teamName: 'Solo Bears',
+                    role: 'Parent',
+                    sport: 'Basketball',
+                    photoUrl: null,
+                    players: [{ teamId: 'team-solo', teamName: 'Solo Bears', playerId: 'player-1', playerName: 'Alex Star' }],
+                    nextEvent: null,
+                    eventCount: 3,
+                    unreadCount: 0,
+                    openActions: 0
+                }
+            ]
+        };
+        const multiTeamModel = {
+            ...singleTeamModel,
+            metrics: { players: 1, teams: 2, rsvpNeeded: 0, unreadMessages: 3, packetsReady: 0 },
+            teams: [
+                singleTeamModel.teams[0],
+                {
+                    teamId: 'team-staff',
+                    teamName: 'Staff Wolves',
+                    role: 'Coach',
+                    sport: 'Soccer',
+                    photoUrl: null,
+                    players: [],
+                    nextEvent: null,
+                    eventCount: 0,
+                    unreadCount: 3,
+                    openActions: 1
+                }
+            ]
+        };
+        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(singleTeamModel);
+        homeMocks.loadParentHomeSummary.mockResolvedValueOnce(multiTeamModel);
+
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        mountedRoots.add(root);
+
+        function TeamHubRoute() {
+            return React.createElement('div', { 'data-testid': 'team-hub' }, 'Team hub stub');
+        }
+
+        await act(async () => {
+            root.render(React.createElement(
+                MemoryRouter,
+                { initialEntries: ['/teams?selectedTeamId=team-staff&from=home'] },
+                React.createElement(
+                    Routes,
+                    null,
+                    React.createElement(Route, { path: '/teams', element: React.createElement(Teams, { auth }) }),
+                    React.createElement(Route, { path: '/teams/:teamId', element: React.createElement(TeamHubRoute) })
+                )
+            ));
+        });
+
+        await waitForText(container, '2 teams ready');
+        expect(container.textContent).toContain('Choose a team');
+        expect(container.querySelector('[data-testid="team-hub"]')).toBeNull();
+        expect(buttonByText(container, 'Staff Wolves').getAttribute('aria-pressed')).toBe('true');
     });
 });

@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ParentTools } from './ParentTools';
 import type { AuthState } from '../lib/types';
+import { openPublicUrl } from '../lib/publicActions';
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
     buildParentScheduleIcs: vi.fn(),
@@ -331,6 +332,109 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
     });
 
+    it('loads calendar tools with cached defaults across remounts and forces refresh on demand', async () => {
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [
+                {
+                    id: 'event-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    type: 'game',
+                    date: new Date('2100-06-01T18:00:00Z')
+                }
+            ],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        });
+
+        const firstRender = renderParentTools(['/parent-tools/calendar']);
+        expect(await screen.findByText('Bears')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, auth.user, {});
+        firstRender.unmount();
+
+        renderParentTools(['/parent-tools/calendar']);
+        expect(await screen.findByText('Bears')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, auth.user, {});
+
+        fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(3, auth.user, { force: true }));
+    });
+
+    it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-1',
+                title: 'Team dues',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                statusLabel: 'Open',
+                balanceDueCents: 10000,
+                checkoutUrl: 'https://pay.example.test/legacy',
+                canPay: true,
+                checkoutInitiatable: false,
+                paymentAction: '',
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+
+        renderParentTools(['/parent-tools/fees']);
+
+        await screen.findByText('Team dues');
+        fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
+
+        await waitFor(() => {
+            expect(openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/legacy');
+        });
+        expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+    });
+
+    it('regenerates stale team fee checkout links instead of opening the stored URL', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-1',
+                title: 'Team dues',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$100',
+                dueLabel: 'Today',
+                statusLabel: 'Open',
+                balanceDueCents: 10000,
+                checkoutUrl: 'https://pay.example.test/stale',
+                checkoutStatus: 'stale',
+                canPay: true,
+                checkoutInitiatable: true,
+                paymentAction: 'createCheckout',
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+        parentToolsServiceMocks.initiateParentTeamFeeCheckout.mockResolvedValue({
+            success: true,
+            checkoutUrl: 'https://pay.example.test/fresh'
+        });
+
+        renderParentTools(['/parent-tools/fees']);
+
+        await screen.findByText('Team dues');
+        fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
+
+        await waitFor(() => {
+            expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).toHaveBeenCalledWith('team-1', 'batch-1', 'recipient-1');
+        });
+        expect(openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/fresh');
+        expect(openPublicUrl).not.toHaveBeenCalledWith('https://pay.example.test/stale');
+    });
+
     it('redirects invalid tabs without triggering a hook order violation', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -438,6 +542,44 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
         expect(await screen.findByText('Team dues')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(2);
+    });
+
+    it('forces a calendar reload after access changes update linked players', async () => {
+        parentToolsServiceMocks.loadParentCalendarTools
+            .mockResolvedValueOnce({
+                events: [],
+                teams: []
+            })
+            .mockResolvedValueOnce({
+                events: [
+                    {
+                        id: 'event-1',
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        type: 'game',
+                        date: new Date('2100-06-01T18:00:00Z')
+                    }
+                ],
+                teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+            });
+
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        await screen.findByText('No team schedules');
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, auth.user, {});
+
+        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        await screen.findByText('Request player access');
+        fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
+        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
+
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        expect(await screen.findByText('Bears')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, auth.user, { force: true });
     });
 
     it('refreshes the currently viewed dependent tab when access changes finish after navigation', async () => {

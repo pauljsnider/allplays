@@ -3,8 +3,10 @@ import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, Chev
 import { Link } from 'react-router-dom';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
-import { getCachedAppData, loadCachedAppData } from '../lib/appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { startUxTimer } from '../lib/uxTiming';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
@@ -13,11 +15,13 @@ import {
   formatEventDateLabel,
   formatEventTimeLabel,
   getCalendarScheduleEntries,
+  getScheduleEventDetailPath,
   getParentScheduleTeamOptions,
   getPracticePacketRows,
   getScheduleTitle,
   getScheduleMapHref,
   getScheduleForecastHref,
+  getScheduleTaskDetailSection,
   normalizeRsvpResponse,
   validateExternalCalendarUrl,
   type CalendarScheduleEntry,
@@ -128,8 +132,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [timeRange, setTimeRange] = useState<ScheduleTimeRange>('all');
   const [children, setChildren] = useState<ParentScheduleChild[]>([]);
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
+  const { loading, error, clearError, run: runAsyncOperation } = useAsyncOperation();
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [visibleListCount, setVisibleListCount] = useState(upcomingListPageSize);
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -160,6 +164,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
   const [mobileStaffToolsOpen, setMobileStaffToolsOpen] = useState(false);
+  const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
+  const hasLoadedScheduleRef = useRef(false);
+
+  const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+    setChildren(data.children);
+    setEvents(data.events);
+  };
+
+  const hasLoadedSchedule = Boolean(auth.user?.uid) && loadedScheduleUserId === auth.user?.uid && hasLoadedScheduleRef.current;
+  const isInitialScheduleLoad = Boolean(auth.user?.uid) && loadedScheduleUserId !== auth.user?.uid;
 
   const clearAiPreview = () => {
     if (scheduleImportPreviewSource === 'ai') {
@@ -169,60 +183,76 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
 
   const refreshSchedule = async (force = false) => {
-    if (!auth.user) return;
-    setLoading(true);
-    setError(null);
+    if (!auth.user) return null;
+    clearError();
+    setScheduleLoadError(null);
     setStatusMessage(null);
     const timer = startUxTimer('schedule summary load');
-    const hasExistingSchedule = events.length > 0; // Check current state
-    try {
-      const cacheKey = `app-schedule-summary:${auth.user.uid}`;
-      const scheduleCacheTtlMs = 60 * 1000 * 5; // Placeholder for cache TTL (5 minutes)
-      const cached = getCachedAppData(cacheKey); // Assuming getCachedAppData is available
+    const hasExistingSchedule = hasLoadedScheduleRef.current;
+    const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);
+    const scheduleCacheTtlMs = 60 * 1000 * 5;
+    const cached = getCachedAppData(cacheKey);
 
-      const result = await loadCachedAppData(
+    return runAsyncOperation(
+      () => loadCachedAppData(
         cacheKey,
         () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
         { ttlMs: scheduleCacheTtlMs, force }
-      );
+      ),
+      {
+        getErrorMessage: (loadError) => {
+          return getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule);
+        },
+        rethrow: false,
+        onSuccess: (result) => {
+          hasLoadedScheduleRef.current = true;
+          setLoadedScheduleUserId(auth.user?.uid || null);
+          setScheduleLoadError(null);
+          applyScheduleResult(result);
 
-      // Define applyScheduleResult here to access state setters
-      const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
-        setChildren(data.children);
-        setEvents(data.events);
-      };
-      applyScheduleResult(result);
+          if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
+            setSelectedPlayerId('');
+          }
+          if (selectedTeamId && !result.children.some((child) => child.teamId === selectedTeamId)) {
+            setSelectedTeamId('');
+          }
+          const firstUpcoming = filterParentScheduleEvents(result.events, { filter: 'upcoming-all' })[0];
+          if (firstUpcoming) {
+            setCalendarMonth(new Date(firstUpcoming.date.getFullYear(), firstUpcoming.date.getMonth(), 1));
+          }
 
-      // Logic from HEAD that adjusts selectedPlayerId, selectedTeamId, and calendarMonth
-      if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
-        setSelectedPlayerId('');
+          timer.end({
+            cacheHit: Boolean(cached) && !force,
+            force,
+            children: result.children.length,
+            eventRows: result.events.length,
+            groupedEvents: getCalendarScheduleEntries(result.events).length
+          });
+        },
+        onError: (loadError) => {
+          const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
+          setScheduleLoadError(mappedError);
+          if (!hasExistingSchedule) {
+            applyScheduleResult({ children: [], events: [] });
+          }
+          setLoadedScheduleUserId(auth.user?.uid || null);
+          timer.end({
+            force,
+            error: mappedError.message
+          });
+        }
       }
-      if (selectedTeamId && !result.children.some((child) => child.teamId === selectedTeamId)) {
-        setSelectedTeamId('');
-      }
-      const firstUpcoming = filterParentScheduleEvents(result.events, { filter: 'upcoming-all' })[0];
-      if (firstUpcoming) {
-        setCalendarMonth(new Date(firstUpcoming.date.getFullYear(), firstUpcoming.date.getMonth(), 1));
-      }
-
-      timer.end({
-        cacheHit: Boolean(cached) && !force,
-        force,
-        children: result.children.length,
-        eventRows: result.events.length,
-        groupedEvents: getCalendarScheduleEntries(result.events).length
-      });
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load schedule.');
-      if (!hasExistingSchedule) setEvents([]);
-      timer.end({ force: false, error: loadError?.message || 'Unable to load schedule.' }); // Use hardcoded false for force in catch
-    } finally {
-      setLoading(false);
-    }
+    );
   };
 
   useEffect(() => {
-    refreshSchedule();
+    hasLoadedScheduleRef.current = false;
+    if (!auth.user?.uid) {
+      setLoadedScheduleUserId(null);
+      applyScheduleResult({ children: [], events: [] });
+      return;
+    }
+    void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
@@ -374,7 +404,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setCsvPreviewRows([]);
     setScheduleImportPreviewSource(null);
     setStatusMessage(null);
-    setError(null);
+    clearError();
     const currentGames = events
       .filter((event) => event.teamId === selectedCalendarTeam.teamId && event.type === 'game' && event.isDbGame)
       .map((event) => ({
@@ -420,7 +450,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setImportingCsv(true);
     setCsvImportErrors([]);
     setStatusMessage(null);
-    setError(null);
+    clearError();
     const failedRows: ScheduleCsvImportPreviewRow[] = [];
     let importedCount = 0;
     for (const row of csvPreviewRows) {
@@ -459,7 +489,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setSavingCalendarUrl(true);
     setCalendarUrlError(null);
     setStatusMessage(null);
-    setError(null);
+    clearError();
     try {
       const result = await addTeamCalendarUrl(selectedCalendarTeam.teamId, validation.url, auth.user);
       setCalendarUrl('');
@@ -481,7 +511,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setRemovingCalendarUrl(url);
     setCalendarUrlError(null);
     setStatusMessage(null);
-    setError(null);
+    clearError();
     try {
       const result = await removeTeamCalendarUrl(selectedCalendarTeam.teamId, url, auth.user);
       setStatusMessage(result.removed ? 'Calendar link removed. Refreshing schedule…' : 'Calendar link was already removed. Refreshing schedule…');
@@ -798,9 +828,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
 
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
-          {error ? <Status tone="error" message={error} /> : null}
+          {error ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : error} /> : null}
 
-          {loading ? (
+          {loading || isInitialScheduleLoad ? (
             <LoadingSchedule />
           ) : view === 'calendar' ? (
             <CalendarSchedule
@@ -1295,6 +1325,21 @@ function Status({ tone, message }: { tone: 'success' | 'error'; message: string 
       {message}
     </div>
   );
+}
+
+function getScheduleLoadErrorMessage(error: AppServiceError, hasExistingSchedule: boolean) {
+  if (hasExistingSchedule) {
+    if (error.type === 'network') return 'Unable to refresh schedule while offline. Showing the last loaded schedule.';
+    if (error.type === 'permission') return 'Unable to refresh schedule because access was denied. Showing the last loaded schedule.';
+    if (error.type === 'not_found') return 'Unable to refresh schedule because the requested data was not found. Showing the last loaded schedule.';
+    if (error.type === 'validation') return error.message;
+    return 'Unable to refresh schedule. Showing the last loaded schedule. Try again.';
+  }
+  if (error.type === 'network') return 'Unable to load schedule while offline. Check your connection and try again.';
+  if (error.type === 'permission') return 'You do not have permission to load this schedule.';
+  if (error.type === 'not_found') return 'Schedule data was not found. Try again after refreshing your team access.';
+  if (error.type === 'validation') return error.message;
+  return error.message || 'Unable to load schedule. Try again.';
 }
 
 type ScheduleWebInsights = {
@@ -1863,9 +1908,7 @@ function ScheduleEventCard({ event }: {
 }
 
 function getEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) {
-  const params = new URLSearchParams();
-  if (event.childId) params.set('childId', event.childId);
-  return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${params.toString() ? `?${params}` : ''}`;
+  return getScheduleEventDetailPath(event, getScheduleTaskDetailSection(event));
 }
 
 function getScheduleChildLabel(event: ParentScheduleEvent | CalendarScheduleEntry) {

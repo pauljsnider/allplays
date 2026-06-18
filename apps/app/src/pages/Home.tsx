@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { HomePageSkeleton } from '../components/PageSkeletons';
 import { loadParentHomeSummaryBootstrap, loadParentHomeWithSecondaryData } from '../lib/homeService';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import {
   blockFriend,
   commentOnSocialPost,
@@ -63,6 +64,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import {
   emptySocialHome,
   filterSocialFeedItems,
@@ -134,43 +136,70 @@ export function Home({ auth }: { auth: AuthState }) {
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [social, setSocial] = useState<SocialHomeModel>(() => emptySocialHome());
   const [activeSection, setActiveSection] = useState<HomeSectionId>('today');
-  const [loading, setLoading] = useState(true);
-  const [socialLoading, setSocialLoading] = useState(false);
   const [officialsAccess, setOfficialsAccess] = useState<{ hasAccess: boolean; teamCount: number } | null>(null);
-  const [error, setError] = useState('');
   const [socialStatus, setSocialStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
+  const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
+  const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
+  const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
+
+  const authUserId = auth.user?.uid || null;
+  const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
 
   const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
-    if (!auth.user) return;
-    setLoading(true);
-    setSocialLoading(true);
-    setError('');
+    const user = auth.user;
+    if (!user) return;
+    const hasExistingHome = loadedHomeDetailsUserId === user.uid;
+    clearError();
+    setHomeLoadError(null);
     setSocialStatus(null);
-    try {
-      const { home: nextHome, schedule } = await loadParentHomeSummaryBootstrap(auth.user, { force });
-      setHome(nextHome);
-      setLoading(false);
+    return runPrimaryLoad(
+      async () => {
+        const summary = await loadParentHomeSummaryBootstrap(user, { force });
+        setHome(summary.home);
+        setHomeLoadError(null);
 
-      void loadParentHomeWithSecondaryData(auth.user, { force, schedule })
-        .then(async (secondaryHome) => {
-          setHome(secondaryHome);
-          setSocial(await loadSocialHome(auth.user, secondaryHome));
-        })
-        .catch((secondaryError: any) => {
-          setSocialStatus({ tone: 'error', message: secondaryError?.message || 'Unable to refresh Home details.' });
-        })
-        .finally(() => {
-          setSocialLoading(false);
-        });
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load Home.');
-      setHome(emptyHome());
-      setSocial(emptySocialHome());
-      setSocialLoading(false);
-      setLoading(false);
-    }
+        void runSecondaryLoad(
+          async () => {
+            const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
+            setHome(secondaryHome);
+            setSocial(await loadSocialHome(user, secondaryHome));
+            setLoadedHomeDetailsUserId(user.uid);
+            setHomeLoadError(null);
+          },
+          {
+            rethrow: false,
+            getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
+            onError: (secondaryError) => {
+              const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
+              if (!hasExistingHome) {
+                setHomeLoadError(appError);
+                setLoadedHomeDetailsUserId(null);
+                setSocial(emptySocialHome());
+                return;
+              }
+              setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
+            }
+          }
+        );
+
+        return summary;
+      },
+      {
+        getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome),
+        rethrow: false,
+        onError: (loadError) => {
+          setHomeLoadError(toAppServiceError(loadError, 'Unable to load Home.'));
+          if (!hasExistingHome) {
+            setHome(emptyHome());
+            setSocial(emptySocialHome());
+            setLoadedHomeDetailsUserId(null);
+          }
+        }
+      }
+    );
   };
 
   useEffect(() => {
@@ -191,7 +220,7 @@ export function Home({ auth }: { auth: AuthState }) {
         }
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && typeof window !== 'undefined') {
           setOfficialsAccess({ hasAccess: false, teamCount: 0 });
         }
       });
@@ -211,6 +240,7 @@ export function Home({ auth }: { auth: AuthState }) {
   }, [searchParams]);
 
   const topAction = home.actionItems[0] || null;
+  const showBlockingErrorState = !loading && !hasLoadedHomeDetails && Boolean(homeLoadError);
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
   const today = new Date();
@@ -243,15 +273,21 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   const refreshSocial = async (nextHome = home) => {
-    if (!auth.user) return;
-    setSocialLoading(true);
-    try {
-      setSocial(await loadSocialHome(auth.user, nextHome));
-    } catch (loadError: any) {
-      setSocialStatus({ tone: 'error', message: loadError?.message || 'Unable to refresh Feed.' });
-    } finally {
-      setSocialLoading(false);
-    }
+    const user = auth.user;
+    if (!user) return;
+    setSocialStatus(null);
+    await runSecondaryLoad(
+      async () => {
+        setSocial(await loadSocialHome(user, nextHome));
+      },
+      {
+        getErrorMessage: (loadError) => getAsyncErrorMessage(loadError, 'Unable to refresh Feed.'),
+        rethrow: false,
+        onError: (loadError) => {
+          setSocialStatus({ tone: 'error', message: getAsyncErrorMessage(loadError, 'Unable to refresh Feed.') });
+        }
+      }
+    );
   };
 
   const handleCreatePost = async (input: CreateSocialPostInput) => {
@@ -335,8 +371,10 @@ export function Home({ auth }: { auth: AuthState }) {
 
       {loading ? <HomePageSkeleton /> : null}
 
-      {!loading && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} officialsAccess={officialsAccess} /> : null}
-      {!loading && activeSection === 'feed' ? (
+      {showBlockingErrorState ? <HomeLoadErrorState error={homeLoadError} onRetry={() => refreshHome({ force: true })} retrying={loading} /> : null}
+
+      {!loading && !showBlockingErrorState && activeSection === 'today' ? <TodaySection home={home} social={social} socialLoading={socialLoading} onOpenComposer={openComposer} officialsAccess={officialsAccess} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'feed' ? (
         <FeedSection
           social={social}
           loading={socialLoading}
@@ -347,9 +385,9 @@ export function Home({ auth }: { auth: AuthState }) {
           onStatus={setSocialStatus}
         />
       ) : null}
-      {!loading && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
-      {!loading && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
-      {!loading && activeSection === 'friends' ? (
+      {!loading && !showBlockingErrorState && activeSection === 'players' ? <PlayersSection players={home.players} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'teams' ? <TeamsSection teams={home.teams} /> : null}
+      {!loading && !showBlockingErrorState && activeSection === 'friends' ? (
         <FriendsSection
           auth={auth}
           home={home}
@@ -1707,6 +1745,21 @@ function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: str
   );
 }
 
+function HomeLoadErrorState({ error, onRetry, retrying }: { error: AppServiceError | null; onRetry: () => void; retrying: boolean }) {
+  const copy = getHomeLoadErrorStateCopy(error);
+  return (
+    <section className="app-card p-5 text-center">
+      <AlertCircle className="mx-auto h-8 w-8 text-rose-400" aria-hidden="true" />
+      <div className="mt-3 text-sm font-black text-gray-900">{copy.title}</div>
+      <div className="mt-1 text-xs font-semibold text-gray-500">{copy.detail}</div>
+      <button type="button" className="primary-button mx-auto mt-4 !min-h-10 !px-4 text-sm" onClick={onRetry} disabled={retrying} aria-label="Retry loading Home">
+        {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+        Retry
+      </button>
+    </section>
+  );
+}
+
 function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const isError = tone === 'error';
   return (
@@ -1715,4 +1768,65 @@ function Status({ tone, message }: { tone: 'error' | 'success'; message: string 
       {message}
     </div>
   );
+}
+
+function getAsyncErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+}
+
+function getHomeLoadErrorMessage(error: AppServiceError, hasExistingHome: boolean) {
+  if (hasExistingHome) {
+    if (error.type === 'network') return 'Unable to refresh Home while offline. Showing the last loaded Home.';
+    if (error.type === 'permission') return 'Unable to refresh Home because access was denied. Showing the last loaded Home.';
+    if (error.type === 'not_found') return 'Unable to refresh Home because the requested data was not found. Showing the last loaded Home.';
+    if (error.type === 'validation') return error.message;
+    return 'Unable to refresh Home. Showing the last loaded Home. Try again.';
+  }
+  if (error.type === 'network') return 'Unable to load Home while offline. Check your connection and try again.';
+  if (error.type === 'permission') return 'You do not have permission to load this Home data.';
+  if (error.type === 'not_found') return 'Home data was not found. Try again or check the linked team access.';
+  if (error.type === 'validation') return error.message;
+  return getAsyncErrorMessage(error, 'Unable to load Home. Try again.');
+}
+
+function getHomeSecondaryErrorMessage(error: AppServiceError) {
+  if (error.type === 'network') return 'Home details could not refresh while offline.';
+  if (error.type === 'permission') return 'Home details could not refresh because access was denied.';
+  if (error.type === 'not_found') return 'Home details could not refresh because some data was not found.';
+  if (error.type === 'validation') return error.message;
+  return getAsyncErrorMessage(error, 'Unable to refresh Home details.');
+}
+
+function getHomeLoadErrorStateCopy(error: AppServiceError | null) {
+  if (error?.type === 'network') {
+    return {
+      title: 'Home could not connect',
+      detail: 'Check your connection and try loading Home again.'
+    };
+  }
+  if (error?.type === 'permission') {
+    return {
+      title: 'Home access is blocked',
+      detail: 'Your account does not have permission to load this Home data.'
+    };
+  }
+  if (error?.type === 'not_found') {
+    return {
+      title: 'Home data was not found',
+      detail: 'The linked Home data is missing. Try again after refreshing your team access.'
+    };
+  }
+  if (error?.type === 'validation') {
+    return {
+      title: 'Home request needs attention',
+      detail: error.message
+    };
+  }
+  return {
+    title: 'Home could not load',
+    detail: 'Try loading Home again to restore your dashboard.'
+  };
 }

@@ -97,6 +97,31 @@ function isTeamFeeCheckoutEligible(recipient = {}) {
     return getTeamFeeBalanceCents(recipient) > 0;
 }
 
+function collectParentContactUserIds(parents = []) {
+    return (Array.isArray(parents) ? parents : [])
+        .map((parent) => normalizeString(parent?.userId || parent?.uid || parent?.parentUserId || parent?.guardianUserId))
+        .filter(Boolean);
+}
+
+function getTeamFeeRecipientTargetUserIds(recipient = {}, player = {}, privateProfile = {}) {
+    const directUserIds = [
+        recipient.parentUserId,
+        recipient.accountUserId,
+        recipient.userId,
+        player.parentUserId,
+        player.guardianUserId,
+        privateProfile.parentUserId,
+        privateProfile.guardianUserId
+    ].map((value) => normalizeString(value)).filter(Boolean);
+    const parentUserIds = [
+        ...collectParentContactUserIds(player.parents),
+        ...collectParentContactUserIds(player.privateProfileParents),
+        ...collectParentContactUserIds(privateProfile.parents)
+    ];
+
+    return [...new Set([...directUserIds, ...parentUserIds])];
+}
+
 function isEligibleTeamFeePayer({ team = {}, user = {}, uid = '', email = '', recipient = {} } = {}) {
     if (!uid) return false;
     if (team.ownerId && team.ownerId === uid) return true;
@@ -108,20 +133,16 @@ function isEligibleTeamFeePayer({ team = {}, user = {}, uid = '', email = '', re
         return true;
     }
 
-    if ([recipient.parentUserId, recipient.accountUserId, recipient.userId].some((value) => value && value === uid)) {
+    if (getTeamFeeRecipientTargetUserIds(recipient).includes(uid)) {
         return true;
     }
 
     const teamId = normalizeString(recipient.teamId || team.id);
     const playerId = normalizeString(recipient.playerId);
     const playerKey = normalizeString(recipient.playerKey || (teamId && playerId ? `${teamId}::${playerId}` : ''));
-    const parentTeamIds = Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [];
     const parentPlayerKeys = Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [];
 
-    return Boolean(
-        (teamId && parentTeamIds.includes(teamId)) ||
-        (playerKey && parentPlayerKeys.includes(playerKey))
-    );
+    return Boolean(playerKey && parentPlayerKeys.includes(playerKey));
 }
 
 function buildTeamFeeCheckoutUrls(appUrl, { teamId, batchId, recipientId }) {
@@ -383,6 +404,7 @@ module.exports = {
     isOnlineTeamFeeCollection,
     isTeamFeeCheckoutEligible,
     isEligibleTeamFeePayer,
+    getTeamFeeRecipientTargetUserIds,
     buildTeamFeeCheckoutUrls,
     buildTeamFeeCheckoutMetadata,
     canReuseTeamFeeCheckoutSession,

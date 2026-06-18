@@ -389,6 +389,10 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
                     onChange={(event) => setRedeemCode(event.target.value.toUpperCase())}
                     maxLength={8}
                     placeholder="XXXXXXXX"
+                    inputMode="text"
+                    autoCapitalize="characters"
+                    autoComplete="one-time-code"
+                    enterKeyHint="go"
                     disabled={redeeming || saving}
                   />
                 </label>
@@ -499,15 +503,24 @@ function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: n
   const balanceCents = visibleFees.reduce((sum, fee) => sum + Number(fee.balanceDueCents ?? fee.amountDueCents ?? 0), 0);
   const payFee = async (fee: ParentFeeAppRecord) => {
     const feeKey = getFeeCardKey(fee);
+    const checkoutStatus = String(fee.checkoutStatus || '').toLowerCase();
+    const reusableCheckoutUrl = Boolean(fee.checkoutUrl) && (!checkoutStatus || checkoutStatus === 'open');
     setPayingFeeId(feeKey);
     setFeeErrors((current) => ({ ...current, [feeKey]: '' }));
     try {
-      if (fee.checkoutUrl) {
+      if (fee.paymentAction === 'checkoutUrl' || (!fee.paymentAction && reusableCheckoutUrl)) {
         await openPublicUrl(String(fee.checkoutUrl));
         return;
       }
-      const checkout = await initiateParentTeamFeeCheckout(String(fee.teamId || ''), String(fee.batchId || ''), String(fee.recipientId || ''));
-      await openPublicUrl(checkout.checkoutUrl);
+      if (fee.paymentAction === 'createCheckout' || (!fee.paymentAction && fee.checkoutInitiatable)) {
+        const checkout = await initiateParentTeamFeeCheckout(String(fee.teamId || ''), String(fee.batchId || ''), String(fee.recipientId || ''));
+        await openPublicUrl(checkout.checkoutUrl);
+        return;
+      }
+      if (!reusableCheckoutUrl) {
+        throw new Error('Checkout is not available for this fee.');
+      }
+      await openPublicUrl(String(fee.checkoutUrl));
     } catch (payError: any) {
       setFeeErrors((current) => ({ ...current, [feeKey]: payError?.message || 'Unable to open checkout. Please try again.' }));
     } finally {
@@ -561,12 +574,12 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const refresh = async () => {
+  const refresh = async (options: { force?: boolean } = {}) => {
     setLoading(true);
     setError('');
     setMessage('');
     try {
-      const model = await loadParentCalendarTools(auth.user);
+      const model = await loadParentCalendarTools(auth.user, options);
       setEvents(model.events);
       setTeams(model.teams);
     } catch (loadError: any) {
@@ -577,7 +590,7 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
   };
 
   useEffect(() => {
-    void refresh();
+    void refresh(refreshVersion > 0 ? { force: true } : {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, refreshVersion]);
 
@@ -630,7 +643,7 @@ function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersio
   return (
     <div className="space-y-3">
       <section className="app-card p-4">
-        <ToolHeader icon={CalendarDays} title="Calendar tools" detail="Download your family schedule or subscribe by team." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
+        <ToolHeader icon={CalendarDays} title="Calendar tools" detail="Download your family schedule or subscribe by team." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={() => { void refresh({ force: true }); }} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
         {error ? <Status tone="error" message={error} /> : null}
         {message ? <Status tone="success" message={message} /> : null}
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -770,10 +783,10 @@ function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refres
               </select>
             </label>
             <div className="grid gap-3 sm:grid-cols-2">
-              <input className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" disabled={saving || !linkedPlayers.length} />
-              <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Household contact email" disabled={saving || !linkedPlayers.length} />
+              <input className="auth-input" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Name (optional)" autoComplete="name" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
+              <input className="auth-input" type="email" inputMode="email" autoComplete="email" enterKeyHint="send" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Household contact email" disabled={saving || !linkedPlayers.length} />
             </div>
-            <input className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" disabled={saving || !linkedPlayers.length} />
+            <input className="auth-input" value={relation} onChange={(event) => setRelation(event.target.value)} placeholder="Relation, like grandparent or guardian" autoComplete="off" enterKeyHint="next" disabled={saving || !linkedPlayers.length} />
             <button type="submit" className="primary-button" disabled={saving || loading || !linkedPlayers.length}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Users className="h-4 w-4" aria-hidden="true" />}
               Create household invite

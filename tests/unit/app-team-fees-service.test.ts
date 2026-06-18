@@ -54,19 +54,23 @@ describe('React app team fee offline payment service', () => {
             paidAt: null,
             manualPayment: {
                 amountPaidCents: 2500,
-                paidAt: '2026-05-28',
-                note: 'Check 1001',
-                recordedBy: 'coach-1'
+                paidAt: '2026-05-28'
             }
         });
         expect(update.ledgerEntries).toEqual([
             expect.objectContaining({
                 type: 'offline_payment',
                 amountCents: 2500,
-                paymentDate: '2026-05-28',
-                recordedBy: 'coach-1'
+                paymentDate: '2026-05-28'
             })
         ]);
+        expect(update.adminBilling).toEqual(expect.objectContaining({
+            type: 'offline_payment',
+            amountPaidCents: 2500,
+            paidAt: '2026-05-28',
+            note: 'Check 1001',
+            recordedBy: 'coach-1'
+        }));
     });
 
     it('builds a paid update when payment exactly covers the remaining balance', () => {
@@ -84,6 +88,7 @@ describe('React app team fee offline payment service', () => {
     });
 
     it('rejects invalid amount and missing payment date', () => {
+        expect(() => buildManualPaymentUpdate({ amount: '-0.01', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '0', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '-1.00', date: '2026-05-28' })).toThrow('greater than $0');
         expect(() => buildManualPaymentUpdate({ amount: '5.00', date: '' })).toThrow('payment date');
@@ -121,9 +126,7 @@ describe('React app team fee offline payment service', () => {
             adjustment: {
                 amountCents: 2000,
                 previousAmountDueCents: 15000,
-                amountDueCents: 13000,
-                note: 'Scholarship credit',
-                adjustedBy: 'coach-1'
+                amountDueCents: 13000
             }
         });
         expect(update.ledgerEntries).toEqual([
@@ -131,10 +134,17 @@ describe('React app team fee offline payment service', () => {
                 type: 'balance_adjustment',
                 amountCents: 2000,
                 previousAmountDueCents: 15000,
-                amountDueCents: 13000,
-                reason: 'Scholarship credit'
+                amountDueCents: 13000
             })
         ]);
+        expect(update.adminBilling).toEqual(expect.objectContaining({
+            type: 'balance_adjustment',
+            amountCents: 2000,
+            previousAmountDueCents: 15000,
+            amountDueCents: 13000,
+            reason: 'Scholarship credit',
+            adjustedBy: 'coach-1'
+        }));
     });
 
     it('treats negative adjustments as charges that increase the amount owed', () => {
@@ -177,9 +187,7 @@ describe('React app team fee offline payment service', () => {
             refunded: {
                 amountCents: 1500,
                 refundType: 'partial',
-                refundMethod: 'check',
-                note: 'Parent returned duplicate cash payment',
-                recordedBy: 'coach-1'
+                refundMethod: 'check'
             }
         });
         expect(update.ledgerEntries).toEqual([
@@ -192,6 +200,15 @@ describe('React app team fee offline payment service', () => {
                 methodLabel: 'Check'
             })
         ]);
+        expect(update.adminBilling).toEqual(expect.objectContaining({
+            type: 'offline_refund',
+            refundAmountCents: 1500,
+            refundType: 'partial',
+            refundMethod: 'check',
+            methodLabel: 'Check',
+            note: 'Parent returned duplicate cash payment',
+            recordedBy: 'coach-1'
+        }));
     });
 
     it('builds full offline refunds back to unpaid', () => {
@@ -255,7 +272,7 @@ describe('React app team fee offline payment service', () => {
 
         expect(model.canManageFees).toBe(true);
         expect(model.selectedBatch?.id).toBe('batch-1');
-        expect(model.rosterPlayers).toEqual([{ id: 'player-1', name: 'Pat Star', number: '12' }]);
+        expect(model.rosterPlayers).toEqual([{ id: 'player-1', name: 'Pat Star', number: '12', parentName: '', parentEmail: '' }]);
         expect(model.recipients[0]).toMatchObject({
             id: 'recipient-1',
             playerName: 'Pat Star',
@@ -295,7 +312,7 @@ describe('React app team fee offline payment service', () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.getPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Pat Star', number: '12', active: true },
-            { id: 'player-2', name: 'Chris Doe', number: '7', active: true },
+            { id: 'player-2', name: 'Chris Doe', number: '7', active: true, parents: [{ name: 'Dana Doe', email: 'Dana@Example.com' }] },
             { id: 'player-3', name: 'Inactive Player', active: false }
         ]);
         dbMocks.createTeamFeeBatch.mockResolvedValue({ id: 'batch-9' });
@@ -330,6 +347,8 @@ describe('React app team fee offline payment service', () => {
                 playerId: 'player-2',
                 playerKey: 'team-1::player-2',
                 playerName: 'Chris Doe',
+                parentName: 'Dana Doe',
+                parentEmail: 'dana@example.com',
                 amountCents: 2500,
                 dueDate: '2026-06-15',
                 status: 'unpaid'
@@ -337,10 +356,39 @@ describe('React app team fee offline payment service', () => {
         ], expect.objectContaining({ uid: 'coach-1' }));
     });
 
-    it('creates a whole-roster fee batch from active players only', async () => {
+    it('rejects fee batch recipients that are not active roster players', async () => {
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
         dbMocks.getPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Pat Star', active: true },
+            { id: 'player-2', name: 'Inactive Player', active: false }
+        ]);
+
+        await expect(createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Tournament dues',
+            amount: '25.00',
+            dueDate: '2026-06-15',
+            applyToWholeRoster: false,
+            recipientIds: ['player-1', 'missing-player', 'player-2'],
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        })).rejects.toThrow('missing-player, player-2');
+
+        expect(dbMocks.createTeamFeeBatch).not.toHaveBeenCalled();
+    });
+
+    it('creates a whole-roster fee batch from active players only and uses private-profile parent contacts', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Pat Star',
+                active: true,
+                privateProfileParents: [{
+                    name: 'Pat Parent',
+                    email: 'Pat.Parent@Example.com',
+                    userId: 'parent-1'
+                }]
+            },
             { id: 'player-2', name: 'Chris Doe', active: true },
             { id: 'player-3', name: 'Inactive Player', active: false }
         ]);
@@ -356,8 +404,8 @@ describe('React app team fee offline payment service', () => {
         });
 
         expect(dbMocks.createTeamFeeBatch).toHaveBeenCalledWith('team-1', expect.any(Object), [
-            expect.objectContaining({ playerId: 'player-1' }),
-            expect.objectContaining({ playerId: 'player-2' })
+            expect.objectContaining({ playerId: 'player-1', parentName: 'Pat Parent', parentEmail: 'pat.parent@example.com' }),
+            expect.objectContaining({ playerId: 'player-2', parentName: '', parentEmail: '' })
         ], expect.any(Object));
     });
 
@@ -390,8 +438,9 @@ describe('React app team fee offline payment service', () => {
             amountPaidCents: 10000,
             remainingBalanceCents: 0,
             paidAt: '2026-05-28',
-            manualPayment: expect.objectContaining({ amountPaidCents: 10000, note: 'Cash' }),
-            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 10000 })]
+            manualPayment: expect.objectContaining({ amountPaidCents: 10000 }),
+            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 10000 })],
+            adminBilling: expect.objectContaining({ type: 'offline_payment', note: 'Cash' })
         }));
     });
 
@@ -424,8 +473,9 @@ describe('React app team fee offline payment service', () => {
             amountPaidCents: 7000,
             remainingBalanceCents: 3000,
             paidAt: null,
-            manualPayment: expect.objectContaining({ amountPaidCents: 1000, note: 'Cash' }),
-            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 1000 })]
+            manualPayment: expect.objectContaining({ amountPaidCents: 1000 }),
+            ledgerEntries: [expect.objectContaining({ type: 'offline_payment', amountCents: 1000 })],
+            adminBilling: expect.objectContaining({ type: 'offline_payment', note: 'Cash' })
         }));
     });
 
@@ -456,8 +506,9 @@ describe('React app team fee offline payment service', () => {
             status: 'partial',
             amountDueCents: 11000,
             remainingBalanceCents: 1000,
-            adjustment: expect.objectContaining({ amountCents: -1000, note: 'Late fee' }),
-            ledgerEntries: [expect.objectContaining({ type: 'balance_adjustment', amountCents: -1000, reason: 'Late fee' })]
+            adjustment: expect.objectContaining({ amountCents: -1000 }),
+            ledgerEntries: [expect.objectContaining({ type: 'balance_adjustment', amountCents: -1000 })],
+            adminBilling: expect.objectContaining({ type: 'balance_adjustment', reason: 'Late fee' })
         }));
     });
 
@@ -490,8 +541,9 @@ describe('React app team fee offline payment service', () => {
             status: 'partial',
             amountPaidCents: 7500,
             remainingBalanceCents: 2500,
-            refunded: expect.objectContaining({ amountCents: 2500, refundMethod: 'cash', note: 'Refunded at the field' }),
-            ledgerEntries: [expect.objectContaining({ type: 'offline_refund', amountCents: -2500, refundAmountCents: 2500 })]
+            refunded: expect.objectContaining({ amountCents: 2500, refundMethod: 'cash' }),
+            ledgerEntries: [expect.objectContaining({ type: 'offline_refund', amountCents: -2500, refundAmountCents: 2500 })],
+            adminBilling: expect.objectContaining({ type: 'offline_refund', note: 'Refunded at the field' })
         }));
     });
 

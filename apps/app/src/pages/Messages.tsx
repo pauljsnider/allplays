@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, memo, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Archive,
@@ -35,11 +35,8 @@ import {
   editTeamChatMessage,
   ensureStaffChatConversation,
   getChatInboxPreview,
-  loadChatConversations,
   loadChatInbox,
   loadChatRecipientOptions,
-  loadChatTeamContext,
-  loadOlderTeamChatMessages,
   loadSentTeamEmails,
   loadTeamEmailDrafts,
   loadTeamEmailTemplates,
@@ -51,9 +48,9 @@ import {
   sendAllPlaysChatAnswer,
   sendTeamChatMessage,
   sendTeamEmailMessage,
-  subscribeToTeamChatMessages,
   toggleTeamChatReaction,
   type ChatConversation,
+  type ChatInboxPreviewUpdate,
   type ChatMessage,
   type SentTeamEmail,
   type TeamEmailDraft,
@@ -80,13 +77,11 @@ import {
   getMessageAttachments,
   getMessageSenderLabel,
   getReactionNames,
-  getSortedChatMessages,
   hasAllPlaysMention,
   isChatComposerLinkSafe,
   isDefaultTeamConversation,
   isStaffConversation,
   isSafeChatMediaUrl,
-  mergeChatMessageLists,
   normalizeChatReactions,
   shouldRetryChatLastReadOnViewReturn,
   shouldUpdateChatLastRead,
@@ -95,9 +90,14 @@ import {
   type ChatTargetType
 } from '../lib/chatLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { markTeamChatReadAndRefreshBadge, updateAppIconBadge } from '../lib/badgeService';
 import { useShellLayout } from '../lib/useShellLayout';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
+import { useChatSheets } from './messages/hooks/useChatSheets';
+import { useChatTeam } from './messages/hooks/useChatTeam';
+import { useChatMessages } from './messages/hooks/useChatMessages';
+import { emailReducer, initialEmailComposerState } from './messages/state/emailReducer';
 
 type StatusTone = 'neutral' | 'success' | 'error';
 
@@ -127,27 +127,48 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [query, setQuery] = useState('');
   const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
   const shouldLoadInbox = isDesktopWeb || !teamId;
+  const inboxRequestIdRef = useRef(0);
 
-  const refreshInbox = async () => {
+  const refreshInbox = useCallback(async () => {
     if (!auth.user) return;
+    const requestId = inboxRequestIdRef.current + 1;
+    const previewUpdates = new Map<string, ChatInboxPreviewUpdate>();
+    inboxRequestIdRef.current = requestId;
     setLoading(true);
     setError(null);
     try {
-      const result = await loadChatInbox(auth.user);
-      setTeams(result.teams);
+      const result = await loadChatInbox(auth.user, {
+        includeLastMessages: false,
+        onPreview: (previewUpdate) => {
+          if (inboxRequestIdRef.current !== requestId) return;
+          previewUpdates.set(previewUpdate.teamId, previewUpdate);
+          setTeams((current) => mergeInboxPreview(current, previewUpdate));
+        }
+      });
+      if (inboxRequestIdRef.current !== requestId) return;
+      setTeams(mergeInboxTeams(result.teams, previewUpdates));
+      const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
+      void updateAppIconBadge(totalUnread);
     } catch (loadError: any) {
+      if (inboxRequestIdRef.current !== requestId) return;
       setError(loadError?.message || 'Unable to load messages.');
       setTeams([]);
     } finally {
-      setLoading(false);
+      if (inboxRequestIdRef.current === requestId) {
+        setLoading(false);
+      }
     }
-  };
+  }, [auth.user]);
 
   useEffect(() => {
     if (!shouldLoadInbox) {
       setLoading(false);
       setError(null);
       setTeams([]);
+      return;
+    }
+    if (!auth.user) {
+      void updateAppIconBadge(0);
       return;
     }
     refreshInbox();
@@ -218,6 +239,9 @@ export function Messages({ auth }: { auth: AuthState }) {
                 teamId={activeTeamId}
                 inboxTeam={teams.find((team) => team.id === activeTeamId)}
                 preferredConversationId={teamId === activeTeamId ? preferredConversationId : ''}
+                onInboxMuteChange={(nextConversationId, nextIsMuted) => {
+                  setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
+                }}
                 embedded
               />
             ) : (
@@ -236,6 +260,9 @@ export function Messages({ auth }: { auth: AuthState }) {
         teamId={activeTeamId}
         inboxTeam={teams.find((team) => team.id === activeTeamId)}
         preferredConversationId={preferredConversationId}
+        onInboxMuteChange={(nextConversationId, nextIsMuted) => {
+          setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
+        }}
       />
     );
   }
@@ -289,6 +316,7 @@ function InboxSearch({ query, onChange }: { query: string; onChange: (value: str
         onChange={(event) => onChange(event.target.value)}
         className="min-w-0 flex-1 border-0 bg-transparent text-base font-semibold text-gray-900 outline-none placeholder:text-gray-400"
         placeholder="Search team chats"
+        enterKeyHint="search"
       />
     </label>
   );
@@ -317,7 +345,7 @@ function InboxList({
 }) {
   const trimmedQuery = searchQuery.trim();
 
-  if (loading) {
+  if (loading && !teams.length) {
     return <MessagesPageSkeleton />;
   }
 
@@ -402,11 +430,11 @@ function InboxRow({ team, active, compact, onSelect }: { team: ChatTeam; active:
   );
 }
 
-function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
+export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' | 'unreadCount'> }) {
   return (
     <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
       {team.photoUrl ? (
-        <img src={team.photoUrl} alt="" className="h-full w-full object-cover" />
+        <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover" />
       ) : (
         <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
       )}
@@ -432,35 +460,24 @@ function ChatWindow({
   teamId,
   inboxTeam,
   preferredConversationId = '',
+  onInboxMuteChange,
   embedded = false
 }: {
   auth: AuthState;
   teamId: string;
   inboxTeam?: ChatTeam;
   preferredConversationId?: string;
+  onInboxMuteChange?: (conversationId: string, isMuted: boolean) => void;
   embedded?: boolean;
 }) {
   const navigate = useNavigate();
   const { isDesktopWeb } = useShellLayout();
-  const [team, setTeam] = useState<Record<string, any> | null>(inboxTeam || null);
-  const [profile, setProfile] = useState<Record<string, any>>({});
-  const [canModerate, setCanModerate] = useState(inboxTeam?.canModerate || false);
-  const [conversations, setConversations] = useState<ChatConversation[]>([]);
-  const [selectedConversationId, setSelectedConversationId] = useState(DEFAULT_TEAM_CONVERSATION_ID);
   const [recipientOptions, setRecipientOptions] = useState<ChatRecipientOption[]>([]);
   const [recipientOptionsLoading, setRecipientOptionsLoading] = useState(false);
   const [recipientOptionsLoaded, setRecipientOptionsLoaded] = useState(false);
   const [recipientOptionsError, setRecipientOptionsError] = useState<string | null>(null);
   const [selectedRecipientTarget, setSelectedRecipientTarget] = useState<ChatTargetType>('full_team');
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
-  const [liveMessages, setLiveMessages] = useState<ChatMessage[]>([]);
-  const [olderMessages, setOlderMessages] = useState<ChatMessage[]>([]);
-  const [liveOldestDoc, setLiveOldestDoc] = useState<unknown | null>(null);
-  const [hasMoreMessages, setHasMoreMessages] = useState(false);
-  const [loadingContext, setLoadingContext] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(true);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<ChatStatus | null>(null);
   const [composerNotice, setComposerNotice] = useState('');
   const [text, setText] = useState('');
@@ -469,15 +486,27 @@ function ChatWindow({
   const [aiThinking, setAiThinking] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(() => voiceRecognition.isNativeRuntime() || voiceRecognition.hasBrowserSupport());
-  const [showConversationSheet, setShowConversationSheet] = useState(false);
-  const [showAudienceSheet, setShowAudienceSheet] = useState(false);
-  const [showMediaGallery, setShowMediaGallery] = useState(false);
-  const [showAttachSheet, setShowAttachSheet] = useState(false);
-  const [showLinkSheet, setShowLinkSheet] = useState(false);
-  const [showEmailSheet, setShowEmailSheet] = useState(false);
-  const [emailSubject, setEmailSubject] = useState('');
-  const [emailBody, setEmailBody] = useState('');
-  const [emailTemplateName, setEmailTemplateName] = useState('');
+  const {
+    showConversationSheet,
+    showAudienceSheet,
+    showMediaGallery,
+    showAttachSheet,
+    showLinkSheet,
+    showEmailSheet,
+    openConversationSheet,
+    closeConversationSheet,
+    openAudienceSheet,
+    closeAudienceSheet,
+    openMediaGallery,
+    closeMediaGallery,
+    openAttachSheet,
+    closeAttachSheet,
+    openLinkSheet,
+    closeLinkSheet,
+    openEmailSheet: openTeamEmailSheet,
+    closeEmailSheet: closeTeamEmailSheet
+  } = useChatSheets();
+  const [emailState, emailDispatch] = useReducer(emailReducer, initialEmailComposerState);
   const [emailSending, setEmailSending] = useState(false);
   const [emailSavingTemplate, setEmailSavingTemplate] = useState(false);
   const [emailSavingDraft, setEmailSavingDraft] = useState(false);
@@ -486,9 +515,6 @@ function ChatWindow({
   const [emailLoadingTemplates, setEmailLoadingTemplates] = useState(false);
   const [emailStatus, setEmailStatus] = useState<ChatStatus | null>(null);
   const [emailHistoryStatus, setEmailHistoryStatus] = useState<ChatStatus | null>(null);
-  const [emailDrafts, setEmailDrafts] = useState<TeamEmailDraft[]>([]);
-  const [selectedEmailDraftId, setSelectedEmailDraftId] = useState('');
-  const [emailTemplates, setEmailTemplates] = useState<TeamEmailTemplate[]>([]);
   const [sentEmails, setSentEmails] = useState<SentTeamEmail[]>([]);
   const [linkDraft, setLinkDraft] = useState('');
   const [reactionMessageId, setReactionMessageId] = useState('');
@@ -496,7 +522,7 @@ function ChatWindow({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState('');
-  const [isMuted, setIsMuted] = useState(() => resolveMutedState(teamId, inboxTeam, {}));
+  const [isMuted, setIsMuted] = useState(() => resolveMutedState(teamId, DEFAULT_TEAM_CONVERSATION_ID, inboxTeam, {}));
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -508,12 +534,12 @@ function ChatWindow({
   const voicePartialRef = useRef('');
   const nativeVoiceListeningRef = useRef(false);
   const voiceStopRequestedRef = useRef(false);
-  const initialSnapshotLoadedRef = useRef(false);
   const pendingScrollRef = useRef(false);
   const stickToLatestRef = useRef(true);
   const recipientOptionsPromiseRef = useRef<Promise<ChatRecipientOption[]> | null>(null);
   const recipientOptionsRequestIdRef = useRef(0);
   const currentTeamIdRef = useRef(teamId);
+  const emailSheetLoadedForTeamRef = useRef<string | null>(null);
   const programmaticScrollRef = useRef(false);
   const mountedRef = useRef(true);
   const scheduledScrollFrameRef = useRef<number | null>(null);
@@ -521,7 +547,81 @@ function ChatWindow({
   const scheduledScrollForceRef = useRef(false);
   const scheduledScrollTimeoutsRef = useRef<number[]>([]);
   const lastObservedViewportSignatureRef = useRef('');
-  const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
+
+  const resetChatSelectionState = useCallback(() => {
+    setStatus(null);
+    recipientOptionsPromiseRef.current = null;
+    recipientOptionsRequestIdRef.current += 1;
+    setRecipientOptions([]);
+    setRecipientOptionsLoading(false);
+    setRecipientOptionsLoaded(false);
+    setRecipientOptionsError(null);
+    pendingScrollRef.current = true;
+    stickToLatestRef.current = true;
+    setShowJumpToLatest(false);
+  }, []);
+
+  const {
+    team,
+    profile,
+    canModerate,
+    conversations,
+    setConversations,
+    selectedConversationId,
+    setSelectedConversationId,
+    loadingContext,
+    error: teamError,
+    reloadConversations,
+    switchConversation: switchChatConversation
+  } = useChatTeam({
+    teamId,
+    user: auth.user,
+    inboxTeam,
+    preferredConversationId,
+    onTeamReset: resetChatSelectionState
+  });
+
+  const handleBeforeLiveUpdate = useCallback(() => isNearBottom(messagesRef.current), []);
+  const handleLiveUpdateState = useCallback(({ isInitialSnapshot, wasNearBottom }: { isInitialSnapshot: boolean; wasNearBottom: boolean }) => {
+    if (isInitialSnapshot || pendingScrollRef.current || wasNearBottom) {
+      pendingScrollRef.current = true;
+      stickToLatestRef.current = true;
+      setShowJumpToLatest(false);
+    } else {
+      stickToLatestRef.current = false;
+      setShowJumpToLatest(true);
+    }
+  }, []);
+  const handleMessagesReset = useCallback(() => {
+    pendingScrollRef.current = true;
+    stickToLatestRef.current = true;
+    setShowJumpToLatest(false);
+  }, []);
+  const handleMarkRead = useCallback(() => {
+    maybeMarkRead(auth.user, teamId, true, !isDesktopWeb && !embedded);
+  }, [auth.user, embedded, isDesktopWeb, teamId]);
+
+  const {
+    messages,
+    olderMessages,
+    hasMoreMessages,
+    loadingMessages,
+    loadingOlder,
+    error: messagesError,
+    loadOlderMessages: loadOlderChatMessages,
+    initialSnapshotLoadedRef
+  } = useChatMessages({
+    teamId,
+    team,
+    user: auth.user,
+    selectedConversationId,
+    onBeforeLiveUpdate: handleBeforeLiveUpdate,
+    onLiveUpdateState: handleLiveUpdateState,
+    onMessagesReset: handleMessagesReset,
+    onMarkRead: handleMarkRead
+  });
+  const error = teamError || messagesError;
+
   const selectedConversation = useMemo(() => (
     conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null
   ), [conversations, selectedConversationId]);
@@ -716,118 +816,15 @@ function ChatWindow({
   }, [clearScheduledScrollTimeouts, maybeScrollToLatest]);
 
   useEffect(() => {
+    if (currentTeamIdRef.current !== teamId) {
+      emailSheetLoadedForTeamRef.current = null;
+    }
     currentTeamIdRef.current = teamId;
   }, [teamId]);
 
   useEffect(() => {
-    setIsMuted(resolveMutedState(teamId, inboxTeam, profile));
-  }, [inboxTeam, profile, teamId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadContext() {
-      if (!auth.user) return;
-      setLoadingContext(true);
-      setError(null);
-      setStatus(null);
-      setSelectedConversationId(preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID);
-      setOlderMessages([]);
-      setLiveMessages([]);
-      recipientOptionsPromiseRef.current = null;
-      recipientOptionsRequestIdRef.current += 1;
-      setRecipientOptions([]);
-      setRecipientOptionsLoading(false);
-      setRecipientOptionsLoaded(false);
-      setRecipientOptionsError(null);
-      initialSnapshotLoadedRef.current = false;
-      pendingScrollRef.current = true;
-      stickToLatestRef.current = true;
-      setShowJumpToLatest(false);
-
-      try {
-        const context = await loadChatTeamContext(teamId, auth.user);
-        if (cancelled) return;
-        setTeam(context.team);
-        setProfile(context.profile);
-        setCanModerate(context.canModerate);
-        const loadedConversations = await loadChatConversations(teamId, auth.user, context.team, context.canModerate);
-        if (cancelled) return;
-        setConversations(loadedConversations);
-        setSelectedConversationId((current: string) => {
-          if (loadedConversations.some((conversation) => conversation.id === current)) {
-            return current;
-          }
-          if (preferredConversationId && loadedConversations.some((conversation) => conversation.id === preferredConversationId)) {
-            return preferredConversationId;
-          }
-          return DEFAULT_TEAM_CONVERSATION_ID;
-        });
-        if (!context.canModerate) {
-          setRecipientOptionsLoaded(true);
-        }
-      } catch (loadError: any) {
-        if (!cancelled) {
-          setError(loadError?.message || 'Unable to load team chat.');
-        }
-      } finally {
-        if (!cancelled) setLoadingContext(false);
-      }
-    }
-
-    loadContext();
-    return () => {
-      cancelled = true;
-    };
-  }, [auth.user?.uid, preferredConversationId, teamId]);
-
-  useEffect(() => {
-    if (!team || !auth.user) return undefined;
-    const currentUser = auth.user;
-
-    setLoadingMessages(true);
-    setError(null);
-    setOlderMessages([]);
-    setLiveMessages([]);
-    setLiveOldestDoc(null);
-    setHasMoreMessages(false);
-    initialSnapshotLoadedRef.current = false;
-    pendingScrollRef.current = true;
-    stickToLatestRef.current = true;
-    setShowJumpToLatest(false);
-
-    const subscription = subscribeToTeamChatMessages(
-      teamId,
-      selectedConversationId,
-      (incomingMessages, oldestDoc) => {
-        const isInitialSnapshot = !initialSnapshotLoadedRef.current;
-        const wasNearBottom = isNearBottom(messagesRef.current);
-        setLiveOldestDoc(oldestDoc || incomingMessages[incomingMessages.length - 1]?._doc || null);
-        setLiveMessages(getSortedChatMessages(incomingMessages));
-        setHasMoreMessages(incomingMessages.length >= 50);
-        setLoadingMessages(false);
-        if (isInitialSnapshot || pendingScrollRef.current || wasNearBottom) {
-          pendingScrollRef.current = true;
-          stickToLatestRef.current = true;
-          setShowJumpToLatest(false);
-        } else {
-          stickToLatestRef.current = false;
-          setShowJumpToLatest(true);
-        }
-        initialSnapshotLoadedRef.current = true;
-        maybeMarkRead(currentUser.uid, teamId, true);
-      },
-      (subscribeError) => {
-        setError(subscribeError.message || 'Unable to load chat messages.');
-        setLoadingMessages(false);
-      }
-    );
-
-    return () => {
-      subscription.unsubscribe();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, selectedConversationId, team, teamId]);
+    setIsMuted(resolveMutedState(teamId, selectedConversationId, inboxTeam, profile));
+  }, [inboxTeam, profile, selectedConversationId, teamId]);
 
   useLayoutEffect(() => {
     if (!pendingScrollRef.current) return;
@@ -899,7 +896,7 @@ function ChatWindow({
         hasMessages: messages.length > 0,
         hasLoadedSnapshot: initialSnapshotLoadedRef.current
       })) {
-        void markTeamChatRead(auth.user.uid, teamId);
+        maybeMarkRead(auth.user, teamId, true, !isDesktopWeb && !embedded);
       }
     };
     document.addEventListener('visibilitychange', handleReturn);
@@ -923,24 +920,17 @@ function ChatWindow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearScheduledScrollToLatest]);
 
-  const reloadConversations = async () => {
-    if (!auth.user || !team) return;
-    const loadedConversations = await loadChatConversations(teamId, auth.user, team, canModerate);
-    setConversations(loadedConversations);
-    return loadedConversations;
-  };
-
   const switchConversation = (conversationId: string) => {
     if (!conversationId || conversationId === selectedConversationId) return;
     pendingScrollRef.current = true;
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);
-    setSelectedConversationId(conversationId);
+    if (!switchChatConversation(conversationId)) return;
     setSelectedRecipientTarget('full_team');
     setSelectedRecipientIds([]);
     setReactionMessageId('');
     setActionMessageId('');
-    setShowConversationSheet(false);
+    closeConversationSheet();
   };
 
   const handleAudienceTargetChange = async (target: ChatTargetType) => {
@@ -953,7 +943,7 @@ function ChatWindow({
       if (!isDefaultTeamConversation(selectedConversationId)) {
         switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
       }
-      setShowAudienceSheet(false);
+      closeAudienceSheet();
       return;
     }
 
@@ -969,7 +959,7 @@ function ChatWindow({
         if (selectedConversationId !== staffConversation.id) {
           switchConversation(staffConversation.id);
         }
-        setShowAudienceSheet(false);
+        closeAudienceSheet();
       } catch (staffError: any) {
         setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
       }
@@ -977,18 +967,10 @@ function ChatWindow({
   };
 
   const loadOlderMessages = async () => {
-    if (loadingOlder || !hasMoreMessages) return;
-    const cursor = olderMessages[0]?._doc || liveOldestDoc;
-    if (!cursor) return;
-    setLoadingOlder(true);
     try {
-      const batch = await loadOlderTeamChatMessages(teamId, selectedConversationId, cursor);
-      if (batch.length < 50) setHasMoreMessages(false);
-      setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(batch), current));
+      await loadOlderChatMessages();
     } catch (loadError: any) {
       setStatus({ tone: 'error', message: loadError?.message || 'Unable to load older messages.' });
-    } finally {
-      setLoadingOlder(false);
     }
   };
 
@@ -1024,7 +1006,7 @@ function ChatWindow({
       ...selectedFiles.map((file) => ({ file, url: URL.createObjectURL(file) }))
     ]);
     event.target.value = '';
-    setShowAttachSheet(false);
+    closeAttachSheet();
   };
 
   const removeFile = (index: number) => {
@@ -1035,10 +1017,9 @@ function ChatWindow({
     });
   };
 
-  const openLinkSheet = () => {
-    setShowAttachSheet(false);
+  const handleOpenLinkSheet = () => {
     setLinkDraft('');
-    setShowLinkSheet(true);
+    openLinkSheet();
   };
 
   const addLinkToComposer = () => {
@@ -1050,7 +1031,7 @@ function ChatWindow({
       return;
     }
     setText((current) => `${current.trim()}${current.trim() ? ' ' : ''}${href}`);
-    setShowLinkSheet(false);
+    closeLinkSheet();
     setLinkDraft('');
   };
 
@@ -1065,7 +1046,7 @@ function ChatWindow({
       && selectedRecipientIds.map((id) => String(id || '').trim()).filter(Boolean).length === 0;
     if (hasEmptySelectedAudience) {
       setStatus({ tone: 'error', message: 'Choose at least one selected member before sending.' });
-      setShowAudienceSheet(true);
+      openAudienceSheet();
       return;
     }
 
@@ -1160,7 +1141,7 @@ function ChatWindow({
     if (!canModerate) return;
     setEmailLoadingTemplates(true);
     try {
-      setEmailTemplates(await loadTeamEmailTemplates(teamId));
+      emailDispatch({ type: 'setTemplates', templates: await loadTeamEmailTemplates(teamId) });
       if (!suppressErrorStatus) {
         setEmailStatus(null);
       }
@@ -1177,7 +1158,7 @@ function ChatWindow({
     if (!canModerate) return;
     setEmailLoadingDrafts(true);
     try {
-      setEmailDrafts(await loadTeamEmailDrafts(teamId));
+      emailDispatch({ type: 'setDrafts', drafts: await loadTeamEmailDrafts(teamId) });
       if (!suppressErrorStatus) {
         setEmailStatus(null);
       }
@@ -1192,36 +1173,36 @@ function ChatWindow({
 
   const openEmailSheet = () => {
     if (!canModerate) return;
-    setShowEmailSheet(true);
-    setEmailTemplateName('');
+    openTeamEmailSheet();
+    emailDispatch({ type: 'updateTemplateName', templateName: '' });
     setEmailStatus(null);
     setEmailHistoryStatus(null);
-    setSelectedEmailDraftId('');
+    emailDispatch({ type: 'clearSelectedDraft' });
     void ensureRecipientOptionsLoaded().catch(() => undefined);
-    void reloadEmailDrafts();
-    void reloadEmailTemplates();
-    void reloadSentEmailHistory();
+    if (emailSheetLoadedForTeamRef.current !== teamId) {
+      emailSheetLoadedForTeamRef.current = teamId;
+      void reloadEmailDrafts();
+      void reloadEmailTemplates();
+      void reloadSentEmailHistory();
+    }
   };
 
   const handleApplyEmailDraft = (draftId: string) => {
-    const draft = emailDrafts.find((item) => item.id === draftId);
+    const draft = emailState.drafts.find((item) => item.id === draftId);
     if (!draft) return;
     if (!isDefaultTeamConversation(selectedConversationId)) {
       switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
     }
     setSelectedRecipientTarget('individuals');
     setSelectedRecipientIds(draft.recipientIds);
-    setEmailSubject(draft.subject || '');
-    setEmailBody(draft.body || '');
-    setSelectedEmailDraftId(draft.id);
+    emailDispatch({ type: 'selectDraft', draftId: draft.id });
     setEmailStatus({ tone: 'success', message: `Restored draft “${draft.subject || 'Untitled draft'}”. This replaced the current email composer.` });
   };
 
   const handleApplyEmailTemplate = (templateId: string) => {
-    const template = emailTemplates.find((item) => item.id === templateId);
+    const template = emailState.templates.find((item) => item.id === templateId);
     if (!template) return;
-    setEmailSubject(template.subject || '');
-    setEmailBody(template.body || '');
+    emailDispatch({ type: 'applyTemplate', templateId: template.id });
     setEmailStatus({ tone: 'success', message: `Applied template “${template.name}”.` });
   };
 
@@ -1232,12 +1213,12 @@ function ChatWindow({
     try {
       const savedTemplate = await saveTeamEmailTemplate({
         teamId,
-        name: emailTemplateName,
-        subject: emailSubject,
-        body: emailBody
+        name: emailState.templateName,
+        subject: emailState.subject,
+        body: emailState.body
       });
-      setEmailTemplateName('');
-      setEmailTemplates((current) => [savedTemplate, ...current.filter((item) => item.id !== savedTemplate.id)]);
+      emailDispatch({ type: 'updateTemplateName', templateName: '' });
+      emailDispatch({ type: 'setTemplates', templates: [savedTemplate, ...emailState.templates.filter((item) => item.id !== savedTemplate.id)] });
       setEmailStatus({ tone: 'success', message: `Saved template “${savedTemplate.name}”.` });
       void reloadEmailTemplates({ suppressErrorStatus: true });
     } catch (saveError: any) {
@@ -1254,18 +1235,19 @@ function ChatWindow({
     try {
       const savedDraft = await saveTeamEmailDraft({
         teamId,
-        draftId: selectedEmailDraftId || null,
-        subject: emailSubject,
-        body: emailBody,
+        draftId: emailState.selectedDraftId || null,
+        subject: emailState.subject,
+        body: emailState.body,
         recipientIds: emailAudienceMetadata.recipientIds,
         recipientOptions,
         authorId: auth.user?.uid || null,
         authorEmail: auth.user?.email || null,
         authorName: profile?.fullName || auth.user?.displayName || null
       });
-      setSelectedEmailDraftId(savedDraft.id);
-      setEmailDrafts((current) => [savedDraft, ...current.filter((item) => item.id !== savedDraft.id)]);
-      setEmailStatus({ tone: 'success', message: `Saved draft “${savedDraft.subject || 'Untitled draft'}”. No email was sent.` });
+      if (savedDraft?.id) {
+        emailDispatch({ type: 'saveDraft', draft: savedDraft });
+      }
+      setEmailStatus({ tone: 'success', message: `Saved draft “${savedDraft?.subject || emailState.subject || 'Untitled draft'}”. No email was sent.` });
       void reloadEmailDrafts({ suppressErrorStatus: true });
     } catch (saveError: any) {
       setEmailStatus({ tone: 'error', message: saveError?.message || 'Could not save team email draft.' });
@@ -1277,8 +1259,8 @@ function ChatWindow({
   const handleSendEmail = async (event?: FormEvent) => {
     event?.preventDefault();
     if (!canModerate || emailSending) return;
-    const subject = emailSubject.trim();
-    const body = emailBody.trim();
+    const subject = emailState.subject.trim();
+    const body = emailState.body.trim();
     if (!subject || !body) {
       setEmailStatus({ tone: 'error', message: 'Subject and message are required.' });
       return;
@@ -1298,8 +1280,7 @@ function ChatWindow({
         targetType: emailAudienceMetadata.targetType,
         recipientIds: emailAudienceMetadata.recipientIds
       });
-      setEmailSubject('');
-      setEmailBody('');
+      emailDispatch({ type: 'clearComposer' });
       setEmailStatus({ tone: 'success', message: `Queued ${Number(result?.recipientCount || 0)} recipient${Number(result?.recipientCount || 0) === 1 ? '' : 's'} for backend email delivery.` });
       await reloadSentEmailHistory({ suppressErrorStatus: true });
     } catch (sendError: any) {
@@ -1509,17 +1490,20 @@ function ChatWindow({
   const handleToggleMute = useCallback(async () => {
     if (!auth.user?.uid) return;
     const next = !isMuted;
+    const conversationId = selectedConversationId || DEFAULT_TEAM_CONVERSATION_ID;
     setIsMuted(next);
+    onInboxMuteChange?.(conversationId, next);
     try {
       if (next) {
-        await muteTeamChat(auth.user.uid, teamId);
+        await muteTeamChat(auth.user.uid, teamId, conversationId);
       } else {
-        await unmuteTeamChat(auth.user.uid, teamId);
+        await unmuteTeamChat(auth.user.uid, teamId, conversationId);
       }
     } catch {
       setIsMuted(!next);
+      onInboxMuteChange?.(conversationId, !next);
     }
-  }, [auth.user?.uid, isMuted, teamId]);
+  }, [auth.user?.uid, isMuted, onInboxMuteChange, selectedConversationId, teamId]);
 
   if (loadingContext) {
     return <MessagesPageSkeleton embedded={embedded} />;
@@ -1549,7 +1533,7 @@ function ChatWindow({
             <button
               type="button"
               className="mt-0.5 flex max-w-full items-center gap-1 text-left text-xs font-bold text-gray-500"
-              onClick={() => setShowConversationSheet(true)}
+              onClick={openConversationSheet}
             >
               <span className="truncate">{getConversationDisplayName(selectedConversation, team || {})}</span>
               <ChevronDown className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
@@ -1570,7 +1554,7 @@ function ChatWindow({
           >
             <BellOff className="h-5 w-5" aria-hidden="true" />
           </button>
-          <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={() => setShowMediaGallery(true)} aria-label="Open photos and videos">
+          <button type="button" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" onClick={openMediaGallery} aria-label="Open photos and videos">
             <ImageIcon className="h-5 w-5" aria-hidden="true" />
             {mediaEntries.length ? <span className="sr-only">{mediaEntries.length} shared media items</span> : null}
           </button>
@@ -1664,11 +1648,11 @@ function ChatWindow({
         audienceSummary={audienceSummary}
         onTextChange={setText}
         onSubmit={handleSend}
-        onAttach={() => setShowAttachSheet(true)}
+        onAttach={openAttachSheet}
         onRemoveFile={removeFile}
         onVoice={toggleVoiceCapture}
         onAudience={() => {
-          setShowAudienceSheet(true);
+          openAudienceSheet();
           void ensureRecipientOptionsLoaded().catch(() => undefined);
         }}
         onTeamEmail={openEmailSheet}
@@ -1684,7 +1668,7 @@ function ChatWindow({
           team={team || {}}
           selectedConversationId={selectedConversationId}
           onSelect={switchConversation}
-          onClose={() => setShowConversationSheet(false)}
+          onClose={closeConversationSheet}
         />
       ) : null}
 
@@ -1700,7 +1684,7 @@ function ChatWindow({
           onRetryRecipientOptions={() => {
             void ensureRecipientOptionsLoaded().catch(() => undefined);
           }}
-          onClose={() => setShowAudienceSheet(false)}
+          onClose={closeAudienceSheet}
         />
       ) : null}
 
@@ -1708,9 +1692,9 @@ function ChatWindow({
         <AttachSheet
           onPhoto={() => photoInputRef.current?.click()}
           onVideo={() => videoInputRef.current?.click()}
-          onLink={openLinkSheet}
+          onLink={handleOpenLinkSheet}
           onMention={insertAllPlaysMention}
-          onClose={() => setShowAttachSheet(false)}
+          onClose={closeAttachSheet}
         />
       ) : null}
 
@@ -1719,20 +1703,20 @@ function ChatWindow({
           value={linkDraft}
           onChange={setLinkDraft}
           onAdd={addLinkToComposer}
-          onClose={() => setShowLinkSheet(false)}
+          onClose={closeLinkSheet}
         />
       ) : null}
 
       {showEmailSheet && canModerate ? (
         <TeamEmailSheet
-          subject={emailSubject}
-          body={emailBody}
-          drafts={emailDrafts}
-          selectedDraftId={selectedEmailDraftId}
-          templateName={emailTemplateName}
+          subject={emailState.subject}
+          body={emailState.body}
+          drafts={emailState.drafts}
+          selectedDraftId={emailState.selectedDraftId}
+          templateName={emailState.templateName}
           savingDraft={emailSavingDraft}
           loadingDrafts={emailLoadingDrafts}
-          templates={emailTemplates}
+          templates={emailState.templates}
           sending={emailSending}
           savingTemplate={emailSavingTemplate}
           loadingHistory={emailLoadingHistory}
@@ -1744,9 +1728,9 @@ function ChatWindow({
           sentEmails={sentEmails}
           audienceSummary={getAudienceSummaryText(emailAudienceMetadata, recipientOptions)}
           audienceMetadata={emailAudienceMetadata}
-          onSubjectChange={setEmailSubject}
-          onBodyChange={setEmailBody}
-          onTemplateNameChange={setEmailTemplateName}
+          onSubjectChange={(subject) => emailDispatch({ type: 'updateSubject', subject })}
+          onBodyChange={(body) => emailDispatch({ type: 'updateBody', body })}
+          onTemplateNameChange={(templateName) => emailDispatch({ type: 'updateTemplateName', templateName })}
           onApplyDraft={handleApplyEmailDraft}
           onSaveDraft={handleSaveEmailDraft}
           onApplyTemplate={handleApplyEmailTemplate}
@@ -1760,12 +1744,12 @@ function ChatWindow({
           }}
           onStatusClose={() => setEmailStatus(null)}
           onHistoryStatusClose={() => setEmailHistoryStatus(null)}
-          onClose={() => setShowEmailSheet(false)}
+          onClose={closeTeamEmailSheet}
         />
       ) : null}
 
       {showMediaGallery ? (
-        <MediaGallerySheet mediaEntries={mediaEntries} onClose={() => setShowMediaGallery(false)} onStatus={setStatus} />
+        <MediaGallerySheet mediaEntries={mediaEntries} onClose={closeMediaGallery} onStatus={setStatus} />
       ) : null}
 
       {editingMessage ? (
@@ -1799,24 +1783,125 @@ function buildMessagesRoute(teamId: string, preferredConversationId?: string | n
   return `${route}?conversationId=${encodeURIComponent(normalizedConversationId)}`;
 }
 
-function resolveMutedState(teamId: string, inboxTeam?: ChatTeam, profile: Record<string, any> = {}) {
-  if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
-    return inboxTeam.isMuted;
-  }
-  const chatMuted = profile?.chatMuted;
-  return Boolean(chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]);
+export function mergeInboxTeams(nextTeams: ChatTeam[], previewUpdates: Map<string, ChatInboxPreviewUpdate>) {
+  return sortInboxTeams(nextTeams.map((team) => {
+    const previewUpdate = previewUpdates.get(team.id);
+    if (!previewUpdate) return team;
+    return {
+      ...team,
+      lastMessage: previewUpdate.lastMessage,
+      preferredConversationId: previewUpdate.preferredConversationId,
+      isMuted: previewUpdate.isMuted
+    };
+  }));
 }
 
-function maybeMarkRead(userId: string, teamId: string, hasTeamId: boolean) {
+function mergeInboxPreview(
+  teams: ChatTeam[],
+  previewUpdate: { teamId: string; lastMessage: ChatMessage | null; preferredConversationId: string | null; isMuted: boolean; }
+) {
+  let changed = false;
+  const nextTeams = teams.map((team) => {
+    if (team.id !== previewUpdate.teamId) return team;
+    changed = true;
+    return {
+      ...team,
+      lastMessage: previewUpdate.lastMessage,
+      preferredConversationId: previewUpdate.preferredConversationId,
+      isMuted: previewUpdate.isMuted
+    };
+  });
+  if (!changed) return teams;
+  return sortInboxTeams(nextTeams);
+}
+
+function updateInboxTeamMuteState(
+  teams: ChatTeam[],
+  teamId: string,
+  conversationId: string,
+  isMuted: boolean
+) {
+  const normalizedConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).trim() || DEFAULT_TEAM_CONVERSATION_ID;
+  let changed = false;
+  const nextTeams = teams.map((team) => {
+    if (team.id !== teamId) return team;
+    changed = true;
+    return {
+      ...team,
+      preferredConversationId: isDefaultTeamConversation(normalizedConversationId) ? null : normalizedConversationId,
+      isMuted
+    };
+  });
+  return changed ? nextTeams : teams;
+}
+
+function sortInboxTeams(teams: ChatTeam[]) {
+  return [...teams].sort((a, b) => {
+    const aTime = toInboxSortTime(a.lastMessage);
+    const bTime = toInboxSortTime(b.lastMessage);
+    if (aTime !== bTime) return bTime - aTime;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+function toInboxSortTime(message: ChatMessage | null | undefined) {
+  if (!message?.createdAt) return 0;
+  if (message.createdAt instanceof Date) return message.createdAt.getTime();
+  if (typeof (message.createdAt as any)?.toDate === 'function') {
+    const date = (message.createdAt as any).toDate();
+    return date instanceof Date ? date.getTime() : 0;
+  }
+  if (typeof (message.createdAt as any)?.seconds === 'number') {
+    return Number((message.createdAt as any).seconds || 0) * 1000;
+  }
+  const date = new Date(message.createdAt as any);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function resolveMutedState(
+  teamId: string,
+  conversationId: string,
+  inboxTeam?: ChatTeam,
+  profile: Record<string, any> = {}
+) {
+  const teamChatState = profile?.teamChatState;
+  const mutedConversations = teamChatState && typeof teamChatState === 'object'
+    ? teamChatState?.[teamId]?.mutedConversations
+    : null;
+  if (mutedConversations && typeof mutedConversations === 'object' && mutedConversations[conversationId]) {
+    return true;
+  }
+  if (isDefaultTeamConversation(conversationId)) {
+    const chatMuted = profile?.chatMuted;
+    if (chatMuted && typeof chatMuted === 'object' && chatMuted[teamId]) {
+      return true;
+    }
+  }
+  if (inboxTeam?.id === teamId && typeof inboxTeam.isMuted === 'boolean') {
+    const inboxConversationId = inboxTeam.preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID;
+    if (inboxConversationId === conversationId) {
+      return inboxTeam.isMuted;
+    }
+  }
+  return false;
+}
+
+function maybeMarkRead(user: AuthState['user'] | null | undefined, teamId: string, hasTeamId: boolean, shouldRefreshBadge = false) {
   const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
   const isWindowFocused = document.hasFocus();
   if (shouldUpdateChatLastRead({
-    hasCurrentUser: Boolean(userId),
+    hasCurrentUser: Boolean(user?.uid),
     hasTeamId,
     isPageVisible,
     isWindowFocused
   })) {
-    void markTeamChatRead(userId, teamId);
+    if (shouldRefreshBadge) {
+      void markTeamChatReadAndRefreshBadge(user || null, teamId);
+      return;
+    }
+    if (user?.uid) {
+      void markTeamChatRead(user.uid, teamId);
+    }
   }
 }
 
@@ -1825,14 +1910,18 @@ function isNearBottom(container: HTMLDivElement | null) {
   return container.scrollHeight - container.scrollTop - container.clientHeight <= 96;
 }
 
-function StatusBanner({ status, onClose }: { status: ChatStatus; onClose: () => void }) {
+export function StatusBanner({ status, onClose }: { status: ChatStatus; onClose: () => void }) {
   const toneClass = status.tone === 'error'
     ? 'border-rose-200 bg-rose-50 text-rose-700'
     : status.tone === 'success'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
       : 'border-primary-200 bg-primary-50 text-primary-700';
   return (
-    <div className={`mt-3 flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm font-bold ${toneClass}`}>
+    <div
+      role={status.tone === 'error' ? 'alert' : 'status'}
+      aria-live={status.tone === 'error' ? 'assertive' : 'polite'}
+      className={`mt-3 flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm font-bold ${toneClass}`}
+    >
       <span>{status.message}</span>
       <button type="button" className="rounded-lg p-1" onClick={onClose} aria-label="Close status">
         <X className="h-4 w-4" aria-hidden="true" />
@@ -2052,6 +2141,7 @@ function TeamEmailSheet({
                 className="min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
                 placeholder="Weekly reminder"
                 maxLength={120}
+                enterKeyHint="next"
               />
               <button type="button" className="secondary-button sm:min-w-[148px]" disabled={!canSaveTemplate} onClick={onSaveTemplate}>
                 {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
@@ -2068,6 +2158,7 @@ function TeamEmailSheet({
             className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
             placeholder="Team update"
             maxLength={160}
+            enterKeyHint="next"
           />
         </label>
         <label className="block">
@@ -2078,6 +2169,7 @@ function TeamEmailSheet({
             className="mt-1 min-h-36 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
             placeholder="Write the email body..."
             maxLength={5000}
+            enterKeyHint="send"
           />
         </label>
         <button type="submit" className="primary-button w-full" disabled={!canSendEmail}>
@@ -2371,12 +2463,12 @@ function normalizeTimestampValue(value: unknown) {
   return String(value);
 }
 
-function MessageAvatar({ message, label }: { message: ChatMessage; label: string }) {
+export function MessageAvatar({ message, label }: { message: ChatMessage; label: string }) {
   if (message.ai) {
-    return <img src="./logo_small.png" alt="" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
+    return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
   }
   if (message.senderPhotoUrl) {
-    return <img src={message.senderPhotoUrl} alt="" className="h-8 w-8 rounded-full object-cover" />;
+    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} className="h-8 w-8 rounded-full object-cover" />;
   }
   return (
     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-600">
@@ -2561,7 +2653,7 @@ function Composer({
               {preview.file.type.startsWith('video/') ? (
                 <video src={preview.url} className="h-full w-full object-cover" muted playsInline />
               ) : (
-                <img src={preview.url} alt="" className="h-full w-full object-cover" />
+                <img src={preview.url} alt={preview.file.name || `Attachment preview ${index + 1}`} className="h-full w-full object-cover" />
               )}
               <button type="button" className="absolute right-1 top-1 rounded-full bg-gray-950/70 p-1 text-white" onClick={() => onRemoveFile(index)} aria-label="Remove attachment">
                 <X className="h-3 w-3" aria-hidden="true" />
@@ -2586,6 +2678,7 @@ function Composer({
           maxLength={2000}
           className="chat-composer-textarea"
           placeholder={placeholder}
+          enterKeyHint="send"
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault();

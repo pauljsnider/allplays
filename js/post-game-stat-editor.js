@@ -1,8 +1,8 @@
 import { buildConfiguredStatFields } from './game-report-stats.js?v=1';
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
 
-function normalizeStatKey(key) {
-    return String(key || '').trim().toLowerCase().replace(/\s+/g, '');
+export function normalizeStatKey(key) {
+    return String(key || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {} } = {}) {
@@ -10,7 +10,12 @@ export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {}
     let fields = [];
 
     if (Array.isArray(resolvedConfig?.columns) && resolvedConfig.columns.length > 0) {
-        fields = buildConfiguredStatFields(resolvedConfig.columns, statsObjects);
+        fields = buildConfiguredStatFields(resolvedConfig.columns, statsObjects)
+            .map((field) => ({
+                ...field,
+                fieldName: normalizeStatKey(field?.fieldName)
+            }))
+            .filter((field) => field.fieldName);
     }
 
     if (fields.length === 0) {
@@ -24,10 +29,13 @@ export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {}
             .map((key) => ({ fieldName: key, label: key.toUpperCase() }));
     }
 
-    const existingFieldNames = new Set(fields.map((field) => field.fieldName));
+    const existingFieldNames = new Set(fields.map((field) => normalizeStatKey(field?.fieldName)).filter(Boolean));
     const privatePlayerFields = normalizeStatTrackerConfig(resolvedConfig || {}).statDefinitions
         .filter((definition) => definition.scope === 'player' && definition.visibility === 'private' && definition.type === 'base')
-        .map((definition) => ({ fieldName: definition.id, label: definition.label || definition.acronym || definition.id.toUpperCase() }))
+        .map((definition) => ({
+            fieldName: normalizeStatKey(definition.id),
+            label: definition.label || definition.acronym || definition.id.toUpperCase()
+        }))
         .filter((field) => field.fieldName && !existingFieldNames.has(field.fieldName));
 
     privatePlayerFields.forEach((field) => {

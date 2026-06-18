@@ -2,28 +2,21 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormE
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, Clock, ExternalLink, FileText, MapPin, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
-  cancelParentScheduleRideRequest,
   cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
   claimParentScheduleAssignmentSlot,
-  createParentScheduleRideOffer,
   loadParentPracticePacket,
   loadStaffPracticeAttendance,
   loadParentScheduleEventDetail,
   loadParentScheduleAssignments,
-  loadParentScheduleRideOffers,
   loadStaffScheduleRsvpBreakdown,
   loadStaffRsvpReminderPreview,
   loadAutoFilledLineupDraftPreviewForApp,
   markParentPracticePacketComplete,
   publishGamePlanForApp,
   releaseParentScheduleAssignmentClaim,
-  requestParentScheduleRideSpot,
   sendStaffRsvpReminder,
-  setParentScheduleRideOfferStatus,
-  submitParentScheduleRsvp,
   submitStaffScheduleRsvpOverride,
-  summarizeParentScheduleRideOffers,
   loadHomeScoringPlayers,
   publishLiveScoreUpdateEvent,
   recordPlayerGameStat,
@@ -38,22 +31,19 @@ import {
   updateLiveGameClockState,
   buildLiveGameClockPeriods,
   resolveLiveGameClockSnapshot,
-  updateParentScheduleRideRequestStatus,
+  type RideRequestChildInput,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
-  type RideOfferInput,
   type ParentPracticePacket,
   type ParentPracticePacketChild,
   type StaffScheduleRsvpBreakdown,
   type StaffScheduleRsvpRow,
   type StaffRsvpReminderSendResult,
-  type RideRequestChildInput,
   type ScheduleHomeScoringPlayer,
   type PlayerGameStatResult,
   type LineupDraftPreviewResult
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
-import { buildRotationPlanFromGamePlan } from '../../../../js/game-plan-interop.js';
 import {
   assignLineupPlayer,
   buildLineupAiPrompt,
@@ -68,32 +58,14 @@ import {
   moveLineupPlayer,
   parseAiLineupPlan
 } from '../lib/gameDayLineupBuilder';
-import { applyLiveSubstitution, getSubstitutionOptions } from '../../../../js/game-day-live-substitutions.js';
-import {
-  buildAppWrapupCompletionPayload,
-  buildGameWrapupEmailDraft,
-  generateGameWrapupArtifactsForApp,
-  type PracticeFeedItem
-} from '../lib/gameWrapupService';
+import { buildAppWrapupCompletionPayload, buildGameWrapupEmailDraft, generateGameWrapupArtifactsForApp, type PracticeFeedItem } from '../lib/gameWrapupService';
 import { loadGameReportSections, type GameReportData, type GameReportInsight, type GameReportPlay, type GameReportPlayerRow } from '../lib/gameReportService';
+import { appendPracticeTimelineLiveNoteForApp, createPracticeTimelineBlockFromOption, getPracticeTimelineTotalMinutes, loadPracticeTimelineModel, savePracticeTimelineForApp, type PracticeTimelineBlock, type PracticeTimelineDrillOption } from '../lib/practiceTimelineService';
+import { acquireTrackStatsheetPhoto, analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, loadTrackStatsheetContextForApp, type TrackStatsheetReviewRow } from '../lib/statsheetImportService';
+import { buildRotationPlanFromGamePlan } from '../lib/adapters/legacyScheduleHelpers';
+import { applyLiveSubstitution, getSubstitutionOptions } from '../lib/adapters/legacyScheduleHelpers';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';
-import {
-  canUseLiveGameChat,
-  getLiveGameChatNotice,
-  sendLiveGameChatMessage,
-  subscribeToLiveGameChat,
-  type LiveGameChatMessage
-} from '../lib/liveGameChatService';
-import {
-  canUseLiveGameReactions,
-  getLiveGameReactionNotice,
-  liveGameReactionOptions,
-  sendLiveGameReaction,
-  subscribeToLiveGameReactions,
-  type LiveGameReaction,
-  type LiveGameReactionType
-} from '../lib/liveGameReactionsService';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import {
   buildGameHubDestinations,
@@ -102,6 +74,8 @@ import {
   type ScheduleHubDestination,
   type ScheduleHubIcon
 } from '../lib/scheduleHub';
+import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import {
   canRequestScheduleRide,
@@ -128,23 +102,35 @@ import {
   type StaffRsvpReminderPreview,
   type ScheduleRideOffer
 } from '../lib/scheduleLogic';
-import {
-  appendPracticeTimelineLiveNoteForApp,
-  createPracticeTimelineBlockFromOption,
-  getPracticeTimelineTotalMinutes,
-  loadPracticeTimelineModel,
-  savePracticeTimelineForApp,
-  type PracticeTimelineBlock,
-  type PracticeTimelineDrillOption
-} from '../lib/practiceTimelineService';
-import {
-  acquireTrackStatsheetPhoto,
-  analyzeTrackStatsheetPhoto,
-  applyTrackStatsheetImportForApp,
-  loadTrackStatsheetContextForApp,
-  type TrackStatsheetReviewRow
-} from '../lib/statsheetImportService';
+// Type-only imports for deferred modules — runtime values loaded on demand below
+import type { LiveGameChatMessage } from '../lib/liveGameChatService';
+import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
+
+// Deferred module type aliases for promise caches
+type LiveGameChatModule = typeof import('../lib/liveGameChatService');
+type LiveGameReactionsModule = typeof import('../lib/liveGameReactionsService');
+
+// Module-level promise caches — each module loads at most once per session
+let liveGameChatModulePromise: Promise<LiveGameChatModule> | null = null;
+let liveGameReactionsModulePromise: Promise<LiveGameReactionsModule> | null = null;
+
+function loadLiveGameChatModule() {
+  if (!liveGameChatModulePromise) {
+    liveGameChatModulePromise = import('../lib/liveGameChatService');
+  }
+  return liveGameChatModulePromise;
+}
+
+function loadLiveGameReactionsModule() {
+  if (!liveGameReactionsModulePromise) {
+    liveGameReactionsModulePromise = import('../lib/liveGameReactionsService');
+  }
+  return liveGameReactionsModulePromise;
+}
 import type { AuthState } from '../lib/types';
+import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
+import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
+import { useScheduleRideOffers } from '../hooks/schedule/useScheduleRideOffers';
 
 type EventDetailSectionId = 'availability' | 'rideshare' | 'assignments' | 'game';
 type GameReportSectionId = 'summary' | 'players' | 'plays' | 'opponent' | 'insights' | 'media';
@@ -254,6 +240,35 @@ const rsvpBadgeClasses: Record<RsvpResponse, string> = {
   not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
 };
 
+export function getAvailabilityNoteSaveState(rsvp: RsvpResponse, availabilityNote: string, savedAvailabilityNote: string) {
+  const trimmedAvailabilityNote = String(availabilityNote || '').trim();
+  const trimmedSavedAvailabilityNote = String(savedAvailabilityNote || '').trim();
+  const isDirty = trimmedAvailabilityNote !== trimmedSavedAvailabilityNote;
+  const canSaveNote = rsvp !== 'not_responded' && isDirty;
+
+  return {
+    isDirty,
+    canSaveNote,
+    trimmedAvailabilityNote,
+    trimmedSavedAvailabilityNote
+  };
+}
+
+function getScheduleEventDetailLoadErrorMessage(error: AppServiceError, hasExistingEvent: boolean) {
+  if (hasExistingEvent) {
+    if (error.type === 'network') return 'Unable to refresh this event while offline. Showing the last loaded details.';
+    if (error.type === 'permission') return 'Unable to refresh this event because access was denied. Showing the last loaded details.';
+    if (error.type === 'not_found') return 'Unable to refresh this event because it is no longer available. Showing the last loaded details.';
+    if (error.type === 'validation') return error.message;
+    return 'Unable to refresh this event. Showing the last loaded details. Try again.';
+  }
+  if (error.type === 'network') return 'Unable to load this event while offline. Check your connection and try again.';
+  if (error.type === 'permission') return 'You do not have permission to view this event.';
+  if (error.type === 'not_found') return 'This event is not available for your account.';
+  if (error.type === 'validation') return error.message;
+  return error.message || 'Unable to load event details.';
+}
+
 type AttentionItem = {
   title: string;
   detail: string;
@@ -285,13 +300,10 @@ export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<stri
 
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const { teamId = '', eventId = '' } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [selectedChildId, setSelectedChildId] = useState(searchParams.get('childId') || '');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState<RsvpResponse | null>(null);
   const [activeSection, setActiveSection] = useState<EventDetailSectionId>(() => parseEventDetailSection(searchParams.get('section')));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
@@ -301,43 +313,90 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [staffRsvpSubmittingPlayerId, setStaffRsvpSubmittingPlayerId] = useState<string | null>(null);
   const [staffRsvpStatus, setStaffRsvpStatus] = useState<StaffRsvpOverrideStatus | null>(null);
   const [staffRsvpRefreshToken, setStaffRsvpRefreshToken] = useState(0);
+  const [initialLoadPending, setInitialLoadPending] = useState(true);
+  const hasLoadedEventRef = useRef(false);
+  const { loading, error, clearError, setError, run: runPrimaryLoad } = useAsyncOperation();
 
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
 
+  const replaceEventRouteParams = (updates: { section?: EventDetailSectionId; childId?: string }) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (updates.section) nextParams.set('section', updates.section);
+    if (Object.prototype.hasOwnProperty.call(updates, 'childId')) {
+      const nextChildId = String(updates.childId || '').trim();
+      if (nextChildId) {
+        nextParams.set('childId', nextChildId);
+      } else {
+        nextParams.delete('childId');
+      }
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const selectSection = (sectionId: EventDetailSectionId) => {
     setActiveSection(sectionId);
+    replaceEventRouteParams({ section: sectionId });
     window.requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   };
 
-  const loadEvent = async () => {
-    if (!auth.user) return;
-    setLoading(true);
-    setError(null);
-    setStatusMessage(null);
-    try {
-      const result = await loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId });
-      setEvents(result.events);
-      if (!selectedChildId && result.events[0]?.childId) {
-        setSelectedChildId(result.events[0].childId);
-      }
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load event details.');
-      setEvents([]);
-    } finally {
-      setLoading(false);
-    }
+  const selectChild = (childId: string) => {
+    setSelectedChildId(childId);
+    replaceEventRouteParams({ childId });
   };
 
+  const loadEvent = useCallback(async () => {
+    if (!auth.user) {
+      setInitialLoadPending(false);
+      return;
+    }
+    setStatusMessage(null);
+    clearError();
+    const hasExistingEvent = hasLoadedEventRef.current;
+    try {
+      await runPrimaryLoad(
+        () => loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId }),
+        {
+          getErrorMessage: (loadError) => getScheduleEventDetailLoadErrorMessage(
+            toAppServiceError(loadError, 'Unable to load event details.'),
+            hasExistingEvent
+          ),
+          rethrow: false,
+          onSuccess: (result) => {
+            setEvents(result.events);
+            hasLoadedEventRef.current = result.events.length > 0;
+            if (!selectedChildId && result.events[0]?.childId) {
+              setSelectedChildId(result.events[0].childId);
+            }
+          },
+          onError: () => {
+            if (!hasExistingEvent) {
+              setEvents([]);
+              hasLoadedEventRef.current = false;
+            }
+          }
+        }
+      );
+    } finally {
+      setInitialLoadPending(false);
+    }
+  }, [auth.user, clearError, decodedEventId, decodedTeamId, runPrimaryLoad, selectedChildId]);
+
   useEffect(() => {
-    loadEvent();
+    hasLoadedEventRef.current = false;
+    setInitialLoadPending(true);
+    void loadEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
 
   useEffect(() => {
     setActiveSection(parseEventDetailSection(searchParams.get('section')));
+    const routeChildId = searchParams.get('childId') || '';
+    if (routeChildId) {
+      setSelectedChildId(routeChildId);
+    }
   }, [searchParams]);
 
   const selectedEvent = useMemo(() => {
@@ -382,14 +441,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     refreshStaffRsvpBreakdown();
   }, [refreshStaffRsvpBreakdown, selectedEvent?.eventKey]);
 
-  const handleRideOffersChanged = useCallback((offers: ScheduleRideOffer[]) => {
-    const rideshareSummary = summarizeParentScheduleRideOffers(offers);
-    setEvents((current) => current.map((event) => (
-      event.teamId === decodedTeamId && event.id === decodedEventId
-        ? { ...event, rideshareSummary }
-      : event
-    )));
-  }, [decodedEventId, decodedTeamId]);
+  const updateEvents = useCallback((updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
+    setEvents((current) => updater(current));
+  }, []);
 
   const handleAssignmentsChanged = useCallback((assignments: ScheduleAssignment[]) => {
     setEvents((current) => current.map((event) => (
@@ -471,34 +525,6 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
-  const canSubmitRsvp = Boolean(selectedEvent?.isDbGame && !selectedEvent.isCancelled && !selectedEvent.availabilityLocked);
-
-  const submitRsvp = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
-    if (!auth.user || !selectedEvent) return;
-    setSubmitting(response);
-    setError(null);
-    setStatusMessage(null);
-    try {
-      const note = availabilityNote.trim();
-      const summary = await submitParentScheduleRsvp(selectedEvent, auth.user, response, note);
-      setEvents((current) => current.map((event) => {
-        if (event.teamId !== selectedEvent.teamId || event.id !== selectedEvent.id) return event;
-        const sameChild = event.childId === selectedEvent.childId;
-        return {
-          ...event,
-          myRsvp: sameChild ? response : event.myRsvp,
-          myRsvpNote: sameChild ? note : event.myRsvpNote,
-          rsvpSummary: summary || event.rsvpSummary
-        };
-      }));
-      setStatusMessage(`${selectedEvent.childName} marked ${rsvpLabels[response].toLowerCase()}.`);
-    } catch (submitError: any) {
-      setError(submitError?.message || 'Unable to submit availability.');
-    } finally {
-      setSubmitting(null);
-    }
-  };
-
   const submitStaffRsvpOverride = async (player: StaffScheduleRsvpRow, response: Exclude<RsvpResponse, 'not_responded'>) => {
     if (!auth.user || !selectedEvent) return;
     setStaffRsvpSubmittingPlayerId(player.playerId);
@@ -526,7 +552,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  if (loading) {
+  if (loading || initialLoadPending) {
     return <EventDetailPageSkeleton />;
   }
 
@@ -538,6 +564,15 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           Schedule
         </Link>
         <Status tone="error" message={error || 'This event is not available for your account.'} />
+        {error ? (
+          <button
+            type="button"
+            className="secondary-button min-h-9 w-fit px-3 text-xs"
+            onClick={() => void loadEvent()}
+          >
+            Try again
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -566,7 +601,14 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   };
 
   return (
-    <div className="event-detail-page space-y-3">
+    <ScheduleEventDetailProvider value={{
+      auth,
+      event: selectedEvent,
+      childEvents: events,
+      refreshEvent: () => void loadEvent(),
+      updateEvents
+    }}>
+      <div className="event-detail-page space-y-3">
       <aside className="event-detail-rail space-y-3">
         <section className="event-summary-card app-card overflow-hidden p-0">
           <div className="event-summary-shell px-3 py-1.5 sm:p-4">
@@ -607,7 +649,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               <div className="min-w-0 flex-1">
                 {events.length > 1 ? (
                   <>
-                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={setSelectedChildId} compact />
+                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />
                     <div className="mt-1 truncate text-xs font-bold text-gray-600">{selectedEvent.childName} · {selectedEvent.teamName}</div>
                   </>
                 ) : (
@@ -664,11 +706,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             auth={auth}
             event={selectedEvent}
             rsvp={rsvp}
-            canSubmitRsvp={canSubmitRsvp}
-            submitting={submitting}
             availabilityNote={availabilityNote}
             onAvailabilityNoteChange={setAvailabilityNote}
-            onSubmit={submitRsvp}
             staffRsvpBreakdown={staffRsvpBreakdown}
             staffRsvpLoading={staffRsvpLoading}
             staffRsvpError={staffRsvpError}
@@ -684,8 +723,6 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
           <RideshareSection
             auth={auth}
             event={selectedEvent}
-            childEvents={events}
-            onOffersChanged={handleRideOffersChanged}
           />
         ) : null}
         {activeSection === 'assignments' ? (
@@ -695,9 +732,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onAssignmentsChanged={handleAssignmentsChanged}
           />
         ) : null}
-        {activeSection === 'game' ? <GameHubSection auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {activeSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
-    </div>
+      </div>
+    </ScheduleEventDetailProvider>
   );
 }
 
@@ -772,13 +810,15 @@ function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availa
   onSubmit: (response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
 }) {
   const needsResponse = rsvp === 'not_responded';
+  const noteSaveState = getAvailabilityNoteSaveState(rsvp, availabilityNote, event.myRsvpNote || '');
+  const showDirtyState = rsvp !== 'not_responded' && noteSaveState.isDirty;
   return (
     <div className={`border-b px-3 py-2.5 sm:px-4 sm:py-3 ${needsResponse ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
       <div className="flex items-center gap-2.5 sm:items-start sm:gap-3">
         <PlayerInitials name={event.childName} />
         <div className="min-w-0 flex-1">
-          <div className={`text-[11px] font-black uppercase tracking-[0.06em] ${needsResponse ? 'text-amber-800' : 'text-gray-500'}`}>
-            {needsResponse ? 'Availability needed' : 'Availability saved'}
+          <div className={`text-[11px] font-black uppercase tracking-[0.06em] ${needsResponse ? 'text-amber-800' : showDirtyState ? 'text-amber-800' : 'text-gray-500'}`}>
+            {needsResponse ? 'Availability needed' : showDirtyState ? 'Unsaved note changes' : 'Availability saved'}
           </div>
           <div className="mt-0.5 text-sm font-black leading-tight text-gray-950 sm:mt-1 sm:text-base">Is {event.childName} going?</div>
           <div className="mt-2 grid grid-cols-3 gap-1.5">
@@ -812,6 +852,19 @@ function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availa
           <div className="mt-1 text-[11px] font-semibold text-gray-500">
             {event.availabilityNotesVisible ? 'Team note sharing is on for this team.' : 'Notes are visible to team staff unless sharing is enabled.'}
           </div>
+          {noteSaveState.canSaveNote ? (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+              <div className="text-xs font-black text-amber-900">Note edited but not saved yet.</div>
+              <button
+                type="button"
+                className="min-h-8 rounded-full border border-primary-200 bg-white px-3 text-xs font-black text-primary-700 transition hover:border-primary-300 hover:bg-primary-50"
+                disabled={!canSubmitRsvp || submitting === rsvp}
+                onClick={() => onSubmit(rsvp as Exclude<RsvpResponse, 'not_responded'>)}
+              >
+                {submitting === rsvp ? 'Saving' : 'Save note'}
+              </button>
+            </div>
+          ) : null}
           {!canSubmitRsvp ? <div className="mt-2 text-xs font-semibold text-gray-500">Availability is not open for this event.</div> : null}
         </div>
       </div>
@@ -1014,15 +1067,12 @@ function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: 
   );
 }
 
-function AvailabilitySection({ auth, event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit, staffRsvpBreakdown, staffRsvpLoading, staffRsvpError, staffRsvpSubmittingPlayerId, staffRsvpStatus, staffRsvpRefreshToken, onStaffRsvpOverride, attentionItems, onSelectSection }: {
+function AvailabilitySection({ auth, event, rsvp, availabilityNote, onAvailabilityNoteChange, staffRsvpBreakdown, staffRsvpLoading, staffRsvpError, staffRsvpSubmittingPlayerId, staffRsvpStatus, staffRsvpRefreshToken, onStaffRsvpOverride, attentionItems, onSelectSection }: {
   auth: AuthState;
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;
-  canSubmitRsvp: boolean;
-  submitting: RsvpResponse | null;
   availabilityNote: string;
   onAvailabilityNoteChange: (note: string) => void;
-  onSubmit: (response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
   staffRsvpBreakdown: StaffScheduleRsvpBreakdown | null;
   staffRsvpLoading: boolean;
   staffRsvpError: string | null;
@@ -1033,6 +1083,8 @@ function AvailabilitySection({ auth, event, rsvp, canSubmitRsvp, submitting, ava
   attentionItems: AttentionItem[];
   onSelectSection: (sectionId: EventDetailSectionId) => void;
 }) {
+  const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });
+
   return (
     <section className="app-card overflow-hidden p-0">
       <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-3 py-2.5 sm:px-4">
@@ -1047,13 +1099,15 @@ function AvailabilitySection({ auth, event, rsvp, canSubmitRsvp, submitting, ava
       <QuickAvailabilityPanel
         event={event}
         rsvp={rsvp}
-        canSubmitRsvp={canSubmitRsvp}
-        submitting={submitting}
+        canSubmitRsvp={rsvpWorkflow.canSubmit}
+        submitting={rsvpWorkflow.submitting}
         availabilityNote={availabilityNote}
         onAvailabilityNoteChange={onAvailabilityNoteChange}
-        onSubmit={onSubmit}
+        onSubmit={rsvpWorkflow.submit}
       />
       <div className="px-3 pb-3 sm:px-4">
+        {rsvpWorkflow.message ? <Status tone="success" message={rsvpWorkflow.message} /> : null}
+        {rsvpWorkflow.error ? <div className="mt-2"><Status tone="error" message={rsvpWorkflow.error} /></div> : null}
         <AttentionPanel items={attentionItems} onSelectSection={onSelectSection} />
         <StaffRsvpBreakdownPanel
           event={event}
@@ -1253,112 +1307,15 @@ const rideDirectionOptions: Array<{ value: RideOfferDirection; label: string }> 
   { value: 'round-trip', label: 'Round trip' }
 ];
 
-function RideshareSection({ auth, event, childEvents, onOffersChanged }: {
+function RideshareSection({ auth, event }: {
   auth: AuthState;
   event: ParentScheduleEvent;
-  childEvents: ParentScheduleEvent[];
-  onOffersChanged: (offers: ScheduleRideOffer[]) => void;
 }) {
-  const [offers, setOffers] = useState<ScheduleRideOffer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [formOpen, setFormOpen] = useState(false);
-  const [seatCapacity, setSeatCapacity] = useState('3');
-  const [direction, setDirection] = useState<RideOfferDirection>('to');
-  const [note, setNote] = useState('');
-  const [selectedChildByOffer, setSelectedChildByOffer] = useState<Record<string, string>>({});
-  const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [rideStatus, setRideStatus] = useState<string | null>(null);
-  const [rideError, setRideError] = useState<string | null>(null);
-
-  const childChoices = useMemo(() => getRideChildChoices(childEvents), [childEvents]);
-  const summary = loading && !offers.length ? event.rideshareSummary : summarizeParentScheduleRideOffers(offers);
-
-  const refreshOffers = useCallback(async (showLoading = true) => {
-    if (showLoading) setLoading(true);
-    setRideError(null);
-    try {
-      const loaded = await loadParentScheduleRideOffers(event);
-      setOffers(loaded);
-      onOffersChanged(loaded);
-    } catch (error: any) {
-      setRideError(error?.message || 'Unable to load rideshare offers.');
-      setOffers([]);
-      onOffersChanged([]);
-    } finally {
-      if (showLoading) setLoading(false);
-    }
-  }, [event.id, event.isCancelled, event.isDbGame, event.teamId, onOffersChanged]);
-
-  useEffect(() => {
-    setSelectedChildByOffer({});
-    setRideStatus(null);
-    refreshOffers();
-  }, [refreshOffers]);
-
-  const runRideAction = async (actionKey: string, action: () => Promise<void>, successMessage: string) => {
-    setBusyAction(actionKey);
-    setRideStatus(null);
-    setRideError(null);
-    try {
-      await action();
-      await refreshOffers(false);
-      setRideStatus(successMessage);
-    } catch (error: any) {
-      setRideError(error?.message || 'Unable to update rideshare.');
-    } finally {
-      setBusyAction(null);
-    }
-  };
+  const rideOffers = useScheduleRideOffers();
 
   const submitRideOffer = async (formEvent: FormEvent) => {
     formEvent.preventDefault();
-    if (!auth.user) return;
-    const input: RideOfferInput = {
-      seatCapacity: Number.parseInt(seatCapacity, 10) || 0,
-      direction,
-      note
-    };
-    await runRideAction('create-offer', async () => {
-      await createParentScheduleRideOffer(event, auth.user!, input);
-      setFormOpen(false);
-      setSeatCapacity('3');
-      setDirection('to');
-      setNote('');
-    }, 'Ride offer saved.');
-  };
-
-  const updateOfferChild = (offerId: string, childId: string) => {
-    setSelectedChildByOffer((current) => ({
-      ...current,
-      [offerId]: childId
-    }));
-  };
-
-  const requestSpot = (offer: ScheduleRideOffer, child: RideRequestChildInput) => runRideAction(
-    `request-${offer.id}`,
-    () => requestParentScheduleRideSpot(event, offer, auth.user!, child),
-    `Ride requested for ${child.childName}.`
-  );
-
-  const cancelRequest = (offer: ScheduleRideOffer, requestId: string) => runRideAction(
-    `cancel-${offer.id}-${requestId}`,
-    () => cancelParentScheduleRideRequest(event, offer, requestId),
-    'Ride request cancelled.'
-  );
-
-  const updateRequestStatus = (offer: ScheduleRideOffer, requestId: string, status: RideRequestStatus) => runRideAction(
-    `decision-${offer.id}-${requestId}-${status}`,
-    () => updateParentScheduleRideRequestStatus(event, offer, requestId, status),
-    `Ride request ${status}.`
-  );
-
-  const toggleOfferStatus = (offer: ScheduleRideOffer) => {
-    const nextStatus = offer.status === 'open' ? 'closed' : 'open';
-    return runRideAction(
-      `offer-status-${offer.id}`,
-      () => setParentScheduleRideOfferStatus(event, offer, nextStatus),
-      nextStatus === 'open' ? 'Ride offer reopened.' : 'Ride offer closed.'
-    );
+    await rideOffers.submit();
   };
 
   return (
@@ -1376,20 +1333,20 @@ function RideshareSection({ auth, event, childEvents, onOffersChanged }: {
           <button
             type="button"
             className="secondary-button !min-h-9 flex-none !px-3 !py-2 text-xs"
-            onClick={() => setFormOpen((current) => !current)}
-            disabled={!event.isDbGame || event.isCancelled || busyAction === 'create-offer'}
+            onClick={() => rideOffers.setFormOpen(!rideOffers.formOpen)}
+            disabled={!event.isDbGame || event.isCancelled || rideOffers.submitting === 'create-offer'}
           >
             Offer Ride
           </button>
         </div>
         <div className="mt-3 grid grid-cols-3 gap-2">
-          <DetailRow label="Seats open" value={summary ? String(summary.seatsLeft) : '0'} />
-          <DetailRow label="Requests" value={summary ? String(summary.requests) : '0'} />
-          <DetailRow label="Offers" value={summary ? String(summary.offerCount) : '0'} />
+          <DetailRow label="Seats open" value={rideOffers.summary ? String(rideOffers.summary.seatsLeft) : '0'} />
+          <DetailRow label="Requests" value={rideOffers.summary ? String(rideOffers.summary.requests) : '0'} />
+          <DetailRow label="Offers" value={rideOffers.summary ? String(rideOffers.summary.offerCount) : '0'} />
         </div>
       </div>
 
-      {formOpen ? (
+      {rideOffers.formOpen ? (
         <form className="border-b border-primary-100 bg-primary-50 p-3 sm:p-4" onSubmit={submitRideOffer}>
           <div className="grid grid-cols-[0.75fr_1.25fr] gap-2 sm:grid-cols-[0.6fr_1fr_2fr_auto]">
             <label className="min-w-0">
@@ -1399,16 +1356,16 @@ function RideshareSection({ auth, event, childEvents, onOffersChanged }: {
                 type="number"
                 min="1"
                 max="12"
-                value={seatCapacity}
-                onChange={(inputEvent) => setSeatCapacity(inputEvent.target.value)}
+                value={rideOffers.seatCapacity}
+                onChange={(inputEvent) => rideOffers.setSeatCapacity(inputEvent.target.value)}
               />
             </label>
             <label className="min-w-0">
               <span className="app-label">Direction</span>
               <select
                 className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm"
-                value={direction}
-                onChange={(inputEvent) => setDirection(inputEvent.target.value as RideOfferDirection)}
+                value={rideOffers.direction}
+                onChange={(inputEvent) => rideOffers.setDirection(inputEvent.target.value as RideOfferDirection)}
               >
                 {rideDirectionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
@@ -1417,46 +1374,57 @@ function RideshareSection({ auth, event, childEvents, onOffersChanged }: {
               <span className="app-label">Note</span>
               <input
                 className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm"
-                value={note}
+                value={rideOffers.note}
                 maxLength={160}
-                onChange={(inputEvent) => setNote(inputEvent.target.value)}
+                onChange={(inputEvent) => rideOffers.setNote(inputEvent.target.value)}
                 placeholder="Optional"
               />
             </label>
-            <button type="submit" className="primary-button col-span-2 !min-h-10 !py-2 text-sm sm:col-span-1 sm:self-end" disabled={busyAction === 'create-offer'}>
-              {busyAction === 'create-offer' ? 'Saving' : 'Save'}
+            <button type="submit" className="primary-button col-span-2 !min-h-10 !py-2 text-sm sm:col-span-1 sm:self-end" disabled={rideOffers.submitting === 'create-offer'}>
+              {rideOffers.submitting === 'create-offer' ? 'Saving' : 'Save'}
             </button>
           </div>
         </form>
       ) : null}
 
       <div className="p-3 sm:p-4">
-        {rideStatus ? <Status tone="success" message={rideStatus} /> : null}
-        {rideError ? <div className="mt-2"><Status tone="error" message={rideError} /></div> : null}
+        {rideOffers.message ? <Status tone="success" message={rideOffers.message} /> : null}
+        {rideOffers.error ? <div className="mt-2"><Status tone="error" message={rideOffers.error} /></div> : null}
         {!event.isDbGame || event.isCancelled ? (
           <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Rideshare is available for active tracked schedule events.</div>
-        ) : loading ? (
+        ) : rideOffers.loading ? (
           <div className="mt-2 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-600">
             <RefreshCw className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
             Loading rideshare offers
           </div>
-        ) : offers.length ? (
+        ) : rideOffers.error && !rideOffers.offers.length ? (
+          <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <div className="text-sm font-semibold text-rose-700">Rideshare could not be loaded for this event.</div>
+            <button
+              type="button"
+              className="secondary-button mt-3 min-h-9 w-fit px-3 text-xs"
+              onClick={() => void rideOffers.retry()}
+            >
+              Retry rideshare
+            </button>
+          </div>
+        ) : rideOffers.offers.length ? (
           <div className="mt-2 space-y-3">
-            {offers.map((offer) => (
+            {rideOffers.offers.map((offer) => (
               <RideOfferCard
                 key={offer.id}
                 offer={offer}
                 event={event}
                 userId={auth.user?.uid || ''}
-                canManage={canManageRideOffer(offer, event, auth)}
-                childChoices={childChoices}
-                selectedChildId={resolveRideChildIdForOffer(offer, event, childChoices, selectedChildByOffer[offer.id], auth.user?.uid || '')}
-                busyAction={busyAction}
-                onChildChange={(childId) => updateOfferChild(offer.id, childId)}
-                onRequest={(child) => requestSpot(offer, child)}
-                onCancel={(requestId) => cancelRequest(offer, requestId)}
-                onDecision={(requestId, status) => updateRequestStatus(offer, requestId, status)}
-                onToggleStatus={() => toggleOfferStatus(offer)}
+                canManage={rideOffers.canManageOffer(offer)}
+                childChoices={rideOffers.childChoices}
+                selectedChildId={rideOffers.resolveSelectedChildId(offer)}
+                busyAction={rideOffers.submitting}
+                onChildChange={(childId) => rideOffers.selectChildForOffer(offer.id, childId)}
+                onRequest={(child) => rideOffers.requestSpot(offer, child)}
+                onCancel={(requestId) => rideOffers.cancelRequest(offer, requestId)}
+                onDecision={(requestId, status) => rideOffers.updateRequestStatus(offer, requestId, status)}
+                onToggleStatus={() => rideOffers.toggleOfferStatus(offer)}
               />
             ))}
           </div>
@@ -1609,32 +1577,6 @@ function RideOfferCard({ offer, event, userId, canManage, childChoices, selected
       ) : null}
     </article>
   );
-}
-
-function getRideChildChoices(events: ParentScheduleEvent[]): RideChildChoice[] {
-  const byId = new Map<string, RideChildChoice>();
-  events.forEach((event) => {
-    if (!event.childId || byId.has(event.childId)) return;
-    byId.set(event.childId, {
-      childId: event.childId,
-      childName: event.childName || 'Player'
-    });
-  });
-  return [...byId.values()];
-}
-
-function resolveRideChildIdForOffer(offer: ScheduleRideOffer, event: ParentScheduleEvent, childChoices: RideChildChoice[], selectedChildId: string | undefined, userId: string) {
-  const validChildIds = new Set(childChoices.map((child) => child.childId));
-  if (selectedChildId && validChildIds.has(selectedChildId)) return selectedChildId;
-  if (event.childId && validChildIds.has(event.childId)) return event.childId;
-  const ownRequest = offer.requests.find((request) => request.parentUserId === userId && request.childId && validChildIds.has(request.childId));
-  if (ownRequest?.childId) return ownRequest.childId;
-  return childChoices[0]?.childId || '';
-}
-
-function canManageRideOffer(offer: ScheduleRideOffer, event: ParentScheduleEvent, auth: AuthState) {
-  if (!auth.user?.uid) return false;
-  return offer.driverUserId === auth.user.uid || event.isTeamAdmin === true || auth.isAdmin || auth.isPlatformAdmin;
 }
 
 function formatRideRequestStatus(status: unknown) {
@@ -1836,30 +1778,36 @@ function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease
   );
 }
 
-function getLiveReactionEmoji(type: LiveGameReactionType) {
-  return liveGameReactionOptions.find((reaction) => reaction.key === type)?.emoji || '🔥';
-}
-
 function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [reactionsModule, setReactionsModule] = useState<LiveGameReactionsModule | null>(null);
   const [activeReactions, setActiveReactions] = useState<ActiveLiveReaction[]>([]);
   const [sendStatus, setSendStatus] = useState<string | null>(null);
   const [sendingReactionKey, setSendingReactionKey] = useState<LiveGameReactionType | null>(null);
   const timeoutIdsRef = useRef<number[]>([]);
-  const canReact = canUseLiveGameReactions(event, { now: new Date() });
-  const reactionNotice = getLiveGameReactionNotice(event, { now: new Date() });
 
   useEffect(() => {
-    if (!event.isDbGame || !event.teamId || !event.id) return undefined;
+    void loadLiveGameReactionsModule().then(setReactionsModule);
+  }, []);
 
+  const canReact = reactionsModule ? reactionsModule.canUseLiveGameReactions(event, { now: new Date() }) : false;
+  const reactionNotice = reactionsModule ? reactionsModule.getLiveGameReactionNotice(event, { now: new Date() }) : null;
+  const reactionOptions = reactionsModule ? reactionsModule.liveGameReactionOptions : [];
+  const reactionsReady = Boolean(reactionsModule && reactionOptions.length);
+
+  useEffect(() => {
+    if (!reactionsModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
+
+    const { subscribeToLiveGameReactions, liveGameReactionOptions: options } = reactionsModule;
     const unsubscribe = subscribeToLiveGameReactions(event.teamId, event.id, (reaction) => {
-      const normalizedType = liveGameReactionOptions.some((option) => option.key === reaction.type)
+      const normalizedType = options.some((option) => option.key === reaction.type)
         ? reaction.type
         : 'fire';
+      const emoji = options.find((r) => r.key === normalizedType)?.emoji || '🔥';
       const nextReaction: ActiveLiveReaction = {
         ...reaction,
         type: normalizedType,
         localId: `${reaction.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        emoji: getLiveReactionEmoji(normalizedType)
+        emoji
       };
       setActiveReactions((current) => [...current, nextReaction].slice(-12));
       const timeoutId = window.setTimeout(() => {
@@ -1876,14 +1824,14 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
       timeoutIdsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
       timeoutIdsRef.current = [];
     };
-  }, [event.id, event.isDbGame, event.teamId]);
+  }, [reactionsModule, event.id, event.isDbGame, event.teamId]);
 
   const sendReaction = async (type: LiveGameReactionType) => {
-    if (!canReact || !event.teamId || !event.id || !auth.user?.uid || sendingReactionKey === type) return;
+    if (!reactionsModule || !canReact || !event.teamId || !event.id || !auth.user?.uid || sendingReactionKey === type) return;
     setSendingReactionKey(type);
     setSendStatus(null);
     try {
-      await sendLiveGameReaction(event.teamId, event.id, {
+      await reactionsModule.sendLiveGameReaction(event.teamId, event.id, {
         type,
         user: auth.user
       });
@@ -1924,8 +1872,8 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {liveGameReactionOptions.map((reaction) => {
+      <div className="mt-3 flex min-h-11 flex-wrap gap-2">
+        {reactionsReady ? reactionOptions.map((reaction) => {
           const disabled = !canReact || sendingReactionKey === reaction.key;
           return (
             <button
@@ -1939,11 +1887,19 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
               {reaction.emoji}
             </button>
           );
-        })}
+        }) : Array.from({ length: 5 }).map((_, index) => (
+          <span
+            key={`reaction-loading-${index}`}
+            className="inline-flex min-h-11 min-w-11 animate-pulse items-center justify-center rounded-full border border-amber-100 bg-white/80 px-3"
+            aria-hidden="true"
+          />
+        ))}
       </div>
 
       <div className="mt-2 text-xs font-semibold text-gray-500">
-        {reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.'}
+        {reactionsReady
+          ? (reactionNotice || 'Shared Firestore stream. App and web viewers see the same reactions in real time.')
+          : 'Loading reaction controls…'}
       </div>
       {sendStatus ? <div className="mt-2 text-xs font-bold text-rose-700">{sendStatus}</div> : null}
     </div>
@@ -1951,6 +1907,7 @@ function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: Paren
 }
 
 function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [chatModule, setChatModule] = useState<LiveGameChatModule | null>(null);
   const [messages, setMessages] = useState<LiveGameChatMessage[]>([]);
   const [messageText, setMessageText] = useState('');
   const [anonymousDisplayName, setAnonymousDisplayName] = useState('');
@@ -1958,16 +1915,20 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
-  const canChat = canUseLiveGameChat(event, { now: new Date() });
-  const chatNotice = getLiveGameChatNotice(event, { now: new Date() });
+  useEffect(() => {
+    void loadLiveGameChatModule().then(setChatModule);
+  }, []);
+
+  const canChat = chatModule ? chatModule.canUseLiveGameChat(event, { now: new Date() }) : false;
+  const chatNotice = chatModule ? chatModule.getLiveGameChatNotice(event, { now: new Date() }) : null;
   const canSend = canChat && Boolean(messageText.trim()) && !sending;
 
   useEffect(() => {
-    if (!event.isDbGame || !event.teamId || !event.id) return undefined;
+    if (!chatModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
 
     setLoading(true);
     setStatus(null);
-    const unsubscribe = subscribeToLiveGameChat(event.teamId, event.id, (nextMessages) => {
+    const unsubscribe = chatModule.subscribeToLiveGameChat(event.teamId, event.id, (nextMessages) => {
       setMessages(sortLiveGameChatMessages(nextMessages));
       setLoading(false);
     }, (subscribeError: any) => {
@@ -1978,16 +1939,16 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     return () => {
       unsubscribe?.();
     };
-  }, [event.id, event.isDbGame, event.teamId]);
+  }, [chatModule, event.id, event.isDbGame, event.teamId]);
 
   const sendMessage = async (submitEvent: FormEvent) => {
     submitEvent.preventDefault();
-    if (!canChat || !event.teamId || !event.id || !messageText.trim() || sending) return;
+    if (!chatModule || !canChat || !event.teamId || !event.id || !messageText.trim() || sending) return;
 
     setSending(true);
     setStatus(null);
     try {
-      await sendLiveGameChatMessage(event.teamId, event.id, {
+      await chatModule.sendLiveGameChatMessage(event.teamId, event.id, {
         text: messageText,
         user: auth.user || undefined,
         anonymousDisplayName
@@ -2076,15 +2037,54 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   );
 }
 
+function LazyGameHubPanel({
+  panelId,
+  title,
+  description,
+  open,
+  onToggle,
+  children
+}: {
+  panelId: string;
+  title: string;
+  description: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-left transition hover:border-primary-200 hover:bg-primary-50"
+        onClick={onToggle}
+        aria-label={title}
+        aria-expanded={open}
+        aria-controls={panelId}
+      >
+        <div className="min-w-0">
+          <div className="text-sm font-black text-gray-950">{title}</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">{description}</div>
+        </div>
+        <ChevronDown className={`h-4 w-4 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {open ? <div id={panelId}>{children}</div> : null}
+    </div>
+  );
+}
+
 function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
   const [liveClockNow, setLiveClockNow] = useState(() => new Date());
   const liveClockView = getLiveClockViewModel(event, liveClockNow);
   const isPractice = event.type === 'practice';
+  const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
+  const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canWrapup = canUpdateScore;
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
@@ -2099,6 +2099,17 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
     const intervalId = window.setInterval(() => setLiveClockNow(new Date()), 1000);
     return () => window.clearInterval(intervalId);
   }, [event.eventKey, event.liveClockRunning, event.liveClockMs, event.liveClockUpdatedAt]);
+
+  useEffect(() => {
+    setOpenPanels({});
+  }, [event.eventKey]);
+
+  const togglePanel = useCallback((panelId: string) => {
+    setOpenPanels((current) => ({
+      ...current,
+      [panelId]: !current[panelId]
+    }));
+  }, []);
 
   const cancelGame = async () => {
     if (!auth.user) return;
@@ -2160,8 +2171,9 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
 
   return (
     <section className="space-y-3">
-      {isPractice ? <PracticeTimelineSection auth={auth} event={event} /> : null}
-      {isPractice ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
+      {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
+      {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
+      {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       <div className="app-card overflow-hidden p-0">
         <div className="border-b border-gray-100 px-3 py-3 sm:px-4">
           <div className="flex items-start justify-between gap-3">
@@ -2197,19 +2209,76 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
           {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
           {canUpdateScore ? <GameDayFoulTrackerPanel auth={auth} event={event} /> : null}
-          {!isPractice ? <LiveGameReactionsPanel auth={auth} event={event} /> : null}
-          {!isPractice ? <LiveGameChatPanel auth={auth} event={event} /> : null}
 
-          {canWrapup ? <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} /> : null}
+          {!isPractice ? (
+            <LazyGameHubPanel
+              panelId="game-hub-reactions-panel"
+              title="Live reactions"
+              description="Start the shared reaction stream only when you need it."
+              open={Boolean(openPanels.reactions)}
+              onToggle={() => togglePanel('reactions')}
+            >
+              <LiveGameReactionsPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
+          ) : null}
+          {!isPractice ? (
+            <LazyGameHubPanel
+              panelId="game-hub-chat-panel"
+              title="Live chat"
+              description="Open chat on demand instead of subscribing during first paint."
+              open={Boolean(openPanels.chat)}
+              onToggle={() => togglePanel('chat')}
+            >
+              <LiveGameChatPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
+          ) : null}
 
-          {canWrapup ? <StatsheetImportPanel event={event} onImported={onStatsheetImported} /> : null}
+          {canWrapup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-wrapup-panel"
+              title="Post-game wrap-up"
+              description="Load wrap-up tools only when staff is ready to finish the game."
+              open={Boolean(openPanels.wrapup)}
+              onToggle={() => togglePanel('wrapup')}
+            >
+              <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} />
+            </LazyGameHubPanel>
+          ) : null}
 
-          {canPublishLineup ? (
-            <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
+          {canWrapup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-statsheet-panel"
+              title="Statsheet import"
+              description="Defer photo analysis and roster context until someone opens import."
+              open={Boolean(openPanels.statsheet)}
+              onToggle={() => togglePanel('statsheet')}
+            >
+              <StatsheetImportPanel event={event} onImported={onStatsheetImported} />
+            </LazyGameHubPanel>
           ) : null}
 
           {canPublishLineup ? (
-            <GameDaySubstitutionPanel auth={auth} event={event} />
+            <LazyGameHubPanel
+              panelId="game-hub-lineup-panel"
+              title="Lineup builder"
+              description="Only load lineup preview data after staff opens lineup tools."
+              open={Boolean(openPanels.lineup)}
+              onToggle={() => togglePanel('lineup')}
+            >
+              <GameHubLineupBuilderPanel auth={auth} event={event} onGamePlanSaved={onGamePlanPublished} />
+            </LazyGameHubPanel>
+          ) : null}
+
+          {canPublishLineup ? (
+            <LazyGameHubPanel
+              panelId="game-hub-substitutions-panel"
+              title="Live substitutions"
+              description="Keep substitution planning idle until the bench actually needs it."
+              open={Boolean(openPanels.substitutions)}
+              onToggle={() => togglePanel('substitutions')}
+            >
+              <GameDaySubstitutionPanel auth={auth} event={event} />
+            </LazyGameHubPanel>
           ) : null}
 
           {canCancelGame ? (
@@ -2269,7 +2338,17 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
 
       {shareStatus ? <Status tone={shareStatus.startsWith('Unable') ? 'error' : 'success'} message={shareStatus} /> : null}
       {cancelStatus ? <Status tone={cancelStatus.tone} message={cancelStatus.message} /> : null}
-      {!isPractice ? <GameReportSections event={event} /> : null}
+      {!isPractice ? (
+        <LazyGameHubPanel
+          panelId="game-hub-report-panel"
+          title="Report sections"
+          description="Load reports and live play refreshes only when someone opens reports."
+          open={Boolean(openPanels.report)}
+          onToggle={() => togglePanel('report')}
+        >
+          <GameReportSections event={event} />
+        </LazyGameHubPanel>
+      ) : null}
     </section>
   );
 }
@@ -4510,8 +4589,15 @@ function MatchSummarySection({ report }: { report: GameReportData }) {
 }
 
 function PlayerPerformanceSection({ report }: { report: GameReportData }) {
+  const [showFullRoster, setShowFullRoster] = useState(false);
   const statKeys = report.statKeys.slice(0, 4);
-  if (!report.playerRows.length) {
+  const playerRows = Array.isArray(report.playerRows) ? report.playerRows : [];
+  const visiblePlayerRows = Array.isArray(report.visiblePlayerRows) ? report.visiblePlayerRows : [];
+  const deferredPlayerRows = Array.isArray(report.deferredPlayerRows) ? report.deferredPlayerRows : [];
+  const visiblePlayers = visiblePlayerRows.length ? visiblePlayerRows : playerRows;
+  const deferredPlayers = deferredPlayerRows;
+
+  if (!playerRows.length) {
     return <EmptyReportState title="No players found" detail="Player performance will appear after roster and stats load." />;
   }
 
@@ -4521,7 +4607,7 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
         <span>Player</span>
         <span>Stats</span>
       </div>
-      {report.playerRows.map((player) => (
+      {visiblePlayers.map((player) => (
         <PlayerPerformanceRow
           key={player.playerId}
           player={player}
@@ -4532,6 +4618,40 @@ function PlayerPerformanceSection({ report }: { report: GameReportData }) {
           gameId={report.game.id || ''}
         />
       ))}
+      {deferredPlayers.length ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-3">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-3 text-left"
+            onClick={() => setShowFullRoster((current) => !current)}
+            aria-expanded={showFullRoster}
+            aria-label={showFullRoster ? 'Hide full roster' : `Show full roster (${deferredPlayers.length})`}
+          >
+            <div>
+              <div className="text-sm font-black text-gray-950">Other rostered players</div>
+              <div className="mt-0.5 text-xs font-semibold text-gray-500">Show the full roster, including players without participation records for this game.</div>
+            </div>
+            <span className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-black text-gray-700">
+              {showFullRoster ? 'Hide full roster' : `Show full roster (${deferredPlayers.length})`}
+            </span>
+          </button>
+          {showFullRoster ? (
+            <div className="mt-3 space-y-2">
+              {deferredPlayers.map((player) => (
+                <PlayerPerformanceRow
+                  key={player.playerId}
+                  player={player}
+                  statKeys={statKeys}
+                  statLabels={report.statLabels}
+                  hasPlayingTime={report.hasPlayingTime}
+                  teamId={report.team.id || ''}
+                  gameId={report.game.id || ''}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
