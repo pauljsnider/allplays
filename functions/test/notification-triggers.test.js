@@ -85,6 +85,42 @@ test('notifyGameCreated respects practice preferences and skips sends when the c
     }
 });
 
+test('notifyGameCreated sends a practice notification once and records audit output', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { practice: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { practice: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/practice-2');
+        const snapshot = makeSnapshot(ref, {
+            title: 'Thursday practice',
+            type: 'practice',
+            date: '2026-06-22T16:00:00.000Z',
+            createdBy: 'coach-1'
+        });
+        const context = { params: { teamId: 'team-1', gameId: 'practice-2' } };
+
+        const firstResult = await moduleExports.notifyGameCreated(snapshot, context);
+        const secondResult = await moduleExports.notifyGameCreated(snapshot, context);
+
+        assert.equal(firstResult?.successCount, 1);
+        assert.equal(secondResult, null);
+        assert.equal(env.counts.dedupTransactions, 2);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].data.category, 'practice');
+        assert.equal(env.auditWrites.length, 1);
+        assert.equal(env.auditWrites[0].value.category, 'practice');
+        assert.equal(env.auditWrites[0].value.dedupGuardApplied, true);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyGameUpdated sends liveScore notifications and records once-only audit state', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
@@ -218,3 +254,31 @@ test('notifyFeeMarkedPaid sends fees notifications to payer and staff and record
         cleanup();
     }
 });
+
+for (const category of ['schedule', 'practice', 'liveScore', 'liveChat', 'mentions', 'fees']) {
+    test(`sendCategoryNotification suppresses ${category} when every indexed recipient opted out`, async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+            indexedRecipients: [
+                { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { [category]: false } }
+            ]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                gameId: `${category}-game`,
+                category,
+                title: 'Notification regression check',
+                body: 'This should not send.'
+            });
+
+            assert.equal(result, null);
+            assert.equal(env.messagingCalls.length, 0);
+            assert.equal(env.inboxWrites.length, 0);
+            assert.equal(env.auditWrites.length, 0);
+        } finally {
+            cleanup();
+        }
+    });
+}
