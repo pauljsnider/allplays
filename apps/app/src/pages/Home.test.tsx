@@ -124,6 +124,115 @@ const baseSocial = {
   }
 };
 
+function buildLargeHomeModel() {
+  return {
+    players: Array.from({ length: 4 }, (_, index) => ({
+      teamId: index < 2 ? 'team-1' : index === 2 ? 'team-2' : 'team-3',
+      teamName: index < 2 ? 'Bears' : index === 2 ? 'Storm' : 'Falcons',
+      playerId: `player-${index + 1}`,
+      playerName: `Player ${index + 1}`,
+      nextEvent: {
+        teamId: index < 2 ? 'team-1' : index === 2 ? 'team-2' : 'team-3',
+        id: `event-${index + 1}`,
+        childId: `player-${index + 1}`,
+        childName: `Player ${index + 1}`,
+        teamName: index < 2 ? 'Bears' : index === 2 ? 'Storm' : 'Falcons',
+        type: 'game',
+        date: new Date(`2100-06-0${index + 1}T18:00:00Z`),
+        location: 'Main Gym',
+        opponent: 'Rivals',
+        title: null,
+        eventKey: `team-${index + 1}::event-${index + 1}::player-${index + 1}`,
+        isDbGame: true,
+        isCancelled: false,
+        myRsvp: 'not_responded',
+        assignments: []
+      },
+      rsvpNeeded: index < 2 ? 1 : 0,
+      packetsReady: index === 2 ? 1 : 0,
+      openAssignments: index === 3 ? 2 : 0,
+      unreadCount: index < 2 ? 3 : 0
+    })),
+    teams: [
+      {
+        teamId: 'team-1',
+        teamName: 'Bears',
+        role: 'Parent',
+        sport: 'Basketball',
+        players: [
+          { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Player 1' },
+          { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Player 2' }
+        ],
+        nextEvent: null,
+        eventCount: 4,
+        unreadCount: 3,
+        openActions: 5
+      },
+      {
+        teamId: 'team-2',
+        teamName: 'Storm',
+        role: 'Parent',
+        sport: 'Soccer',
+        players: [
+          { teamId: 'team-2', teamName: 'Storm', playerId: 'player-3', playerName: 'Player 3' }
+        ],
+        nextEvent: null,
+        eventCount: 2,
+        unreadCount: 0,
+        openActions: 2
+      },
+      {
+        teamId: 'team-3',
+        teamName: 'Falcons',
+        role: 'Parent',
+        sport: 'Volleyball',
+        players: [
+          { teamId: 'team-3', teamName: 'Falcons', playerId: 'player-4', playerName: 'Player 4' }
+        ],
+        nextEvent: null,
+        eventCount: 3,
+        unreadCount: 1,
+        openActions: 3
+      }
+    ],
+    upcomingEvents: Array.from({ length: 6 }, (_, index) => ({
+      teamId: index < 3 ? 'team-1' : index < 5 ? 'team-2' : 'team-3',
+      id: `upcoming-${index + 1}`,
+      childId: `player-${(index % 4) + 1}`,
+      childName: `Player ${(index % 4) + 1}`,
+      teamName: index < 3 ? 'Bears' : index < 5 ? 'Storm' : 'Falcons',
+      type: index % 2 === 0 ? 'game' : 'practice',
+      date: new Date(`2100-06-${String(index + 1).padStart(2, '0')}T18:00:00Z`),
+      location: 'Main Gym',
+      opponent: 'Rivals',
+      title: index % 2 === 0 ? null : 'Practice',
+      eventKey: `team-${index + 1}::upcoming-${index + 1}::player-${(index % 4) + 1}`,
+      isDbGame: true,
+      isCancelled: false,
+      myRsvp: 'going',
+      assignments: []
+    })),
+    actionItems: [
+      { id: 'rsvp:1', kind: 'rsvp', tone: 'amber', title: 'Player 1 needs availability', detail: 'Bears Game · Tue, Jun 1', to: '/schedule/team-1/upcoming-1', priority: 10, date: new Date('2100-06-01T18:00:00Z') },
+      { id: 'packet:1', kind: 'packet', tone: 'blue', title: 'Practice packet ready', detail: 'Player 3 · Skills packet', to: '/schedule/team-2/upcoming-4', priority: 20, date: new Date('2100-06-04T18:00:00Z') },
+      { id: 'assignment:1', kind: 'assignment', tone: 'emerald', title: '2 open assignments', detail: 'Falcons Game · Clock, Book', to: '/schedule/team-3/upcoming-6', priority: 30, date: new Date('2100-06-06T18:00:00Z') },
+      { id: 'fee:1', kind: 'fee', tone: 'rose', title: 'Tournament fee', detail: 'Bears · Player 2 · $20.00 due', to: '/parent-tools/fees', priority: 50, date: new Date('2100-06-02T18:00:00Z') },
+      { id: 'message:1', kind: 'message', tone: 'blue', title: '3 unread messages', detail: 'Bears', to: '/messages/team-1', priority: 60, date: null },
+      { id: 'message:2', kind: 'message', tone: 'blue', title: '1 unread message', detail: 'Falcons', to: '/messages/team-3', priority: 60, date: null }
+    ],
+    fees: [
+      { id: 'fee-1', title: 'Tournament fee', teamId: 'team-1', teamName: 'Bears', playerName: 'Player 2', status: 'partial', balanceDueCents: 2000 }
+    ],
+    metrics: {
+      players: 4,
+      teams: 3,
+      rsvpNeeded: 1,
+      unreadMessages: 4,
+      packetsReady: 1
+    }
+  };
+}
+
 const signedInAuth: AuthState = {
   user: {
     uid: 'parent-1',
@@ -293,5 +402,29 @@ describe('Home', () => {
       expect(socialServiceMocks.respondToFriendRequest).toHaveBeenCalledWith('friendship-1', 'accepted');
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('renders Today content from larger Home payloads and keeps it visible after refresh', async () => {
+    const largeHome = buildLargeHomeModel();
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: largeHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(largeHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(screen.getByText('Upcoming')).toBeTruthy();
+    expect(screen.getAllByText('Player 1 needs availability').length).toBeGreaterThan(0);
+    expect(screen.getByText('Falcons')).toBeTruthy();
+    expect(screen.getAllByText('Tournament fee').length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Home' }));
+
+    await waitFor(() => {
+      expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenCalledTimes(2);
+      expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.getByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(screen.getByText('1 unread message')).toBeTruthy();
   });
 });
