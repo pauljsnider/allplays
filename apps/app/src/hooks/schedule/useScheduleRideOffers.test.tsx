@@ -149,7 +149,18 @@ describe('useScheduleRideOffers', () => {
     });
 
     it('surfaces ride-offer submission failures without changing shared summary state', async () => {
-        vi.mocked(loadParentScheduleRideOffers).mockResolvedValue([] as any);
+        vi.mocked(loadParentScheduleRideOffers).mockResolvedValue([
+            {
+                id: 'offer-1',
+                driverUserId: 'parent-1',
+                driverName: 'Parent One',
+                seatCapacity: 3,
+                seatCountConfirmed: 1,
+                direction: 'to',
+                status: 'open',
+                requests: []
+            }
+        ] as any);
         vi.mocked(createParentScheduleRideOffer).mockRejectedValue(new Error('Unable to save ride offer.'));
 
         renderProbe();
@@ -163,8 +174,8 @@ describe('useScheduleRideOffers', () => {
         await waitFor(() => {
             expect(screen.getByText('Unable to save ride offer.')).toBeTruthy();
         });
-        expect(screen.getByTestId('offers-count')).toHaveTextContent('0');
-        expect(screen.getByTestId('summary-count')).toHaveTextContent('0');
+        expect(screen.getByTestId('offers-count')).toHaveTextContent('1');
+        expect(screen.getByTestId('summary-count')).toHaveTextContent('1');
     });
 
     it('reloads ride offers when the selected schedule event changes', async () => {
@@ -199,5 +210,17 @@ describe('useScheduleRideOffers', () => {
         });
         expect(screen.getByTestId('offers-count')).toHaveTextContent('1');
         expect(screen.getByTestId('summary-count')).toHaveTextContent('1');
+    });
+
+    it('surfaces rideshare load failures instead of treating them like an empty state', async () => {
+        vi.mocked(loadParentScheduleRideOffers).mockRejectedValue(new Error('Unable to load rideshare offers.'));
+
+        renderProbe();
+
+        await waitFor(() => {
+            expect(screen.getByText('Unable to load rideshare offers.')).toBeTruthy();
+        });
+        expect(screen.getByTestId('offers-count')).toHaveTextContent('0');
+        expect(screen.getByTestId('summary-count')).toHaveTextContent('0');
     });
 });

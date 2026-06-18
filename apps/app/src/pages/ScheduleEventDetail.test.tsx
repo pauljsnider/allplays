@@ -294,6 +294,38 @@ describe('ScheduleEventDetail loading states', () => {
     expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
     expect(screen.queryByText('Pulling parent actions and game-day details.')).toBeNull();
   });
+
+  it('shows a consistent fetch error and retries the primary event load', async () => {
+    scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleEventDetail
+      .mockRejectedValueOnce(Object.assign(new Error('Event missing.'), { status: 404 }))
+      .mockResolvedValueOnce({
+        events: [buildEvent({ childId: 'player-1', childName: 'Avery Smith' })],
+        children: []
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('This event is not available for your account.')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
+    });
+  });
 });
 
 describe('ScheduleEventDetail lineup draft guards', () => {

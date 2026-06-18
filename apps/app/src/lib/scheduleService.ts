@@ -4135,7 +4135,7 @@ async function nativeCancelRideRequestForChild(event: ParentScheduleEvent, offer
 
 export async function loadParentScheduleRideOffers(event: ParentScheduleEvent) {
   if (!event.isDbGame || event.isCancelled) return [];
-  return normalizeRideOffers(await loadRideOffers(event.teamId, event.id).catch(() => []));
+  return normalizeRideOffers(await loadRideOffers(event.teamId, event.id));
 }
 
 export async function createParentScheduleRideOffer(event: ParentScheduleEvent, user: AuthUser, input: RideOfferInput) {
