@@ -14,6 +14,20 @@ function getDetectMentionedUids() {
     return new Function(`${slice}; return detectMentionedUids;`)();
 }
 
+function getBuildTeamChatNotificationContext() {
+    const start = functionsSource.indexOf('function normalizeTeamChatConversationId(');
+    const end = functionsSource.indexOf('\nfunction buildTeamChatNotificationPlan');
+    const slice = functionsSource.slice(start, end);
+    return new Function(
+        'firestore',
+        'getUserIdsByEmails',
+        'getUserRecordsByIds',
+        'notificationAudienceAllowsRoles',
+        'getLegacyTargetsForCategory',
+        `${slice}; return buildTeamChatNotificationContext;`
+    );
+}
+
 function getBuildTeamChatNotificationPlan() {
     const start = functionsSource.indexOf('function buildTeamChatNotificationPlan(');
     const end = functionsSource.indexOf('\nexports.notifyTeamChatMessageCreated');
@@ -65,7 +79,7 @@ describe('detectMentionedUids', () => {
             { uid: 'u2', displayName: 'Bob' },
             { uid: 'u3', displayName: 'Carol' }
         ];
-        const result = detectMentionedUids('Heads up @all!', members);
+        const result = detectMentionedUids('Heads up @all!', members, { allowReservedMentions: true });
         expect(result.sort()).toEqual(['u1', 'u2', 'u3']);
     });
 
@@ -74,7 +88,7 @@ describe('detectMentionedUids', () => {
             { uid: 'u1', displayName: 'Alice' },
             { uid: 'u2', displayName: 'Bob' }
         ];
-        const result = detectMentionedUids('Hey @team listen up', members);
+        const result = detectMentionedUids('Hey @team listen up', members, { allowReservedMentions: true });
         expect(result.sort()).toEqual(['u1', 'u2']);
     });
 
@@ -99,9 +113,90 @@ describe('detectMentionedUids', () => {
         expect(detectMentionedUids('Hello @unknown', members)).toEqual([]);
     });
 
+    it('does not treat partial strings as exact @mentions', () => {
+        const members = [{ uid: 'u1', displayName: 'Alice' }];
+        expect(detectMentionedUids('Hello @ali', members)).toEqual([]);
+    });
+
     it('falls back to name field when displayName is missing', () => {
         const members = [{ uid: 'u5', displayName: '', name: 'Eve' }];
         expect(detectMentionedUids('Hey @eve!', members)).toEqual(['u5']);
+    });
+
+    it('ignores reserved tokens unless the caller explicitly allows them', () => {
+        const members = [
+            { uid: 'u1', displayName: 'Alice' },
+            { uid: 'u2', displayName: 'Bob' }
+        ];
+        expect(detectMentionedUids('Heads up @all', members)).toEqual([]);
+        expect(detectMentionedUids('Heads up @team', members, { allowReservedMentions: true }).sort()).toEqual(['u1', 'u2']);
+    });
+});
+
+describe('buildTeamChatNotificationContext', () => {
+    it('uses per-conversation mute state before falling back to team-wide chatMuted', async () => {
+        const teamData = { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] };
+        const parentDocs = [{ id: 'parent-1' }];
+        const targetDocs = [
+            {
+                data: () => ({ uid: 'coach-1', deviceId: 'device-1', token: 'token-1', categories: { mentions: true, liveChat: true } })
+            },
+            {
+                data: () => ({ uid: 'assistant-1', deviceId: 'device-2', token: 'token-2', categories: { mentions: true, liveChat: true } })
+            },
+            {
+                data: () => ({ uid: 'parent-1', deviceId: 'device-3', token: 'token-3', categories: { mentions: true, liveChat: true } })
+            }
+        ];
+
+        const firestore = {
+            doc: (path) => ({
+                get: async () => ({
+                    exists: path === 'teams/team-1',
+                    data: () => teamData
+                })
+            }),
+            collection: (path) => {
+                if (path === 'users') {
+                    return {
+                        where: () => ({
+                            get: async () => ({ forEach: (callback) => parentDocs.forEach((doc) => callback(doc)) })
+                        })
+                    };
+                }
+                if (path === 'teams/team-1/notificationTargets') {
+                    return {
+                        get: async () => ({ forEach: (callback) => targetDocs.forEach((doc) => callback(doc)) })
+                    };
+                }
+                throw new Error(`Unexpected collection path: ${path}`);
+            }
+        };
+
+        const factory = getBuildTeamChatNotificationContext();
+        const buildTeamChatNotificationContext = factory(
+            firestore,
+            async () => ['assistant-1'],
+            async () => new Map([
+                ['coach-1', { displayName: 'Coach Kim', teamChatState: { 'team-1': { mutedConversations: { staff: { seconds: 1 } } } } }],
+                ['assistant-1', { displayName: 'Assistant Lee', chatMuted: { 'team-1': { seconds: 2 } } }],
+                ['parent-1', { displayName: 'Pat Parent', teamChatState: { 'team-1': { mutedConversations: { team: { seconds: 3 } } } } }]
+            ]),
+            (category, roles = []) => category === 'mentions' || roles.includes('parent') || roles.includes('staff'),
+            async () => []
+        );
+
+        const teamConversationContext = await buildTeamChatNotificationContext('team-1', {
+            includeMentions: true,
+            conversationId: null
+        });
+        const staffConversationContext = await buildTeamChatNotificationContext('team-1', {
+            includeMentions: true,
+            conversationId: 'staff'
+        });
+
+        expect(teamConversationContext.mutedUids.sort()).toEqual(['assistant-1', 'parent-1']);
+        expect(staffConversationContext.mutedUids).toEqual(['coach-1']);
     });
 });
 
@@ -117,8 +212,10 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
 
     it('builds one shared recipient context for mentions and live chat delivery', () => {
         expect(notifyTeamChatMessageCreatedSource).toContain('const shouldResolveMentions = Boolean(text);');
+        expect(notifyTeamChatMessageCreatedSource).toContain('const conversationId = normalizeTeamChatConversationId(data.conversationId);');
         expect(notifyTeamChatMessageCreatedSource).toContain('const recipientContext = await buildTeamChatNotificationContext(teamId, {');
         expect(notifyTeamChatMessageCreatedSource).toContain('includeMentions: shouldResolveMentions');
+        expect(notifyTeamChatMessageCreatedSource).toContain('conversationId');
         expect(notifyTeamChatMessageCreatedSource).toContain('const notificationPlan = buildTeamChatNotificationPlan({');
         expect(notifyTeamChatMessageCreatedSource).not.toContain('const candidateUsers = await getCandidateUsersForTeam(teamId);');
         expect(notifyTeamChatMessageCreatedSource).not.toContain('await getMutedUserIdsForTeam(');
@@ -143,6 +240,12 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     it('skips mention target resolution for photo-only chats', () => {
         expect(functionsSource).toContain("const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];");
         expect(functionsSource).toContain("displayName: includeMentions");
+    });
+
+    it('includes the conversation deep-link target in both mention and live chat payloads', () => {
+        expect(notifyTeamChatMessageCreatedSource).toContain('conversationId');
+        expect(functionsSource).toContain('conversationId: String(conversationId || \'\')');
+        expect(functionsSource).toContain('return `${route}?conversationId=${encodeURIComponent(conversationId)}`;');
     });
 });
 
@@ -217,5 +320,42 @@ describe('buildTeamChatNotificationPlan', () => {
         expect(plan.liveChatTargets.some((target) => target.uid === 'user-111')).toBe(false);
         expect(plan.liveChatTargets.some((target) => target.uid === 'user-222')).toBe(false);
         expect(plan.liveChatTargets.some((target) => mentionedUserIds.includes(target.uid))).toBe(false);
+    });
+
+    it('honors reserved @team mentions only for staff senders and still dedupes live chat', () => {
+        const recipientContext = {
+            members: [
+                { uid: 'coach-1', displayName: 'Coach Kim', roles: ['staff'] },
+                { uid: 'player-1', displayName: 'Alex', roles: ['parent'] },
+                { uid: 'player-2', displayName: 'Blair', roles: ['parent'] }
+            ],
+            mutedUids: [],
+            targetsByCategory: {
+                mentions: [
+                    { uid: 'player-1', token: 'mention-1' },
+                    { uid: 'player-2', token: 'mention-2' }
+                ],
+                liveChat: [
+                    { uid: 'player-1', token: 'chat-1' },
+                    { uid: 'player-2', token: 'chat-2' }
+                ]
+            }
+        };
+
+        const staffPlan = buildTeamChatNotificationPlan({
+            text: 'Heads up @team',
+            actorUid: 'coach-1',
+            recipientContext
+        });
+        const parentPlan = buildTeamChatNotificationPlan({
+            text: 'Heads up @team',
+            actorUid: 'player-1',
+            recipientContext
+        });
+
+        expect(staffPlan.mentionedUids.sort()).toEqual(['player-1', 'player-2']);
+        expect(staffPlan.liveChatTargets).toEqual([]);
+        expect(parentPlan.mentionedUids).toEqual([]);
+        expect(parentPlan.liveChatTargets.map((target) => target.uid).sort()).toEqual(['player-2']);
     });
 });

@@ -3179,9 +3179,13 @@ function detectGameNotificationCategory(beforeGame, afterGame) {
   return scheduleChanged ? 'schedule' : null;
 }
 
-function buildNotificationLink({ category, teamId, gameId }) {
+function buildNotificationLink({ category, teamId, gameId, conversationId = null }) {
   if (category === 'liveChat') {
-    return `https://allplays.ai/team-chat.html?teamId=${encodeURIComponent(teamId)}`;
+    const params = [`teamId=${encodeURIComponent(teamId)}`];
+    if (conversationId) {
+      params.push(`conversationId=${encodeURIComponent(conversationId)}`);
+    }
+    return `https://allplays.ai/team-chat.html?${params.join('&')}`;
   }
   if (category === 'liveScore' && gameId) {
     return `https://allplays.ai/live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
@@ -3189,9 +3193,13 @@ function buildNotificationLink({ category, teamId, gameId }) {
   return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
 }
 
-function buildNotificationAppRoute({ category, teamId, gameId, eventId }) {
+function buildNotificationAppRoute({ category, teamId, gameId, eventId, conversationId = null }) {
   if (category === 'liveChat' && teamId) {
-    return `/messages/${encodeURIComponent(teamId)}`;
+    const route = `/messages/${encodeURIComponent(teamId)}`;
+    if (!conversationId) {
+      return route;
+    }
+    return `${route}?conversationId=${encodeURIComponent(conversationId)}`;
   }
   if (category === 'liveScore' && gameId) {
     if (teamId) {
@@ -3593,6 +3601,7 @@ async function sendCategoryNotification({
   teamId,
   gameId = null,
   eventId = null,
+  conversationId = null,
   category,
   title,
   body,
@@ -3619,10 +3628,10 @@ async function sendCategoryNotification({
     : allTargets;
   if (!targets.length) return null;
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, conversationId });
+  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
-    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
+    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, conversationId })
     : {};
   const maxMulticastTokens = 500;
   const allResponses = [];
@@ -3638,6 +3647,7 @@ async function sendCategoryNotification({
         teamId: String(teamId),
         gameId: String(gameId || ''),
         eventId: String(eventId || gameId || ''),
+        conversationId: String(conversationId || ''),
         category: String(category),
         appRoute,
         link
@@ -3675,13 +3685,13 @@ async function sendCategoryNotification({
   };
 }
 
-async function sendDirectTargetsNotification({ targets, category, title, body, teamId, gameId = null, eventId = null }) {
+async function sendDirectTargetsNotification({ targets, category, title, body, teamId, gameId = null, eventId = null, conversationId = null }) {
   if (!targets.length) return null;
 
-  const link = buildNotificationLink({ category, teamId, gameId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId });
+  const link = buildNotificationLink({ category, teamId, gameId, conversationId });
+  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
-    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
+    ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, conversationId })
     : {};
   const maxMulticastTokens = 500;
   const allResponses = [];
@@ -3697,6 +3707,7 @@ async function sendDirectTargetsNotification({ targets, category, title, body, t
         teamId: String(teamId),
         gameId: String(gameId || ''),
         eventId: String(eventId || gameId || ''),
+        conversationId: String(conversationId || ''),
         category: String(category),
         appRoute,
         link
@@ -4188,13 +4199,20 @@ exports.sendFeeUnpaidDueReminders = functions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendFeeUnpaidDueReminders());
 
-function detectMentionedUids(text, members) {
+function normalizeTeamChatConversationId(value) {
+  const conversationId = String(value || '').trim();
+  return conversationId || 'team';
+}
+
+function detectMentionedUids(text, members, options = {}) {
   if (!text) return [];
+  const { allowReservedMentions = false } = options || {};
   const mentioned = new Set();
   const tokens = text.match(/@[\w.'"-]+/gi) || [];
   for (const token of tokens) {
     const name = token.slice(1).toLowerCase();
     if (name === 'all' || name === 'team') {
+      if (!allowReservedMentions) continue;
       members.forEach((m) => mentioned.add(m.uid));
       break;
     }
@@ -4211,7 +4229,8 @@ function detectMentionedUids(text, members) {
 }
 
 async function buildTeamChatNotificationContext(teamId, options = {}) {
-  const { includeMentions = true } = options || {};
+  const { includeMentions = true, conversationId = null } = options || {};
+  const normalizedConversationId = normalizeTeamChatConversationId(conversationId);
   const teamSnap = await firestore.doc(`teams/${teamId}`).get();
   if (!teamSnap.exists) {
     return {
@@ -4302,12 +4321,18 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
   const hydratedMembers = members.map((member) => {
     const userRecord = userRecords.get(member.uid) || {};
     const chatMuted = userRecord.chatMuted;
+    const mutedConversations = userRecord.teamChatState?.[teamId]?.mutedConversations;
+    const conversationMuted = Boolean(
+      mutedConversations
+      && typeof mutedConversations === 'object'
+      && mutedConversations[normalizedConversationId]
+    );
     return {
       ...member,
       displayName: includeMentions
         ? String(userRecord.displayName || userRecord.fullName || userRecord.name || '').trim()
         : '',
-      muted: Boolean(chatMuted && chatMuted[teamId])
+      muted: conversationMuted || Boolean(normalizedConversationId === 'team' && chatMuted && chatMuted[teamId])
     };
   });
 
@@ -4337,8 +4362,13 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
   const mentionMembers = Array.isArray(context.members)
     ? context.members.filter((member) => mentionEligibleUids.has(member.uid))
     : [];
+  const actorIsStaff = Boolean(
+    actorUid
+    && Array.isArray(context.members)
+    && context.members.some((member) => member.uid === actorUid && Array.isArray(member.roles) && member.roles.includes('staff'))
+  );
   const mentionedUids = text
-    ? detectMentionedUids(text, mentionMembers).filter((uid) => uid !== actorUid)
+    ? detectMentionedUids(text, mentionMembers, { allowReservedMentions: actorIsStaff }).filter((uid) => uid !== actorUid)
     : [];
   const mentionedSet = new Set(mentionedUids);
   const mutedSet = new Set(Array.isArray(context.mutedUids) ? context.mutedUids : []);
@@ -4365,6 +4395,7 @@ exports.notifyTeamChatMessageCreated = functions.firestore
 
     const teamId = context.params.teamId;
     const actorUid = data.senderId || null;
+    const conversationId = normalizeTeamChatConversationId(data.conversationId);
     const senderName = String(data.senderName || 'Team').trim();
     const body = text
       ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
@@ -4372,7 +4403,8 @@ exports.notifyTeamChatMessageCreated = functions.firestore
 
     const shouldResolveMentions = Boolean(text);
     const recipientContext = await buildTeamChatNotificationContext(teamId, {
-      includeMentions: shouldResolveMentions
+      includeMentions: shouldResolveMentions,
+      conversationId
     });
     const notificationPlan = buildTeamChatNotificationPlan({
       text,
@@ -4394,7 +4426,8 @@ exports.notifyTeamChatMessageCreated = functions.firestore
           category: 'mentions',
           title: `${senderName} mentioned you`,
           body,
-          teamId
+          teamId,
+          conversationId
         }));
       }
     }
@@ -4409,7 +4442,8 @@ exports.notifyTeamChatMessageCreated = functions.firestore
       category: 'liveChat',
       title: `${senderName}: Team Chat`,
       body,
-      teamId
+      teamId,
+      conversationId
     }));
 
     return results;
