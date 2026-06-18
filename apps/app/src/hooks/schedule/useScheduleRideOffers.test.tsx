@@ -68,6 +68,7 @@ function RideOffersProbe({ onSwitchEvent }: { onSwitchEvent?: () => void }) {
         <div>
             <div data-testid="event-id">{event.id}</div>
             <div data-testid="loading">{String(rideOffers.loading)}</div>
+            <div data-testid="submitting">{String(rideOffers.submitting || '')}</div>
             <div data-testid="offers-count">{String(rideOffers.offers.length)}</div>
             <div data-testid="summary-count">{String(event.rideshareSummary?.offerCount || 0)}</div>
             <div>{rideOffers.message || ''}</div>
@@ -108,6 +109,50 @@ describe('useScheduleRideOffers', () => {
     afterEach(() => {
         cleanup();
         vi.clearAllMocks();
+    });
+
+    it('keeps the rideshare action busy until the refresh finishes', async () => {
+        let resolveRefresh: ((value: any) => void) | null = null;
+        vi.mocked(loadParentScheduleRideOffers)
+            .mockResolvedValueOnce([] as any)
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveRefresh = resolve;
+            }));
+        vi.mocked(createParentScheduleRideOffer).mockResolvedValue(undefined as any);
+
+        renderProbe();
+
+        await waitFor(() => {
+            expect(loadParentScheduleRideOffers).toHaveBeenCalledTimes(1);
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Create offer' }));
+
+        await waitFor(() => {
+            expect(createParentScheduleRideOffer).toHaveBeenCalledTimes(1);
+        });
+        expect(screen.getByTestId('loading').textContent).toBe('true');
+        expect(screen.getByTestId('submitting').textContent).toBe('create-offer');
+        expect(screen.getByTestId('offers-count').textContent).toBe('0');
+
+        resolveRefresh?.([
+            {
+                id: 'offer-1',
+                driverUserId: 'parent-1',
+                driverName: 'Parent One',
+                seatCapacity: 3,
+                seatCountConfirmed: 1,
+                direction: 'to',
+                status: 'open',
+                requests: []
+            }
+        ] as any);
+
+        await waitFor(() => {
+            expect(screen.getByText('Ride offer saved.')).toBeTruthy();
+        });
+        expect(screen.getByTestId('submitting').textContent).toBe('');
+        expect(screen.getByTestId('offers-count').textContent).toBe('1');
     });
 
     it('loads and refreshes ride offers after a successful offer submission', async () => {

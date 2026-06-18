@@ -292,6 +292,7 @@ describe('ScheduleEventDetail loading states', () => {
     );
 
     expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
+    expect(screen.queryByText('This event is not available for your account.')).toBeNull();
     expect(screen.queryByText('Pulling parent actions and game-day details.')).toBeNull();
   });
 
@@ -490,6 +491,28 @@ describe('ScheduleEventDetail rideshare permissions', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Rideshare' })[0]);
 
     expect(await screen.findByRole('button', { name: 'Request spot' })).toBeTruthy();
+  });
+
+  it('shows a rideshare retry state instead of the empty-state copy after load failures', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent()],
+      children: []
+    });
+    scheduleServiceMocks.loadParentScheduleRideOffers.mockRejectedValue(new Error('Unable to load rideshare offers.'));
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Rideshare' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Rideshare' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Rideshare could not be loaded for this event.')).toBeTruthy();
+    });
+    expect(screen.getByRole('button', { name: 'Retry rideshare' })).toBeTruthy();
+    expect(screen.queryByText('No ride offers yet for this event.')).toBeNull();
   });
 });
 

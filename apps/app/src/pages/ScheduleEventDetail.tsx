@@ -313,6 +313,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [staffRsvpSubmittingPlayerId, setStaffRsvpSubmittingPlayerId] = useState<string | null>(null);
   const [staffRsvpStatus, setStaffRsvpStatus] = useState<StaffRsvpOverrideStatus | null>(null);
   const [staffRsvpRefreshToken, setStaffRsvpRefreshToken] = useState(0);
+  const [initialLoadPending, setInitialLoadPending] = useState(true);
   const hasLoadedEventRef = useRef(false);
   const { loading, error, clearError, setError, run: runPrimaryLoad } = useAsyncOperation();
 
@@ -347,37 +348,45 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   };
 
   const loadEvent = useCallback(async () => {
-    if (!auth.user) return;
+    if (!auth.user) {
+      setInitialLoadPending(false);
+      return;
+    }
     setStatusMessage(null);
     clearError();
     const hasExistingEvent = hasLoadedEventRef.current;
-    await runPrimaryLoad(
-      () => loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId }),
-      {
-        getErrorMessage: (loadError) => getScheduleEventDetailLoadErrorMessage(
-          toAppServiceError(loadError, 'Unable to load event details.'),
-          hasExistingEvent
-        ),
-        rethrow: false,
-        onSuccess: (result) => {
-          setEvents(result.events);
-          hasLoadedEventRef.current = result.events.length > 0;
-          if (!selectedChildId && result.events[0]?.childId) {
-            setSelectedChildId(result.events[0].childId);
-          }
-        },
-        onError: () => {
-          if (!hasExistingEvent) {
-            setEvents([]);
-            hasLoadedEventRef.current = false;
+    try {
+      await runPrimaryLoad(
+        () => loadParentScheduleEventDetail(auth.user, { teamId: decodedTeamId, eventId: decodedEventId }),
+        {
+          getErrorMessage: (loadError) => getScheduleEventDetailLoadErrorMessage(
+            toAppServiceError(loadError, 'Unable to load event details.'),
+            hasExistingEvent
+          ),
+          rethrow: false,
+          onSuccess: (result) => {
+            setEvents(result.events);
+            hasLoadedEventRef.current = result.events.length > 0;
+            if (!selectedChildId && result.events[0]?.childId) {
+              setSelectedChildId(result.events[0].childId);
+            }
+          },
+          onError: () => {
+            if (!hasExistingEvent) {
+              setEvents([]);
+              hasLoadedEventRef.current = false;
+            }
           }
         }
-      }
-    );
+      );
+    } finally {
+      setInitialLoadPending(false);
+    }
   }, [auth.user, clearError, decodedEventId, decodedTeamId, runPrimaryLoad, selectedChildId]);
 
   useEffect(() => {
     hasLoadedEventRef.current = false;
+    setInitialLoadPending(true);
     void loadEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
@@ -543,7 +552,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  if (loading) {
+  if (loading || initialLoadPending) {
     return <EventDetailPageSkeleton />;
   }
 
@@ -1387,6 +1396,17 @@ function RideshareSection({ auth, event }: {
           <div className="mt-2 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-600">
             <RefreshCw className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
             Loading rideshare offers
+          </div>
+        ) : rideOffers.error && !rideOffers.offers.length ? (
+          <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3">
+            <div className="text-sm font-semibold text-rose-700">Rideshare could not be loaded for this event.</div>
+            <button
+              type="button"
+              className="secondary-button mt-3 min-h-9 w-fit px-3 text-xs"
+              onClick={() => void rideOffers.retry()}
+            >
+              Retry rideshare
+            </button>
           </div>
         ) : rideOffers.offers.length ? (
           <div className="mt-2 space-y-3">

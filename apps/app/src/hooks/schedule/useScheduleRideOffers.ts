@@ -146,11 +146,13 @@ export function useScheduleRideOffers() {
   const runRideAction = useCallback(async (actionKey: string, action: () => Promise<void>, successMessage: string) => {
     setSubmitting(actionKey);
     setMessage(null);
-    await runRideMutation(action, {
+    await runRideMutation(async () => {
+      await action();
+      await refreshOffers(false);
+    }, {
       getErrorMessage: (actionError) => getRideOffersErrorMessage(actionError, 'Unable to update rideshare.'),
       rethrow: false,
-      onSuccess: async () => {
-        await refreshOffers(false);
+      onSuccess: () => {
         setMessage(successMessage);
       },
       onFinally: () => setSubmitting(null)
@@ -237,6 +239,7 @@ export function useScheduleRideOffers() {
     submitting,
     message,
     error: actionError || loadError,
+    retry: () => refreshOffers(),
     submit,
     selectChildForOffer,
     requestSpot,
