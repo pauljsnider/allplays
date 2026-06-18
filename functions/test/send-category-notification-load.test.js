@@ -1,6 +1,8 @@
-const assert = require('node:assert/strict');
-const test = require('node:test');
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { describe, it } from 'vitest';
 
+const require = createRequire(import.meta.url);
 const { loadNotificationInternals } = require('./send-category-notification-test-helpers');
 
 function buildLargeFixture({ recipients = 500, devicesPerRecipient = 1 }) {
@@ -27,58 +29,60 @@ function buildLargeFixture({ recipients = 500, devicesPerRecipient = 1 }) {
     };
 }
 
-test('sendCategoryNotification handles a 500-recipient indexed send without legacy per-user scans', async () => {
-    const { internals, env, cleanup } = loadNotificationInternals(buildLargeFixture({
-        recipients: 500,
-        devicesPerRecipient: 1
-    }));
+describe('sendCategoryNotification load coverage', () => {
+    it('handles a 500-recipient indexed send without legacy per-user scans', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals(buildLargeFixture({
+            recipients: 500,
+            devicesPerRecipient: 1
+        }));
 
-    try {
-        const result = await internals.sendCategoryNotification({
-            teamId: 'team-1',
-            category: 'schedule',
-            title: 'Schedule updated',
-            body: 'The bus leaves at 5:30.'
-        });
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                title: 'Schedule updated',
+                body: 'The bus leaves at 5:30.'
+            });
 
-        assert.equal(result.successCount, 500);
-        assert.equal(result.failureCount, 0);
-        assert.equal(env.counts.targetQueries, 1);
-        assert.equal(env.counts.parentQueries, 1);
-        assert.equal(env.counts.preferenceGets, 0);
-        assert.equal(env.counts.deviceGets, 0);
-        assert.equal(env.messagingCalls.length, 1);
-        assert.equal(env.messagingCalls[0].tokens.length, 500);
-        assert.equal(env.inboxWrites.length, 500);
-    } finally {
-        cleanup();
-    }
-});
+            assert.equal(result.successCount, 500);
+            assert.equal(result.failureCount, 0);
+            assert.equal(env.counts.targetQueries, 1);
+            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+            assert.equal(env.messagingCalls.length, 1);
+            assert.equal(env.messagingCalls[0].tokens.length, 500);
+            assert.equal(env.inboxWrites.length, 500);
+        } finally {
+            cleanup();
+        }
+    });
 
-test('sendCategoryNotification preserves 500-token FCM chunking for large indexed sends', async () => {
-    const { internals, env, cleanup } = loadNotificationInternals(buildLargeFixture({
-        recipients: 500,
-        devicesPerRecipient: 2
-    }));
+    it('preserves 500-token FCM chunking for large indexed sends', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals(buildLargeFixture({
+            recipients: 500,
+            devicesPerRecipient: 2
+        }));
 
-    try {
-        const result = await internals.sendCategoryNotification({
-            teamId: 'team-1',
-            category: 'schedule',
-            title: 'Schedule updated',
-            body: 'Two buses this time.'
-        });
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                title: 'Schedule updated',
+                body: 'Two buses this time.'
+            });
 
-        assert.equal(result.successCount, 1000);
-        assert.equal(result.failureCount, 0);
-        assert.equal(env.counts.targetQueries, 1);
-        assert.equal(env.counts.parentQueries, 1);
-        assert.equal(env.counts.preferenceGets, 0);
-        assert.equal(env.counts.deviceGets, 0);
-        assert.equal(env.messagingCalls.length, 2);
-        assert.deepEqual(env.messagingCalls.map((call) => call.tokens.length), [500, 500]);
-        assert.equal(env.inboxWrites.length, 500);
-    } finally {
-        cleanup();
-    }
+            assert.equal(result.successCount, 1000);
+            assert.equal(result.failureCount, 0);
+            assert.equal(env.counts.targetQueries, 1);
+            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+            assert.equal(env.messagingCalls.length, 2);
+            assert.deepEqual(env.messagingCalls.map((call) => call.tokens.length), [500, 500]);
+            assert.equal(env.inboxWrites.length, 500);
+        } finally {
+            cleanup();
+        }
+    });
 });
