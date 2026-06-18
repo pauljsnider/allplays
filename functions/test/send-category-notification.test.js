@@ -183,6 +183,47 @@ describe('getTargetsForCategory', () => {
 
 
 describe('sendCategoryNotification', () => {
+    it('includes conversation deep links for live chat notifications', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    deviceId: 'coach-device',
+                    token: 'coach-token',
+                    categories: { liveChat: true }
+                }
+            ]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'liveChat',
+                title: 'New message',
+                body: 'Check chat',
+                conversationId: 'staff room'
+            });
+
+            expect(result?.successCount).toBe(1);
+            expect(env.messagingCalls).toHaveLength(1);
+            expect(env.messagingCalls[0].data).toMatchObject({
+                category: 'liveChat',
+                conversationId: 'staff room',
+                appRoute: '/messages/team-1?conversationId=staff%20room',
+                link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room'
+            });
+            expect(env.messagingCalls[0].webLink).toBe('https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room');
+            expect(env.inboxWrites).toHaveLength(1);
+            expect(env.inboxWrites[0].value.appRoute).toBe('/messages/team-1?conversationId=staff%20room');
+        } finally {
+            cleanup();
+        }
+    });
+
     it('prunes invalid tokens from both notification index collections', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
