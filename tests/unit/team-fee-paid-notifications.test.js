@@ -78,7 +78,7 @@ describe('notifyFeeMarkedPaid trigger', () => {
             before: { exists: true, data: () => ({ status: 'unpaid' }) },
             after: { exists: true, data: () => ({ status: 'paid', feeTitle: 'Spring dues', parentUserId: 'parent-1' }) }
         }, {
-            params: { teamId: 'team-1', recipientId: 'recipient-1' }
+            params: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }
         });
 
         expect(harness.getTargetsForCategory).toHaveBeenCalledWith('team-1', 'fees', null);
@@ -93,7 +93,11 @@ describe('notifyFeeMarkedPaid trigger', () => {
                 { uid: 'staff-1', token: 'staff-token', teamId: 'team-1' },
                 { uid: 'staff-2', token: 'staff-2-token', teamId: 'team-1' }
             ],
-            title: 'Fee marked paid: Spring dues'
+            title: 'Fee marked paid: Spring dues',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1',
+            linkOverride: 'https://allplays.ai/app/#/teams/team-1/fees/batch-1?recipientId=recipient-1',
+            appRouteOverride: '/teams/team-1/fees/batch-1?recipientId=recipient-1'
         }));
     });
 
