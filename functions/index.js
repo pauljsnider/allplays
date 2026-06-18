@@ -3179,7 +3179,39 @@ function detectGameNotificationCategory(beforeGame, afterGame) {
   return scheduleChanged ? 'schedule' : null;
 }
 
-function buildNotificationLink({ category, teamId, gameId, conversationId = null }) {
+function buildStaffFeeNotificationDestination({ teamId, batchId = null, recipientId = null }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const encodedBatchId = batchId ? encodeURIComponent(batchId) : '';
+  const baseRoute = encodedBatchId
+    ? `/teams/${encodedTeamId}/fees/${encodedBatchId}`
+    : `/teams/${encodedTeamId}/fees`;
+  const params = new URLSearchParams();
+  if (recipientId) {
+    params.set('recipientId', recipientId);
+  }
+  const query = params.toString();
+  const appRoute = `${baseRoute}${query ? `?${query}` : ''}`;
+  return {
+    appRoute,
+    link: `https://allplays.ai/app/#${appRoute}`
+  };
+}
+
+function buildNotificationLink({ category, teamId, gameId, batchId = null, recipientId = null, conversationId = null }) {
+  if (category === 'fees') {
+    const params = new URLSearchParams();
+    if (teamId) {
+      params.set('teamId', teamId);
+    }
+    if (batchId) {
+      params.set('batchId', batchId);
+    }
+    if (recipientId) {
+      params.set('recipientId', recipientId);
+    }
+    const query = params.toString();
+    return `https://allplays.ai/app/#/parent-tools/fees${query ? `?${query}` : ''}`;
+  }
   if (category === 'liveChat' || category === 'mentions') {
     const params = [`teamId=${encodeURIComponent(teamId)}`];
     if (conversationId) {
@@ -3193,7 +3225,21 @@ function buildNotificationLink({ category, teamId, gameId, conversationId = null
   return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
 }
 
-function buildNotificationAppRoute({ category, teamId, gameId, eventId, conversationId = null }) {
+function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId = null, recipientId = null, conversationId = null }) {
+  if (category === 'fees') {
+    const params = new URLSearchParams();
+    if (teamId) {
+      params.set('teamId', teamId);
+    }
+    if (batchId) {
+      params.set('batchId', batchId);
+    }
+    if (recipientId) {
+      params.set('recipientId', recipientId);
+    }
+    const query = params.toString();
+    return `/parent-tools/fees${query ? `?${query}` : ''}`;
+  }
   if ((category === 'liveChat' || category === 'mentions') && teamId) {
     const route = `/messages/${encodeURIComponent(teamId)}`;
     if (!conversationId) {
@@ -3685,11 +3731,24 @@ async function sendCategoryNotification({
   };
 }
 
-async function sendDirectTargetsNotification({ targets, category, title, body, teamId, gameId = null, eventId = null, conversationId = null }) {
+async function sendDirectTargetsNotification({
+  targets,
+  category,
+  title,
+  body,
+  teamId,
+  gameId = null,
+  eventId = null,
+  batchId = null,
+  recipientId = null,
+  conversationId = null,
+  linkOverride = null,
+  appRouteOverride = null
+}) {
   if (!targets.length) return null;
 
-  const link = buildNotificationLink({ category, teamId, gameId, conversationId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, batchId, recipientId, conversationId });
+  const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
@@ -4159,10 +4218,13 @@ async function sendFeeUnpaidDueReminders() {
     // Skip if reminder already sent (deduplication guard)
     if (data.reminderSentAt) return null;
     const pathParts = doc.ref.path.split('/');
-    // Path structure: teams/{teamId}/.../{feeId}/feeRecipients/{recipientId}
+    // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
     const teamId = pathParts[1];
+    const batchId = pathParts[3];
+    const recipientId = pathParts[5];
     if (!teamId) return null;
     const title = data.feeTitle || data.title || 'Team fee due soon';
+    const amountLabel = formatFeeReminderAmount(getTeamFeeBalanceCents(data), data.currency || 'USD');
 
     try {
       const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, data);
@@ -4180,8 +4242,10 @@ async function sendFeeUnpaidDueReminders() {
         targets: payerTargets,
         category: 'fees',
         title: `Reminder: ${title} is due soon`,
-        body: 'Your team fee payment is due in 3 days or less.',
+        body: `${amountLabel} is due in 3 days or less.`,
         teamId,
+        batchId,
+        recipientId,
       });
       return { teamId, payerUserIds: candidateUserIds, feeTitle: title };
     } catch (err) {
@@ -4198,6 +4262,19 @@ async function sendFeeUnpaidDueReminders() {
 exports.sendFeeUnpaidDueReminders = functions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendFeeUnpaidDueReminders());
+
+function formatFeeReminderAmount(amountCents, currency = 'USD') {
+  const cents = Math.max(0, Math.round(Number(amountCents || 0)));
+  const normalizedCurrency = String(currency || 'USD').trim().toUpperCase() || 'USD';
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: normalizedCurrency
+    }).format(cents / 100);
+  } catch (error) {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
+}
 
 function normalizeTeamChatConversationId(value) {
   const conversationId = String(value || '').trim();
@@ -4772,9 +4849,23 @@ exports.notifyFeeMarkedPaid = functions.firestore
       return null;
     }
 
-    const { teamId } = context.params;
+    const { teamId, batchId, recipientId } = context.params;
     const title = String(after.feeTitle || after.title || 'Team fee').trim();
     const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
+    const encodedTeamId = encodeURIComponent(teamId);
+    const encodedBatchId = batchId ? encodeURIComponent(batchId) : '';
+    const staffFeeBaseRoute = encodedBatchId
+      ? `/teams/${encodedTeamId}/fees/${encodedBatchId}`
+      : `/teams/${encodedTeamId}/fees`;
+    const staffFeeParams = new URLSearchParams();
+    if (recipientId) {
+      staffFeeParams.set('recipientId', recipientId);
+    }
+    const staffFeeQuery = staffFeeParams.toString();
+    const staffFeeDestination = {
+      appRoute: `${staffFeeBaseRoute}${staffFeeQuery ? `?${staffFeeQuery}` : ''}`,
+      link: `https://allplays.ai/app/#${staffFeeBaseRoute}${staffFeeQuery ? `?${staffFeeQuery}` : ''}`
+    };
 
     const [allFeeTargets, candidateUsers] = await Promise.all([
       getTargetsForCategory(teamId, 'fees', null),
@@ -4807,7 +4898,11 @@ exports.notifyFeeMarkedPaid = functions.firestore
         category: 'fees',
         title: `Fee marked paid: ${title}`,
         body: 'A team fee has been marked as paid.',
-        teamId
+        teamId,
+        batchId,
+        recipientId,
+        linkOverride: staffFeeDestination.link,
+        appRouteOverride: staffFeeDestination.appRoute
       }));
     } else {
       functions.logger.warn('notifyFeeMarkedPaid found no staff notification targets.', {

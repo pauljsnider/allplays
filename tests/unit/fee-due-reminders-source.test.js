@@ -45,4 +45,13 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain('const candidateUserIdSet = new Set(candidateUserIds);');
         expect(functionsSource).toContain('await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });');
     });
+
+    it('formats the reminder amount and attaches fee-specific routing identifiers', () => {
+        expect(functionsSource).toContain("const batchId = pathParts[3];");
+        expect(functionsSource).toContain("const recipientId = pathParts[5];");
+        expect(functionsSource).toContain("const amountLabel = formatFeeReminderAmount(getTeamFeeBalanceCents(data), data.currency || 'USD');");
+        expect(functionsSource).toContain('body: `${amountLabel} is due in 3 days or less.`,');
+        expect(functionsSource).toContain('batchId,');
+        expect(functionsSource).toContain('recipientId,');
+    });
 });
