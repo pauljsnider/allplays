@@ -1,3 +1,5 @@
+import { recordAppUxTiming } from './telemetry';
+
 export function startUxTimer(label: string) {
   const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
   return {
@@ -13,4 +15,5 @@ export function recordUxTiming(label: string, startedAt: number, meta: Record<st
   if (typeof console !== 'undefined') {
     console.info(`[ux] ${label} ${JSON.stringify({ durationMs, ...meta })}`);
   }
+  recordAppUxTiming(label, startedAt, meta);
 }
