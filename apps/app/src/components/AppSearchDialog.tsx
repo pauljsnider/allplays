@@ -43,6 +43,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const preloadedRoutesRef = useRef(new Set<string>());
   const baseTeamsRef = useRef<AppSearchTeam[]>([]);
   const playersRef = useRef<AppSearchPlayer[]>([]);
+  const playersQueryRef = useRef('');
   const hydratedTeamsPromiseRef = useRef<Promise<AppSearchTeam[]> | null>(null);
   const navigate = useNavigate();
 
@@ -64,6 +65,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     preloadedRoutesRef.current = new Set<string>();
     hydratedTeamsPromiseRef.current = null;
     setQuery('');
+    playersQueryRef.current = '';
     setPlayers([]);
     setPlayersError('');
     setPlayersLoading(false);
@@ -104,6 +106,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       setTeams(baseTeams);
       setTeamsLoading(false);
       setTeamsError('');
+      playersQueryRef.current = '';
       setPlayers([]);
       setPlayersLoading(false);
       setPlayersError('');
@@ -137,9 +140,11 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
         if (playersResult) {
           if (playersResult.status === 'fulfilled') {
+            playersQueryRef.current = trimmedQuery;
             setPlayers(playersResult.value);
             setPlayersError('');
           } else {
+            playersQueryRef.current = trimmedQuery;
             setPlayers([]);
             setPlayersError(getPlayerSearchError(playersResult.reason));
           }
@@ -165,10 +170,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
         const hydratedTeamsById = new Map(hydratedTeams.map((team) => [team.id, team]));
         const cachedHydratedPlayers = getCachedAppPlayerSearchResults(trimmedQuery, hydratedTeamsById, auth.user);
-        const shouldRerunPlayerSearch = !hasSatisfiedAppPlayerSearchResultBudget(playersRef.current) && !cachedHydratedPlayers;
+        const hasCurrentQueryPlayers = playersQueryRef.current === trimmedQuery;
+        const shouldRerunPlayerSearch = (!hasCurrentQueryPlayers || !hasSatisfiedAppPlayerSearchResultBudget(playersRef.current)) && !cachedHydratedPlayers;
 
         setTeamsLoading(true);
         if (cachedHydratedPlayers) {
+          playersQueryRef.current = trimmedQuery;
           setPlayers(cachedHydratedPlayers);
           setPlayersError('');
         }
