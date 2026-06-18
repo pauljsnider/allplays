@@ -3179,6 +3179,24 @@ function detectGameNotificationCategory(beforeGame, afterGame) {
   return scheduleChanged ? 'schedule' : null;
 }
 
+function buildStaffFeeNotificationDestination({ teamId, batchId = null, recipientId = null }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const encodedBatchId = batchId ? encodeURIComponent(batchId) : '';
+  const baseRoute = encodedBatchId
+    ? `/teams/${encodedTeamId}/fees/${encodedBatchId}`
+    : `/teams/${encodedTeamId}/fees`;
+  const params = new URLSearchParams();
+  if (recipientId) {
+    params.set('recipientId', recipientId);
+  }
+  const query = params.toString();
+  const appRoute = `${baseRoute}${query ? `?${query}` : ''}`;
+  return {
+    appRoute,
+    link: `https://allplays.ai/app/#${appRoute}`
+  };
+}
+
 function buildNotificationLink({ category, teamId, gameId, batchId = null, recipientId = null, conversationId = null }) {
   if (category === 'fees') {
     const params = new URLSearchParams();
@@ -3713,11 +3731,24 @@ async function sendCategoryNotification({
   };
 }
 
-async function sendDirectTargetsNotification({ targets, category, title, body, teamId, gameId = null, eventId = null, batchId = null, recipientId = null, conversationId = null }) {
+async function sendDirectTargetsNotification({
+  targets,
+  category,
+  title,
+  body,
+  teamId,
+  gameId = null,
+  eventId = null,
+  batchId = null,
+  recipientId = null,
+  conversationId = null,
+  linkOverride = null,
+  appRouteOverride = null
+}) {
   if (!targets.length) return null;
 
-  const link = buildNotificationLink({ category, teamId, gameId, batchId, recipientId, conversationId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, batchId, recipientId, conversationId });
+  const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
@@ -4818,9 +4849,10 @@ exports.notifyFeeMarkedPaid = functions.firestore
       return null;
     }
 
-    const { teamId } = context.params;
+    const { teamId, batchId, recipientId } = context.params;
     const title = String(after.feeTitle || after.title || 'Team fee').trim();
     const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
+    const staffFeeDestination = buildStaffFeeNotificationDestination({ teamId, batchId, recipientId });
 
     const [allFeeTargets, candidateUsers] = await Promise.all([
       getTargetsForCategory(teamId, 'fees', null),
@@ -4853,7 +4885,11 @@ exports.notifyFeeMarkedPaid = functions.firestore
         category: 'fees',
         title: `Fee marked paid: ${title}`,
         body: 'A team fee has been marked as paid.',
-        teamId
+        teamId,
+        batchId,
+        recipientId,
+        linkOverride: staffFeeDestination.link,
+        appRouteOverride: staffFeeDestination.appRoute
       }));
     } else {
       functions.logger.warn('notifyFeeMarkedPaid found no staff notification targets.', {

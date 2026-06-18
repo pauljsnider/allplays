@@ -10,6 +10,7 @@ function getHelper(name, nextMarker) {
     return new Function(`${slice}; return ${name};`)();
 }
 
+const buildStaffFeeNotificationDestination = getHelper('buildStaffFeeNotificationDestination', 'function buildNotificationLink');
 const buildNotificationLink = getHelper('buildNotificationLink', 'function buildNotificationAppRoute');
 const buildNotificationAppRoute = getHelper('buildNotificationAppRoute', 'async function getUserIdsByEmails');
 
@@ -41,5 +42,18 @@ describe('push notification payload contract', () => {
             batchId: 'batch/1',
             recipientId: 'recipient?1'
         })).toBe('/parent-tools/fees?teamId=team+1&batchId=batch%2F1&recipientId=recipient%3F1');
+    });
+
+    it('builds staff fee notification routes to the team fee management page', () => {
+        expect(buildStaffFeeNotificationDestination({
+            teamId: 'team 1',
+            batchId: 'batch/1',
+            recipientId: 'recipient?1'
+        })).toEqual({
+            appRoute: '/teams/team%201/fees/batch%2F1?recipientId=recipient%3F1',
+            link: 'https://allplays.ai/app/#/teams/team%201/fees/batch%2F1?recipientId=recipient%3F1'
+        });
+        expect(source).toContain('linkOverride: staffFeeDestination.link');
+        expect(source).toContain('appRouteOverride: staffFeeDestination.appRoute');
     });
 });
