@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MessageAvatar, StatusBanner, TeamAvatar } from '../../apps/app/src/pages/Messages.tsx';
@@ -67,6 +68,6 @@ describe('React app Messages accessibility helpers', () => {
     it('announces error banners as alerts', () => {
         render(<StatusBanner status={{ tone: 'error', message: 'Failed to send message.' }} onClose={() => {}} />);
 
-        expect(screen.getByRole('alert')).toHaveTextContent('Failed to send message.');
+        expect(screen.getByRole('alert').textContent).toContain('Failed to send message.');
     });
 });
