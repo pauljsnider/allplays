@@ -2985,6 +2985,13 @@ function buildTeamNotificationRecipientRef(teamId, uid, deviceId) {
   return firestore.doc(`teams/${teamId}/notificationRecipients/${docId}`);
 }
 
+function buildTeamNotificationIndexRefs(teamId, uid, deviceId) {
+  return [
+    buildTeamNotificationTargetRef(teamId, uid, deviceId),
+    buildTeamNotificationRecipientRef(teamId, uid, deviceId)
+  ].filter(Boolean);
+}
+
 function normalizeNotificationDeviceRecord(deviceId, raw) {
   const token = String(raw?.token || '').trim();
   if (!token) return null;
@@ -3028,14 +3035,14 @@ async function syncNotificationTargetsForPreference(uid, teamId, preferences) {
   const batch = firestore.batch();
   devicesSnap.docs.forEach((deviceSnap) => {
     const device = normalizeNotificationDeviceRecord(deviceSnap.id, deviceSnap.data());
-    const targetRef = buildTeamNotificationTargetRef(teamId, uid, deviceSnap.id);
-    if (!targetRef) return;
+    const indexRefs = buildTeamNotificationIndexRefs(teamId, uid, deviceSnap.id);
+    if (!indexRefs.length) return;
     if (teamAccessMap.get(teamId) !== true || !device || !hasEnabledNotificationCategory(normalizedPreferences)) {
-      batch.delete(targetRef);
+      indexRefs.forEach((ref) => batch.delete(ref));
       return;
     }
 
-    batch.set(targetRef, {
+    const payload = {
       ...buildNotificationTargetPayload({
         uid,
         teamId,
@@ -3046,7 +3053,8 @@ async function syncNotificationTargetsForPreference(uid, teamId, preferences) {
         preferences: normalizedPreferences
       }),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    };
+    indexRefs.forEach((ref) => batch.set(ref, payload, { merge: true }));
   });
   await batch.commit();
 }
@@ -3059,15 +3067,15 @@ async function syncNotificationTargetsForDevice(uid, deviceId, rawDevice) {
   const teamAccessMap = await getNotificationTargetTeamAccessMap(uid, prefsSnap.docs.map((prefSnap) => prefSnap.id));
   const batch = firestore.batch();
   prefsSnap.docs.forEach((prefSnap) => {
-    const targetRef = buildTeamNotificationTargetRef(prefSnap.id, uid, deviceId);
+    const indexRefs = buildTeamNotificationIndexRefs(prefSnap.id, uid, deviceId);
     const preferences = normalizeNotificationPreferences(prefSnap.data());
-    if (!targetRef) return;
+    if (!indexRefs.length) return;
     if (teamAccessMap.get(prefSnap.id) !== true || !targetDevice || !hasEnabledNotificationCategory(preferences)) {
-      batch.delete(targetRef);
+      indexRefs.forEach((ref) => batch.delete(ref));
       return;
     }
 
-    batch.set(targetRef, {
+    const payload = {
       ...buildNotificationTargetPayload({
         uid,
         teamId: prefSnap.id,
@@ -3078,9 +3086,17 @@ async function syncNotificationTargetsForDevice(uid, deviceId, rawDevice) {
         preferences
       }),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    };
+    indexRefs.forEach((ref) => batch.set(ref, payload, { merge: true }));
   });
   await batch.commit();
+}
+
+async function teamNotificationRecipientIndexIsEmpty(teamId) {
+  const recipientSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
+    .limit(1)
+    .get();
+  return recipientSnap.empty;
 }
 
 exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
@@ -3421,7 +3437,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
     return indexedTargets;
   }
 
-  if (targetSnap.empty) {
+  if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId)) {
     try {
       await backfillNotificationRecipientsForTeam(teamId, users);
     } catch (error) {
@@ -3454,10 +3470,8 @@ async function pruneInvalidTokens(sendResult, targets) {
     removals.push(
       firestore.doc(`users/${target.uid}/notificationDevices/${target.deviceId}`).delete()
     );
-    const teamTargetRef = buildTeamNotificationTargetRef(target.teamId, target.uid, target.deviceId);
-    if (teamTargetRef) {
-      removals.push(teamTargetRef.delete());
-    }
+    buildTeamNotificationIndexRefs(target.teamId, target.uid, target.deviceId)
+      .forEach((ref) => removals.push(ref.delete()));
   });
 
   if (removals.length) {

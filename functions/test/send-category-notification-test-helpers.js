@@ -104,6 +104,7 @@ function buildNotificationTestEnv({
         teamDocGets: 0,
         parentQueries: 0,
         recipientQueries: 0,
+        recipientCollectionGets: 0,
         preferenceGets: 0,
         deviceGets: 0,
         inboxAdds: 0,
@@ -196,6 +197,19 @@ function buildNotificationTestEnv({
                                     exists: true
                                 }));
                             return makeQuerySnapshot(docs);
+                        }
+                    };
+                },
+                limit() {
+                    return {
+                        async get() {
+                            counts.recipientCollectionGets += 1;
+                            return makeQuerySnapshot(notificationRecipientDocs.slice(0, 1).map((entry) => makeDocSnapshot({
+                                id: entry.id,
+                                ref: doc(`${path}/${entry.id}`),
+                                data: entry.data,
+                                exists: true
+                            })));
                         }
                     };
                 }

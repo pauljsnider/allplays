@@ -89,6 +89,9 @@ describe('notification target index core helpers', () => {
         expect(syncSource).toContain('teamAccessMap.get(teamId) !== true');
         expect(syncSource).toContain('teamAccessMap.get(prefSnap.id) !== true');
         expect(syncSource).toContain('hasParentAccess || hasTeamAdminAccess');
+        expect(syncSource).toContain('buildTeamNotificationIndexRefs');
+        expect(syncSource).toContain('indexRefs.forEach((ref) => batch.set(ref, payload, { merge: true }))');
+        expect(syncSource).toContain('indexRefs.forEach((ref) => batch.delete(ref));');
     });
 
     it('uses the team recipient index first and falls back to legacy user scans for missing indexed recipients', () => {
@@ -107,8 +110,10 @@ describe('notification target index core helpers', () => {
         expect(functionsSource).toContain("normalizeNotificationAlbumVisibility(audienceContext.albumVisibility) !== 'private'");
         expect(functionsSource).toContain("return Array.isArray(user.roles) && user.roles.includes('staff');");
         expect(targetResolverSource).toContain('const missingUsers = users.filter');
-        expect(targetResolverSource).toContain('if (targetSnap.empty)');
+        expect(targetResolverSource).toContain('teamNotificationRecipientIndexIsEmpty(teamId)');
+        expect(targetResolverSource).toContain('if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId))');
         expect(targetResolverSource).toContain('await backfillNotificationRecipientsForTeam(teamId, users);');
         expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
+        expect(functionsSource).toContain('buildTeamNotificationIndexRefs(target.teamId, target.uid, target.deviceId)');
     });
 });
