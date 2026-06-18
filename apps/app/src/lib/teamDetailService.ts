@@ -286,6 +286,7 @@ type FirestoreDocument = Record<string, any> & { id: string };
 const teamDetailBaseSnapshotCache = new Map<string, TeamDetailBaseSnapshot>();
 type RelevantTeamMembersCacheEntry = {
   inviteStateKey: string;
+  parentInviteStateKey: string;
   baseMembersPromise: Promise<any[]> | null;
   baseMembers: any[];
   membersById: Map<string, any>;
@@ -658,6 +659,7 @@ function collectRelevantTeamMemberEmails(team: any, players: any[] = [], invites
 function createRelevantTeamMembersCacheEntry(): RelevantTeamMembersCacheEntry {
   return {
     inviteStateKey: '',
+    parentInviteStateKey: '',
     baseMembersPromise: null,
     baseMembers: [],
     membersById: new Map<string, any>(),
@@ -680,12 +682,16 @@ function buildRelevantTeamMemberInviteStateKey(pendingAdminInvites: any[] = [], 
     .join('|');
 }
 
-function resetRelevantTeamMembersCacheEntry(entry: RelevantTeamMembersCacheEntry, inviteStateKey: string) {
+function resetRelevantTeamMembersCacheEntry(entry: RelevantTeamMembersCacheEntry, inviteStateKey: string, options: { resetBaseMembers?: boolean; parentInviteStateKey?: string } = {}) {
   entry.inviteStateKey = inviteStateKey;
-  entry.baseMembersPromise = null;
-  entry.baseMembers = [];
+  if (typeof options.parentInviteStateKey === 'string') entry.parentInviteStateKey = options.parentInviteStateKey;
+  if (options.resetBaseMembers) {
+    entry.baseMembersPromise = null;
+    entry.baseMembers = [];
+  }
   entry.membersById.clear();
   entry.membersByEmail.clear();
+  mergeRelevantTeamMembers(entry, entry.baseMembers);
   entry.loadedInviteEmails.clear();
   entry.inviteEmailPromises.clear();
 }
@@ -724,8 +730,11 @@ async function loadRelevantTeamMembers({
   }
 
   const inviteStateKey = buildRelevantTeamMemberInviteStateKey(pendingAdminInvites, pendingParentInvites);
-  if (cacheEntry.inviteStateKey !== inviteStateKey) {
-    resetRelevantTeamMembersCacheEntry(cacheEntry, inviteStateKey);
+  const parentInviteStateKey = buildRelevantTeamMemberInviteStateKey([], pendingParentInvites);
+  if (cacheEntry.parentInviteStateKey !== parentInviteStateKey) {
+    resetRelevantTeamMembersCacheEntry(cacheEntry, inviteStateKey, { resetBaseMembers: true, parentInviteStateKey });
+  } else if (cacheEntry.inviteStateKey !== inviteStateKey) {
+    resetRelevantTeamMembersCacheEntry(cacheEntry, inviteStateKey, { parentInviteStateKey });
   }
 
   const userIds = collectRelevantTeamMemberUserIds(team, players);
