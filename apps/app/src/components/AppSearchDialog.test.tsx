@@ -27,11 +27,20 @@ vi.mock('../lib/searchRoutePreload', () => ({
   preloadSearchRoute: preloadSearchRouteMock,
 }));
 
-const { getKnownAppSearchTeamsMock, loadAppSearchTeamsMock, searchAppTeamsMock, searchAppPlayersMock } = vi.hoisted(() => ({
+const {
+  getKnownAppSearchTeamsMock,
+  loadAppSearchTeamsMock,
+  searchAppTeamsMock,
+  searchAppPlayersMock,
+  getCachedAppPlayerSearchResultsMock,
+  hasSatisfiedAppPlayerSearchResultBudgetMock,
+} = vi.hoisted(() => ({
   getKnownAppSearchTeamsMock: vi.fn((): AppSearchTeam[] => []),
   loadAppSearchTeamsMock: vi.fn(async (): Promise<AppSearchTeam[]> => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
   searchAppTeamsMock: vi.fn<(query: string, teams: AppSearchTeam[], user: AuthState['user']) => Promise<AppSearchTeam[]>>(),
   searchAppPlayersMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => Promise<never[]>>(),
+  getCachedAppPlayerSearchResultsMock: vi.fn(() => null),
+  hasSatisfiedAppPlayerSearchResultBudgetMock: vi.fn(() => false),
 }));
 
 vi.mock('../lib/searchService', () => ({
@@ -52,7 +61,9 @@ vi.mock('../lib/searchService', () => ({
       flat: [...actionItems, ...teamItems],
     };
   },
+  getCachedAppPlayerSearchResults: getCachedAppPlayerSearchResultsMock,
   getKnownAppSearchTeams: getKnownAppSearchTeamsMock,
+  hasSatisfiedAppPlayerSearchResultBudget: hasSatisfiedAppPlayerSearchResultBudgetMock,
   loadAppSearchTeams: loadAppSearchTeamsMock,
   searchAppTeams: searchAppTeamsMock,
   searchAppPlayers: searchAppPlayersMock,
@@ -85,6 +96,8 @@ describe('AppSearchDialog', () => {
     loadAppSearchTeamsMock.mockResolvedValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
     searchAppTeamsMock.mockImplementation(async (_query, teams) => teams);
     searchAppPlayersMock.mockResolvedValue([]);
+    getCachedAppPlayerSearchResultsMock.mockReturnValue(null);
+    hasSatisfiedAppPlayerSearchResultBudgetMock.mockReturnValue(false);
     preloadSearchRouteMock.mockImplementation(async () => true);
   });
 
@@ -286,6 +299,65 @@ describe('AppSearchDialog', () => {
 
     await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('skips the hydrated player rerun when the first pass already satisfied the result budget', async () => {
+    const onClose = vi.fn();
+    const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+    const hydratedTeams: AppSearchTeam[] = [
+      ...initialTeams,
+      { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }
+    ];
+
+    getKnownAppSearchTeamsMock.mockReturnValue(initialTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(hydratedTeams);
+    hasSatisfiedAppPlayerSearchResultBudgetMock.mockReturnValue(true);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('skips the hydrated player rerun when cached hydrated results can answer the query', async () => {
+    const onClose = vi.fn();
+    const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+    const hydratedTeams: AppSearchTeam[] = [
+      ...initialTeams,
+      { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }
+    ];
+
+    getKnownAppSearchTeamsMock.mockReturnValue(initialTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(hydratedTeams);
+    getCachedAppPlayerSearchResultsMock.mockReturnValue([
+      {
+        id: 'player:team-2:player-1',
+        kind: 'player',
+        title: '#9 Rocket Runner',
+        subtitle: 'Rockets',
+        route: '/players/team-2/player-1',
+        teamId: 'team-2',
+        playerId: 'player-1',
+      },
+    ]);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+
+    await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
+    expect(getCachedAppPlayerSearchResultsMock).toHaveBeenCalledWith('ro', expect.any(Map), null);
   });
 
   it('reruns search with the hydrated team scope when access expands', async () => {

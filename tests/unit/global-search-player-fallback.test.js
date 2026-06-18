@@ -15,6 +15,7 @@ describe('legacy global player search scoping', () => {
     });
 
     it('queries only accessible team player collections for normal searches', () => {
+        expect(source).toContain('player-search-budget.js?v=1');
         expect(source).toContain('async function loadPlayerSearchDocsByTeam(');
         expect(source).toContain('async function loadPlayerSearchDocs(prefixes, rawQuery, isNumeric, teamsById)');
         expect(source).toContain("const playersRef = collection(db, `teams/${teamId}/players`);");
@@ -22,12 +23,15 @@ describe('legacy global player search scoping', () => {
         expect(source).not.toContain("collectionGroup(db, 'players')");
     });
 
-    it('limits legacy player fan-out to a bounded set of searchable teams', () => {
+    it('limits legacy player fan-out to a bounded set of searchable teams and queries', () => {
+        expect(source).toContain('const playerSearchQueryLimit = playerSearchResultLimit;');
         expect(source).toContain('const playerSearchTeamLimit = 8;');
         expect(source).toContain('function getPlayerSearchTeamIds(rawQuery, teamsById)');
         expect(source).toContain('filterSearchableTeams(Array.from(teamsById.values()), currentUser)');
         expect(source).toContain('.slice(0, playerSearchTeamLimit)');
         expect(source).toContain('const teamIds = getPlayerSearchTeamIds(rawQuery, teamsById);');
+        expect(source).toContain('executeBoundedPlayerSearch({');
+        expect(source).toContain('queryBudget: playerSearchFirestoreQueryBudget');
     });
 
     it('avoids unreadable stream-only team queries when loading accessible teams', () => {

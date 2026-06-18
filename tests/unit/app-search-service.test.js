@@ -48,6 +48,7 @@ import {
     preloadSearchRoute,
     resolveSearchRoutePreloader
 } from '../../apps/app/src/lib/searchRoutePreload.ts';
+import { playerSearchFirestoreQueryBudget } from '../../js/player-search-budget.js';
 
 const auth = {
     user: {
@@ -959,7 +960,7 @@ describe('React app search service', () => {
         await expect(searchAppPlayers('pat', visibleTeams, auth.user)).rejects.toThrow('permission denied');
     });
 
-    it('caps team-scoped player queries at 8 teams to prevent unbounded Firestore reads', async () => {
+    it('caps text player searches to the shared Firestore query budget', async () => {
         const manyTeams = new Map(
             Array.from({ length: 12 }, (_, i) => [
                 `team-${i}`,
@@ -980,8 +981,23 @@ describe('React app search service', () => {
 
         await searchAppPlayers('pat', manyTeams, auth.user);
 
-        expect(queriedTeamIds.size).toBe(8);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(playerSearchFirestoreQueryBudget);
         expect(queriedTeamIds.size).toBeLessThan(manyTeams.size);
+    });
+
+    it('caps numeric player searches to the shared Firestore query budget', async () => {
+        const manyTeams = new Map(
+            Array.from({ length: 12 }, (_, i) => [
+                `team-${i}`,
+                { id: `team-${i}`, name: `Team ${i}`, sport: 'Basketball', fromAppAccess: true }
+            ])
+        );
+
+        firebaseMocks.getDocs.mockResolvedValue({ docs: [] });
+
+        await searchAppPlayers('12', manyTeams, auth.user);
+
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(playerSearchFirestoreQueryBudget);
     });
 
     it('prioritizes private and query-matching teams before capping player search fanout', async () => {

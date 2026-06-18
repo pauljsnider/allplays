@@ -6,7 +6,9 @@ import { openPublicUrl } from '../lib/publicActions';
 import { preloadSearchRoute } from '../lib/searchRoutePreload';
 import {
   computeAppSearchResults,
+  getCachedAppPlayerSearchResults,
   getKnownAppSearchTeams,
+  hasSatisfiedAppPlayerSearchResultBudget,
   loadAppSearchTeams,
   searchAppTeams,
   searchAppPlayers,
@@ -40,8 +42,13 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const openedAtRef = useRef(Date.now());
   const preloadedRoutesRef = useRef(new Set<string>());
   const baseTeamsRef = useRef<AppSearchTeam[]>([]);
+  const playersRef = useRef<AppSearchPlayer[]>([]);
   const hydratedTeamsPromiseRef = useRef<Promise<AppSearchTeam[]> | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    playersRef.current = players;
+  }, [players]);
 
   const results = useMemo(
     () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
@@ -109,13 +116,14 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
-      const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
+      const runSearch = async (accessibleTeams: AppSearchTeam[], options: { includePlayers: boolean } = { includePlayers: true }) => {
         const phaseId = ++latestPhaseId;
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
-        const [teamsResult, playersResult] = await Promise.allSettled([
-          searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
-          searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
-        ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
+        const searchTasks = [searchAppTeams(trimmedQuery, accessibleTeams, auth.user)] as [Promise<AppSearchTeam[]>, Promise<AppSearchPlayer[]>?];
+        if (options.includePlayers) {
+          searchTasks.push(searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user));
+        }
+        const [teamsResult, playersResult] = await Promise.allSettled(searchTasks) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>?];
 
         if (requestId !== searchRequestId.current || phaseId !== latestPhaseId) return;
 
@@ -127,17 +135,21 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           setTeamsError(teamsResult.reason?.message || 'Team search unavailable.');
         }
 
-        if (playersResult.status === 'fulfilled') {
-          setPlayers(playersResult.value);
-          setPlayersError('');
-        } else {
-          setPlayers([]);
-          setPlayersError(getPlayerSearchError(playersResult.reason));
+        if (playersResult) {
+          if (playersResult.status === 'fulfilled') {
+            setPlayers(playersResult.value);
+            setPlayersError('');
+          } else {
+            setPlayers([]);
+            setPlayersError(getPlayerSearchError(playersResult.reason));
+          }
         }
 
         if (requestId === searchRequestId.current && phaseId === latestPhaseId) {
           setTeamsLoading(false);
-          setPlayersLoading(false);
+          if (options.includePlayers) {
+            setPlayersLoading(false);
+          }
         }
       };
 
@@ -150,9 +162,20 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       void hydrationPromise.then((hydratedTeams) => {
         if (requestId !== searchRequestId.current) return;
         if (hasSameTeamScope(initialAccessibleTeams, hydratedTeams)) return;
+
+        const hydratedTeamsById = new Map(hydratedTeams.map((team) => [team.id, team]));
+        const cachedHydratedPlayers = getCachedAppPlayerSearchResults(trimmedQuery, hydratedTeamsById, auth.user);
+        const shouldRerunPlayerSearch = !hasSatisfiedAppPlayerSearchResultBudget(playersRef.current) && !cachedHydratedPlayers;
+
         setTeamsLoading(true);
-        setPlayersLoading(true);
-        return runSearch(hydratedTeams);
+        if (cachedHydratedPlayers) {
+          setPlayers(cachedHydratedPlayers);
+          setPlayersError('');
+        }
+        if (shouldRerunPlayerSearch) {
+          setPlayersLoading(true);
+        }
+        return runSearch(hydratedTeams, { includePlayers: shouldRerunPlayerSearch });
       }).catch(() => {
         if (requestId === searchRequestId.current && latestPhaseId === 0) {
           setTeamsLoading(false);
