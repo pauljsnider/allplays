@@ -4582,30 +4582,88 @@ function getPracticePacketReminderDocRef(teamId, sessionId, playerId) {
   return firestore.doc(`teams/${teamId}/practiceSessions/${sessionId}/packetReminderSends/${playerId}`);
 }
 
-async function claimPracticePacketReminder(teamId, sessionId, playerId) {
+const PRACTICE_PACKET_REMINDER_CLAIM_TTL_MS = 15 * 60 * 1000;
+
+function buildPracticePacketReminderClaimId() {
+  return `practice-packet-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')}`;
+}
+
+async function claimPracticePacketReminder(teamId, sessionId, playerId, now = new Date()) {
   const reminderRef = getPracticePacketReminderDocRef(teamId, sessionId, playerId);
   return firestore.runTransaction(async (transaction) => {
     const reminderSnap = await transaction.get(reminderRef);
-    if (reminderSnap.exists && reminderSnap.data()?.reminderSentAt) {
+    const reminder = reminderSnap.exists ? (reminderSnap.data() || {}) : {};
+    if (reminder.reminderSentAt) {
+      return null;
+    }
+
+    const deliveryClaimedAt = coercePracticePacketDate(reminder.deliveryClaimedAt);
+    const hasActiveClaim = reminder.deliveryClaimId
+      && deliveryClaimedAt
+      && (now.getTime() - deliveryClaimedAt.getTime()) < PRACTICE_PACKET_REMINDER_CLAIM_TTL_MS;
+    if (hasActiveClaim) {
+      return null;
+    }
+
+    const claimId = buildPracticePacketReminderClaimId();
+    transaction.set(reminderRef, {
+      playerId,
+      deliveryClaimId: claimId,
+      deliveryClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+      reminderSentAt: null,
+      lastError: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return claimId;
+  });
+}
+
+async function getPracticePacketReminderTargetUserIds(teamId, playerId, player = {}) {
+  const privateProfileSnap = await firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`).get();
+  const privateProfile = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
+  return getTeamFeeRecipientTargetUserIds({}, player, privateProfile);
+}
+
+async function markPracticePacketReminderSent(teamId, sessionId, playerId, claimId) {
+  const reminderRef = getPracticePacketReminderDocRef(teamId, sessionId, playerId);
+  return firestore.runTransaction(async (transaction) => {
+    const reminderSnap = await transaction.get(reminderRef);
+    const reminder = reminderSnap.exists ? (reminderSnap.data() || {}) : {};
+    if (reminder.reminderSentAt || reminder.deliveryClaimId !== claimId) {
       return false;
     }
 
     transaction.set(reminderRef, {
       playerId,
       reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      deliveryClaimId: null,
+      deliveryClaimedAt: null,
+      lastError: null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
     return true;
   });
 }
 
-async function getPracticePacketReminderTargetUserIds(teamId, playerId, player = {}) {
-  const directUserIds = getTeamFeeRecipientTargetUserIds({}, player, {});
-  if (directUserIds.length > 0) return directUserIds;
+async function clearPracticePacketReminderClaim(teamId, sessionId, playerId, claimId, error) {
+  const reminderRef = getPracticePacketReminderDocRef(teamId, sessionId, playerId);
+  return firestore.runTransaction(async (transaction) => {
+    const reminderSnap = await transaction.get(reminderRef);
+    const reminder = reminderSnap.exists ? (reminderSnap.data() || {}) : {};
+    if (reminder.deliveryClaimId !== claimId || reminder.reminderSentAt) {
+      return false;
+    }
 
-  const privateProfileSnap = await firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`).get();
-  const privateProfile = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
-  return getTeamFeeRecipientTargetUserIds({}, player, privateProfile);
+    transaction.set(reminderRef, {
+      playerId,
+      deliveryClaimId: null,
+      deliveryClaimedAt: null,
+      lastError: error?.message || 'Unknown practice packet reminder error',
+      lastAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return true;
+  });
 }
 
 async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
@@ -4670,26 +4728,39 @@ async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
       const parentTargets = practiceTargets.filter((target) => candidateUserIdSet.has(target.uid));
       if (!parentTargets.length) continue;
 
-      const claimed = await claimPracticePacketReminder(teamId, sessionId, playerId);
-      if (!claimed) continue;
+      const claimId = await claimPracticePacketReminder(teamId, sessionId, playerId, now);
+      if (!claimId) continue;
 
-      await sendDirectTargetsNotification({
-        targets: parentTargets,
-        category: 'practice',
-        title: `Reminder: ${packetTitle} is due tomorrow`,
-        body: `${String(player.name || 'Your player').trim() || 'Your player'} has not completed the ${getPracticePacketNotificationLabel(session)} yet.`,
-        teamId,
-        eventId: sessionId,
-        linkOverride: destination.link,
-        appRouteOverride: destination.appRoute
-      });
+      try {
+        await sendDirectTargetsNotification({
+          targets: parentTargets,
+          category: 'practice',
+          title: `Reminder: ${packetTitle} is due tomorrow`,
+          body: `${String(player.name || 'Your player').trim() || 'Your player'} has not completed the ${getPracticePacketNotificationLabel(session)} yet.`,
+          teamId,
+          eventId: sessionId,
+          linkOverride: destination.link,
+          appRouteOverride: destination.appRoute
+        });
 
-      results.push({
-        teamId,
-        sessionId,
-        playerId,
-        targetCount: parentTargets.length
-      });
+        const markedSent = await markPracticePacketReminderSent(teamId, sessionId, playerId, claimId);
+        if (!markedSent) continue;
+
+        results.push({
+          teamId,
+          sessionId,
+          playerId,
+          targetCount: parentTargets.length
+        });
+      } catch (error) {
+        await clearPracticePacketReminderClaim(teamId, sessionId, playerId, claimId, error);
+        functions.logger.error('Failed to send practice packet due tomorrow reminder.', {
+          teamId,
+          sessionId,
+          playerId,
+          error: error?.message || error
+        });
+      }
     }
   }
 

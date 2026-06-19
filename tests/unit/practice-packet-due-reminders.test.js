@@ -144,6 +144,9 @@ function buildHarness({
             }
         }
     };
+    const crypto = {
+        randomUUID: () => 'claim-1234'
+    };
     const exportsObject = {};
     const factory = new Function(
         'exports',
@@ -154,6 +157,7 @@ function buildHarness({
         'getTargetsForCategory',
         'getTeamFeeRecipientTargetUserIds',
         'sendDirectTargetsNotification',
+        'crypto',
         `${extractReminderSource()}\nreturn { trigger: exports.sendPracticePacketDueTomorrowReminders, sendPracticePacketDueTomorrowReminders };`
     );
 
@@ -165,7 +169,8 @@ function buildHarness({
         categories,
         getTargetsForCategory,
         getTeamFeeRecipientTargetUserIds,
-        sendDirectTargetsNotification
+        sendDirectTargetsNotification,
+        crypto
     );
 
     return {
@@ -182,7 +187,7 @@ function buildHarness({
 }
 
 describe('sendPracticePacketDueTomorrowReminders', () => {
-    it('sends one practice reminder only for incomplete players with enabled parent targets', async () => {
+    it('sends one practice reminder only for incomplete players with enabled parent targets, including private-profile caregivers', async () => {
         const harness = buildHarness({
             sessions: [
                 {
@@ -201,7 +206,7 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
             playersByTeam: {
                 'team-1': [
                     { id: 'player-1', data: { name: 'Pat', parents: [{ userId: 'parent-1' }] } },
-                    { id: 'player-2', data: { name: 'Sam' } },
+                    { id: 'player-2', data: { name: 'Sam', parents: [{ userId: 'parent-2' }] } },
                     { id: 'player-3', data: { name: 'Alex', parents: [{ userId: 'parent-3' }] } }
                 ]
             },
@@ -212,12 +217,13 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
             },
             privateProfiles: {
                 'teams/team-1/players/player-2/private/profile': {
-                    parents: [{ userId: 'parent-2' }]
+                    parents: [{ userId: 'caregiver-2' }]
                 }
             },
             practiceTargetsByTeam: {
                 'team-1': [
-                    { uid: 'parent-2', token: 'parent-2-token', teamId: 'team-1' }
+                    { uid: 'parent-2', token: 'parent-2-token', teamId: 'team-1' },
+                    { uid: 'caregiver-2', token: 'caregiver-2-token', teamId: 'team-1' }
                 ]
             }
         });
@@ -225,12 +231,15 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
         const result = await harness.sendPracticePacketDueTomorrowReminders(harness.now);
 
         expect(result).toEqual([
-            { teamId: 'team-1', sessionId: 'session-1', playerId: 'player-2', targetCount: 1 }
+            { teamId: 'team-1', sessionId: 'session-1', playerId: 'player-2', targetCount: 2 }
         ]);
         expect(harness.getTargetsForCategory).toHaveBeenCalledWith('team-1', 'practice', null);
         expect(harness.sendDirectTargetsNotification).toHaveBeenCalledTimes(1);
         expect(harness.sendDirectTargetsNotification).toHaveBeenCalledWith(expect.objectContaining({
-            targets: [{ uid: 'parent-2', token: 'parent-2-token', teamId: 'team-1' }],
+            targets: [
+                { uid: 'parent-2', token: 'parent-2-token', teamId: 'team-1' },
+                { uid: 'caregiver-2', token: 'caregiver-2-token', teamId: 'team-1' }
+            ],
             category: 'practice',
             title: 'Reminder: Thursday Practice is due tomorrow',
             body: 'Sam has not completed the home packet for Thursday Practice yet.',
@@ -241,13 +250,17 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
         }));
         expect(
             harness.reminderDocStore.get('teams/team-1/practiceSessions/session-1/packetReminderSends/player-2')
-        ).toEqual(expect.objectContaining({ playerId: 'player-2' }));
+        ).toEqual(expect.objectContaining({
+            playerId: 'player-2',
+            deliveryClaimId: null,
+            deliveryClaimedAt: null
+        }));
         expect(
             harness.reminderDocStore.has('teams/team-1/practiceSessions/session-1/packetReminderSends/player-1')
         ).toBe(false);
     });
 
-    it('uses reminderSentAt guard to avoid duplicate sends for the same player and packet', async () => {
+    it('clears failed reminder claims so later players still send and retries can deliver later', async () => {
         const harness = buildHarness({
             sessions: [
                 {
@@ -264,24 +277,54 @@ describe('sendPracticePacketDueTomorrowReminders', () => {
             ],
             playersByTeam: {
                 'team-1': [
-                    { id: 'player-2', data: { name: 'Sam', parents: [{ userId: 'parent-2' }] } }
+                    { id: 'player-2', data: { name: 'Sam', parents: [{ userId: 'parent-2' }] } },
+                    { id: 'player-3', data: { name: 'Alex', parents: [{ userId: 'parent-3' }] } }
                 ]
             },
             practiceTargetsByTeam: {
                 'team-1': [
-                    { uid: 'parent-2', token: 'parent-2-token', teamId: 'team-1' }
+                    { uid: 'parent-2', token: 'parent-2-token', teamId: 'team-1' },
+                    { uid: 'parent-3', token: 'parent-3-token', teamId: 'team-1' }
                 ]
             }
         });
+        harness.sendDirectTargetsNotification
+            .mockRejectedValueOnce(new Error('FCM unavailable'))
+            .mockResolvedValue({ successCount: 1, failureCount: 0 });
 
         const firstResult = await harness.sendPracticePacketDueTomorrowReminders(harness.now);
-        const secondResult = await harness.sendPracticePacketDueTomorrowReminders(harness.now);
 
         expect(firstResult).toEqual([
+            { teamId: 'team-1', sessionId: 'session-1', playerId: 'player-3', targetCount: 1 }
+        ]);
+        expect(
+            harness.reminderDocStore.get('teams/team-1/practiceSessions/session-1/packetReminderSends/player-2')
+        ).toEqual(expect.objectContaining({
+            playerId: 'player-2',
+            reminderSentAt: null,
+            deliveryClaimId: null,
+            deliveryClaimedAt: null,
+            lastError: 'FCM unavailable'
+        }));
+        expect(harness.functions.logger.error).toHaveBeenCalledWith(
+            'Failed to send practice packet due tomorrow reminder.',
+            expect.objectContaining({ teamId: 'team-1', sessionId: 'session-1', playerId: 'player-2', error: 'FCM unavailable' })
+        );
+
+        const secondResult = await harness.sendPracticePacketDueTomorrowReminders(harness.now);
+
+        expect(secondResult).toEqual([
             { teamId: 'team-1', sessionId: 'session-1', playerId: 'player-2', targetCount: 1 }
         ]);
-        expect(secondResult).toEqual([]);
-        expect(harness.sendDirectTargetsNotification).toHaveBeenCalledTimes(1);
+        expect(harness.sendDirectTargetsNotification).toHaveBeenCalledTimes(3);
+        expect(
+            harness.reminderDocStore.get('teams/team-1/practiceSessions/session-1/packetReminderSends/player-2')
+        ).toEqual(expect.objectContaining({
+            playerId: 'player-2',
+            deliveryClaimId: null,
+            deliveryClaimedAt: null,
+            lastError: null
+        }));
     });
 
     it('logs and exits when practice notifications are unavailable', async () => {
