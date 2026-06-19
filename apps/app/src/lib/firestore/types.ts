@@ -30,6 +30,58 @@ export type FirestoreDecodedDocument = Record<string, unknown> & {
     id: string;
 };
 
+export type ChatConversationFirestoreRecord = {
+    id: string;
+    type: 'team' | 'group' | 'direct';
+    name?: string | null;
+    participantIds?: string[];
+    participantRoles?: string[];
+    mutedBy?: string[];
+    isDefault?: boolean;
+    isLegacy?: boolean;
+    updatedAt?: unknown;
+    lastMessageAt?: unknown;
+};
+
+export type ChatAttachmentFirestoreRecord = {
+    type: 'image' | 'video';
+    url: string | null;
+    path?: string | null;
+    thumbnailUrl?: string | null;
+    name?: string | null;
+    mimeType?: string | null;
+    size?: number | null;
+    uploadedAt?: unknown;
+};
+
+export type ChatMessageFirestoreRecord = {
+    id: string;
+    text?: string | null;
+    senderId?: string | null;
+    senderName?: string | null;
+    senderEmail?: string | null;
+    senderPhotoUrl?: string | null;
+    attachments?: ChatAttachmentFirestoreRecord[];
+    imageUrl?: string | null;
+    imagePath?: string | null;
+    imageName?: string | null;
+    imageType?: string | null;
+    imageSize?: number | null;
+    createdAt?: unknown;
+    editedAt?: unknown;
+    deleted?: boolean;
+    ai?: boolean;
+    aiName?: string | null;
+    aiQuestion?: string | null;
+    aiMeta?: Record<string, unknown> | null;
+    reactions?: Record<string, string[]>;
+    targetType?: 'full_team' | 'staff' | 'individuals';
+    recipientIds?: string[];
+    targetRole?: string | null;
+    conversationId?: string | null;
+    _doc?: unknown;
+};
+
 export type ScheduleEventFirestoreRecord = {
     id: string;
     type: 'game' | 'practice';
