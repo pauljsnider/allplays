@@ -110,6 +110,29 @@ const baseHome = {
   }
 };
 
+const baseFeedItem = {
+  id: 'post-1',
+  type: 'player_moment',
+  visibility: 'friends',
+  authorId: 'friend-1',
+  authorName: 'Jamie Friend',
+  authorPhotoUrl: null,
+  teamId: 'team-1',
+  teamName: 'Bears',
+  playerIds: ['player-1'],
+  playerNames: ['Pat Player'],
+  sourceType: 'player',
+  sourceId: 'player-1',
+  title: 'Pat Player highlight',
+  detail: 'Player moment · Pat Player · Bears',
+  caption: 'Great effort today.',
+  media: [],
+  route: '/players/team-1/player-1',
+  createdAt: new Date('2100-06-01T18:00:00Z'),
+  reactionCounts: { like: 2 },
+  commentCount: 1
+};
+
 const baseSocial = {
   feedItems: [],
   friends: [],
@@ -327,6 +350,66 @@ describe('Home', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh feed' }));
+
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('optimistically updates likes and blocks rapid double taps from writing twice', async () => {
+    let resolveLike: () => void = () => {};
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+    socialServiceMocks.reactToSocialPost.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveLike = () => resolve(undefined);
+    }));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    await screen.findByRole('heading', { name: 'Feed' });
+    const likeButton = await screen.findByRole('button', { name: /2$/ });
+
+    fireEvent.click(likeButton);
+    fireEvent.click(likeButton);
+
+    expect(screen.getByRole('button', { name: /3$/ })).toBeTruthy();
+    expect(socialServiceMocks.reactToSocialPost).toHaveBeenCalledTimes(1);
+
+    resolveLike();
+
+    await waitFor(() => {
+      expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('optimistically clears comment input, increments the count, and blocks duplicate submits', async () => {
+    let resolveComment: () => void = () => {};
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+    socialServiceMocks.commentOnSocialPost.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveComment = () => resolve(undefined);
+    }));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    await screen.findByRole('heading', { name: 'Feed' });
+    const commentInput = screen.getByPlaceholderText('Comment · 1') as HTMLInputElement;
+    fireEvent.change(commentInput, { target: { value: 'Nice play!' } });
+    const sendButton = screen.getByRole('button', { name: 'Send' });
+
+    fireEvent.click(sendButton);
+    fireEvent.click(sendButton);
+
+    expect(socialServiceMocks.commentOnSocialPost).toHaveBeenCalledTimes(1);
+    expect((screen.getByPlaceholderText('Comment · 2') as HTMLInputElement).value).toBe('');
+
+    resolveComment();
 
     await waitFor(() => {
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(2);
