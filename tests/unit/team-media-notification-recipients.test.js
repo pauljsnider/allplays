@@ -107,7 +107,13 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
 }
 
 describe('team media notification recipients', () => {
-    it('filters private-album media recipients down to staff-only targets', async () => {
+    it.each([
+        { albumVisibility: 'private' },
+        { albumVisibility: 'staff-only' },
+        { albumVisibility: 'staff_only' },
+        { albumVisibility: 'staff' },
+        { albumVisibility: 'team', staffOnly: true }
+    ])('filters restricted-album media recipients down to staff-only targets for %j', async (audienceContext) => {
         const harness = createHarness({
             candidateUsers: [
                 { uid: 'parent-1', roles: ['parent'] },
@@ -119,7 +125,7 @@ describe('team media notification recipients', () => {
             ]
         });
 
-        const targets = await harness.getTargetsForCategory('team-1', 'media', null, { albumVisibility: 'private' });
+        const targets = await harness.getTargetsForCategory('team-1', 'media', null, audienceContext);
 
         expect(targets).toEqual([
             {
