@@ -59,6 +59,7 @@ function RsvpProbe({ availabilityNote }: { availabilityNote: string }) {
             <div>{workflow.message || ''}</div>
             <div>{workflow.error || ''}</div>
             <button type="button" onClick={() => workflow.submit('going')}>Submit going</button>
+            <button type="button" onClick={() => workflow.submit('maybe')}>Submit maybe</button>
         </div>
     );
 }
@@ -119,13 +120,22 @@ describe('useScheduleEventRsvp', () => {
         expect(screen.getByTestId('current-rsvp').textContent).toBe('not_responded');
     });
 
-    it('submits RSVP updates and patches the shared event state on success', async () => {
-        vi.mocked(submitParentScheduleRsvp).mockResolvedValue({ going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 } as any);
+    it('optimistically updates RSVP state before the server resolves and reconciles on success', async () => {
+        let resolveSubmit: (value: any) => void = () => {};
+        vi.mocked(submitParentScheduleRsvp).mockImplementation(() => new Promise((resolve) => {
+            resolveSubmit = resolve;
+        }));
 
         renderProbe('Running late');
 
         expect(screen.getByTestId('can-submit').textContent).toBe('true');
         fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('going');
+        expect(screen.getByTestId('current-note').textContent).toBe('Running late');
+        expect(screen.getByTestId('submitting').textContent).toBe('going');
+
+        resolveSubmit({ going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 } as any);
 
         await waitFor(() => {
             expect(submitParentScheduleRsvp).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, 'going', 'Running late');
@@ -133,21 +143,54 @@ describe('useScheduleEventRsvp', () => {
         await waitFor(() => {
             expect(screen.getByText('Avery Smith marked going.')).toBeTruthy();
         });
-        expect(screen.getByTestId('current-rsvp').textContent).toBe('going');
-        expect(screen.getByTestId('current-note').textContent).toBe('Running late');
         expect(screen.getByTestId('submitting').textContent).toBe('');
     });
 
-    it('surfaces submission failures without mutating shared event state', async () => {
+    it('rolls back optimistic RSVP state when the save fails', async () => {
         vi.mocked(submitParentScheduleRsvp).mockRejectedValue(new Error('Unable to save RSVP.'));
 
         renderProbe();
         fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('going');
 
         await waitFor(() => {
             expect(screen.getByText('Unable to save RSVP.')).toBeTruthy();
         });
         expect(screen.getByTestId('current-rsvp').textContent).toBe('not_responded');
         expect(screen.getByTestId('current-note').textContent).toBe('');
+    });
+
+    it('does not roll back a newer RSVP choice when an earlier submission fails later', async () => {
+        let rejectFirst: (reason?: unknown) => void = () => {};
+        let resolveSecond: (value: any) => void = () => {};
+        vi.mocked(submitParentScheduleRsvp)
+            .mockImplementationOnce(() => new Promise((_, reject) => {
+                rejectFirst = reject;
+            }))
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveSecond = resolve;
+            }));
+
+        renderProbe();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('going');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Submit maybe' }));
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('maybe');
+
+        resolveSecond({ going: 0, maybe: 1, notGoing: 0, notResponded: 0, total: 1 } as any);
+        await waitFor(() => {
+            expect(screen.getByText('Avery Smith marked maybe.')).toBeTruthy();
+        });
+
+        rejectFirst(new Error('Unable to save RSVP.'));
+        await waitFor(() => {
+            expect(screen.getByText('Unable to save RSVP.')).toBeTruthy();
+        });
+
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('maybe');
+        expect(screen.getByTestId('current-note').textContent).toBe('Running late');
     });
 });
