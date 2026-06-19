@@ -1,4 +1,7 @@
 import type {
+    ChatAttachmentFirestoreRecord,
+    ChatConversationFirestoreRecord,
+    ChatMessageFirestoreRecord,
     FirestoreDecodedDocument,
     FirestoreDocument,
     FirestoreValue,
@@ -45,6 +48,13 @@ function asTrimmedString(value: unknown): string | null {
     return normalized || null;
 }
 
+function asUniqueStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return Array.from(new Set(value
+        .map((entry) => asTrimmedString(entry))
+        .filter((entry): entry is string => Boolean(entry))));
+}
+
 function asOptionalDate(value: unknown): Date | null {
     if (value instanceof Date) {
         return Number.isNaN(value.getTime()) ? null : value;
@@ -70,6 +80,19 @@ function asObject(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+function asTemporalValue(value: unknown): unknown {
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value;
+    }
+    if (value && typeof (value as { toDate?: unknown }).toDate === 'function') {
+        return value;
+    }
+    if (typeof (value as { seconds?: unknown })?.seconds === 'number') {
+        return value;
+    }
+    return asOptionalDate(value);
+}
+
 function asLooseObject(value: unknown): Record<string, unknown> {
     return asObject(value) || {};
 }
@@ -78,6 +101,115 @@ function asObjectArray(value: unknown): Array<Record<string, unknown>> {
     return Array.isArray(value)
         ? value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
         : [];
+}
+
+function asChatConversationType(value: unknown): ChatConversationFirestoreRecord['type'] {
+    return value === 'team' || value === 'group' || value === 'direct' ? value : 'group';
+}
+
+function asChatAttachmentType(value: unknown, mimeType: unknown): ChatAttachmentFirestoreRecord['type'] {
+    if (value === 'image' || value === 'video') return value;
+    return asTrimmedString(mimeType)?.toLowerCase().startsWith('video/') ? 'video' : 'image';
+}
+
+function asChatTargetType(value: unknown): ChatMessageFirestoreRecord['targetType'] {
+    return value === 'staff' || value === 'individuals' || value === 'full_team' ? value : 'full_team';
+}
+
+function asReactionMap(value: unknown): Record<string, string[]> {
+    const source = asObject(value);
+    if (!source) return {};
+
+    return Object.entries(source).reduce<Record<string, string[]>>((acc, [key, entry]) => {
+        const normalizedKey = asTrimmedString(key);
+        const normalizedUsers = asUniqueStringArray(entry);
+        if (normalizedKey && normalizedUsers.length > 0) {
+            acc[normalizedKey] = normalizedUsers;
+        }
+        return acc;
+    }, {});
+}
+
+export function mapChatAttachmentRecord(value: unknown): ChatAttachmentFirestoreRecord | null {
+    const source = asObject(value);
+    if (!source) return null;
+
+    const mimeType = asTrimmedString(source.mimeType);
+    return {
+        type: asChatAttachmentType(source.type, mimeType),
+        url: asTrimmedString(source.url),
+        path: asTrimmedString(source.path),
+        thumbnailUrl: asTrimmedString(source.thumbnailUrl),
+        name: asTrimmedString(source.name),
+        mimeType,
+        size: asOptionalNumber(source.size),
+        uploadedAt: asTemporalValue(source.uploadedAt)
+    };
+}
+
+export function mapChatConversationRecord(value: unknown, fallbackId = ''): ChatConversationFirestoreRecord | null {
+    const source = asLooseObject(value);
+    const id = asTrimmedString(source.id) || fallbackId;
+    if (!id) return null;
+
+    return {
+        id,
+        type: asChatConversationType(source.type),
+        name: asTrimmedString(source.name),
+        participantIds: asUniqueStringArray(source.participantIds),
+        participantRoles: asUniqueStringArray(source.participantRoles),
+        mutedBy: asUniqueStringArray(source.mutedBy),
+        isDefault: source.isDefault === true,
+        isLegacy: source.isLegacy === true,
+        updatedAt: asTemporalValue(source.updatedAt),
+        lastMessageAt: asTemporalValue(source.lastMessageAt)
+    };
+}
+
+export function mapChatConversationDocument(document: FirestoreDocument | null | undefined): ChatConversationFirestoreRecord | null {
+    const decoded = mapFirestoreDocument(document);
+    return decoded ? mapChatConversationRecord(decoded, decoded.id) : null;
+}
+
+export function mapChatMessageRecord(value: unknown, fallbackId = ''): ChatMessageFirestoreRecord | null {
+    const source = asLooseObject(value);
+    const id = asTrimmedString(source.id) || fallbackId;
+    if (!id) return null;
+
+    return {
+        id,
+        text: asTrimmedString(source.text),
+        senderId: asTrimmedString(source.senderId),
+        senderName: asTrimmedString(source.senderName),
+        senderEmail: asTrimmedString(source.senderEmail),
+        senderPhotoUrl: asTrimmedString(source.senderPhotoUrl),
+        attachments: asObjectArray(source.attachments)
+            .map((attachment) => mapChatAttachmentRecord(attachment))
+            .filter((attachment): attachment is ChatAttachmentFirestoreRecord => Boolean(attachment)),
+        imageUrl: asTrimmedString(source.imageUrl),
+        imagePath: asTrimmedString(source.imagePath),
+        imageName: asTrimmedString(source.imageName),
+        imageType: asTrimmedString(source.imageType),
+        imageSize: asOptionalNumber(source.imageSize),
+        createdAt: asTemporalValue(source.createdAt),
+        editedAt: asTemporalValue(source.editedAt),
+        deleted: source.deleted === true,
+        ai: source.ai === true,
+        aiName: asTrimmedString(source.aiName),
+        aiQuestion: asTrimmedString(source.aiQuestion),
+        aiMeta: asObject(source.aiMeta),
+        reactions: asReactionMap(source.reactions),
+        targetType: asChatTargetType(source.targetType),
+        recipientIds: asUniqueStringArray(source.recipientIds),
+        targetRole: asTrimmedString(source.targetRole),
+        conversationId: asTrimmedString(source.conversationId),
+        _doc: source._doc
+    };
+}
+
+export function mapChatMessageDocument(document: FirestoreDocument | null | undefined): ChatMessageFirestoreRecord | null {
+    const decoded = mapFirestoreDocument(document);
+    return decoded ? mapChatMessageRecord(decoded, decoded.id) : null;
 }
 
 function asGameReportStatsRecord(value: unknown): GameReportStatsRecord {

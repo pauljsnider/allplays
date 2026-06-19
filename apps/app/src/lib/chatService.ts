@@ -53,6 +53,14 @@ import {
   type ChatTargetType
 } from './chatLogic';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { mapChatConversationRecord, mapChatMessageRecord, mapFirestoreDocument } from './firestore/mappers';
+import type {
+  ChatAttachmentFirestoreRecord,
+  ChatConversationFirestoreRecord,
+  ChatMessageFirestoreRecord,
+  FirestoreDecodedDocument,
+  FirestoreDocument as NativeFirestoreDocument
+} from './firestore/types';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -77,57 +85,11 @@ export type ChatTeam = {
   isMuted?: boolean;
 };
 
-export type ChatConversation = {
-  id: string;
-  type: 'team' | 'group' | 'direct';
-  name?: string | null;
-  participantIds?: string[];
-  participantRoles?: string[];
-  mutedBy?: string[];
-  isDefault?: boolean;
-  isLegacy?: boolean;
-  updatedAt?: unknown;
-  lastMessageAt?: unknown;
-};
+export type ChatConversation = ChatConversationFirestoreRecord;
 
-export type ChatAttachment = {
-  type: 'image' | 'video';
-  url: string | null;
-  path?: string | null;
-  thumbnailUrl?: string | null;
-  name?: string | null;
-  mimeType?: string | null;
-  size?: number | null;
-  uploadedAt?: unknown;
-};
+export type ChatAttachment = ChatAttachmentFirestoreRecord;
 
-export type ChatMessage = {
-  id: string;
-  text?: string | null;
-  senderId?: string | null;
-  senderName?: string | null;
-  senderEmail?: string | null;
-  senderPhotoUrl?: string | null;
-  attachments?: ChatAttachment[];
-  imageUrl?: string | null;
-  imagePath?: string | null;
-  imageName?: string | null;
-  imageType?: string | null;
-  imageSize?: number | null;
-  createdAt?: unknown;
-  editedAt?: unknown;
-  deleted?: boolean;
-  ai?: boolean;
-  aiName?: string | null;
-  aiQuestion?: string | null;
-  aiMeta?: Record<string, unknown> | null;
-  reactions?: Record<string, string[]>;
-  targetType?: ChatTargetType;
-  recipientIds?: string[];
-  targetRole?: string | null;
-  conversationId?: string | null;
-  _doc?: unknown;
-};
+export type ChatMessage = ChatMessageFirestoreRecord;
 
 export type SentTeamEmail = {
   id: string;
@@ -200,7 +162,7 @@ export type ChatSubscribeResult = {
   unsubscribe: () => void;
 };
 
-type FirestoreDocument = Record<string, any> & { id: string };
+type FirestoreDocument = FirestoreDecodedDocument;
 
 type ImageUploadSession = {
   apiKey: string;
@@ -340,37 +302,9 @@ function encodeFirestoreValue(value: any): Record<string, unknown> {
   return { stringValue: String(value) };
 }
 
-function decodeFirestoreValue(value: any): any {
-  if (!value || typeof value !== 'object') return null;
-  if ('stringValue' in value) return value.stringValue;
-  if ('booleanValue' in value) return value.booleanValue;
-  if ('integerValue' in value) return Number(value.integerValue || 0);
-  if ('doubleValue' in value) return Number(value.doubleValue || 0);
-  if ('timestampValue' in value) return new Date(value.timestampValue);
-  if ('nullValue' in value) return null;
-  if ('arrayValue' in value) return (value.arrayValue?.values || []).map((entry: any) => decodeFirestoreValue(entry));
-  if ('mapValue' in value) return decodeFirestoreFields(value.mapValue?.fields || {});
-  return null;
-}
-
-function decodeFirestoreFields(fields: Record<string, any> = {}) {
-  return Object.keys(fields).reduce<Record<string, any>>((acc, key) => {
-    acc[key] = decodeFirestoreValue(fields[key]);
-    return acc;
-  }, {});
-}
-
-function decodeFirestoreDocument(document: any): FirestoreDocument | null {
-  if (!document?.name) return null;
-  return {
-    id: String(document.name).split('/').pop() || '',
-    ...decodeFirestoreFields(document.fields || {})
-  };
-}
-
 async function nativeGetDocument(path: string) {
   try {
-    return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`));
+    return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument);
   } catch (error: any) {
     const message = String(error?.message || '').toLowerCase();
     if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
@@ -386,7 +320,7 @@ async function nativeListCollection(path: string, params: Record<string, string 
   const suffix = query.toString() ? `?${query.toString()}` : '';
   const payload = await nativeFirestoreRequest(`/${path}${suffix}`);
   return (payload.documents || [])
-    .map((document: any) => decodeFirestoreDocument(document))
+    .map((document: NativeFirestoreDocument) => mapFirestoreDocument(document))
     .filter(Boolean) as FirestoreDocument[];
 }
 
@@ -409,10 +343,10 @@ async function nativeCreateDocument(path: string, data: Record<string, unknown>)
     acc[key] = encodeFirestoreValue(data[key]);
     return acc;
   }, {});
-  return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
+  return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
     method: 'POST',
     body: JSON.stringify({ fields })
-  }));
+  }) as NativeFirestoreDocument);
 }
 
 async function nativeRunQuery(structuredQuery: Record<string, unknown>) {
@@ -421,7 +355,7 @@ async function nativeRunQuery(structuredQuery: Record<string, unknown>) {
     body: JSON.stringify({ structuredQuery })
   });
   return (Array.isArray(payload) ? payload : [])
-    .map((entry) => decodeFirestoreDocument(entry.document))
+    .map((entry) => mapFirestoreDocument(entry.document as NativeFirestoreDocument))
     .filter(Boolean) as FirestoreDocument[];
 }
 
@@ -531,7 +465,7 @@ function getConversationActivityTime(conversation: ChatConversation | null | und
 async function getLatestConversationMessage(teamId: string, conversationId: string): Promise<ChatMessage | null> {
   try {
     const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
-    return message || null;
+    return mapChatMessageRecord(message, message?.id || '') || null;
   } catch (error) {
     if (!isNativeRuntime()) return null;
     const path = isDefaultTeamConversation(conversationId)
@@ -541,7 +475,7 @@ async function getLatestConversationMessage(teamId: string, conversationId: stri
       orderBy: 'createdAt desc',
       pageSize: 1
     }).catch(() => []);
-    return message as ChatMessage || null;
+    return mapChatMessageRecord(message, message?.id || '') || null;
   }
 }
 
@@ -553,8 +487,13 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
       `latest chat conversations ${teamId}`,
       2500
     ) as ChatConversation[];
-    conversations = Array.isArray(loadedConversations) && loadedConversations.length
+    const mappedConversations = Array.isArray(loadedConversations)
       ? loadedConversations
+        .map((conversation) => mapChatConversationRecord(conversation, conversation?.id || ''))
+        .filter((conversation): conversation is ChatConversation => Boolean(conversation))
+      : [];
+    conversations = mappedConversations.length
+      ? mappedConversations
       : [buildDefaultTeamConversation(team)];
   } catch (error) {
     if (!isNativeRuntime()) {
@@ -744,7 +683,10 @@ export async function loadChatTeamContext(teamId: string, user: AuthUser | null)
 
 export async function loadChatConversations(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<ChatConversation[]> {
   try {
-    return await withTimeout(Promise.resolve(getChatConversations(teamId, user, { team, canModerate })), 'Chat conversations load') as ChatConversation[];
+    const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, { team, canModerate })), 'Chat conversations load') as ChatConversation[];
+    return (Array.isArray(conversations) ? conversations : [])
+      .map((conversation) => mapChatConversationRecord(conversation, conversation?.id || ''))
+      .filter((conversation): conversation is ChatConversation => Boolean(conversation));
   } catch (error) {
     console.warn('[chat-service] Falling back to default chat conversation:', sanitizeErrorForLogging(error));
     return [buildDefaultTeamConversation(team) as ChatConversation];
@@ -782,7 +724,10 @@ export function subscribeToTeamChatMessages(
           orderBy: 'createdAt desc',
           pageSize: 50
         });
-        onMessages(messages as ChatMessage[], messages[messages.length - 1]?._doc || null);
+        const mappedMessages = messages
+          .map((message) => mapChatMessageRecord(message, message?.id || ''))
+          .filter((message): message is ChatMessage => Boolean(message));
+        onMessages(mappedMessages, mappedMessages[mappedMessages.length - 1]?._doc || null);
       } catch (error: any) {
         onError?.(error);
       }
@@ -795,7 +740,12 @@ export function subscribeToTeamChatMessages(
 
   try {
     unsubscribe = subscribeToChatMessages(teamId, { limit: 50, conversationId }, (messages: ChatMessage[], oldestDoc: unknown | null) => {
-      if (!cancelled) onMessages(messages, oldestDoc);
+      if (!cancelled) {
+        const mappedMessages = (Array.isArray(messages) ? messages : [])
+          .map((message) => mapChatMessageRecord(message, message?.id || ''))
+          .filter((message): message is ChatMessage => Boolean(message));
+        onMessages(mappedMessages, oldestDoc);
+      }
     });
   } catch (error: any) {
     if (!isNativeRuntime()) {
@@ -817,11 +767,14 @@ export function subscribeToTeamChatMessages(
 export async function loadOlderTeamChatMessages(teamId: string, conversationId: string, startAfterDoc: unknown | null) {
   if (!startAfterDoc) return [];
   try {
-    return await withTimeout(Promise.resolve(getChatMessages(teamId, {
+    const messages = await withTimeout(Promise.resolve(getChatMessages(teamId, {
       limit: 50,
       startAfterDoc,
       conversationId
     })), 'Older chat messages load') as ChatMessage[];
+    return (Array.isArray(messages) ? messages : [])
+      .map((message) => mapChatMessageRecord(message, message?.id || ''))
+      .filter((message): message is ChatMessage => Boolean(message));
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     console.warn('[chat-service] Older chat history is limited in native REST fallback:', sanitizeErrorForLogging(error));
@@ -1285,7 +1238,9 @@ export async function toggleTeamChatReaction(teamId: string, messageId: string, 
     const path = getMessageDocumentPath(teamId, messageId, conversationId);
     const message = await nativeGetDocument(path);
     if (!message) throw new Error('Message not found.');
-    const reactions = message.reactions && typeof message.reactions === 'object' ? message.reactions : {};
+    const reactions = message.reactions && typeof message.reactions === 'object'
+      ? message.reactions as Record<string, unknown>
+      : {} as Record<string, unknown>;
     const existing = Array.isArray(reactions[reactionKey]) ? reactions[reactionKey].map(String) : [];
     const next = existing.includes(userId)
       ? existing.filter((id: string) => id !== userId)
