@@ -3830,6 +3830,22 @@ async function checkAndSetNotificationDedup(teamId, category, gameId) {
 }
 
 
+function mergeNotificationWebpushOptions(baseWebpush = {}, deliveryOptions = {}) {
+  if (!deliveryOptions?.webpush) return baseWebpush;
+  return {
+    ...baseWebpush,
+    ...deliveryOptions.webpush,
+    notification: {
+      ...(baseWebpush.notification || {}),
+      ...(deliveryOptions.webpush.notification || {})
+    },
+    fcmOptions: {
+      ...(baseWebpush.fcmOptions || {}),
+      ...(deliveryOptions.webpush.fcmOptions || {})
+    }
+  };
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
@@ -3885,11 +3901,11 @@ async function sendCategoryNotification({
         appRoute,
         link
       },
-      webpush: {
+      ...deliveryOptions,
+      webpush: mergeNotificationWebpushOptions({
         notification: WEB_PUSH_NOTIFICATION_ASSETS,
         fcmOptions: { link }
-      },
-      ...deliveryOptions
+      }, deliveryOptions)
     });
     allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
     successCount += Number(sendResult.successCount || 0);
@@ -3975,11 +3991,11 @@ async function sendDirectTargetsNotification({
         appRoute,
         link
       },
-      webpush: {
+      ...deliveryOptions,
+      webpush: mergeNotificationWebpushOptions({
         notification: WEB_PUSH_NOTIFICATION_ASSETS,
         fcmOptions: { link }
-      },
-      ...deliveryOptions
+      }, deliveryOptions)
     });
     allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
     successCount += Number(sendResult.successCount || 0);

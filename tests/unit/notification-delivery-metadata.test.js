@@ -12,6 +12,19 @@ const {
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const serviceWorkerSource = readFileSync(new URL('../../firebase-messaging-sw.js', import.meta.url), 'utf8');
 
+function extractChunk(startMarker, endMarker) {
+    const start = functionsSource.indexOf(startMarker);
+    const end = functionsSource.indexOf(endMarker, start);
+    if (start === -1 || end === -1) {
+        throw new Error(`Unable to extract source chunk for ${startMarker}.`);
+    }
+    return functionsSource.slice(start, end);
+}
+
+const mergeNotificationWebpushOptions = new Function(
+    `${extractChunk('function mergeNotificationWebpushOptions(', 'async function sendCategoryNotification(')}\nreturn mergeNotificationWebpushOptions;`
+)();
+
 describe('notification delivery metadata', () => {
     it('defines the five Android channels used by app startup and backend sends', () => {
         expect(ANDROID_NOTIFICATION_CHANNELS).toEqual([
@@ -87,11 +100,31 @@ describe('notification delivery metadata', () => {
             badge: '/img/logo_small.png'
         });
         expect(firstSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })');
-        expect(firstSendPath).toContain('notification: WEB_PUSH_NOTIFICATION_ASSETS');
         expect(firstSendPath).toContain('...deliveryOptions');
+        expect(firstSendPath).toContain('webpush: mergeNotificationWebpushOptions({');
+        expect(firstSendPath).toContain('notification: WEB_PUSH_NOTIFICATION_ASSETS');
         expect(secondSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })');
-        expect(secondSendPath).toContain('notification: WEB_PUSH_NOTIFICATION_ASSETS');
         expect(secondSendPath).toContain('...deliveryOptions');
+        expect(secondSendPath).toContain('webpush: mergeNotificationWebpushOptions({');
+        expect(secondSendPath).toContain('notification: WEB_PUSH_NOTIFICATION_ASSETS');
+    });
+
+    it('merges web push collapse tags without dropping the notification link', () => {
+        expect(mergeNotificationWebpushOptions({
+            notification: WEB_PUSH_NOTIFICATION_ASSETS,
+            fcmOptions: { link: 'https://allplays.ai/app/#/schedule/team-1/practice-1' }
+        }, {
+            webpush: {
+                notification: { tag: 'event-team-1-session-1' }
+            }
+        })).toEqual({
+            notification: {
+                icon: '/img/logo_small.png',
+                badge: '/img/logo_small.png',
+                tag: 'event-team-1-session-1'
+            },
+            fcmOptions: { link: 'https://allplays.ai/app/#/schedule/team-1/practice-1' }
+        });
     });
 
     it('shows branded icon and badge assets from the web service worker', () => {
