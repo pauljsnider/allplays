@@ -113,6 +113,43 @@ describe('notifyFeeMarkedPaid trigger', () => {
         }));
     });
 
+    it('sends a balance-paid message instead of a payment receipt when credits mark the fee paid', async () => {
+        const harness = buildTriggerHarness({
+            targets: [
+                { uid: 'parent-1', token: 'parent-token', teamId: 'team-1' },
+                { uid: 'staff-1', token: 'staff-token', teamId: 'team-1' }
+            ],
+            users: [{ uid: 'staff-1', roles: ['staff'] }]
+        });
+
+        await harness.trigger({
+            before: { exists: true, data: () => ({ status: 'pending', parentName: 'Pat Parent', amountPaidCents: 2500 }) },
+            after: {
+                exists: true,
+                data: () => ({
+                    status: 'paid',
+                    feeTitle: 'Spring dues',
+                    userId: 'parent-1',
+                    parentName: 'Pat Parent',
+                    amountPaidCents: 2500,
+                    amountDueCents: 2500
+                })
+            }
+        }, {
+            params: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }
+        });
+
+        expect(harness.sendDirectTargetsNotification).toHaveBeenCalledTimes(2);
+        expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            title: 'Fee paid: Spring dues',
+            body: 'Your fee balance is now marked as paid.'
+        }));
+        expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            title: 'Fee paid: Spring dues',
+            body: "Pat Parent's fee balance is now marked as paid."
+        }));
+    });
+
     it('does not send when an already-paid recipient gets an unrelated update', async () => {
         const harness = buildTriggerHarness({
             targets: [{ uid: 'staff-1', token: 'staff-token', teamId: 'team-1' }],

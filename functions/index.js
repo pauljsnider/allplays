@@ -4387,8 +4387,7 @@ function getFeePaymentAmountCents(before = {}, after = {}) {
     return Math.round(afterPaid - beforePaid);
   }
 
-  const totalAmount = Number(after.amountDueCents ?? after.balanceDueCents ?? after.adjustedAmountCents ?? after.amountCents ?? after.totalAmountCents ?? 0);
-  return Number.isFinite(totalAmount) && totalAmount > 0 ? Math.round(totalAmount) : 0;
+  return 0;
 }
 
 function getFeePayerIdentity(recipient = {}) {
@@ -4983,11 +4982,13 @@ exports.notifyFeeMarkedPaid = functions.firestore
     const title = String(after.feeTitle || after.title || 'Team fee').trim();
     const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
     const staffFeeDestination = buildStaffFeeNotificationDestination({ teamId, batchId, recipientId });
+    const paymentAmountCents = getFeePaymentAmountCents(before, after);
     const paymentAmountDisplay = formatMoneyFromCents(
-      getFeePaymentAmountCents(before, after),
+      paymentAmountCents,
       after.currency || after.receiptMetadata?.currency || 'USD'
     );
     const payerIdentity = getFeePayerIdentity(after);
+    const wasPaymentRecorded = paymentAmountCents > 0;
 
     const [allFeeTargets, candidateUsers] = await Promise.all([
       getTargetsForCategory(teamId, 'fees', null),
@@ -5006,8 +5007,10 @@ exports.notifyFeeMarkedPaid = functions.firestore
         promises.push(sendDirectTargetsNotification({
           targets: payerTargets,
           category: 'fees',
-          title: `Payment received: ${title}`,
-          body: `We received your ${paymentAmountDisplay} payment. Thank you!`,
+          title: wasPaymentRecorded ? `Payment received: ${title}` : `Fee paid: ${title}`,
+          body: wasPaymentRecorded
+            ? `We received your ${paymentAmountDisplay} payment. Thank you!`
+            : 'Your fee balance is now marked as paid.',
           teamId
         }));
       }
@@ -5019,7 +5022,9 @@ exports.notifyFeeMarkedPaid = functions.firestore
         targets: staffTargets,
         category: 'fees',
         title: `Fee paid: ${title}`,
-        body: `${payerIdentity} paid ${paymentAmountDisplay}.`,
+        body: wasPaymentRecorded
+          ? `${payerIdentity} paid ${paymentAmountDisplay}.`
+          : `${payerIdentity}'s fee balance is now marked as paid.`,
         teamId,
         batchId,
         recipientId,
