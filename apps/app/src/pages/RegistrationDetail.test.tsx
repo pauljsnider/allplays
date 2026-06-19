@@ -128,13 +128,13 @@ describe('RegistrationDetail payment notice', () => {
       paymentNotice: 'Payment will be collected in Stripe before your registration is complete.',
       onlineCheckout: true
     }));
-    parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true });
+    parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true, nextPublicCheckoutCapability: 'cap-2' });
 
-    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&registrationId=reg-1&checkoutAttemptToken=tok-1&retryPayment=1&status=cancelled');
+    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&publicCheckoutCapability=cap-1&retryPayment=1&status=cancelled');
 
     expect(await screen.findByText('Stripe payment was cancelled. You can retry payment for this registration.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry payment with Stripe' })).toBeTruthy();
-    await waitFor(() => expect(parentToolsServiceMocks.cancelRegistrationCheckout).toHaveBeenCalledWith('team-1', 'form-1', 'reg-1', 'tok-1'));
+    await waitFor(() => expect(parentToolsServiceMocks.cancelRegistrationCheckout).toHaveBeenCalledWith('team-1', 'form-1', '', '', 'cap-1'));
   });
 
   it('retries Stripe checkout without creating a duplicate registration', async () => {
@@ -142,25 +142,26 @@ describe('RegistrationDetail payment notice', () => {
       onlineCheckout: true,
       paymentNotice: 'Pay online.'
     }));
-    parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true });
+    parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true, nextPublicCheckoutCapability: 'cap-2' });
     parentToolsServiceMocks.initiateRegistrationCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://stripe.example/checkout' });
 
-    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&registrationId=reg-1&checkoutAttemptToken=tok-1&retryPayment=1&status=cancelled');
+    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&publicCheckoutCapability=cap-1&retryPayment=1&status=cancelled');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Retry payment with Stripe' }));
 
     await waitFor(() => expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
       'team-1',
       'form-1',
-      'reg-1',
+      '',
       '',
       'pay_full',
       1,
       12500,
       'USD',
       {
-        checkoutAttemptToken: 'tok-1',
-        retryPayment: true
+        checkoutAttemptToken: '',
+        retryPayment: true,
+        publicCheckoutCapability: 'cap-2'
       }
     ));
     expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
@@ -173,7 +174,7 @@ describe('RegistrationDetail payment notice', () => {
       paymentNotice: 'Pay online.'
     }));
 
-    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&registrationId=reg-1&checkoutAttemptToken=tok-1&retryPayment=1&status=success');
+    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&publicCheckoutCapability=cap-1&retryPayment=1&status=success');
 
     expect(await screen.findByRole('heading', { name: 'Payment successful' })).toBeTruthy();
     expect(screen.getByText('Your registration payment was received. The program organizer will follow up with next steps.')).toBeTruthy();
