@@ -36,6 +36,6 @@ describe('parent dashboard active player filtering', () => {
         expect(functionSource).not.toContain('const playerRef = doc(db, `teams/${child.teamId}/players`, child.playerId);');
         expect(functionSource).toContain("dashboardState.kind = 'degraded';");
         expect(dashboardSource).toContain('renderPlayers(data.children, data.dashboardState || null);');
-        expect(dashboardSource).toContain("./js/db.js?v=52");
+        expect(dashboardSource).toContain("./js/db.js?v=53");
     });
 });
