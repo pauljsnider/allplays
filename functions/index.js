@@ -2303,7 +2303,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         } else {
           const form = formSnap.data() || {};
           const registration = registrationSnap.data() || {};
-          if (!registrationCheckoutAttemptMatches(registration, registrationInput)) {
+          if (!registrationCheckoutAuthorityMatches(registration, registrationInput)) {
             transaction.set(eventRef, {
               provider: 'stripe',
               product: 'registration',
