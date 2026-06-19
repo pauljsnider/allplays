@@ -1052,6 +1052,7 @@ describe('native parent schedule Firestore mapping', () => {
       calendarUrls: ['https://calendar.example.com/team-1.ics']
     } as any);
     vi.mocked(getGame).mockRejectedValue(new Error('offline'));
+    vi.mocked(getGames).mockRejectedValue(new Error('offline'));
     vi.mocked(getPracticeSession).mockResolvedValue(null as any);
     vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
