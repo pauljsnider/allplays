@@ -76,6 +76,10 @@ describe('React app team navigation helpers', () => {
             'certificates'
         ]);
         expect(management?.items.find((item) => item.id === 'manage-roster')?.href).toBe('https://allplays.ai/edit-roster.html#teamId=team-1');
+        expect(management?.items.find((item) => item.id === 'stats-config')).toMatchObject({
+            href: '/teams/team-1?tab=more',
+            kind: 'native'
+        });
         expect(management?.items.find((item) => item.id === 'fees')).toMatchObject({
             href: '/teams/team-1/fees',
             kind: 'native'

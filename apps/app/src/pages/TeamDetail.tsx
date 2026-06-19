@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Award,
@@ -33,7 +33,8 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { addRosterPlayerForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { addRosterPlayerForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -48,6 +49,7 @@ const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
 
 export function TeamDetail({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
+  const location = useLocation();
   const authUserId = auth.user?.uid || '';
   const [model, setModel] = useState<TeamDetailModel | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,6 +67,13 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [rosterInviteError, setRosterInviteError] = useState('');
   const [rosterInviteAttempted, setRosterInviteAttempted] = useState(false);
   const [rosterInviteSummaries, setRosterInviteSummaries] = useState<Record<string, TeamRosterParentInviteSummary>>({});
+
+  useEffect(() => {
+    const nextTab = new URLSearchParams(location.search).get('tab');
+    if (nextTab === 'overview' || nextTab === 'schedule' || nextTab === 'roster' || nextTab === 'insights' || nextTab === 'more') {
+      setActiveTab(nextTab);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -776,7 +785,7 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
 
   return (
     <div className="space-y-4">
-      {model.canManageTeam ? <StatTrackerConfigsCard configs={statTrackerConfigs} orphanedAssignments={orphanedConfigAssignments} /> : null}
+      {model.canManageTeam ? <StatTrackerConfigsCard teamId={model.team.id} auth={auth} configs={statTrackerConfigs} orphanedAssignments={orphanedConfigAssignments} onSaved={onTeamDetailRefresh} /> : null}
       {model.canManageTeam && !model.staffPermissions && staffPermissionsLoading ? (
         <section className="app-card p-4">
           <div className="flex items-center gap-3 text-sm font-semibold text-gray-600">
@@ -859,18 +868,229 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
   );
 }
 
-function StatTrackerConfigsCard({ configs, orphanedAssignments }: { configs: TeamDetailModel['statTrackerConfigs']; orphanedAssignments: TeamDetailModel['upcomingEvents'] }) {
+function StatTrackerConfigsCard({
+  teamId,
+  auth,
+  configs,
+  orphanedAssignments,
+  onSaved
+}: {
+  teamId: string;
+  auth: AuthState;
+  configs: TeamDetailModel['statTrackerConfigs'];
+  orphanedAssignments: TeamDetailModel['upcomingEvents'];
+  onSaved: () => Promise<void>;
+}) {
   const safeConfigs = configs || [];
+  const presetCatalog = getStatTrackerConfigPresetCatalog();
+  const [editingConfigId, setEditingConfigId] = useState('');
+  const [selectedPresetId, setSelectedPresetId] = useState('blank');
+  const [draft, setDraft] = useState<StatTrackerConfigDraft | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  function openCreateForm() {
+    setEditingConfigId('');
+    setSelectedPresetId('blank');
+    setDraft(createEmptyStatTrackerConfigDraft());
+    setStatus(null);
+  }
+
+  function openEditForm(config: TeamDetailModel['statTrackerConfigs'][number]) {
+    const nextDraft = createStatTrackerConfigDraft({
+      id: config.id,
+      name: config.name,
+      baseType: config.baseType,
+      columns: config.columns,
+      statDefinitions: config.statDefinitions
+    });
+    setEditingConfigId(config.id);
+    setSelectedPresetId('blank');
+    setDraft(nextDraft);
+    setStatus(null);
+  }
+
+  function closeEditor(options: { keepStatus?: boolean } = {}) {
+    setEditingConfigId('');
+    setSelectedPresetId('blank');
+    setDraft(null);
+    if (!options.keepStatus) {
+      setStatus(null);
+    }
+  }
+
+  function updateColumn(columnUiId: string, patch: { key?: string; label?: string }) {
+    setDraft((currentDraft) => currentDraft ? {
+      ...currentDraft,
+      columns: currentDraft.columns.map((column) => column.uiId === columnUiId ? { ...column, ...patch } : column)
+    } : currentDraft);
+  }
+
+  function moveColumn(columnUiId: string, direction: -1 | 1) {
+    setDraft((currentDraft) => {
+      if (!currentDraft) return currentDraft;
+      const index = currentDraft.columns.findIndex((column) => column.uiId === columnUiId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= currentDraft.columns.length) return currentDraft;
+      const columns = currentDraft.columns.slice();
+      const [column] = columns.splice(index, 1);
+      columns.splice(nextIndex, 0, column);
+      return { ...currentDraft, columns };
+    });
+  }
+
+  async function saveDraft() {
+    if (!draft || submitting) return;
+
+    const validation = validateStatTrackerConfigDraft(draft);
+    if (!validation.valid) {
+      setStatus({ success: false, message: validation.errors.join(' ') });
+      return;
+    }
+
+    const payload = buildStatTrackerConfigPayload(draft);
+    setSubmitting(true);
+    setStatus(null);
+    try {
+      if (editingConfigId) {
+        await updateStatTrackerConfigForApp(teamId, editingConfigId, auth.user || null, payload);
+      } else {
+        await createStatTrackerConfigForApp(teamId, auth.user || null, payload);
+      }
+      await onSaved();
+      setStatus({ success: true, message: editingConfigId ? 'Stat config saved.' : 'Stat config created.' });
+      closeEditor({ keepStatus: true });
+    } catch (error: any) {
+      setStatus({ success: false, message: error?.message || 'Unable to save this stat config.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <section className="app-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-black text-gray-950">Stat tracker configs</div>
-          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Read-only view of this team&apos;s tracker setups, sport routing, and scheduled game assignments.</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Create a config from a sport preset or blank slate, then rename, reorder, add, or remove tracked columns without leaving the app.</div>
         </div>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{safeConfigs.length} config{safeConfigs.length === 1 ? '' : 's'}</span>
+        <div className="flex flex-col items-end gap-2">
+          <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{safeConfigs.length} config{safeConfigs.length === 1 ? '' : 's'}</span>
+          {!draft ? <button type="button" className="primary-button !min-h-9 px-3 text-xs" onClick={openCreateForm}>Create config</button> : null}
+        </div>
       </div>
+
+      {status ? <div className={`mt-3 rounded-xl border p-3 text-xs font-black ${status.success ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`} role="status">{status.message}</div> : null}
+
+      {draft ? (
+        <div className="mt-3 rounded-xl border border-primary-100 bg-primary-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-black text-gray-950">{editingConfigId ? 'Edit stat config' : 'Create stat config'}</div>
+              <div className="mt-1 text-xs font-semibold text-gray-600">Column labels can change without changing stored stat keys. Basketball base type keeps the website tracker chooser working.</div>
+            </div>
+            <button type="button" className="secondary-button !min-h-9 px-3 text-xs" onClick={() => closeEditor()} disabled={submitting}>Cancel</button>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Config name</span>
+              <input
+                type="text"
+                value={draft.name}
+                onChange={(event) => setDraft((currentDraft) => currentDraft ? { ...currentDraft, name: event.target.value } : currentDraft)}
+                className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                placeholder="Basketball Standard"
+                disabled={submitting}
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Base sport</span>
+              <select
+                value={draft.baseType}
+                onChange={(event) => setDraft((currentDraft) => currentDraft ? { ...currentDraft, baseType: event.target.value } : currentDraft)}
+                className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                disabled={submitting}
+              >
+                {['Basketball', 'Soccer', 'Baseball', 'Football', 'Volleyball', 'Custom'].map((baseType) => <option key={baseType} value={baseType}>{baseType}</option>)}
+              </select>
+            </label>
+          </div>
+
+          {!editingConfigId ? (
+            <div className="mt-3 rounded-xl border border-white/80 bg-white p-3">
+              <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Preset library</div>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <select
+                  aria-label="Preset library"
+                  value={selectedPresetId}
+                  onChange={(event) => setSelectedPresetId(event.target.value)}
+                  className="min-h-10 flex-1 rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                  disabled={submitting}
+                >
+                  {presetCatalog.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+                </select>
+                <button type="button" className="secondary-button !min-h-10 px-3 text-xs" onClick={() => {
+                  const presetDraft = createStatTrackerConfigDraftFromPreset(selectedPresetId);
+                  setDraft({ ...presetDraft, name: draft.name || presetDraft.name, baseType: presetDraft.baseType });
+                }} disabled={submitting}>Apply preset</button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-3 rounded-xl border border-white/80 bg-white p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Columns</div>
+                <div className="mt-1 text-xs font-semibold text-gray-500">Keys power saved events. Labels control what coaches see in the tracker and reports.</div>
+              </div>
+              <button type="button" className="secondary-button !min-h-8 px-3 text-xs" onClick={() => setDraft((currentDraft) => currentDraft ? { ...currentDraft, columns: currentDraft.columns.concat(createBlankStatTrackerConfigColumnDraft()) } : currentDraft)} disabled={submitting}>Add column</button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {draft.columns.length ? draft.columns.map((column, index) => (
+                <div key={column.uiId} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                    <label className="block">
+                      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Label</span>
+                      <input
+                        type="text"
+                        value={column.label}
+                        onChange={(event) => updateColumn(column.uiId, { label: event.target.value })}
+                        className="mt-1 min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                        placeholder="PTS"
+                        disabled={submitting}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Key</span>
+                      <input
+                        type="text"
+                        value={column.key}
+                        onChange={(event) => updateColumn(column.uiId, { key: event.target.value })}
+                        className="mt-1 min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                        placeholder="PTS"
+                        disabled={submitting}
+                      />
+                    </label>
+                    <div className="flex gap-2">
+                      <button type="button" className="secondary-button !min-h-10 px-3 text-xs" onClick={() => moveColumn(column.uiId, -1)} disabled={submitting || index === 0}>Up</button>
+                      <button type="button" className="secondary-button !min-h-10 px-3 text-xs" onClick={() => moveColumn(column.uiId, 1)} disabled={submitting || index === draft.columns.length - 1}>Down</button>
+                      <button type="button" className="secondary-button !min-h-10 px-3 text-xs !border-rose-200 !bg-rose-50 !text-rose-700" onClick={() => setDraft((currentDraft) => currentDraft ? { ...currentDraft, columns: currentDraft.columns.filter((entry) => entry.uiId !== column.uiId) } : currentDraft)} disabled={submitting}>Remove</button>
+                    </div>
+                  </div>
+                </div>
+              )) : <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-xs font-semibold text-gray-500">No columns yet. Add one manually or apply a preset.</div>}
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="primary-button !min-h-10 px-3 text-xs" disabled={submitting} onClick={saveDraft}>
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+              {editingConfigId ? 'Save config' : 'Create config'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-3 space-y-3">
         {safeConfigs.length ? safeConfigs.map((config) => (
@@ -883,7 +1103,10 @@ function StatTrackerConfigsCard({ configs, orphanedAssignments }: { configs: Tea
                   {config.isBasketball ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-amber-800">Basketball tracker routing</span> : null}
                 </div>
               </div>
-              <span className="rounded-full bg-primary-50 px-2.5 py-1 text-xs font-black text-primary-700">{formatConfigColumnSummary(config.columnCount, config.columnNames)}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-primary-50 px-2.5 py-1 text-xs font-black text-primary-700">{formatConfigColumnSummary(config.columnCount, config.columnNames)}</span>
+                <button type="button" className="secondary-button !min-h-8 px-3 text-xs" onClick={() => openEditForm(config)} disabled={submitting}>Edit</button>
+              </div>
             </div>
             <div className="mt-3 text-xs font-semibold text-gray-600">Columns: <span className="font-black text-gray-900">{config.columnNames.length ? config.columnNames.join(', ') : 'None configured'}</span></div>
             <div className="mt-3">
