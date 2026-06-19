@@ -3882,6 +3882,23 @@ async function sendCategoryNotification({
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
+  const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === 'function'
+    ? mergeNotificationWebpushOptions
+    : (baseWebpush = {}, runtimeDeliveryOptions = {}) => {
+      if (!runtimeDeliveryOptions?.webpush) return baseWebpush;
+      return {
+        ...baseWebpush,
+        ...runtimeDeliveryOptions.webpush,
+        notification: {
+          ...(baseWebpush.notification || {}),
+          ...(runtimeDeliveryOptions.webpush.notification || {})
+        },
+        fcmOptions: {
+          ...(baseWebpush.fcmOptions || {}),
+          ...(runtimeDeliveryOptions.webpush.fcmOptions || {})
+        }
+      };
+    };
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -3902,7 +3919,7 @@ async function sendCategoryNotification({
         link
       },
       ...deliveryOptions,
-      webpush: mergeNotificationWebpushOptions({
+      webpush: mergeWebpushOptions({
         notification: WEB_PUSH_NOTIFICATION_ASSETS,
         fcmOptions: { link }
       }, deliveryOptions)
@@ -3972,6 +3989,23 @@ async function sendDirectTargetsNotification({
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
+  const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === 'function'
+    ? mergeNotificationWebpushOptions
+    : (baseWebpush = {}, runtimeDeliveryOptions = {}) => {
+      if (!runtimeDeliveryOptions?.webpush) return baseWebpush;
+      return {
+        ...baseWebpush,
+        ...runtimeDeliveryOptions.webpush,
+        notification: {
+          ...(baseWebpush.notification || {}),
+          ...(runtimeDeliveryOptions.webpush.notification || {})
+        },
+        fcmOptions: {
+          ...(baseWebpush.fcmOptions || {}),
+          ...(runtimeDeliveryOptions.webpush.fcmOptions || {})
+        }
+      };
+    };
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -3992,7 +4026,7 @@ async function sendDirectTargetsNotification({
         link
       },
       ...deliveryOptions,
-      webpush: mergeNotificationWebpushOptions({
+      webpush: mergeWebpushOptions({
         notification: WEB_PUSH_NOTIFICATION_ASSETS,
         fcmOptions: { link }
       }, deliveryOptions)
