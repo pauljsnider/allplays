@@ -5959,7 +5959,8 @@ export async function createRegistrationCheckoutSession(
     amountCents,
     currency,
     checkoutAttemptToken = '',
-    retryPayment = false
+    retryPayment = false,
+    publicCheckoutCapability = ''
 ) {
     const callable = httpsCallable(functions, 'createStripeRegistrationCheckout');
     const result = await callable({
@@ -5972,7 +5973,8 @@ export async function createRegistrationCheckoutSession(
         amountCents,
         currency,
         checkoutAttemptToken,
-        retryPayment
+        retryPayment,
+        publicCheckoutCapability
     });
     return result.data;
 }

@@ -364,13 +364,12 @@ describe('public registration flow', () => {
         expect(page).toContain(': await submitRegistrationWithoutCapacity(submission);');
         expect(page).toContain('registrationId: result.registrationId');
         expect(page).toContain('let preparedCheckoutRegistration = null;');
-        expect(page).toContain("const retryRegistrationId = params.get('registrationId') || '';");
-        expect(page).toContain("const retryPaymentRequested = params.get('retryPayment') === '1' && !!retryRegistrationId;");
+        expect(page).toContain("const retryPublicCheckoutCapability = params.get('publicCheckoutCapability') || '';");
+        expect(page).toContain("const retryPaymentRequested = params.get('retryPayment') === '1' && !!(retryPublicCheckoutCapability || retryRegistrationId);");
         expect(page).toContain('Use the button below to retry payment without submitting a new registration.');
         expect(page).toContain('if (retryPaymentRequested) {');
-        expect(page).toContain('registrationId: retryRegistrationId,');
+        expect(page).toContain("registrationId: currentPublicCheckoutCapability ? '' : retryRegistrationId,");
         expect(page).toContain('retryPayment: true');
-        expect(page).toContain("returnParams.set('retryPayment', '1');");
         expect(page).toContain('const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);');
         expect(page).toContain('preparedCheckoutRegistration?.retryKey === retryKey');
         expect(page).toContain('preparedCheckoutRegistration = { retryKey, result, checkoutAttemptToken };');
@@ -379,8 +378,8 @@ describe('public registration flow', () => {
         expect(page).toContain('return { status: \'pending\', registrationId: registrationRef.id };');
         expect(page).toContain('return { status: placement.status, registrationId: registrationRef.id };');
         expect(page).toContain("paymentLoadingState.classList.add('hidden');");
-        expect(page).toContain('cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken });');
-        expect(page).toContain('releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken)');
+        expect(page).toContain('cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken, publicCheckoutCapability });');
+        expect(page).toContain('releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken, cancelledPublicCheckoutCapability)');
         expect(page).toContain('function createCheckoutAttemptToken()');
         expect(page).toContain('? preparedCheckoutRegistration.checkoutAttemptToken');
         expect(page).toContain(': createCheckoutAttemptToken();');
@@ -719,7 +718,23 @@ describe('public registration flow', () => {
         expect(appSource).not.toContain('Math.random().toString(36).slice(2, 18)');
         expect(appSource).toContain("const checkoutAttemptToken = isRetryPaymentMode ? returnCheckoutAttemptToken : createCheckoutAttemptToken();");
         expect(appSource).toContain('retryPayment: true');
+        expect(appSource).toContain('publicCheckoutCapability: currentPublicCheckoutCapability ||');
         expect(appSource).toContain("Stripe payment was cancelled. You can retry payment for this registration.");
+    });
+
+    it('omits raw registration identifiers from public Stripe return URLs', () => {
+        const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
+        const urlBuilderStart = functionsSource.indexOf('function buildRegistrationCheckoutUrls');
+        const urlBuilderEnd = functionsSource.indexOf('function isServerDiscountRuleEligible');
+        const urlBuilder = functionsSource.slice(urlBuilderStart, urlBuilderEnd);
+        const page = fs.readFileSync('registration.html', 'utf8');
+
+        expect(urlBuilderStart).toBeGreaterThanOrEqual(0);
+        expect(urlBuilder).toContain("params.set('publicCheckoutCapability', input.publicCheckoutCapability);");
+        expect(urlBuilder).not.toContain('registrationId');
+        expect(urlBuilder).not.toContain('checkoutAttemptToken');
+        expect(page).not.toContain('const successUrl =');
+        expect(page).not.toContain('const cancelUrl =');
     });
 
     it('wires registration Stripe checkout to deployed functions', () => {
@@ -737,7 +752,7 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain('reserveRegistrationCheckoutCapacityForRetry');
         expect(functionsSource).toContain('const amountCents = expectedAmountCents');
         expect(functionsSource).toContain('form.currency || registration.feeSnapshot?.currency || registration.currency');
-        expect(functionsSource).toContain("Registration checkout attempt is required to retry this payment.");
+        expect(functionsSource).toContain("Current public checkout capability is required to retry this payment.");
         expect(functionsSource).toContain("This registration option is no longer available. Please restart registration or contact the organizer.");
         expect(functionsSource).toContain("registrationCapacityReleased: false");
         expect(functionsSource).toContain("capacityReleasedAt: admin.firestore.FieldValue.delete()");
@@ -747,11 +762,12 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain("paymentStatus: 'checkout_open'");
         expect(functionsSource).toContain('canReleasePreCheckoutReservation');
         expect(functionsSource).toContain('normalizeCheckoutAttemptToken');
-        expect(functionsSource).toContain('registrationCheckoutAttemptMatches(registration, input)');
-        expect(functionsSource).toContain('registrationCheckoutAttemptStrictlyMatches(registration, input)');
+        expect(functionsSource).toContain('registrationCheckoutAuthorityMatches(registration, input)');
+        expect(functionsSource).toContain('registrationCheckoutAuthorityStrictlyMatches(registration, input)');
+        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(registration, input)');
         expect(functionsSource).toContain('return Boolean(registrationToken && inputToken && registrationToken === inputToken);');
-        expect(functionsSource).toContain('Registration checkout attempt does not match.');
-        expect(functionsSource).toContain('Registration checkout attempt is required to release this reservation.');
+        expect(functionsSource).toContain('Public checkout capability does not match.');
+        expect(functionsSource).toContain('Current public checkout capability is required to release this reservation.');
         expect(functionsSource).toContain('checkoutAttemptToken: input.checkoutAttemptToken ||');
         expect(functionsSource).toContain("ignoredReason: 'checkout_attempt_mismatch'");
         expect(functionsSource).toContain("['pending', 'waitlisted'].includes(registration.status)");
@@ -764,14 +780,14 @@ describe('public registration flow', () => {
         const releaseStart = functionsSource.indexOf('async function releaseRegistrationCheckoutCapacity');
         const releaseEnd = functionsSource.indexOf('async function getUserForEligibility');
         const releaseBody = functionsSource.slice(releaseStart, releaseEnd);
-        const preCheckoutGuardIndex = releaseBody.indexOf('if (canReleasePreCheckoutReservation && !registrationCheckoutAttemptStrictlyMatches(registration, input))');
-        const relaxedOpenCheckoutGuardIndex = releaseBody.indexOf('if (!canReleasePreCheckoutReservation && !registrationCheckoutAttemptMatches(registration, input))');
+        const preCheckoutGuardIndex = releaseBody.indexOf('if (canReleasePreCheckoutReservation && !registrationCheckoutAuthorityStrictlyMatches(registration, input))');
+        const relaxedOpenCheckoutGuardIndex = releaseBody.indexOf('if (!canReleasePreCheckoutReservation && !registrationCheckoutAuthorityMatches(registration, input))');
         const selectedOptionIndex = releaseBody.indexOf('const selectedOption = registration.selectedOption || {};');
 
         expect(releaseStart).toBeGreaterThanOrEqual(0);
         expect(releaseEnd).toBeGreaterThan(releaseStart);
-        expect(functionsSource).toContain('function registrationCheckoutAttemptStrictlyMatches(registration = {}, input = {})');
-        expect(functionsSource).toContain('return Boolean(registrationToken && inputToken && registrationToken === inputToken);');
+        expect(functionsSource).toContain('function registrationCheckoutAuthorityStrictlyMatches(registration = {}, input = {})');
+        expect(functionsSource).toContain('registrationPublicCheckoutCapabilityMatches(registration, input)');
         expect(preCheckoutGuardIndex).toBeGreaterThanOrEqual(0);
         expect(relaxedOpenCheckoutGuardIndex).toBeGreaterThan(preCheckoutGuardIndex);
         expect(selectedOptionIndex).toBeGreaterThan(relaxedOpenCheckoutGuardIndex);

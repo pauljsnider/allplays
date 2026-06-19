@@ -1207,9 +1207,9 @@ export async function initiateRegistrationCheckout(
   quantity: number,
   amountCents: number,
   currency: string,
-  options: { checkoutAttemptToken?: string; retryPayment?: boolean } = {}
+  options: { checkoutAttemptToken?: string; retryPayment?: boolean; publicCheckoutCapability?: string } = {}
 ): Promise<{ success: true, checkoutUrl: string }> {
-  if (!teamId || !formId || !registrationId || !paymentPlanId || !quantity || !amountCents || !currency) {
+  if (!teamId || !formId || (!registrationId && !options.publicCheckoutCapability) || !paymentPlanId || !quantity || !amountCents || !currency) {
     throw new Error('Missing required fields for checkout.');
   }
 
@@ -1223,7 +1223,8 @@ export async function initiateRegistrationCheckout(
     amountCents,
     currency,
     options.checkoutAttemptToken,
-    options.retryPayment
+    options.retryPayment,
+    options.publicCheckoutCapability
   );
 
   if (!result?.checkoutUrl) {
@@ -1237,9 +1238,10 @@ export async function cancelRegistrationCheckout(
   teamId: string,
   formId: string,
   registrationId: string,
-  checkoutAttemptToken = ''
+  checkoutAttemptToken = '',
+  publicCheckoutCapability = ''
 ) {
-  if (!teamId || !formId || !registrationId) {
+  if (!teamId || !formId || (!registrationId && !publicCheckoutCapability)) {
     throw new Error('Missing required fields for checkout cancellation.');
   }
 
@@ -1247,7 +1249,8 @@ export async function cancelRegistrationCheckout(
     teamId,
     formId,
     registrationId,
-    checkoutAttemptToken
+    checkoutAttemptToken,
+    publicCheckoutCapability
   });
 }
 
