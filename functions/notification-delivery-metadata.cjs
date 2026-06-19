@@ -47,7 +47,7 @@ const NOTIFICATION_CATEGORY_DELIVERY = Object.freeze({
   schedule: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.schedule, iosThreadScope: 'team' }),
   rsvp: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.schedule, iosThreadScope: 'team' }),
   fees: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.money, iosThreadScope: 'team' }),
-  practice: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.gameDay, iosThreadScope: 'team' }),
+  practice: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.gameDay, iosThreadScope: 'team', iosCollapseScope: 'event' }),
   access: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.team, iosThreadScope: 'team' }),
   rideshare: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.team, iosThreadScope: 'team' }),
   media: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.team, iosThreadScope: 'team' }),
@@ -93,6 +93,19 @@ function buildIosCollapseId({ metadata, teamId, gameId, eventId }) {
   if (metadata?.iosCollapseScope === 'score') {
     return buildBoundedIdentifier(['score', teamId, gameId || eventId]);
   }
+  if (metadata?.iosCollapseScope === 'event') {
+    return buildBoundedIdentifier(['event', teamId, eventId || gameId]);
+  }
+  return '';
+}
+
+function buildNotificationCollapseTag({ metadata, teamId, gameId, eventId }) {
+  if (metadata?.iosCollapseScope === 'score') {
+    return buildBoundedIdentifier(['score', teamId, gameId || eventId]);
+  }
+  if (metadata?.iosCollapseScope === 'event') {
+    return buildBoundedIdentifier(['event', teamId, eventId || gameId]);
+  }
   return '';
 }
 
@@ -104,8 +117,14 @@ function buildNotificationDeliveryOptions({ category, teamId, gameId = null, eve
   const metadata = getNotificationDeliveryMetadata(category);
   if (!metadata) return {};
 
+  const collapseTag = buildNotificationCollapseTag({ metadata, teamId, gameId, eventId });
   const android = metadata.androidChannelId
-    ? { notification: { channelId: metadata.androidChannelId } }
+    ? {
+        notification: {
+          channelId: metadata.androidChannelId,
+          ...(collapseTag ? { tag: collapseTag } : {})
+        }
+      }
     : undefined;
   const iosThreadId = buildIosThreadId({ metadata, teamId, gameId, eventId });
   const iosCollapseId = buildIosCollapseId({ metadata, teamId, gameId, eventId });
@@ -120,6 +139,7 @@ function buildNotificationDeliveryOptions({ category, teamId, gameId = null, eve
 
   return {
     ...(android ? { android } : {}),
+    ...(collapseTag ? { webpush: { notification: { tag: collapseTag } } } : {}),
     ...(apns ? { apns } : {})
   };
 }

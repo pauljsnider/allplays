@@ -3305,6 +3305,23 @@ function buildStaffFeeNotificationDestination({ teamId, batchId = null, recipien
   };
 }
 
+function buildPracticePacketNotificationDestination({ teamId, eventId = null, sessionId = null }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const effectiveEventId = String(eventId || sessionId || '').trim();
+  const appRoute = effectiveEventId
+    ? `/schedule/${encodedTeamId}/${encodeURIComponent(effectiveEventId)}`
+    : `/schedule?teamId=${encodedTeamId}`;
+  return {
+    appRoute,
+    link: `https://allplays.ai/app/#${appRoute}`
+  };
+}
+
+function getPracticePacketNotificationLabel(session = {}) {
+  const sessionTitle = String(session?.title || session?.eventTitle || '').trim();
+  return sessionTitle ? `home packet for ${sessionTitle}` : 'home packet';
+}
+
 function buildNotificationLink({ category, teamId, gameId, batchId = null, recipientId = null, conversationId = null }) {
   if (category === 'fees') {
     const params = new URLSearchParams();
@@ -3813,6 +3830,22 @@ async function checkAndSetNotificationDedup(teamId, category, gameId) {
 }
 
 
+function mergeNotificationWebpushOptions(baseWebpush = {}, deliveryOptions = {}) {
+  if (!deliveryOptions?.webpush) return baseWebpush;
+  return {
+    ...baseWebpush,
+    ...deliveryOptions.webpush,
+    notification: {
+      ...(baseWebpush.notification || {}),
+      ...(deliveryOptions.webpush.notification || {})
+    },
+    fcmOptions: {
+      ...(baseWebpush.fcmOptions || {}),
+      ...(deliveryOptions.webpush.fcmOptions || {})
+    }
+  };
+}
+
 async function sendCategoryNotification({
   teamId,
   gameId = null,
@@ -3849,6 +3882,23 @@ async function sendCategoryNotification({
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
+  const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === 'function'
+    ? mergeNotificationWebpushOptions
+    : (baseWebpush = {}, runtimeDeliveryOptions = {}) => {
+      if (!runtimeDeliveryOptions?.webpush) return baseWebpush;
+      return {
+        ...baseWebpush,
+        ...runtimeDeliveryOptions.webpush,
+        notification: {
+          ...(baseWebpush.notification || {}),
+          ...(runtimeDeliveryOptions.webpush.notification || {})
+        },
+        fcmOptions: {
+          ...(baseWebpush.fcmOptions || {}),
+          ...(runtimeDeliveryOptions.webpush.fcmOptions || {})
+        }
+      };
+    };
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -3868,11 +3918,11 @@ async function sendCategoryNotification({
         appRoute,
         link
       },
-      webpush: {
+      ...deliveryOptions,
+      webpush: mergeWebpushOptions({
         notification: WEB_PUSH_NOTIFICATION_ASSETS,
         fcmOptions: { link }
-      },
-      ...deliveryOptions
+      }, deliveryOptions)
     });
     allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
     successCount += Number(sendResult.successCount || 0);
@@ -3939,6 +3989,23 @@ async function sendDirectTargetsNotification({
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
+  const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === 'function'
+    ? mergeNotificationWebpushOptions
+    : (baseWebpush = {}, runtimeDeliveryOptions = {}) => {
+      if (!runtimeDeliveryOptions?.webpush) return baseWebpush;
+      return {
+        ...baseWebpush,
+        ...runtimeDeliveryOptions.webpush,
+        notification: {
+          ...(baseWebpush.notification || {}),
+          ...(runtimeDeliveryOptions.webpush.notification || {})
+        },
+        fcmOptions: {
+          ...(baseWebpush.fcmOptions || {}),
+          ...(runtimeDeliveryOptions.webpush.fcmOptions || {})
+        }
+      };
+    };
   const maxMulticastTokens = 500;
   const allResponses = [];
   let successCount = 0;
@@ -3958,11 +4025,11 @@ async function sendDirectTargetsNotification({
         appRoute,
         link
       },
-      webpush: {
+      ...deliveryOptions,
+      webpush: mergeWebpushOptions({
         notification: WEB_PUSH_NOTIFICATION_ASSETS,
         fcmOptions: { link }
-      },
-      ...deliveryOptions
+      }, deliveryOptions)
     });
     allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
     successCount += Number(sendResult.successCount || 0);
@@ -5198,6 +5265,67 @@ exports.notifyFeeAssigned = functions.firestore
       title: `New fee assigned: ${title}${amountDisplay}`,
       body: 'A new team fee has been assigned to your account.',
       teamId,
+    });
+    return null;
+  });
+
+exports.notifyPracticePacketCompleted = functions.firestore
+  .document('teams/{teamId}/practiceSessions/{sessionId}/packetCompletions/{completionId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data();
+    if (!data) return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('practice')) {
+      functions.logger.error('notifyPracticePacketCompleted requires the practice notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
+
+    const { teamId, sessionId, completionId } = context.params;
+    const parentUserId = String(data.parentUserId || '').trim() || null;
+    const playerName = String(data.childName || 'A player').trim() || 'A player';
+
+    const [allPracticeTargets, candidateUsers, sessionSnap] = await Promise.all([
+      getTargetsForCategory(teamId, 'practice', null),
+      getCandidateUsersForTeam(teamId),
+      firestore.doc(`teams/${teamId}/practiceSessions/${sessionId}`).get()
+    ]);
+    const staffUserIds = new Set(
+      candidateUsers
+        .filter((user) => Array.isArray(user?.roles) && user.roles.includes('staff'))
+        .map((user) => user.uid)
+    );
+    const staffTargets = allPracticeTargets.filter((target) => (
+      staffUserIds.has(target.uid)
+      && target.uid !== parentUserId
+    ));
+
+    if (!staffTargets.length) {
+      functions.logger.warn('notifyPracticePacketCompleted found no staff notification targets.', {
+        teamId,
+        sessionId,
+        completionId,
+        parentUserId,
+        totalPracticeTargets: allPracticeTargets.length
+      });
+      return null;
+    }
+
+    const session = sessionSnap.exists ? (sessionSnap.data() || {}) : {};
+    const scheduleEventId = String(session.eventId || '').trim() || sessionId;
+    const destination = buildPracticePacketNotificationDestination({ teamId, eventId: scheduleEventId, sessionId });
+
+    await sendDirectTargetsNotification({
+      targets: staffTargets,
+      category: 'practice',
+      title: `Home packet completed: ${playerName}`,
+      body: `${playerName} completed the ${getPracticePacketNotificationLabel(session)}.`,
+      teamId,
+      eventId: sessionId,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
     });
     return null;
   });
