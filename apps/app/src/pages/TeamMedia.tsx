@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { flushSync } from 'react-dom';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { isSupportedTeamMediaDocument } from '../../../../js/team-media-utils.js';
+import { isSupportedTeamMediaDocument } from '../lib/adapters/legacyTeamMedia';
 import {
   AlertCircle,
   CheckCircle2,
