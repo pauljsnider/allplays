@@ -237,6 +237,13 @@
                         </tbody>
                     </table>
                 </div>
+                <div class="flex items-center justify-between border-t border-gray-200 px-4 py-3 text-sm text-gray-600">
+                    <p id="teams-pagination-status">Loading teams...</p>
+                    <div class="flex items-center gap-2">
+                        <button id="teams-prev-page" type="button" class="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+                        <button id="teams-next-page" type="button" class="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -283,6 +290,13 @@
                             <!-- Rows injected here -->
                         </tbody>
                     </table>
+                </div>
+                <div class="flex items-center justify-between border-t border-gray-200 px-4 py-3 text-sm text-gray-600">
+                    <p id="users-pagination-status">Loading users...</p>
+                    <div class="flex items-center gap-2">
+                        <button id="users-prev-page" type="button" class="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Previous</button>
+                        <button id="users-next-page" type="button" class="rounded border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50">Next</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -629,7 +643,7 @@
 
     <div id="footer-container"></div>
 
-    <script type="module" src="js/admin.js"></script>
+    <script type="module" src="js/admin.js?v=1"></script>
 </body>
 
 </html>

@@ -12,4 +12,17 @@ describe('admin dashboard statistics scope', () => {
         expect(adminJs).toContain('const activeTeams = new Set(visibleGames.filter(g => {');
         expect(adminJs).toContain('const teamsWithGames = new Set(visibleGames.map(g => g.teamId)).size;');
     });
+
+    it('boots from paged teams and users before lazy team detail fan-out', () => {
+        const adminHtml = fs.readFileSync('admin.html', 'utf8');
+        const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+
+        expect(adminJs).toContain('loadInitialAdminBootstrap({');
+        expect(adminJs).toContain('getTeamsPage: getAdminTeamsPage');
+        expect(adminJs).toContain('getUsersPage: getAdminUsersPage');
+        expect(adminJs).toContain('await ensureCurrentTeamGamesLoaded();');
+        expect(adminJs).toContain("await ensureCurrentPageOfficialsLoaded();");
+        expect(adminHtml).toContain('id="teams-pagination-status"');
+        expect(adminHtml).toContain('id="users-pagination-status"');
+    });
 });
