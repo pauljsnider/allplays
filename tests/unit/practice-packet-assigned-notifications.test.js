@@ -15,7 +15,7 @@ function extractChunk(startMarker, endMarker) {
 function extractNotifyPracticePacketAssigned() {
     return [
         extractChunk('function buildPracticePacketNotificationDestination(', 'function buildNotificationLink'),
-        extractChunk('exports.notifyPracticePacketAssigned = functions.firestore', 'const PUBLIC_RSVP_TOKEN_TTL_DAYS')
+        extractChunk('exports.notifyPracticePacketAssigned = functions.firestore', 'function writePublicRsvpCors')
     ].join('\n');
 }
 
@@ -165,6 +165,37 @@ describe('notifyPracticePacketAssigned trigger', () => {
         sendDeferred.resolve({ successCount: 1, failureCount: 0 });
         await triggerPromise;
         expect(completed).toBe(true);
+    });
+
+    it('uses packet title and due date fallbacks when session fields are missing', async () => {
+        const harness = buildHarness({
+            targets: [{ uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' }],
+            users: [{ uid: 'parent-1', roles: ['parent'] }]
+        });
+
+        await harness.trigger({
+            before: { exists: false, data: () => null },
+            after: {
+                exists: true,
+                data: () => ({
+                    homePacketContent: {
+                        packetTitle: 'Weekend shooting plan',
+                        dueAt: { seconds: 1782259200 },
+                        blocks: [{ id: 'block-1' }]
+                    }
+                })
+            }
+        }, {
+            params: { teamId: 'team-1', sessionId: 'session-99' }
+        });
+
+        expect(harness.sendDirectTargetsNotification).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Practice packet ready',
+            body: 'Weekend shooting plan is ready. Due Jun 24, 2026.',
+            eventId: 'session-99',
+            linkOverride: 'https://allplays.ai/app/#/schedule/team-1/session-99?section=game',
+            appRouteOverride: '/schedule/team-1/session-99?section=game'
+        }));
     });
 
     it('logs and exits when practice notifications are unavailable', async () => {
