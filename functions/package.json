@@ -10,7 +10,7 @@
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
     "test": "node --test test",
-    "test:notifications": "node --test test/send-category-notification*.js test/notification-triggers.test.js"
+    "test:notifications": "node ../node_modules/vitest/vitest.mjs run test/send-category-notification.test.js test/send-category-notification-load.test.js test/notification-triggers.test.js --environment node"
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",
