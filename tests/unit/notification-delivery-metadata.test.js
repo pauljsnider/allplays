@@ -47,6 +47,20 @@ describe('notification delivery metadata', () => {
         expect(options.apns.headers['apns-collapse-id']).toBe('score-team-1-game-9');
     });
 
+    it('collapses practice packet notifications by session while keeping them in the team thread', () => {
+        const options = buildNotificationDeliveryOptions({
+            category: 'practice',
+            teamId: 'team-1',
+            eventId: 'session-1'
+        });
+
+        expect(options.android.notification.channelId).toBe('allplays_game_day');
+        expect(options.android.notification.tag).toBe('event-team-1-session-1');
+        expect(options.webpush.notification.tag).toBe('event-team-1-session-1');
+        expect(options.apns.payload.aps['thread-id']).toBe('team-team-1');
+        expect(options.apns.headers['apns-collapse-id']).toBe('event-team-1-session-1');
+    });
+
     it('routes team-scoped award notifications to the team channel and iOS team thread', () => {
         const options = buildNotificationDeliveryOptions({
             category: 'awards',
