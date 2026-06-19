@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Home } from './Home';
@@ -441,17 +441,21 @@ describe('Home', () => {
     expect((screen.getByPlaceholderText('Comment · 1') as HTMLInputElement).value).toBe('Nice play!');
   });
 
-  it('refreshes the social feed after creating a post', async () => {
+  it('opens the requested team media composer from the route and refreshes the social feed after posting', async () => {
     socialServiceMocks.createSocialPost.mockResolvedValueOnce('post-1');
-    renderHome(signedInAuth, '/home?section=feed&social=create');
+    renderHome(signedInAuth, '/home?section=feed&social=create&type=team_media');
 
-    await screen.findByRole('dialog', { name: 'Create social post' });
+    const dialog = await screen.findByRole('dialog', { name: 'Create social post' });
+    expect(within(dialog).getAllByText('Photo or video').length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('Choose photo or video')).toBeTruthy();
     await waitFor(() => {
       expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledTimes(1);
     });
 
-    fireEvent.change(screen.getByRole('textbox'), {
-      target: { value: 'Big team win today.' }
+    fireEvent.change(screen.getByLabelText(/choose photo or video/i), {
+      target: {
+        files: [new File(['image-bytes'], 'team-photo.png', { type: 'image/png' })]
+      }
     });
     const postButtons = screen.getAllByRole('button', { name: 'Post' });
     fireEvent.click(postButtons[postButtons.length - 1]!);

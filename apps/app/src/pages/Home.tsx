@@ -234,9 +234,7 @@ export function Home({ auth }: { auth: AuthState }) {
     if (section && homeSections.some((item) => item.id === section)) {
       setActiveSection(section);
     }
-    if (searchParams.get('social') === 'create') {
-      setComposerOpen(true);
-    }
+    setComposerOpen(searchParams.get('social') === 'create');
   }, [searchParams]);
 
   const topAction = home.actionItems[0] || null;
