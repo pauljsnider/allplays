@@ -93,14 +93,17 @@ vi.mock('./adapters/legacyScheduleHelpers', () => ({
 }));
 
 vi.mock('./adapters/legacyAvailability', () => ({
-  buildAvailabilityNoteRows: vi.fn(),
-  canViewAvailabilityNotes: vi.fn(),
-  formatAvailabilityCutoff: vi.fn(),
-  isAvailabilityLocked: vi.fn(),
-  normalizeAvailabilityPreferences: vi.fn()
+  buildAvailabilityNoteRows: vi.fn(() => []),
+  canViewAvailabilityNotes: vi.fn(() => false),
+  formatAvailabilityCutoff: vi.fn(() => ''),
+  isAvailabilityLocked: vi.fn(() => false),
+  normalizeAvailabilityPreferences: vi.fn((value: any) => (value && typeof value === 'object' ? value : {}))
 }));
 vi.mock('./profileService', () => ({ loadProfileDocument: vi.fn(), saveProfileDocument: vi.fn() }));
-vi.mock('./authService', () => ({ firebaseAuth: {}, getNativeAuthIdToken: vi.fn() }));
+vi.mock('./authService', () => ({
+  firebaseAuth: { app: { options: { projectId: 'allplays-test' } } },
+  getNativeAuthIdToken: vi.fn()
+}));
 vi.mock('./uxTiming', () => ({ startUxTimer: vi.fn(() => ({ end: vi.fn() })) }));
 vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
@@ -112,10 +115,11 @@ vi.mock('./appDataCache', () => ({
 }));
 
 import { broadcastLiveEvent, claimOpenOfficiatingSlot, releaseAssignmentClaim, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
+import { getNativeAuthIdToken } from './authService';
 import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadParentScheduleEventDetail, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
@@ -1014,5 +1018,114 @@ describe('staff practice attendance', () => {
     })).rejects.toThrow('Only team owners and admins can manage practice attendance.');
     expect(getPracticeSession).not.toHaveBeenCalled();
     expect(updatePracticeAttendance).not.toHaveBeenCalled();
+  });
+});
+
+describe('native parent schedule Firestore mapping', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    (globalThis as any).fetch = vi.fn();
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-1', playerId: 'child-1', playerName: 'Avery', teamName: 'Bears' }
+      ]
+    } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Bears',
+      ownerId: 'coach-1',
+      adminEmails: [],
+      availabilityPreferences: null,
+      notificationEmail: 'bears@example.com'
+    } as any);
+    vi.mocked(getGame).mockRejectedValue(new Error('offline'));
+    vi.mocked(getPracticeSession).mockResolvedValue(null as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+  });
+
+  it('maps a valid Firestore schedule event record through the native fallback path', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+        fields: {
+          type: { stringValue: 'game' },
+          date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+          location: { stringValue: 'Main Gym' },
+          opponent: { stringValue: 'Tigers' },
+          status: { stringValue: 'scheduled' },
+          liveClockMs: { integerValue: '120000' },
+          liveClockRunning: { booleanValue: true },
+          assignments: {
+            arrayValue: {
+              values: [
+                {
+                  mapValue: {
+                    fields: {
+                      role: { stringValue: 'Scoreboard' },
+                      value: { stringValue: 'Open' }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          sourceMetadata: {
+            mapValue: {
+              fields: {
+                sourceType: { stringValue: 'registration' }
+              }
+            }
+          }
+        }
+      })
+    } as any);
+
+    const result = await loadParentScheduleEventDetail({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      teamId: 'team-1',
+      eventId: 'game-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      id: 'game-1',
+      teamId: 'team-1',
+      type: 'game',
+      location: 'Main Gym',
+      opponent: 'Tigers',
+      status: 'scheduled',
+      liveClockMs: 120000,
+      liveClockRunning: true,
+      sourceType: 'registration'
+    });
+    expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));
+  });
+
+  it('drops malformed Firestore schedule event records at the mapper boundary', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-2',
+        fields: {
+          type: { stringValue: 'game' },
+          date: { stringValue: 'not-a-date' },
+          location: { integerValue: '42' }
+        }
+      })
+    } as any);
+
+    const result = await loadParentScheduleEventDetail({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      teamId: 'team-1',
+      eventId: 'game-2',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toEqual([]);
   });
 });
