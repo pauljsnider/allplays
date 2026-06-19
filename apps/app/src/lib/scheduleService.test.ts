@@ -119,7 +119,7 @@ import { getNativeAuthIdToken } from './authService';
 import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadParentScheduleEventDetail, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
@@ -1038,7 +1038,8 @@ describe('native parent schedule Firestore mapping', () => {
       ownerId: 'coach-1',
       adminEmails: [],
       availabilityPreferences: null,
-      notificationEmail: 'bears@example.com'
+      notificationEmail: 'bears@example.com',
+      calendarUrls: ['https://calendar.example.com/team-1.ics']
     } as any);
     vi.mocked(getGame).mockRejectedValue(new Error('offline'));
     vi.mocked(getPracticeSession).mockResolvedValue(null as any);
@@ -1052,8 +1053,8 @@ describe('native parent schedule Firestore mapping', () => {
       json: async () => ({
         name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
         fields: {
-          type: { stringValue: 'game' },
           date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+          calendarEventUid: { stringValue: 'cal-123' },
           location: { stringValue: 'Main Gym' },
           opponent: { stringValue: 'Tigers' },
           status: { stringValue: 'scheduled' },
@@ -1096,6 +1097,7 @@ describe('native parent schedule Firestore mapping', () => {
       id: 'game-1',
       teamId: 'team-1',
       type: 'game',
+      eventKey: expect.stringContaining('::game-1::'),
       location: 'Main Gym',
       opponent: 'Tigers',
       status: 'scheduled',
@@ -1104,6 +1106,47 @@ describe('native parent schedule Firestore mapping', () => {
       sourceType: 'registration'
     });
     expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));
+  });
+
+  it('keeps tracked calendar ids on native game loads so imported events do not duplicate db games', async () => {
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        documents: [
+          {
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+            fields: {
+              date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+              calendarEventUid: { stringValue: 'cal-123' },
+              opponent: { stringValue: 'Tigers' },
+              location: { stringValue: 'Main Gym' }
+            }
+          }
+        ]
+      })
+    } as any);
+    vi.mocked(fetchAndParseCalendar).mockResolvedValue([
+      {
+        uid: 'cal-123',
+        summary: 'Bears vs Tigers',
+        dtstart: '2026-06-20T18:00:00.000Z',
+        location: 'Main Gym'
+      }
+    ] as any);
+
+    const result = await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      id: 'game-1',
+      type: 'game',
+      opponent: 'Tigers',
+      isDbGame: true
+    });
+    expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team-1.ics');
   });
 
   it('drops malformed Firestore schedule event records at the mapper boundary', async () => {

@@ -34,6 +34,7 @@ export type ScheduleEventFirestoreRecord = {
     id: string;
     type: 'game' | 'practice';
     date: Date;
+    calendarEventUid?: string | null;
     endDate?: Date | null;
     end?: Date | null;
     endTime?: Date | null;

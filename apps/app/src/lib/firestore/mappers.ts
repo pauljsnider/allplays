@@ -68,7 +68,7 @@ export function mapScheduleEventDocument(document: FirestoreDocument | null | un
     const decoded = mapFirestoreDocument(document);
     if (!decoded?.id) return null;
 
-    const type = asTrimmedString(decoded.type);
+    const type = asTrimmedString(decoded.type) || 'game';
     const date = asOptionalDate(decoded.date);
     if ((type !== 'game' && type !== 'practice') || !date) {
         return null;
@@ -78,6 +78,7 @@ export function mapScheduleEventDocument(document: FirestoreDocument | null | un
         id: decoded.id,
         type,
         date,
+        calendarEventUid: asTrimmedString(decoded.calendarEventUid),
         endDate: asOptionalDate(decoded.endDate),
         end: asOptionalDate(decoded.end),
         endTime: asOptionalDate(decoded.endTime),
