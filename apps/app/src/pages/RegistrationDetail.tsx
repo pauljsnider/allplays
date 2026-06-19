@@ -16,7 +16,7 @@ import {
   getPaymentPlanChoices,
   requiresRegistrationOption,
   hasQuantityDiscountRule
-} from '../../../../js/registration-flow.js';
+} from '../lib/adapters/legacyRegistration';
 import type { AuthState } from '../lib/types';
 
 type FieldErrors = Record<string, string>;

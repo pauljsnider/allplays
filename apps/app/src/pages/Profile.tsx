@@ -45,7 +45,7 @@ import {
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { sharePublicUrl } from '../lib/publicActions';
 import { useShellLayout } from '../lib/useShellLayout';
-import { NOTIFICATION_PREFERENCE_GROUPS } from '../../../../js/notification-preferences.js';
+import { NOTIFICATION_PREFERENCE_GROUPS } from '../lib/adapters/legacyProfile';
 import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 import type { AuthState } from '../lib/types';

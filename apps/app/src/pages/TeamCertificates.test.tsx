@@ -16,7 +16,7 @@ const publicActionMocks = vi.hoisted(() => ({
 
 vi.mock('../lib/certificateDraftService', () => certificateDraftServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
-vi.mock('../../../../js/certificates/renderer.js', () => ({
+vi.mock('../lib/adapters/legacyCertificates', () => ({
   renderCertificate: vi.fn(() => {
     const node = document.createElement('div');
     node.textContent = 'Certificate preview';

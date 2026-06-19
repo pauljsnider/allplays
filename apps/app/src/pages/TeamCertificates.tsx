@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { Award, ExternalLink, Loader2, RefreshCw, Sparkles } from 'lucide-react';
-import { renderCertificate } from '../../../../js/certificates/renderer.js';
+import { renderCertificate } from '../lib/adapters/legacyCertificates';
 import { loadCertificateDraftComposer, saveCertificateDraftsForApp, type CertificateDraftComposerModel, type CertificateDraftPlayer, type CertificateDraftSharedState } from '../lib/certificateDraftService';
 import { openPublicUrl } from '../lib/publicActions';
 import { useAsyncOperation } from '../lib/useAsyncOperation';

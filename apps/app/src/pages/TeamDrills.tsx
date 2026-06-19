@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { ChevronLeft, ExternalLink, Heart, Loader2, Search, Shield } from 'lucide-react';
-import { DRILL_LEVELS, DRILL_TYPES, DRILL_TYPE_COLORS } from '../../../../js/drill-constants.js';
+import { DRILL_LEVELS, DRILL_TYPES, DRILL_TYPE_COLORS } from '../lib/adapters/legacyDrills';
 import { openPublicUrl } from '../lib/publicActions';
 import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite, type TeamDrillSummary } from '../lib/teamDrillsService';
 import type { AuthState } from '../lib/types';
