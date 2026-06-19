@@ -13,7 +13,7 @@ import {
 } from '../../../../js/db.js';
 import { normalizeTeamNotificationPreferences } from '../../../../js/notification-preferences.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
-import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { createLogger } from './logger';
 import { isTeamActive } from '../../../../js/team-visibility.js';
 
 export {
@@ -25,6 +25,16 @@ export {
 
 const profileTimeoutMs = 8000;
 const primaryDataTimeoutMs = 3000;
+const logger = createLogger('profile-service');
+
+function logProfileWarning(message: string, operation: string, error: unknown, context: Record<string, unknown> = {}) {
+    logger.warn(message, {
+        operation,
+        fallback: 'rest',
+        ...context,
+        error
+    });
+}
 
 export type ProfileDocument = {
   email?: string;
@@ -394,7 +404,7 @@ export async function loadProfileDocument(userId: string): Promise<ProfileDocume
   try {
     return await withTimeout(Promise.resolve(getUserProfile(userId)), 'Profile load', primaryDataTimeoutMs) || {};
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST profile load:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST profile load.', 'profile-load', error, { userId });
     return nativeLoadProfileDocument(userId);
   }
 }
@@ -403,7 +413,7 @@ export async function saveProfileDocument(userId: string, profile: ProfileDocume
   try {
     await withTimeout(Promise.resolve(updateUserProfile(userId, profile)), 'Profile save', primaryDataTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST profile save:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST profile save.', 'profile-save', error, { userId });
     await nativeSaveProfileDocument(userId, profile);
   }
 }
@@ -418,7 +428,7 @@ export async function loadNotificationTeams(userId: string, email?: string | nul
       getParentTeams(userId)
     ]), 'Notification team load', primaryDataTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST notification team load:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST notification team load.', 'notification-team-load', error, { userId });
     return nativeLoadNotificationTeams(userId, email);
   }
 
@@ -437,7 +447,7 @@ export async function loadParentTeams(userId: string): Promise<NotificationTeam[
     const teams = await withTimeout(Promise.resolve(getParentTeams(userId)), 'Parent team load', primaryDataTimeoutMs);
     return (teams || []).filter((team: NotificationTeam | null | undefined) => Boolean(team?.id));
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST parent team load:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST parent team load.', 'parent-team-load', error, { userId });
     return nativeLoadParentTeams(userId);
   }
 }
@@ -450,7 +460,7 @@ export async function loadNotificationPreferences(userId: string, teamId: string
       primaryDataTimeoutMs
     ));
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST notification preference load:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST notification preference load.', 'notification-preference-load', error, { userId, teamId });
     return nativeLoadNotificationPreferences(userId, teamId);
   }
 }
@@ -463,7 +473,7 @@ export async function saveNotificationPreferences(userId: string, teamId: string
       primaryDataTimeoutMs
     ));
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST notification preference save:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST notification preference save.', 'notification-preference-save', error, { userId, teamId });
     return nativeSaveNotificationPreferences(userId, teamId, preferences);
   }
 }
@@ -476,7 +486,7 @@ export async function saveNotificationDeviceToken(userId: string, input: Notific
       primaryDataTimeoutMs
     );
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST notification device save:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST notification device save.', 'notification-device-save', error, { userId });
     return nativeSaveNotificationDeviceToken(userId, input);
   }
 }
@@ -486,7 +496,7 @@ export async function createProfileAccessCode(userId: string, email: string, pho
   try {
     await withTimeout(Promise.resolve(createAccessCode(userId, email, phone, code)), 'Invite code create', primaryDataTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST invite code create:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST invite code create.', 'invite-code-create', error, { userId });
     await nativeCreateAccessCode(userId, email, phone, code);
   }
   return code;
@@ -510,7 +520,7 @@ export async function requestAccountMerge(userId: string, primaryEmail: string, 
       primaryDataTimeoutMs
     );
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST account merge request:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST account merge request.', 'account-merge-request', error, { userId });
     return nativeCreateAccountMergeRequest(userId, normalizedPrimaryEmail, normalizedSecondaryEmail);
   }
 }
@@ -519,7 +529,7 @@ export async function loadProfileAccessCodes(userId: string): Promise<AccessCode
   try {
     return await withTimeout(getUserAccessCodes(userId) as Promise<AccessCodeRecord[]>, 'Invite history load', primaryDataTimeoutMs);
   } catch (error) {
-    console.warn('[profile-service] Falling back to REST invite history load:', sanitizeErrorForLogging(error));
+    logProfileWarning('Falling back to REST invite history load.', 'invite-history-load', error, { userId });
     return nativeLoadAccessCodes(userId);
   }
 }
