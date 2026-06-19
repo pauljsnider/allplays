@@ -4179,7 +4179,8 @@ async function sendDirectTargetsNotification({
 
 exports._internal = {
   getTargetsForCategory,
-  sendCategoryNotification
+  sendCategoryNotification,
+  sendPracticePacketDueTomorrowReminders
 };
 
 exports.markNotificationInboxItemRead = functions.https.onCall(async (data, context) => {
@@ -4542,6 +4543,233 @@ exports.dispatchDuePreEventReminders = functions.pubsub
 exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub
   .schedule('every 6 hours')
   .onRun(() => queueDueRegistrationFailedPaymentReminders());
+
+function getPracticePacketReminderDueDate(packet = {}, session = {}) {
+  return coercePracticePacketDate(
+    packet.dueDate
+    || packet.dueAt
+    || packet.deadline
+    || packet.deadlineAt
+    || packet.completeBy
+    || packet.completeByAt
+    || session.date
+  );
+}
+
+function getTomorrowDateRange(now = new Date()) {
+  const start = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + 1,
+    0,
+    0,
+    0,
+    0
+  ));
+  const end = new Date(start.getTime());
+  end.setUTCDate(end.getUTCDate() + 1);
+  return { start, end };
+}
+
+function isPracticePacketDueTomorrow(packet = {}, session = {}, now = new Date()) {
+  const dueDate = getPracticePacketReminderDueDate(packet, session);
+  if (!dueDate) return false;
+  const { start, end } = getTomorrowDateRange(now);
+  return dueDate >= start && dueDate < end;
+}
+
+function getPracticePacketReminderDocRef(teamId, sessionId, playerId) {
+  return firestore.doc(`teams/${teamId}/practiceSessions/${sessionId}/packetReminderSends/${playerId}`);
+}
+
+const PRACTICE_PACKET_REMINDER_CLAIM_TTL_MS = 15 * 60 * 1000;
+
+function buildPracticePacketReminderClaimId() {
+  return `practice-packet-${crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex')}`;
+}
+
+async function claimPracticePacketReminder(teamId, sessionId, playerId, now = new Date()) {
+  const reminderRef = getPracticePacketReminderDocRef(teamId, sessionId, playerId);
+  return firestore.runTransaction(async (transaction) => {
+    const reminderSnap = await transaction.get(reminderRef);
+    const reminder = reminderSnap.exists ? (reminderSnap.data() || {}) : {};
+    if (reminder.reminderSentAt) {
+      return null;
+    }
+
+    const deliveryClaimedAt = coercePracticePacketDate(reminder.deliveryClaimedAt);
+    const hasActiveClaim = reminder.deliveryClaimId
+      && deliveryClaimedAt
+      && (now.getTime() - deliveryClaimedAt.getTime()) < PRACTICE_PACKET_REMINDER_CLAIM_TTL_MS;
+    if (hasActiveClaim) {
+      return null;
+    }
+
+    const claimId = buildPracticePacketReminderClaimId();
+    transaction.set(reminderRef, {
+      playerId,
+      deliveryClaimId: claimId,
+      deliveryClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+      reminderSentAt: null,
+      lastError: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return claimId;
+  });
+}
+
+async function getPracticePacketReminderTargetUserIds(teamId, playerId, player = {}) {
+  const privateProfileSnap = await firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`).get();
+  const privateProfile = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
+  return getTeamFeeRecipientTargetUserIds({}, player, privateProfile);
+}
+
+async function markPracticePacketReminderSent(teamId, sessionId, playerId, claimId) {
+  const reminderRef = getPracticePacketReminderDocRef(teamId, sessionId, playerId);
+  return firestore.runTransaction(async (transaction) => {
+    const reminderSnap = await transaction.get(reminderRef);
+    const reminder = reminderSnap.exists ? (reminderSnap.data() || {}) : {};
+    if (reminder.reminderSentAt || reminder.deliveryClaimId !== claimId) {
+      return false;
+    }
+
+    transaction.set(reminderRef, {
+      playerId,
+      reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      deliveryClaimId: null,
+      deliveryClaimedAt: null,
+      lastError: null,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function clearPracticePacketReminderClaim(teamId, sessionId, playerId, claimId, error) {
+  const reminderRef = getPracticePacketReminderDocRef(teamId, sessionId, playerId);
+  return firestore.runTransaction(async (transaction) => {
+    const reminderSnap = await transaction.get(reminderRef);
+    const reminder = reminderSnap.exists ? (reminderSnap.data() || {}) : {};
+    if (reminder.deliveryClaimId !== claimId || reminder.reminderSentAt) {
+      return false;
+    }
+
+    transaction.set(reminderRef, {
+      playerId,
+      deliveryClaimId: null,
+      deliveryClaimedAt: null,
+      lastError: error?.message || 'Unknown practice packet reminder error',
+      lastAttemptAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function sendPracticePacketDueTomorrowReminders(now = new Date()) {
+  if (!NOTIFICATION_CATEGORIES.includes('practice')) {
+    functions.logger.error('sendPracticePacketDueTomorrowReminders requires the practice notification category.', {
+      availableCategories: NOTIFICATION_CATEGORIES
+    });
+    return [];
+  }
+
+  const sessionSnap = await firestore.collectionGroup('practiceSessions')
+    .where('homePacketGenerated', '==', true)
+    .get();
+
+  const practiceTargetsByTeam = new Map();
+  const results = [];
+
+  for (const docSnap of sessionSnap.docs) {
+    const session = docSnap.data() || {};
+    const packet = session.homePacketContent || null;
+    if (!hasPracticePacketContent(packet)) continue;
+    if (!isPracticePacketDueTomorrow(packet, session, now)) continue;
+
+    const pathParts = docSnap.ref.path.split('/');
+    const teamId = pathParts[1];
+    const sessionId = docSnap.id;
+    if (!teamId || !sessionId) continue;
+
+    const [playersSnap, completionsSnap] = await Promise.all([
+      firestore.collection(`teams/${teamId}/players`).get(),
+      firestore.collection(`teams/${teamId}/practiceSessions/${sessionId}/packetCompletions`).get()
+    ]);
+    const completedPlayerIds = new Set(
+      completionsSnap.docs
+        .map((completionSnap) => completionSnap.data() || {})
+        .filter((completion) => String(completion.status || 'completed').trim().toLowerCase() === 'completed')
+        .map((completion) => String(completion.childId || '').trim())
+        .filter(Boolean)
+    );
+
+    let practiceTargets = practiceTargetsByTeam.get(teamId);
+    if (!practiceTargets) {
+      practiceTargets = await getTargetsForCategory(teamId, 'practice', null);
+      practiceTargetsByTeam.set(teamId, practiceTargets);
+    }
+    if (!practiceTargets.length) continue;
+
+    const scheduleEventId = String(session.eventId || '').trim() || sessionId;
+    const destination = buildPracticePacketNotificationDestination({ teamId, eventId: scheduleEventId, sessionId });
+    const packetTitle = getPracticePacketNotificationTitle(packet, session);
+
+    for (const playerSnap of playersSnap.docs) {
+      const playerId = String(playerSnap.id || '').trim();
+      const player = playerSnap.data() || {};
+      if (!playerId || player.active === false) continue;
+      if (completedPlayerIds.has(playerId)) continue;
+
+      const candidateUserIds = await getPracticePacketReminderTargetUserIds(teamId, playerId, player);
+      if (!candidateUserIds.length) continue;
+
+      const candidateUserIdSet = new Set(candidateUserIds);
+      const parentTargets = practiceTargets.filter((target) => candidateUserIdSet.has(target.uid));
+      if (!parentTargets.length) continue;
+
+      const claimId = await claimPracticePacketReminder(teamId, sessionId, playerId, now);
+      if (!claimId) continue;
+
+      try {
+        await sendDirectTargetsNotification({
+          targets: parentTargets,
+          category: 'practice',
+          title: `Reminder: ${packetTitle} is due tomorrow`,
+          body: `${String(player.name || 'Your player').trim() || 'Your player'} has not completed the ${getPracticePacketNotificationLabel(session)} yet.`,
+          teamId,
+          eventId: sessionId,
+          linkOverride: destination.link,
+          appRouteOverride: destination.appRoute
+        });
+
+        const markedSent = await markPracticePacketReminderSent(teamId, sessionId, playerId, claimId);
+        if (!markedSent) continue;
+
+        results.push({
+          teamId,
+          sessionId,
+          playerId,
+          targetCount: parentTargets.length
+        });
+      } catch (error) {
+        await clearPracticePacketReminderClaim(teamId, sessionId, playerId, claimId, error);
+        functions.logger.error('Failed to send practice packet due tomorrow reminder.', {
+          teamId,
+          sessionId,
+          playerId,
+          error: error?.message || error
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
+exports.sendPracticePacketDueTomorrowReminders = functions.pubsub
+  .schedule('every 24 hours')
+  .onRun(() => sendPracticePacketDueTomorrowReminders());
 
 function getFeeReminderPlayerKey(recipient = {}, teamId = '') {
   const explicitPlayerKey = String(recipient.playerKey || '').trim();
