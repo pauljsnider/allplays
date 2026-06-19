@@ -21,23 +21,24 @@ function getAwardHelpers() {
             getCertificateNotificationPlayerKey,
             resolvePublishedCertificateParentUserIds,
             claimPublishedCertificateAwardNotification,
+            markPublishedCertificateAwardNotificationProcessed,
             buildAwardNotificationDestination
         };`
     );
 }
 
-function getAwardTriggerFactory() {
+function getTargetsForCategoryFactory() {
     return new Function(
-        'exports',
-        'functions',
         'NOTIFICATION_CATEGORIES',
-        'claimPublishedCertificateAwardNotification',
-        'resolvePublishedCertificateParentUserIds',
-        'getTargetsForCategory',
-        'sendDirectTargetsNotification',
-        'buildAwardNotificationDestination',
-        `${extractChunk('exports.notifyPublishedCertificateAward = functions.firestore', 'exports.notifyFeeAssigned = functions.firestore')}
-        return exports.notifyPublishedCertificateAward;`
+        'firestore',
+        'getCandidateUsersForTeam',
+        'canReceiveCategoryNotification',
+        'teamNotificationRecipientIndexIsEmpty',
+        'backfillNotificationRecipientsForTeam',
+        'getLegacyTargetsForCategory',
+        'functions',
+        `${extractChunk('async function getTargetsForCategory(', 'async function pruneInvalidTokens')}
+        return getTargetsForCategory;`
     );
 }
 
@@ -93,6 +94,7 @@ function buildTriggerHarness({
     const resolvePublishedCertificateParentUserIds = vi.fn(async () => parentUserIds);
     const getTargetsForCategory = vi.fn(async () => targets);
     const sendDirectTargetsNotification = vi.fn(async () => ({ successCount: 1, failureCount: 0 }));
+    const markPublishedCertificateAwardNotificationProcessed = vi.fn(async () => null);
     const buildAwardNotificationDestination = vi.fn(({ teamId, certificateId }) => ({
         link: `https://allplays.ai/app/#/parent-tools/certificates?teamId=${teamId}&certificateId=${certificateId}`,
         appRoute: `/parent-tools/certificates?teamId=${teamId}&certificateId=${certificateId}`
@@ -109,7 +111,19 @@ function buildTriggerHarness({
         }
     };
     const exportsObject = {};
-    const trigger = getAwardTriggerFactory()(
+    const trigger = new Function(
+        'exports',
+        'functions',
+        'NOTIFICATION_CATEGORIES',
+        'claimPublishedCertificateAwardNotification',
+        'resolvePublishedCertificateParentUserIds',
+        'getTargetsForCategory',
+        'sendDirectTargetsNotification',
+        'markPublishedCertificateAwardNotificationProcessed',
+        'buildAwardNotificationDestination',
+        `${extractChunk('exports.notifyPublishedCertificateAward = functions.firestore', 'exports.notifyFeeAssigned = functions.firestore')}
+        return exports.notifyPublishedCertificateAward;`
+    )(
         exportsObject,
         functions,
         categories,
@@ -117,6 +131,7 @@ function buildTriggerHarness({
         resolvePublishedCertificateParentUserIds,
         getTargetsForCategory,
         sendDirectTargetsNotification,
+        markPublishedCertificateAwardNotificationProcessed,
         buildAwardNotificationDestination
     );
 
@@ -127,6 +142,7 @@ function buildTriggerHarness({
         resolvePublishedCertificateParentUserIds,
         getTargetsForCategory,
         sendDirectTargetsNotification,
+        markPublishedCertificateAwardNotificationProcessed,
         buildAwardNotificationDestination
     };
 }
@@ -153,7 +169,11 @@ describe('published certificate award helpers', () => {
         });
     });
 
-    it('claims the first published notification send with a transaction guard', async () => {
+    it('claims the first published notification send with a retry-safe transaction guard and marks it processed after send', async () => {
+        const certificateRef = {
+            path: 'teams/team-1/certificates/cert-1',
+            update: vi.fn(async () => null)
+        };
         const firestore = {
             collection: vi.fn(),
             runTransaction: vi.fn(async (handler) => {
@@ -162,16 +182,79 @@ describe('published certificate award helpers', () => {
                     update: vi.fn()
                 };
                 const result = await handler(transaction);
-                expect(transaction.update).toHaveBeenCalledWith({ path: 'teams/team-1/certificates/cert-1' }, {
-                    awardNotificationProcessedAt: 'SERVER_TIMESTAMP'
+                expect(transaction.update).toHaveBeenCalledWith(certificateRef, {
+                    awardNotificationProcessingEventId: 'event-1',
+                    awardNotificationProcessingStartedAt: 'SERVER_TIMESTAMP'
                 });
                 return result;
             })
         };
+        const admin = { firestore: { FieldValue: { serverTimestamp: vi.fn(() => 'SERVER_TIMESTAMP'), delete: vi.fn(() => 'DELETE_FIELD') } } };
+        const helpers = getAwardHelpers()(firestore, admin);
+
+        await expect(helpers.claimPublishedCertificateAwardNotification(certificateRef, 'event-1')).resolves.toBe(true);
+        await expect(helpers.markPublishedCertificateAwardNotificationProcessed(certificateRef, 'event-1')).resolves.toBeNull();
+        expect(certificateRef.update).toHaveBeenCalledWith({
+            awardNotificationProcessedAt: 'SERVER_TIMESTAMP',
+            awardNotificationProcessingEventId: 'DELETE_FIELD',
+            awardNotificationProcessingStartedAt: 'DELETE_FIELD',
+            awardNotificationProcessedEventId: 'event-1'
+        });
+    });
+
+    it('keeps the same publish event claimable across retries until processing completes', async () => {
+        const firestore = {
+            collection: vi.fn(),
+            runTransaction: vi.fn(async (handler) => handler({
+                get: vi.fn(async () => ({
+                    exists: true,
+                    data: () => ({
+                        status: 'published',
+                        awardNotificationProcessingEventId: 'event-1'
+                    })
+                })),
+                update: vi.fn()
+            }))
+        };
         const admin = { firestore: { FieldValue: { serverTimestamp: vi.fn(() => 'SERVER_TIMESTAMP') } } };
         const helpers = getAwardHelpers()(firestore, admin);
 
-        await expect(helpers.claimPublishedCertificateAwardNotification({ path: 'teams/team-1/certificates/cert-1' })).resolves.toBe(true);
+        await expect(helpers.claimPublishedCertificateAwardNotification({ path: 'teams/team-1/certificates/cert-1' }, 'event-1')).resolves.toBe(true);
+    });
+});
+
+
+describe('getTargetsForCategory', () => {
+    it('includes extra parent users when their eligibility comes only from parentPlayerKeys', async () => {
+        const getTargetsForCategory = getTargetsForCategoryFactory()(
+            ['awards'],
+            {
+                collection: vi.fn(() => ({
+                    where: vi.fn(() => ({
+                        get: vi.fn(async () => ({
+                            empty: false,
+                            docs: [{
+                                data: () => ({
+                                    uid: 'parent-1',
+                                    deviceId: 'device-1',
+                                    token: 'token-1'
+                                })
+                            }]
+                        }))
+                    }))
+                }))
+            },
+            vi.fn(async () => []),
+            vi.fn((category, user) => category === 'awards' && user.roles.includes('parent')),
+            vi.fn(async () => false),
+            vi.fn(async () => 0),
+            vi.fn(async () => []),
+            { logger: { warn: vi.fn() } }
+        );
+
+        await expect(getTargetsForCategory('team-1', 'awards', null, {}, [{ uid: 'parent-1', roles: ['parent'] }])).resolves.toEqual([
+            { uid: 'parent-1', deviceId: 'device-1', token: 'token-1', teamId: 'team-1' }
+        ]);
     });
 });
 
@@ -199,12 +282,16 @@ describe('notifyPublishedCertificateAward trigger', () => {
                 })
             }
         }, {
+            eventId: 'event-1',
             params: { teamId: 'team-1', certificateId: 'cert-1' }
         });
 
-        expect(harness.claimPublishedCertificateAwardNotification).toHaveBeenCalled();
+        expect(harness.claimPublishedCertificateAwardNotification).toHaveBeenCalledWith({ liveData }, 'event-1');
         expect(harness.resolvePublishedCertificateParentUserIds).toHaveBeenCalledWith('team-1', expect.objectContaining({ playerId: 'player-1' }));
-        expect(harness.getTargetsForCategory).toHaveBeenCalledWith('team-1', 'awards', null);
+        expect(harness.getTargetsForCategory).toHaveBeenCalledWith('team-1', 'awards', null, {}, [
+            { uid: 'parent-1', roles: ['parent'] },
+            { uid: 'parent-2', roles: ['parent'] }
+        ]);
         expect(harness.sendDirectTargetsNotification).toHaveBeenCalledWith(expect.objectContaining({
             category: 'awards',
             teamId: 'team-1',
@@ -217,6 +304,7 @@ describe('notifyPublishedCertificateAward trigger', () => {
                 { uid: 'parent-1', token: 'token-1', deviceId: 'device-1', teamId: 'team-1' }
             ]
         }));
+        expect(harness.markPublishedCertificateAwardNotificationProcessed).toHaveBeenCalledWith({ liveData }, 'event-1');
     });
 
     it('skips edits to already published certificates', async () => {
@@ -233,6 +321,7 @@ describe('notifyPublishedCertificateAward trigger', () => {
                 data: () => ({ status: 'published', playerId: 'player-1', awardTitle: 'Hustle Award' })
             }
         }, {
+            eventId: 'event-1',
             params: { teamId: 'team-1', certificateId: 'cert-1' }
         });
 
@@ -255,6 +344,7 @@ describe('notifyPublishedCertificateAward trigger', () => {
                 data: () => ({ status: 'published', playerId: 'player-1', awardTitle: 'Hustle Award' })
             }
         }, {
+            eventId: 'event-1',
             params: { teamId: 'team-1', certificateId: 'cert-1' }
         });
 

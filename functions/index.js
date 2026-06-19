@@ -3405,7 +3405,7 @@ async function resolvePublishedCertificateParentUserIds(teamId, certificate = {}
   return Array.from(userIds).filter(Boolean);
 }
 
-async function claimPublishedCertificateAwardNotification(certificateRef) {
+async function claimPublishedCertificateAwardNotification(certificateRef, eventId = '') {
   if (!certificateRef) return false;
 
   return firestore.runTransaction(async (transaction) => {
@@ -3420,11 +3420,36 @@ async function claimPublishedCertificateAwardNotification(certificateRef) {
       return false;
     }
 
+    const normalizedEventId = String(eventId || '').trim();
+    const processingEventId = String(data.awardNotificationProcessingEventId || '').trim();
+    if (processingEventId) {
+      return normalizedEventId && processingEventId === normalizedEventId;
+    }
+
     transaction.update(certificateRef, {
-      awardNotificationProcessedAt: admin.firestore.FieldValue.serverTimestamp()
+      awardNotificationProcessingEventId: normalizedEventId || 'pending',
+      awardNotificationProcessingStartedAt: admin.firestore.FieldValue.serverTimestamp()
     });
     return true;
   });
+}
+
+async function markPublishedCertificateAwardNotificationProcessed(certificateRef, eventId = '') {
+  if (!certificateRef) return null;
+
+  const normalizedEventId = String(eventId || '').trim();
+  const update = {
+    awardNotificationProcessedAt: admin.firestore.FieldValue.serverTimestamp(),
+    awardNotificationProcessingEventId: admin.firestore.FieldValue.delete(),
+    awardNotificationProcessingStartedAt: admin.firestore.FieldValue.delete()
+  };
+
+  if (normalizedEventId) {
+    update.awardNotificationProcessedEventId = normalizedEventId;
+  }
+
+  await certificateRef.update(update);
+  return null;
 }
 
 function buildAwardNotificationDestination({ teamId, certificateId }) {
@@ -3758,13 +3783,35 @@ async function backfillNotificationRecipientsForTeam(teamId, users) {
   return writeCount;
 }
 
-async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}) {
+async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
     .where(`categories.${category}`, '==', true)
     .get();
-  const users = await getCandidateUsersForTeam(teamId);
+  const candidateUsers = await getCandidateUsersForTeam(teamId);
+  const mergedUsers = new Map();
+  const mergeUser = (user) => {
+    const uid = String(user?.uid || '').trim();
+    if (!uid) return;
+    const entry = mergedUsers.get(uid) || { uid, roles: new Set() };
+    const roles = Array.isArray(user?.roles) ? user.roles : [];
+    roles.forEach((role) => {
+      const normalizedRole = String(role || '').trim();
+      if (normalizedRole) {
+        entry.roles.add(normalizedRole);
+      }
+    });
+    mergedUsers.set(uid, entry);
+  };
+
+  candidateUsers.forEach(mergeUser);
+  (Array.isArray(additionalUsers) ? additionalUsers : []).forEach(mergeUser);
+
+  const users = Array.from(mergedUsers.values()).map((entry) => ({
+    uid: entry.uid,
+    roles: Array.from(entry.roles)
+  }));
   const eligibleUsers = new Map(users
     .filter((user) => canReceiveCategoryNotification(category, user, audienceContext))
     .map((user) => [user.uid, user]));
@@ -5647,17 +5694,30 @@ exports.notifyPublishedCertificateAward = functions.firestore
       return null;
     }
 
-    const claimed = await claimPublishedCertificateAwardNotification(change.after.ref);
+    const eventId = String(context.eventId || '').trim();
+    const claimed = await claimPublishedCertificateAwardNotification(change.after.ref, eventId);
     if (!claimed) return null;
 
     const { teamId, certificateId } = context.params || {};
     const parentUserIds = await resolvePublishedCertificateParentUserIds(teamId, afterData);
-    if (!parentUserIds.length) return null;
+    if (!parentUserIds.length) {
+      await markPublishedCertificateAwardNotificationProcessed(change.after.ref, eventId);
+      return null;
+    }
 
-    const allAwardTargets = await getTargetsForCategory(teamId, 'awards', null);
+    const allAwardTargets = await getTargetsForCategory(
+      teamId,
+      'awards',
+      null,
+      {},
+      parentUserIds.map((uid) => ({ uid, roles: ['parent'] }))
+    );
     const parentUserIdSet = new Set(parentUserIds);
     const parentTargets = allAwardTargets.filter((target) => parentUserIdSet.has(target.uid));
-    if (!parentTargets.length) return null;
+    if (!parentTargets.length) {
+      await markPublishedCertificateAwardNotificationProcessed(change.after.ref, eventId);
+      return null;
+    }
 
     const destination = buildAwardNotificationDestination({ teamId, certificateId });
     const playerName = String(afterData.recipientName || afterData.playerName || 'A player').trim() || 'A player';
@@ -5673,6 +5733,7 @@ exports.notifyPublishedCertificateAward = functions.firestore
       linkOverride: destination.link,
       appRouteOverride: destination.appRoute
     });
+    await markPublishedCertificateAwardNotificationProcessed(change.after.ref, eventId);
     return null;
   });
 
