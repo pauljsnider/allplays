@@ -328,7 +328,7 @@ function sanitizeForTracking(value: unknown, keyHint = '', seen = new WeakSet<ob
     return '[Circular]';
   }
 
-  if (depth >= 6) {
+  if (depth >= 6 && keyHint !== 'frames') {
     return '[Truncated]';
   }
 

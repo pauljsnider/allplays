@@ -88,7 +88,7 @@ describe('app telemetry bridge', () => {
     expect(sentryMocks.captureException).toHaveBeenCalledWith(expect.any(TypeError));
   });
 
-  it('initializes only when runtime config provides a DSN and redacts sensitive payload fields', async () => {
+  it('initializes only when runtime config provides a DSN, redacts sensitive payload fields, and preserves stack frames', async () => {
     const telemetry = await import('./telemetry');
 
     expect(telemetry.initializeAppErrorTracking()).toBe(false);
@@ -121,6 +121,17 @@ describe('app telemetry bridge', () => {
         nested: {
           apiKey: 'private-key'
         }
+      },
+      exception: {
+        values: [{
+          stacktrace: {
+            frames: [{
+              filename: '/app/main.tsx',
+              function: 'renderHome',
+              lineno: 27
+            }]
+          }
+        }]
       }
     });
 
@@ -135,6 +146,17 @@ describe('app telemetry bridge', () => {
       nested: {
         apiKey: '[REDACTED]'
       }
+    });
+    expect(sanitized.exception).toEqual({
+      values: [{
+        stacktrace: {
+          frames: [{
+            filename: '/app/main.tsx',
+            function: 'renderHome',
+            lineno: 27
+          }]
+        }
+      }]
     });
   });
 
