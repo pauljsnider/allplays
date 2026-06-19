@@ -1,32 +1,64 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const dbMocks = vi.hoisted(() => ({
-    getAssignmentClaims: vi.fn(),
-    getGame: vi.fn(),
-    getGames: vi.fn(),
-    getPracticePacketCompletions: vi.fn(),
-    getPracticeSessions: vi.fn(),
-    getRsvps: vi.fn(),
-    getRsvpSummaries: vi.fn(),
-    getTeam: vi.fn(),
-    getTrackedCalendarEventUids: vi.fn(),
-    createRideOffer: vi.fn(),
-    claimAssignmentSlot: vi.fn(),
-    requestRideSpot: vi.fn(),
-    listRideOffersForEvent: vi.fn(),
-    updateRideRequestStatus: vi.fn(),
-    closeRideOffer: vi.fn(),
-    cancelRideRequest: vi.fn(),
-    releaseAssignmentClaim: vi.fn(),
-    submitRsvpForPlayer: vi.fn(),
-    upsertPracticePacketCompletion: vi.fn(),
-    updateGame: vi.fn(),
-    broadcastLiveEvent: vi.fn(),
-    postChatMessage: vi.fn(),
-    postSharedGameCancellationNotification: vi.fn()
-}));
+const dbMocks = vi.hoisted(() => {
+    const transactionSet = vi.fn();
+    const transactionGet = vi.fn();
+    return {
+        db: {},
+        doc: vi.fn((_db, ...segments) => ({ path: segments.filter(Boolean).join('/') })),
+        collection: vi.fn(),
+        collectionGroup: vi.fn(),
+        getDocs: vi.fn(),
+        query: vi.fn(),
+        runTransaction: vi.fn(async (_db, callback) => callback({
+            get: transactionGet,
+            set: transactionSet,
+            delete: vi.fn()
+        })),
+        where: vi.fn(),
+        increment: vi.fn((value) => ({ __increment: value })),
+        serverTimestamp: vi.fn(() => ({ __serverTimestamp: true })),
+        getAssignmentClaims: vi.fn(),
+        claimOpenOfficiatingSlot: vi.fn(),
+        getGame: vi.fn(),
+        getGames: vi.fn(),
+        getLiveEvents: vi.fn(),
+        getPracticePacketCompletions: vi.fn(),
+        getPracticeSession: vi.fn(),
+        getPracticeSessionByEvent: vi.fn(),
+        getPracticeSessions: vi.fn(),
+        getPlayers: vi.fn(),
+        getRsvpBreakdownByPlayer: vi.fn(),
+        getRsvps: vi.fn(),
+        getRsvpSummaries: vi.fn(),
+        getTeam: vi.fn(),
+        getTeams: vi.fn(),
+        addGame: vi.fn(),
+        addPractice: vi.fn(),
+        createRideOffer: vi.fn(),
+        claimAssignmentSlot: vi.fn(),
+        respondToOfficiatingAssignment: vi.fn(),
+        requestRideSpot: vi.fn(),
+        listRideOffersForEvent: vi.fn(),
+        updateRideRequestStatus: vi.fn(),
+        closeRideOffer: vi.fn(),
+        cancelRideRequest: vi.fn(),
+        releaseAssignmentClaim: vi.fn(),
+        submitRsvpForPlayer: vi.fn(),
+        upsertPracticePacketCompletion: vi.fn(),
+        updateGame: vi.fn(),
+        updatePracticeAttendance: vi.fn(),
+        updateTeam: vi.fn(),
+        broadcastLiveEvent: vi.fn(),
+        postChatMessage: vi.fn(),
+        postSharedGameCancellationNotification: vi.fn(),
+        cancelOccurrence: vi.fn(),
+        transactionGet,
+        transactionSet
+    };
+});
 
-vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../apps/app/src/lib/adapters/legacyScheduleDb', () => dbMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => ({
     loadProfileDocument: vi.fn(),
     saveProfileDocument: vi.fn()
@@ -83,13 +115,18 @@ const user = {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    dbMocks.getGame.mockResolvedValue({
+    const gameSnapshot = {
         id: 'game-1',
         status: 'scheduled',
         liveStatus: 'scheduled',
         liveHasData: false,
         period: 'Q2',
         liveClockMs: 321000
+    };
+    dbMocks.getGame.mockResolvedValue(gameSnapshot);
+    dbMocks.transactionGet.mockResolvedValue({
+        exists: () => true,
+        data: () => gameSnapshot
     });
     vi.stubGlobal('window', {
         setTimeout: globalThis.setTimeout.bind(globalThis),
@@ -125,8 +162,6 @@ describe('React app schedule score updates', () => {
     });
 
     it('publishes a live play-by-play score update event', async () => {
-        dbMocks.broadcastLiveEvent.mockResolvedValue({ id: 'event-1' });
-
         const payload = await publishLiveScoreUpdateEvent('team-1', 'game-1', {
             homeScore: 5,
             awayScore: 2
@@ -135,12 +170,15 @@ describe('React app schedule score updates', () => {
             awayScore: 2
         });
 
-        expect(dbMocks.updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+        expect(dbMocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({
+            homeScore: 5,
+            awayScore: 2,
+            scoreUpdatedBy: 'user-1',
             liveStatus: 'live',
             liveHasData: true,
             liveStartedAt: expect.any(Date)
-        }));
-        expect(dbMocks.broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+        }), { merge: true });
+        expect(dbMocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents/') }), expect.objectContaining({
             type: 'score_update',
             period: 'Q2',
             gameClockMs: 321000,
@@ -152,8 +190,18 @@ describe('React app schedule score updates', () => {
             createdBy: 'user-1',
             createdByName: 'Coach Pat'
         }));
-        expect(dbMocks.broadcastLiveEvent.mock.calls[0][2].createdAt).toBeInstanceOf(Date);
-        expect(payload).toEqual(dbMocks.broadcastLiveEvent.mock.calls[0][2]);
+        expect(payload.createdAt).toBeInstanceOf(Date);
+        expect(payload).toMatchObject({
+            type: 'score_update',
+            period: 'Q2',
+            gameClockMs: 321000,
+            homeScore: 5,
+            awayScore: 2,
+            previousHomeScore: 4,
+            previousAwayScore: 2,
+            createdBy: 'user-1',
+            createdByName: 'Coach Pat'
+        });
     });
 
     it('writes cancellation metadata and posts the legacy-style team chat notice', async () => {
