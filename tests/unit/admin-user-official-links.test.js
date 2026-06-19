@@ -86,4 +86,12 @@ describe('admin users official links', () => {
         expect(adminJs).toContain("officialFilter === 'officials'");
         expect(adminJs).toContain('inline-flex items-center rounded-full bg-emerald-100');
     });
+
+    it('reloads official links from the active team page when tabs request officials on demand', () => {
+        const adminJs = readSource('js/admin.js');
+
+        expect(adminJs).toContain('async function ensureCurrentPageOfficialsLoaded() {');
+        expect(adminJs).toContain('await loadOfficialUserLinks();');
+        expect(adminJs).not.toContain('await loadOfficialUserLinks(getCurrentTeamPage());');
+    });
 });
