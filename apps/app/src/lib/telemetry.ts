@@ -1,4 +1,7 @@
+import * as Sentry from '@sentry/browser';
+import type { ErrorEvent as SentryErrorEvent } from '@sentry/browser';
 import type { ReactErrorBoundaryReport } from '../components/ErrorBoundary';
+import { sanitizeErrorForLogging } from './nativeRestLogging';
 
 type TelemetryOptions = {
   flush?: boolean;
@@ -12,14 +15,45 @@ type AppTelemetryApi = {
   flush?: (keepalive?: boolean) => unknown;
 };
 
+type ErrorTrackingInitOptions = {
+  isProduction?: boolean;
+};
+
+type RuntimeConfig = {
+  errorTracking?: {
+    dsn?: string;
+    environment?: string;
+    release?: string;
+  };
+  errorTrackingDsn?: string;
+  errorTrackingEnvironment?: string;
+  errorTrackingRelease?: string;
+  sentryDsn?: string;
+  sentryEnvironment?: string;
+  sentryRelease?: string;
+  environment?: string;
+  release?: string;
+};
+
 declare global {
   interface Window {
     AllPlaysTelemetry?: AppTelemetryApi;
+    __ALLPLAYS_CONFIG__?: RuntimeConfig;
     __ALLPLAYS_REPORT_REACT_ERROR__?: (report: ReactErrorBoundaryReport) => void;
+    ALLPLAYS_ERROR_TRACKING_DSN?: string;
+    ALLPLAYS_ERROR_TRACKING_ENVIRONMENT?: string;
+    ALLPLAYS_ERROR_TRACKING_RELEASE?: string;
+    ALLPLAYS_SENTRY_DSN?: string;
+    ALLPLAYS_SENTRY_ENVIRONMENT?: string;
+    ALLPLAYS_SENTRY_RELEASE?: string;
+    ALLPLAYS_ENVIRONMENT?: string;
+    ALLPLAYS_RELEASE?: string;
   }
 }
 
 let telemetryPromise: Promise<AppTelemetryApi | null> | null = null;
+let errorTrackingInitialized = false;
+let globalErrorHandlersInstalled = false;
 
 export function startAppStartupTimer() {
   return createAppTimer('app startup', { stage: 'startup' });
@@ -48,19 +82,67 @@ export function recordAppUxTiming(label: string, startedAt: number, meta: Teleme
   });
 
   if (error) {
-    captureAppTelemetryError(label, error, {
+    captureHandledAppError(label, error, {
       durationMs,
       ...context
     });
   }
 }
 
-export function captureAppTelemetryError(label: string, error: unknown, context: TelemetryProperties = {}) {
+export function captureAppStartupFailure(error: unknown, context: TelemetryProperties = {}) {
+  captureAppTelemetryError('app startup failure', error, {
+    stage: 'startup',
+    ...context
+  }, { handled: false });
+}
+
+export function captureHandledAppError(label: string, error: unknown, context: TelemetryProperties = {}) {
+  captureAppTelemetryError(label, error, context, { handled: true });
+}
+
+export function captureAppTelemetryError(
+  label: string,
+  error: unknown,
+  context: TelemetryProperties = {},
+  options: { handled?: boolean } = {}
+) {
   captureAppTelemetryEvent('app_load_error', {
     label,
     ...context,
     ...summarizeError(error)
   }, { flush: true });
+
+  captureErrorTrackingException(label, error, context, options);
+}
+
+export function initializeAppErrorTracking(options: ErrorTrackingInitOptions = {}) {
+  if (errorTrackingInitialized) {
+    return true;
+  }
+
+  const config = resolveErrorTrackingConfig();
+  if (!config?.dsn) {
+    return false;
+  }
+
+  try {
+    Sentry.init({
+      dsn: config.dsn,
+      environment: config.environment,
+      release: config.release,
+      beforeSend(event) {
+        return sanitizeErrorTrackingEvent(event);
+      }
+    });
+    errorTrackingInitialized = true;
+    if (options.isProduction ?? import.meta.env.PROD) {
+      installGlobalErrorTrackingHandlers();
+    }
+    return true;
+  } catch (error) {
+    console.warn('[error-tracking] Failed to initialize:', sanitizeErrorForLogging(error));
+    return false;
+  }
 }
 
 export function installReactErrorTelemetry() {
@@ -73,7 +155,7 @@ export function installReactErrorTelemetry() {
       boundaryName: report.boundaryName,
       location: report.location,
       componentStackPresent: Boolean(report.errorInfo.componentStack)
-    });
+    }, { handled: true });
   };
 
   void ensureTelemetryPipeline();
@@ -121,6 +203,170 @@ function getTelemetryApi(): AppTelemetryApi | null {
   }
 
   return window.AllPlaysTelemetry ?? null;
+}
+
+function resolveErrorTrackingConfig() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const config = window.__ALLPLAYS_CONFIG__ || {};
+  const dsn = firstNonEmptyString(
+    config.errorTracking?.dsn,
+    config.errorTrackingDsn,
+    config.sentryDsn,
+    window.ALLPLAYS_ERROR_TRACKING_DSN,
+    window.ALLPLAYS_SENTRY_DSN
+  );
+
+  if (!dsn) {
+    return null;
+  }
+
+  return {
+    dsn,
+    environment: firstNonEmptyString(
+      config.errorTracking?.environment,
+      config.errorTrackingEnvironment,
+      config.sentryEnvironment,
+      config.environment,
+      window.ALLPLAYS_ERROR_TRACKING_ENVIRONMENT,
+      window.ALLPLAYS_SENTRY_ENVIRONMENT,
+      window.ALLPLAYS_ENVIRONMENT
+    ),
+    release: firstNonEmptyString(
+      config.errorTracking?.release,
+      config.errorTrackingRelease,
+      config.sentryRelease,
+      config.release,
+      window.ALLPLAYS_ERROR_TRACKING_RELEASE,
+      window.ALLPLAYS_SENTRY_RELEASE,
+      window.ALLPLAYS_RELEASE
+    )
+  };
+}
+
+function installGlobalErrorTrackingHandlers() {
+  if (globalErrorHandlersInstalled || typeof window === 'undefined') {
+    return;
+  }
+
+  globalErrorHandlersInstalled = true;
+
+  window.addEventListener('error', (event) => {
+    const error = event.error ?? new Error(event.message || 'Unhandled window error');
+    captureErrorTrackingException('window error', error, {
+      source: event.filename || '',
+      line: event.lineno || 0,
+      column: event.colno || 0
+    }, { handled: false });
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    captureErrorTrackingException('unhandled promise rejection', event.reason, {
+      reason: sanitizeForTracking(event.reason)
+    }, { handled: false });
+  });
+}
+
+function captureErrorTrackingException(
+  label: string,
+  error: unknown,
+  context: TelemetryProperties = {},
+  options: { handled?: boolean } = {}
+) {
+  if (!errorTrackingInitialized) {
+    return;
+  }
+
+  const normalizedError = normalizeError(error, label);
+  const sanitizedContext = sanitizeForTracking({ label, ...context });
+
+  Sentry.withScope((scope) => {
+    scope.setTag('allplays_error_label', label);
+    scope.setTag('allplays_error_handled', options.handled === false ? 'false' : 'true');
+    if (sanitizedContext && typeof sanitizedContext === 'object' && !Array.isArray(sanitizedContext)) {
+      scope.setContext('allplays', sanitizedContext as Record<string, unknown>);
+    }
+    Sentry.captureException(normalizedError);
+  });
+}
+
+function sanitizeErrorTrackingEvent(event: SentryErrorEvent) {
+  const sanitized = sanitizeForTracking(event);
+  return (sanitized && typeof sanitized === 'object') ? sanitized as SentryErrorEvent : event;
+}
+
+function normalizeError(error: unknown, fallbackMessage: string) {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  const message = getErrorMessage(error) || fallbackMessage;
+  const normalized = new Error(message);
+  const sanitizedCause = sanitizeForTracking(error);
+  if (sanitizedCause !== undefined) {
+    (normalized as Error & { cause?: unknown }).cause = sanitizedCause;
+  }
+  return normalized;
+}
+
+function sanitizeForTracking(value: unknown, keyHint = '', seen = new WeakSet<object>(), depth = 0): unknown {
+  if (value == null) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    return shouldRedactKey(keyHint) ? '[REDACTED]' : redactSensitiveText(value);
+  }
+
+  if (typeof value !== 'object') {
+    return value;
+  }
+
+  if (seen.has(value)) {
+    return '[Circular]';
+  }
+
+  if (depth >= 6) {
+    return '[Truncated]';
+  }
+
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeForTracking(entry, keyHint, seen, depth + 1));
+  }
+
+  if (value instanceof Error) {
+    const sanitizedError: Record<string, unknown> = {
+      name: sanitizeForTracking(value.name, 'name', seen, depth + 1),
+      message: sanitizeForTracking(value.message, 'message', seen, depth + 1)
+    };
+
+    Object.entries(value as Error & Record<string, unknown>).forEach(([key, entry]) => {
+      sanitizedError[key] = sanitizeForTracking(entry, key, seen, depth + 1);
+    });
+
+    return sanitizedError;
+  }
+
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, entry]) => {
+    acc[key] = shouldRedactKey(key)
+      ? '[REDACTED]'
+      : sanitizeForTracking(entry, key, seen, depth + 1);
+    return acc;
+  }, {});
+}
+
+function shouldRedactKey(key: string) {
+  return /(authorization|token|secret|password|cookie|api[-_]?key)/i.test(key);
+}
+
+function redactSensitiveText(value: string) {
+  return value
+    .replace(/Bearer\s+[^\s"',}]+/gi, 'Bearer [REDACTED]')
+    .replace(/([?&](?:token|access_token|refresh_token|id_token|auth|authorization|apikey|api_key)=)[^&\s]+/gi, '$1[REDACTED]');
 }
 
 function summarizeError(error: unknown) {
@@ -204,4 +450,13 @@ function truncate(value: string, limit: number) {
     return trimmed;
   }
   return `${trimmed.slice(0, limit - 1)}…`;
+}
+
+function firstNonEmptyString(...values: Array<string | undefined>) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
