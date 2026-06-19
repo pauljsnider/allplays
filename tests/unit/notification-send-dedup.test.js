@@ -116,6 +116,7 @@ function buildSendCategoryNotificationHarness({
         cleanupCount: 0,
         failureCount: 0
     }));
+    const writeNotificationAuditRecord = vi.fn(async () => {});
     const functions = {
         logger: {
             info: vi.fn()
@@ -133,6 +134,7 @@ function buildSendCategoryNotificationHarness({
         'WEB_PUSH_NOTIFICATION_ASSETS',
         'pruneInvalidTokens',
         'writeNotificationInboxRecords',
+        'writeNotificationAuditRecord',
         'functions',
         `${sendSource}\nreturn sendCategoryNotification;`
     );
@@ -148,6 +150,7 @@ function buildSendCategoryNotificationHarness({
         { icon: '/img/logo_small.png', badge: '/img/logo_small.png' },
         pruneInvalidTokens,
         writeNotificationInboxRecords,
+        writeNotificationAuditRecord,
         functions
     );
 
@@ -161,6 +164,7 @@ function buildSendCategoryNotificationHarness({
         buildNotificationDeliveryOptions,
         pruneInvalidTokens,
         writeNotificationInboxRecords,
+        writeNotificationAuditRecord,
         functions
     };
 }
