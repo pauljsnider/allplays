@@ -14,6 +14,20 @@ import { resolveLiveStatConfig } from '../../../../js/live-game-state.js';
 import { generateGameInsights } from '../../../../js/post-game-insights.js';
 import { hasPlayerProfileParticipation } from '../../../../js/player-profile-stats.js';
 import { resolvePostGameTeamStatFields } from '../../../../js/post-game-stat-editor.js';
+import {
+  mapGameReportAggregatedStatsRecord,
+  mapGameReportGameRecord,
+  mapGameReportPlayerRecords,
+  mapGameReportTeamRecord,
+  mapGameReportTeamStatsRecord
+} from './firestore/mappers';
+import type {
+  GameReportGameFirestoreRecord,
+  GameReportPlayerFirestoreRecord,
+  GameReportStatsRecord,
+  GameReportTeamFirestoreRecord,
+  GameReportTeamStatsFirestoreRecord
+} from './firestore/types';
 
 export type GameReportInsight = {
   title: string;
@@ -26,7 +40,7 @@ export type GameReportPlayerRow = {
   playerName: string;
   number: string;
   photoUrl?: string;
-  stats: Record<string, any>;
+  stats: GameReportStatsRecord;
   timeMs: number;
   didNotPlay: boolean;
   participated: boolean;
@@ -39,7 +53,7 @@ export type GameReportOpponentRow = {
   name: string;
   number: string;
   photoUrl?: string;
-  stats: Record<string, any>;
+  stats: GameReportStatsRecord;
 };
 
 export type GameReportPlay = {
@@ -61,8 +75,8 @@ export type GameReportHighlightClip = {
 };
 
 export type GameReportData = {
-  team: Record<string, any>;
-  game: Record<string, any>;
+  team: GameReportTeamFirestoreRecord;
+  game: GameReportGameFirestoreRecord;
   summary: string;
   statKeys: string[];
   statLabels: Record<string, string>;
@@ -75,7 +89,7 @@ export type GameReportData = {
   opponentRows: GameReportOpponentRow[];
   teamStatKeys: string[];
   teamStatLabels: Record<string, string>;
-  teamStats: Record<string, any>;
+  teamStats: GameReportTeamStatsFirestoreRecord;
   statSheetPhotoUrl: string;
   highlightClips: GameReportHighlightClip[];
   plays: GameReportPlay[];
@@ -89,7 +103,7 @@ export type GameReportData = {
 };
 
 type AggregatedStatsResult = {
-  statsMap: Record<string, Record<string, any>>;
+  statsMap: Record<string, GameReportStatsRecord>;
   timeMap: Record<string, number>;
   didNotPlayMap: Record<string, boolean>;
   participatedMap: Record<string, boolean>;
@@ -120,7 +134,7 @@ function normalizeDate(value: any): Date | null {
 
 async function loadAggregatedStats(teamId: string, gameId: string): Promise<AggregatedStatsResult> {
   const snapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
-  const statsMap: Record<string, Record<string, any>> = {};
+  const statsMap: Record<string, GameReportStatsRecord> = {};
   const timeMap: Record<string, number> = {};
   const didNotPlayMap: Record<string, boolean> = {};
   const participatedMap: Record<string, boolean> = {};
@@ -129,14 +143,15 @@ async function loadAggregatedStats(teamId: string, gameId: string): Promise<Aggr
   const recordedPlayerIds = new Set<string>();
 
   snapshot.forEach((docSnap: any) => {
-    const data = docSnap.data() || {};
-    recordedPlayerIds.add(String(docSnap.id || ''));
-    statsMap[docSnap.id] = data.stats || {};
-    timeMap[docSnap.id] = toNumber(data.timeMs);
-    didNotPlayMap[docSnap.id] = data.didNotPlay === true;
-    participatedMap[docSnap.id] = data.participated === true;
-    participationStatusMap[docSnap.id] = String(data.participationStatus || '');
-    participationSourceMap[docSnap.id] = String(data.participationSource || '');
+    const playerId = String(docSnap.id || '');
+    const data = mapGameReportAggregatedStatsRecord(playerId, docSnap.data());
+    recordedPlayerIds.add(playerId);
+    statsMap[playerId] = data.stats;
+    timeMap[playerId] = data.timeMs;
+    didNotPlayMap[playerId] = data.didNotPlay;
+    participatedMap[playerId] = data.participated;
+    participationStatusMap[playerId] = data.participationStatus;
+    participationSourceMap[playerId] = data.participationSource;
   });
 
   return { statsMap, timeMap, didNotPlayMap, participatedMap, participationStatusMap, participationSourceMap, recordedPlayerIds };
@@ -152,7 +167,7 @@ function normalizePlay(entry: any): GameReportPlay {
   };
 }
 
-function normalizeOpponentRows(opponentStats: Record<string, any> = {}): GameReportOpponentRow[] {
+function normalizeOpponentRows(opponentStats: GameReportGameFirestoreRecord['opponentStats'] = {}): GameReportOpponentRow[] {
   return Object.entries(opponentStats || {}).map(([id, rawStats]) => {
     const { name, number, notes, photoUrl, ...stats } = rawStats || {};
     void notes;
@@ -161,12 +176,12 @@ function normalizeOpponentRows(opponentStats: Record<string, any> = {}): GameRep
       name: String(name || 'Opponent Player'),
       number: String(number || '-'),
       photoUrl: photoUrl ? String(photoUrl) : undefined,
-      stats
+      stats: mapGameReportTeamStatsRecord(stats)
     };
   });
 }
 
-function normalizeHighlightClips(teamId: string, gameId: string, game: Record<string, any>): GameReportHighlightClip[] {
+function normalizeHighlightClips(teamId: string, gameId: string, game: GameReportGameFirestoreRecord): GameReportHighlightClip[] {
   return (normalizeGameRecapHighlightClips(game) || []).slice(0, 8).map((clip: any) => {
     const startMs = Number.isFinite(Number(clip.startMs)) ? Number(clip.startMs) : null;
     const endMs = Number.isFinite(Number(clip.endMs)) ? Number(clip.endMs) : null;
@@ -190,17 +205,21 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     throw new Error('Team and game are required.');
   }
 
-  const [team, game, players] = await Promise.all([
+  const [rawTeam, rawGame, rawPlayers] = await Promise.all([
     getTeam(teamId, { includeInactive: true }),
     getGame(teamId, gameId),
     getPlayers(teamId, { includeInactive: true })
   ]);
 
-  if (!game) {
+  const team = mapGameReportTeamRecord(rawTeam, teamId);
+  const game = mapGameReportGameRecord(rawGame, gameId);
+  const players = mapGameReportPlayerRecords(rawPlayers);
+
+  if (!rawGame) {
     throw new Error('Game not found.');
   }
 
-  const [configs, aggregateResult, rawEvents, teamStats] = await Promise.all([
+  const [configs, aggregateResult, rawEvents, rawTeamStats] = await Promise.all([
     getConfigs(teamId).catch(() => []),
     loadAggregatedStats(teamId, gameId).catch((): AggregatedStatsResult => ({
       statsMap: {},
@@ -214,6 +233,7 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     getGameEvents(teamId, gameId, { limit: 100 }).catch(() => []),
     getTeamStatsForGame(teamId, gameId).catch(() => ({}))
   ]);
+  const teamStats = mapGameReportTeamStatsRecord(rawTeamStats);
 
   const resolvedConfig = resolveLiveStatConfig({
     configs,
@@ -260,7 +280,7 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     events: insightEvents
   });
 
-  const safePlayers = Array.isArray(players) ? players : [];
+  const safePlayers: GameReportPlayerFirestoreRecord[] = Array.isArray(players) ? players : [];
   const playerRows = safePlayers.map((player: any) => ({
     playerId: String(player.id || ''),
     playerName: String(player.name || 'Player'),
@@ -287,7 +307,7 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
   })).filter((entry) => entry.insights.length > 0);
 
   return {
-    team: team || { id: teamId },
+    team,
     game,
     summary: String(game.summary || ''),
     statKeys,
@@ -301,7 +321,7 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     opponentRows: normalizeOpponentRows(opponentStats),
     teamStatKeys,
     teamStatLabels,
-    teamStats: teamStats || {},
+    teamStats,
     statSheetPhotoUrl: game.statSheetPhotoUrl ? String(game.statSheetPhotoUrl) : '',
     highlightClips: normalizeHighlightClips(teamId, gameId, game),
     plays,
