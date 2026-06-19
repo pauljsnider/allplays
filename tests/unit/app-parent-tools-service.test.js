@@ -169,6 +169,17 @@ vi.mock('../../apps/app/src/lib/authService', () => authMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../js/stripe-service.js', () => stripeMocks);
+vi.mock('@sentry/browser', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setLevel: vi.fn(),
+        setContext: vi.fn(),
+        setExtra: vi.fn(),
+        setFingerprint: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
 
 import {
     addParentTeamMediaLink,
