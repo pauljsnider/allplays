@@ -9,7 +9,7 @@ describe('team email draft composer', () => {
     it('pins the fresh db cache-busting version for team chat draft helpers', () => {
         const html = readRepoFile('team-chat.html');
 
-        expect(html).toContain("from './js/db.js?v=51';");
+        expect(html).toContain("from './js/db.js?v=52';");
     });
 
     it('wires coach/admin email drafts into team chat', () => {
