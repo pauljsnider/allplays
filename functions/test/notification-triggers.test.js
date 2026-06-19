@@ -240,7 +240,14 @@ test('notifyFeeMarkedPaid sends fees notifications to payer and staff and record
 
     try {
         const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/recipient-2');
-        const change = makeChange(ref, { status: 'pending' }, { status: 'paid', feeTitle: 'Tournament dues', userId: 'parent-1' });
+        const change = makeChange(ref, { status: 'pending', amountPaidCents: 0 }, {
+            status: 'paid',
+            feeTitle: 'Tournament dues',
+            userId: 'parent-1',
+            parentName: 'Pat Parent',
+            amountPaidCents: 2500,
+            manualPayment: { amountPaidCents: 2500 }
+        });
         const context = { params: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-2' } };
 
         const result = await moduleExports.notifyFeeMarkedPaid(change, context);
@@ -248,8 +255,54 @@ test('notifyFeeMarkedPaid sends fees notifications to payer and staff and record
         assert.equal(result, null);
         assert.equal(env.messagingCalls.length, 2);
         assert.deepEqual(env.messagingCalls.map((call) => call.tokens.length).sort(), [1, 2]);
+        const payerNotification = env.messagingCalls.find((call) => call.tokens.includes('parent-token'));
+        const staffNotification = env.messagingCalls.find((call) => call.tokens.includes('coach-token'));
+        assert.equal(payerNotification.title, 'Payment received: Tournament dues');
+        assert.equal(payerNotification.body, 'We received your $25.00 payment. Thank you!');
+        assert.equal(staffNotification.title, 'Fee paid: Tournament dues');
+        assert.equal(staffNotification.body, 'Pat Parent paid $25.00.');
         assert.equal(env.auditWrites.length, 2);
         assert.deepEqual(env.auditWrites.map((entry) => entry.value.category), ['fees', 'fees']);
+    } finally {
+        cleanup();
+    }
+});
+
+
+test('notifyFeeMarkedPaid avoids payment wording when a credit marks the fee as paid', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
+        parentUserIds: ['parent-1'],
+        authUsersByEmail: { 'assistant@example.com': 'coach-2' },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } },
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { fees: true } },
+            { uid: 'coach-2', deviceId: 'assistant-device', token: 'assistant-token', categories: { fees: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/recipient-3');
+        const change = makeChange(ref, { status: 'pending', amountPaidCents: 2500 }, {
+            status: 'paid',
+            feeTitle: 'Tournament dues',
+            userId: 'parent-1',
+            parentName: 'Pat Parent',
+            amountPaidCents: 2500,
+            amountDueCents: 2500
+        });
+        const context = { params: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-3' } };
+
+        const result = await moduleExports.notifyFeeMarkedPaid(change, context);
+
+        assert.equal(result, null);
+        assert.equal(env.messagingCalls.length, 2);
+        const payerNotification = env.messagingCalls.find((call) => call.tokens.includes('parent-token'));
+        const staffNotification = env.messagingCalls.find((call) => call.tokens.includes('coach-token'));
+        assert.equal(payerNotification.title, 'Fee paid: Tournament dues');
+        assert.equal(payerNotification.body, 'Your fee balance is now marked as paid.');
+        assert.equal(staffNotification.title, 'Fee paid: Tournament dues');
+        assert.equal(staffNotification.body, "Pat Parent's fee balance is now marked as paid.");
     } finally {
         cleanup();
     }

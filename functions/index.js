@@ -4318,7 +4318,7 @@ async function sendFeeUnpaidDueReminders() {
     const recipientId = pathParts[5];
     if (!teamId) return null;
     const title = data.feeTitle || data.title || 'Team fee due soon';
-    const amountLabel = formatFeeReminderAmount(getTeamFeeBalanceCents(data), data.currency || 'USD');
+    const amountLabel = formatMoneyFromCents(getTeamFeeBalanceCents(data), data.currency || 'USD');
 
     try {
       const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, data);
@@ -4357,7 +4357,7 @@ exports.sendFeeUnpaidDueReminders = functions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sendFeeUnpaidDueReminders());
 
-function formatFeeReminderAmount(amountCents, currency = 'USD') {
+function formatMoneyFromCents(amountCents, currency = 'USD') {
   const cents = Math.max(0, Math.round(Number(amountCents || 0)));
   const normalizedCurrency = String(currency || 'USD').trim().toUpperCase() || 'USD';
   try {
@@ -4368,6 +4368,41 @@ function formatFeeReminderAmount(amountCents, currency = 'USD') {
   } catch (error) {
     return `$${(cents / 100).toFixed(2)}`;
   }
+}
+
+function getFeePaymentAmountCents(before = {}, after = {}) {
+  const explicitAmount = Number(
+    after.stripePaymentAmountCents
+    ?? after.manualPayment?.amountPaidCents
+    ?? after.receiptMetadata?.amountPaidCents
+    ?? after.adminBilling?.amountPaidCents
+  );
+  if (Number.isFinite(explicitAmount) && explicitAmount > 0) {
+    return Math.round(explicitAmount);
+  }
+
+  const afterPaid = Number(after.paidAmountCents ?? after.amountPaidCents ?? after.totalPaidCents ?? 0);
+  const beforePaid = Number(before.paidAmountCents ?? before.amountPaidCents ?? before.totalPaidCents ?? 0);
+  if (Number.isFinite(afterPaid) && Number.isFinite(beforePaid) && afterPaid > beforePaid) {
+    return Math.round(afterPaid - beforePaid);
+  }
+
+  return 0;
+}
+
+function getFeePayerIdentity(recipient = {}) {
+  return [
+    recipient.parentName,
+    recipient.payerName,
+    recipient.receiptMetadata?.receiptName,
+    recipient.receiptMetadata?.receiptEmail,
+    recipient.parentEmail,
+    recipient.guardianName,
+    recipient.guardianEmail,
+    recipient.userDisplayName,
+    recipient.userEmail,
+    recipient.email
+  ].map((value) => String(value || '').trim()).find(Boolean) || 'A parent';
 }
 
 function normalizeTeamChatConversationId(value) {
@@ -4946,20 +4981,14 @@ exports.notifyFeeMarkedPaid = functions.firestore
     const { teamId, batchId, recipientId } = context.params;
     const title = String(after.feeTitle || after.title || 'Team fee').trim();
     const payerUserId = String(after.userId || after.parentUserId || '').trim() || null;
-    const encodedTeamId = encodeURIComponent(teamId);
-    const encodedBatchId = batchId ? encodeURIComponent(batchId) : '';
-    const staffFeeBaseRoute = encodedBatchId
-      ? `/teams/${encodedTeamId}/fees/${encodedBatchId}`
-      : `/teams/${encodedTeamId}/fees`;
-    const staffFeeParams = new URLSearchParams();
-    if (recipientId) {
-      staffFeeParams.set('recipientId', recipientId);
-    }
-    const staffFeeQuery = staffFeeParams.toString();
-    const staffFeeDestination = {
-      appRoute: `${staffFeeBaseRoute}${staffFeeQuery ? `?${staffFeeQuery}` : ''}`,
-      link: `https://allplays.ai/app/#${staffFeeBaseRoute}${staffFeeQuery ? `?${staffFeeQuery}` : ''}`
-    };
+    const staffFeeDestination = buildStaffFeeNotificationDestination({ teamId, batchId, recipientId });
+    const paymentAmountCents = getFeePaymentAmountCents(before, after);
+    const paymentAmountDisplay = formatMoneyFromCents(
+      paymentAmountCents,
+      after.currency || after.receiptMetadata?.currency || 'USD'
+    );
+    const payerIdentity = getFeePayerIdentity(after);
+    const wasPaymentRecorded = paymentAmountCents > 0;
 
     const [allFeeTargets, candidateUsers] = await Promise.all([
       getTargetsForCategory(teamId, 'fees', null),
@@ -4978,8 +5007,10 @@ exports.notifyFeeMarkedPaid = functions.firestore
         promises.push(sendDirectTargetsNotification({
           targets: payerTargets,
           category: 'fees',
-          title: `Fee paid: ${title}`,
-          body: 'Your payment has been received. Thank you!',
+          title: wasPaymentRecorded ? `Payment received: ${title}` : `Fee paid: ${title}`,
+          body: wasPaymentRecorded
+            ? `We received your ${paymentAmountDisplay} payment. Thank you!`
+            : 'Your fee balance is now marked as paid.',
           teamId
         }));
       }
@@ -4990,8 +5021,10 @@ exports.notifyFeeMarkedPaid = functions.firestore
       promises.push(sendDirectTargetsNotification({
         targets: staffTargets,
         category: 'fees',
-        title: `Fee marked paid: ${title}`,
-        body: 'A team fee has been marked as paid.',
+        title: `Fee paid: ${title}`,
+        body: wasPaymentRecorded
+          ? `${payerIdentity} paid ${paymentAmountDisplay}.`
+          : `${payerIdentity}'s fee balance is now marked as paid.`,
         teamId,
         batchId,
         recipientId,
@@ -5045,7 +5078,7 @@ exports.notifyFeeAssigned = functions.firestore
 
     const title = String(data.feeTitle || data.title || 'Team fee').trim();
     const amountCents = Number(data.amountCents || data.feeAmountCents || 0);
-    const amountDisplay = amountCents > 0 ? ` ($${(amountCents / 100).toFixed(2)})` : '';
+    const amountDisplay = amountCents > 0 ? ` (${formatMoneyFromCents(amountCents, data.currency || 'USD')})` : '';
 
     await sendDirectTargetsNotification({
       targets: payerTargets,
