@@ -171,8 +171,8 @@ test('getTargetsForCategory falls back to legacy resolution and backfills recipi
                 env.dedupWrites
                     .filter((write) => write.path.includes('/notificationRecipients/'))
                     .map((write) => write.path)
-                    .sort()
-            , [
+                    .sort(),
+                [
                 'teams/team-1/notificationRecipients/coach-1__coach-device',
                 'teams/team-1/notificationRecipients/parent-1__parent-device'
             ]);

@@ -9,7 +9,7 @@
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "test": "node --test test",
+    "test": "node --test test/*.test.cjs test/registration-checkout-retry-capacity.test.js test/ssrf.test.js",
     "test:notifications": "node ../node_modules/vitest/vitest.mjs run test/send-category-notification.test.js test/send-category-notification-load.test.js test/notification-triggers.test.js --environment node"
   },
   "dependencies": {
