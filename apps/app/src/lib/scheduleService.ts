@@ -820,27 +820,34 @@ type PendingLivePublishOperation =
 
 const pendingLivePublishQueueStorageKey = 'allplays.pendingLivePublishQueue.v1';
 const liveGameSnapshotStorageKey = 'allplays.liveGameSnapshots.v1';
-const livePublishLocks = new Map<string, { active: boolean }>();
+const livePublishLocks = new Map<string, { active: boolean; waiters: Array<() => void> }>();
 let livePublishQueueFlushPromise: Promise<void> | null = null;
 let livePublishQueueListenerRegistered = false;
 
 function getLivePublishLock(key: string) {
   if (!livePublishLocks.has(key)) {
-    livePublishLocks.set(key, { active: false });
+    livePublishLocks.set(key, { active: false, waiters: [] });
   }
   return livePublishLocks.get(key)!;
 }
 
 async function withLivePublishLock<T>(key: string, work: () => Promise<T>) {
   const lock = getLivePublishLock(key);
-  while (lock.active) {
-    await Promise.resolve();
+  if (lock.active) {
+    await new Promise<void>((resolve) => {
+      lock.waiters.push(resolve);
+    });
   }
   lock.active = true;
   try {
     return await work();
   } finally {
-    lock.active = false;
+    const next = lock.waiters.shift();
+    if (next) {
+      next();
+    } else {
+      lock.active = false;
+    }
   }
 }
 
@@ -1034,10 +1041,9 @@ async function loadLiveScoreIntegrityState(teamId: string, gameId: string) {
 function resolveScoreFromIntegrityState(game: Record<string, any> | null | undefined, integrityState: { hasScoringEvents: boolean; homeScore: number; awayScore: number } | null) {
   const liveHome = normalizeGameScoreValue(game?.homeScore);
   const liveAway = normalizeGameScoreValue(game?.awayScore);
-  if (!integrityState?.hasScoringEvents) {
-    return { homeScore: liveHome, awayScore: liveAway, reconciled: false };
-  }
-  if (integrityState.homeScore === liveHome && integrityState.awayScore === liveAway) {
+  const hasPersistedLiveScore = game?.homeScore !== null && game?.homeScore !== undefined && game?.homeScore !== ''
+    && game?.awayScore !== null && game?.awayScore !== undefined && game?.awayScore !== '';
+  if (!integrityState?.hasScoringEvents || hasPersistedLiveScore) {
     return { homeScore: liveHome, awayScore: liveAway, reconciled: false };
   }
   return {
@@ -2891,6 +2897,26 @@ async function runNativeScoreUpdatePublish(
   throw new Error('Unable to publish live score update.');
 }
 
+export async function flushPendingLivePublishOperations(
+  queue: PendingLivePublishOperation[],
+  processor: (operation: PendingLivePublishOperation) => Promise<void>
+) {
+  const remaining: PendingLivePublishOperation[] = [];
+  for (let index = 0; index < queue.length; index += 1) {
+    const operation = queue[index];
+    try {
+      await processor(operation);
+    } catch (error) {
+      remaining.push(operation);
+      if (isNativeOfflineError(error)) {
+        remaining.push(...queue.slice(index + 1));
+        break;
+      }
+    }
+  }
+  return remaining;
+}
+
 async function flushPendingLivePublishQueue() {
   if (!isNativeRuntime()) return;
   if (livePublishQueueFlushPromise) return livePublishQueueFlushPromise;
@@ -2898,33 +2924,27 @@ async function flushPendingLivePublishQueue() {
   livePublishQueueFlushPromise = (async () => {
     const queue = readPendingLivePublishQueue();
     if (!queue.length) return;
-    const remaining: PendingLivePublishOperation[] = [];
-    for (const operation of queue) {
-      try {
-        if (operation.kind === 'score_update') {
-          await runNativeScoreUpdatePublish(
-            operation.teamId,
-            operation.gameId,
-            operation.score,
-            operation.user as AuthUser,
-            operation.previousScore,
-            new Date(operation.createdAt)
-          );
-        } else {
-          await runNativePlayerGameStatWrite(
-            operation.teamId,
-            operation.gameId,
-            operation.playerId,
-            operation.stat,
-            operation.user as AuthUser,
-            new Date(operation.createdAt)
-          );
-        }
-      } catch (error) {
-        remaining.push(operation, ...queue.slice(queue.indexOf(operation) + 1));
-        if (isNativeOfflineError(error)) break;
+    const remaining = await flushPendingLivePublishOperations(queue, async (operation) => {
+      if (operation.kind === 'score_update') {
+        await runNativeScoreUpdatePublish(
+          operation.teamId,
+          operation.gameId,
+          operation.score,
+          operation.user as AuthUser,
+          operation.previousScore,
+          new Date(operation.createdAt)
+        );
+        return;
       }
-    }
+      await runNativePlayerGameStatWrite(
+        operation.teamId,
+        operation.gameId,
+        operation.playerId,
+        operation.stat,
+        operation.user as AuthUser,
+        new Date(operation.createdAt)
+      );
+    });
     writePendingLivePublishQueue(remaining);
   })().finally(() => {
     livePublishQueueFlushPromise = null;

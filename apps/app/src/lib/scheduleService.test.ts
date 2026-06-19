@@ -119,7 +119,7 @@ import { getNativeAuthIdToken } from './authService';
 import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, flushPendingLivePublishOperations, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
@@ -129,6 +129,8 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleHelpers");
   expect(scheduleServiceSource).toContain("./adapters/legacyAvailability");
+  expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
+  expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");
   expect(scheduleEventDetailSource).toContain("../lib/adapters/legacyScheduleHelpers");
 });
@@ -476,6 +478,48 @@ describe('live score publishing', () => {
     });
   });
 
+  it('keeps the persisted live score when tracker totals are partial', async () => {
+    vi.mocked(getDocs).mockResolvedValue({
+      docs: [
+        {
+          id: 'tracker-1',
+          data: () => ({
+            undoData: {
+              type: 'stat',
+              statKey: 'pts',
+              value: 2,
+              isOpponent: false
+            }
+          })
+        }
+      ]
+    } as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ homeScore: 10, awayScore: 8, period: 'Q3', liveClockMs: 245000 })
+      })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4 } }) });
+
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts',
+      value: 2,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] });
+
+    expect(result).toMatchObject({
+      homeScore: 12,
+      awayScore: 8,
+      playerStatTotal: 6
+    });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({
+      homeScore: 12,
+      awayScore: 8
+    }), { merge: true });
+  });
+
   it('rejects score broadcasts after the game is final', async () => {
     mocks.transactionGet.mockReset();
     mocks.transactionGet.mockResolvedValueOnce({ exists: () => true, data: () => ({ id: 'game-1', status: 'completed', liveStatus: 'completed' }) });
@@ -487,10 +531,25 @@ describe('live score publishing', () => {
 
 describe('native live publishing fallbacks', () => {
   const user = { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] };
+  let localStorageState: Record<string, string>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    localStorageState = {};
+    (globalThis as any).window = {
+      location: { protocol: 'capacitor:' },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem: vi.fn((key: string) => (Object.prototype.hasOwnProperty.call(localStorageState, key) ? localStorageState[key] : null)),
+        setItem: vi.fn((key: string, value: string) => {
+          localStorageState[key] = String(value);
+        }),
+        removeItem: vi.fn((key: string) => {
+          delete localStorageState[key];
+        })
+      }
+    } as any;
     (globalThis as any).fetch = vi.fn();
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
   });
@@ -590,6 +649,43 @@ describe('native live publishing fallbacks', () => {
       })
     });
     expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it('keeps only failed queued publishes after a partial flush', async () => {
+    const queue = [
+      {
+        id: 'pending-score-1',
+        kind: 'score_update',
+        teamId: 'team-1',
+        gameId: 'game-1',
+        score: { homeScore: 11, awayScore: 8 },
+        user: { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com' },
+        createdAt: '2026-06-19T16:00:00.000Z'
+      },
+      {
+        id: 'pending-score-2',
+        kind: 'score_update',
+        teamId: 'team-1',
+        gameId: 'game-1',
+        score: { homeScore: 13, awayScore: 8 },
+        user: { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com' },
+        createdAt: '2026-06-19T16:00:01.000Z'
+      }
+    ] as any;
+    const processor = vi.fn(async (operation: any) => {
+      if (operation.id === 'pending-score-1') {
+        const error = new Error('server validation failed') as Error & { status?: number };
+        error.status = 500;
+        throw error;
+      }
+    });
+
+    const remaining = await flushPendingLivePublishOperations(queue, processor);
+
+    expect(processor).toHaveBeenCalledTimes(2);
+    expect(remaining).toEqual([
+      expect.objectContaining({ id: 'pending-score-1', kind: 'score_update' })
+    ]);
   });
 });
 
