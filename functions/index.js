@@ -3308,9 +3308,10 @@ function buildStaffFeeNotificationDestination({ teamId, batchId = null, recipien
 function buildPracticePacketNotificationDestination({ teamId, eventId = null, sessionId = null }) {
   const encodedTeamId = encodeURIComponent(teamId);
   const effectiveEventId = String(eventId || sessionId || '').trim();
+  const packetSectionQuery = 'section=game';
   const appRoute = effectiveEventId
-    ? `/schedule/${encodedTeamId}/${encodeURIComponent(effectiveEventId)}`
-    : `/schedule?teamId=${encodedTeamId}`;
+    ? `/schedule/${encodedTeamId}/${encodeURIComponent(effectiveEventId)}?${packetSectionQuery}`
+    : `/schedule?teamId=${encodedTeamId}&${packetSectionQuery}`;
   return {
     appRoute,
     link: `https://allplays.ai/app/#${appRoute}`
@@ -3320,6 +3321,84 @@ function buildPracticePacketNotificationDestination({ teamId, eventId = null, se
 function getPracticePacketNotificationLabel(session = {}) {
   const sessionTitle = String(session?.title || session?.eventTitle || '').trim();
   return sessionTitle ? `home packet for ${sessionTitle}` : 'home packet';
+}
+
+function coercePracticePacketDate(value) {
+  if (!value) return null;
+  if (typeof value.toDate === 'function') return value.toDate();
+  if (typeof value.seconds === 'number') return new Date(value.seconds * 1000);
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatPracticePacketDueDate(value) {
+  const date = coercePracticePacketDate(value);
+  if (!date) return '';
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  });
+}
+
+function getPracticePacketAssignedPlayerIds(packet = {}) {
+  const directIds = [
+    ...(Array.isArray(packet.assignedPlayerIds) ? packet.assignedPlayerIds : []),
+    ...(Array.isArray(packet.playerIds) ? packet.playerIds : []),
+    ...(Array.isArray(packet.childIds) ? packet.childIds : [])
+  ];
+  const nestedIds = (Array.isArray(packet.assignedPlayers) ? packet.assignedPlayers : [])
+    .map((entry) => entry?.playerId || entry?.childId || entry?.id);
+  return Array.from(new Set(
+    [...directIds, ...nestedIds]
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  ));
+}
+
+async function resolvePracticePacketParentUserIds(teamId, packet = {}) {
+  const playerIds = getPracticePacketAssignedPlayerIds(packet);
+  if (!playerIds.length) return [];
+
+  const playerKeys = playerIds.map((playerId) => `${teamId}::${playerId}`);
+  const resolvedUserIds = new Set();
+  const queryChunkSize = 10;
+
+  for (let index = 0; index < playerKeys.length; index += queryChunkSize) {
+    const playerKeyChunk = playerKeys.slice(index, index + queryChunkSize);
+    const parentSnap = await firestore.collection('users')
+      .where('parentPlayerKeys', 'array-contains-any', playerKeyChunk)
+      .get();
+    parentSnap.forEach((docSnap) => {
+      const parentPlayerKeys = Array.isArray(docSnap.data()?.parentPlayerKeys) ? docSnap.data().parentPlayerKeys : [];
+      const matchesAssignedPlayer = parentPlayerKeys.some((playerKey) => playerKeyChunk.includes(String(playerKey || '').trim()));
+      if (matchesAssignedPlayer) {
+        resolvedUserIds.add(String(docSnap.id || '').trim());
+      }
+    });
+  }
+
+  return Array.from(resolvedUserIds).filter(Boolean);
+}
+
+function getPracticePacketNotificationTitle(packet = {}, session = {}) {
+  return String(packet.title || packet.packetTitle || packet.name || session.title || session.eventTitle || 'Home packet').trim() || 'Home packet';
+}
+
+function getPracticePacketNotificationBody(packet = {}, session = {}) {
+  const packetTitle = getPracticePacketNotificationTitle(packet, session);
+  const dueDateLabel = formatPracticePacketDueDate(
+    packet.dueDate
+    || packet.dueAt
+    || packet.deadline
+    || packet.deadlineAt
+    || packet.completeBy
+    || packet.completeByAt
+    || session.date
+  );
+  return dueDateLabel
+    ? `${packetTitle} is ready. Due ${dueDateLabel}.`
+    : `${packetTitle} is ready.`;
 }
 
 function buildNotificationLink({ category, teamId, gameId, batchId = null, recipientId = null, conversationId = null }) {
@@ -3386,6 +3465,9 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
       return `/schedule?teamId=${encodeURIComponent(teamId)}`;
     }
     return '/schedule';
+  }
+  if (category === 'practice') {
+    return buildPracticePacketNotificationDestination({ teamId, eventId }).appRoute;
   }
   return '/home';
 }
@@ -5322,6 +5404,66 @@ exports.notifyPracticePacketCompleted = functions.firestore
       category: 'practice',
       title: `Home packet completed: ${playerName}`,
       body: `${playerName} completed the ${getPracticePacketNotificationLabel(session)}.`,
+      teamId,
+      eventId: sessionId,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
+  });
+
+exports.notifyPracticePacketAssigned = functions.firestore
+  .document('teams/{teamId}/practiceSessions/{sessionId}/packets/{packetId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data();
+    if (!data) return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('practice')) {
+      functions.logger.error('notifyPracticePacketAssigned requires the practice notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
+
+    const { teamId, sessionId, packetId } = context.params;
+    const parentUserIds = await resolvePracticePacketParentUserIds(teamId, data);
+    if (!parentUserIds.length) {
+      functions.logger.warn('notifyPracticePacketAssigned found no parent users for assigned players.', {
+        teamId,
+        sessionId,
+        packetId,
+        assignedPlayerIds: getPracticePacketAssignedPlayerIds(data)
+      });
+      return null;
+    }
+
+    const [allPracticeTargets, sessionSnap] = await Promise.all([
+      getTargetsForCategory(teamId, 'practice', null),
+      firestore.doc(`teams/${teamId}/practiceSessions/${sessionId}`).get()
+    ]);
+    const parentUserIdSet = new Set(parentUserIds);
+    const parentTargets = allPracticeTargets.filter((target) => parentUserIdSet.has(target.uid));
+    if (!parentTargets.length) {
+      functions.logger.warn('notifyPracticePacketAssigned found no practice-enabled parent targets.', {
+        teamId,
+        sessionId,
+        packetId,
+        parentUserCount: parentUserIds.length,
+        totalPracticeTargets: allPracticeTargets.length
+      });
+      return null;
+    }
+
+    const session = sessionSnap.exists ? (sessionSnap.data() || {}) : {};
+    const scheduleEventId = String(session.eventId || '').trim() || sessionId;
+    const destination = buildPracticePacketNotificationDestination({ teamId, eventId: scheduleEventId, sessionId });
+
+    await sendDirectTargetsNotification({
+      targets: parentTargets,
+      category: 'practice',
+      title: 'Practice packet ready',
+      body: getPracticePacketNotificationBody(data, session),
       teamId,
       eventId: sessionId,
       linkOverride: destination.link,

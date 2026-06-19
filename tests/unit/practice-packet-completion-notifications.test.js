@@ -115,8 +115,8 @@ describe('notifyPracticePacketCompleted trigger', () => {
             title: 'Home packet completed: Pat',
             body: 'Pat completed the home packet for Practice.',
             eventId: 'session-1',
-            linkOverride: 'https://allplays.ai/app/#/schedule/team-1/practice-1',
-            appRouteOverride: '/schedule/team-1/practice-1'
+            linkOverride: 'https://allplays.ai/app/#/schedule/team-1/practice-1?section=game',
+            appRouteOverride: '/schedule/team-1/practice-1?section=game'
         }));
     });
 
