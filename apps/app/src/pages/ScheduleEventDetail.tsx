@@ -77,6 +77,10 @@ import {
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
+import { DateTile } from '../components/schedule/DateTile';
+import { EventBrief } from '../components/schedule/EventBrief';
+import { EventSectionNav } from '../components/schedule/EventSectionNav';
+import { PlayerInitials } from '../components/schedule/PlayerInitials';
 import {
   canRequestScheduleRide,
   findScheduleRideRequestForChild,
@@ -661,7 +665,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               </span>
             </div>
 
-            <EventBrief event={selectedEvent} />
+            <EventBrief pieces={getEventBriefPieces(selectedEvent)} />
             <button
               type="button"
               className="secondary-button event-calendar-button mt-1.5 w-full justify-center sm:mt-2"
@@ -736,67 +740,6 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
       </div>
       </div>
     </ScheduleEventDetailProvider>
-  );
-}
-
-function EventSectionNav({ className = '', includeBaseClass = true, sections, activeSection, hasPracticePacket, onSelect }: {
-  className?: string;
-  includeBaseClass?: boolean;
-  sections: Array<{ id: EventDetailSectionId; label: string; shortLabel?: string }>;
-  activeSection: EventDetailSectionId;
-  hasPracticePacket: boolean;
-  onSelect: (sectionId: EventDetailSectionId) => void;
-}) {
-  return (
-    <div className={`${includeBaseClass ? 'event-section-nav ' : ''}${className}`}>
-      <div className="grid w-full grid-cols-4 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
-        {sections.map((section) => {
-          const active = activeSection === section.id;
-          const sectionHasPacket = section.id === 'game' && hasPracticePacket;
-          return (
-            <button
-              key={section.id}
-              type="button"
-              className={`relative min-h-9 min-w-0 rounded-xl px-1 text-[11px] font-black leading-tight transition sm:px-3 sm:text-xs ${
-                active ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-950'
-              }`}
-              onClick={() => onSelect(section.id)}
-              aria-label={sectionHasPacket ? `${section.label}, packet ready` : section.label}
-            >
-              <span className="block truncate">{section.shortLabel || section.label}</span>
-              {sectionHasPacket ? (
-                <span className={`absolute right-2 top-1.5 h-1.5 w-1.5 rounded-full ${active ? 'bg-white' : 'bg-blue-500'}`} aria-hidden="true" />
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function DateTile({ date }: { date: Date }) {
-  return (
-    <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-xl bg-gray-50 shadow-inner ring-1 ring-gray-200 sm:h-16 sm:w-16 sm:rounded-2xl">
-      <div className="text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500 sm:text-[11px]">{date.toLocaleDateString('en-US', { month: 'short' })}</div>
-      <div className="mt-0.5 text-lg font-black leading-none text-gray-950 sm:text-2xl">{date.getDate()}</div>
-      <div className="mt-0.5 text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500 sm:mt-1 sm:tracking-[0.08em]">{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-    </div>
-  );
-}
-
-function PlayerInitials({ name }: { name: string }) {
-  const initials = name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('') || 'P';
-
-  return (
-    <div className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-gradient-to-br from-gray-700 to-gray-950 text-sm font-black text-white shadow-sm sm:h-11 sm:w-11">
-      {initials}
-    </div>
   );
 }
 
@@ -904,21 +847,6 @@ function CompactMeta({ icon: Icon, value }: { icon: LucideIcon; value: string })
     <div className="flex min-w-0 items-center gap-2 text-sm font-bold text-gray-800">
       <Icon className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
       <span className="min-w-0 truncate">{value}</span>
-    </div>
-  );
-}
-
-function EventBrief({ event }: { event: ParentScheduleEvent }) {
-  const pieces = getEventBriefPieces(event);
-  if (!pieces.length) return null;
-
-  return (
-    <div className="event-brief mt-1.5 flex-wrap gap-1 sm:mt-3 sm:gap-1.5">
-      {pieces.map((piece) => (
-        <span key={piece} className="inline-flex min-h-6 items-center rounded-full border border-gray-200 bg-white px-2 text-[11px] font-extrabold text-gray-700 sm:min-h-7 sm:px-2.5 sm:text-xs">
-          {piece}
-        </span>
-      ))}
     </div>
   );
 }
