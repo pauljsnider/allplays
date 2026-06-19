@@ -410,18 +410,20 @@ describe('live game clock state', () => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-12T04:00:15.000Z'));
-    vi.mocked(getGame).mockResolvedValue({
-      liveClockMs: 120000,
-      liveClockRunning: true,
-      liveClockPeriod: 'Q2',
-      liveClockUpdatedAt: new Date('2026-06-12T04:00:00.000Z')
-    } as any);
-    vi.mocked(updateGame).mockResolvedValue(undefined as any);
-    vi.mocked(broadcastLiveEvent).mockResolvedValue(undefined as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({
+        liveClockMs: 120000,
+        liveClockRunning: true,
+        liveClockPeriod: 'Q2',
+        liveClockUpdatedAt: new Date('2026-06-12T04:00:00.000Z')
+      })
+    });
 
     await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, { uid: 'coach-1', displayName: 'Coach' } as any);
 
-    expect(broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents/') }), expect.objectContaining({
       period: 'Q2',
       gameClockMs: 135000
     }));
@@ -434,25 +436,32 @@ describe('live score publishing', () => {
   beforeEach(() => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
-    vi.mocked(getGame).mockResolvedValue({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q2', liveClockMs: 321000 } as any);
-    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q2', liveClockMs: 321000 })
+    });
   });
 
-  it('marks the game live before broadcasting app score updates', async () => {
+  it('writes the game score and live event in the same transaction', async () => {
     const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user, { homeScore: 10, awayScore: 8 });
 
-    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({
+      homeScore: 12,
+      awayScore: 8,
       liveStatus: 'live',
       liveHasData: true,
       liveStartedAt: expect.any(Date)
-    }));
-    expect(broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+    }), { merge: true });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents/') }), expect.objectContaining({
       eventId: expect.stringMatching(/^app-live-/),
       type: 'score_update',
       period: 'Q2',
       gameClockMs: 321000,
       homeScore: 12,
-      awayScore: 8
+      awayScore: 8,
+      previousHomeScore: 10,
+      previousAwayScore: 8
     }));
     expect(result).toMatchObject({
       type: 'score_update',
@@ -468,10 +477,11 @@ describe('live score publishing', () => {
   });
 
   it('rejects score broadcasts after the game is final', async () => {
-    vi.mocked(getGame).mockResolvedValue({ id: 'game-1', status: 'completed', liveStatus: 'completed' } as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValueOnce({ exists: () => true, data: () => ({ id: 'game-1', status: 'completed', liveStatus: 'completed' }) });
 
     await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('game is final');
-    expect(updateGame).not.toHaveBeenCalled();
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
   });
 });
 
