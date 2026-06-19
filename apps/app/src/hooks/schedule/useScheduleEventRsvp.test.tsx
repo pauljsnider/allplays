@@ -59,6 +59,7 @@ function RsvpProbe({ availabilityNote }: { availabilityNote: string }) {
             <div>{workflow.message || ''}</div>
             <div>{workflow.error || ''}</div>
             <button type="button" onClick={() => workflow.submit('going')}>Submit going</button>
+            <button type="button" onClick={() => workflow.submit('maybe')}>Submit maybe</button>
         </div>
     );
 }
@@ -158,5 +159,38 @@ describe('useScheduleEventRsvp', () => {
         });
         expect(screen.getByTestId('current-rsvp').textContent).toBe('not_responded');
         expect(screen.getByTestId('current-note').textContent).toBe('');
+    });
+
+    it('does not roll back a newer RSVP choice when an earlier submission fails later', async () => {
+        let rejectFirst: (reason?: unknown) => void = () => {};
+        let resolveSecond: (value: any) => void = () => {};
+        vi.mocked(submitParentScheduleRsvp)
+            .mockImplementationOnce(() => new Promise((_, reject) => {
+                rejectFirst = reject;
+            }))
+            .mockImplementationOnce(() => new Promise((resolve) => {
+                resolveSecond = resolve;
+            }));
+
+        renderProbe();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('going');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Submit maybe' }));
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('maybe');
+
+        resolveSecond({ going: 0, maybe: 1, notGoing: 0, notResponded: 0, total: 1 } as any);
+        await waitFor(() => {
+            expect(screen.getByText('Avery Smith marked maybe.')).toBeTruthy();
+        });
+
+        rejectFirst(new Error('Unable to save RSVP.'));
+        await waitFor(() => {
+            expect(screen.getByText('Unable to save RSVP.')).toBeTruthy();
+        });
+
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('maybe');
+        expect(screen.getByTestId('current-note').textContent).toBe('Running late');
     });
 });

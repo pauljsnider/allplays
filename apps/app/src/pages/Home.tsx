@@ -944,6 +944,7 @@ function SocialFeedCard({
     clearComment?: boolean;
   }) => {
     if (inFlightActionsRef.current.has(actionKey)) return;
+    const previousComment = clearComment ? comment : '';
     inFlightActionsRef.current.add(actionKey);
     setActionBusy(actionKey, true);
     onStatus(null);
@@ -957,6 +958,9 @@ function SocialFeedCard({
       onStatus({ tone: 'success', message: success });
     } catch (error: any) {
       rollback?.();
+      if (clearComment) {
+        setComment(previousComment);
+      }
       onStatus({ tone: 'error', message: error?.message || 'Unable to update feed.' });
     } finally {
       inFlightActionsRef.current.delete(actionKey);

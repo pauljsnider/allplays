@@ -82,10 +82,14 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
         updateEvents((current) => current.map((currentEvent) => {
           if (currentEvent.teamId !== event.teamId || currentEvent.id !== event.id) return currentEvent;
           const sameChild = currentEvent.childId === event.childId;
+          const matchesFailedOptimisticState = sameChild
+            && normalizeRsvpResponse(currentEvent.myRsvp) === response
+            && String(currentEvent.myRsvpNote || '').trim() === note;
+          if (!matchesFailedOptimisticState) return currentEvent;
           return {
             ...currentEvent,
-            myRsvp: sameChild ? previousRsvp : currentEvent.myRsvp,
-            myRsvpNote: sameChild ? previousNote : currentEvent.myRsvpNote,
+            myRsvp: previousRsvp,
+            myRsvpNote: previousNote,
             rsvpSummary: event.rsvpSummary || currentEvent.rsvpSummary
           };
         }));

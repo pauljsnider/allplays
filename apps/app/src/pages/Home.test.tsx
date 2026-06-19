@@ -416,6 +416,31 @@ describe('Home', () => {
     });
   });
 
+  it('restores the submitted comment when the request fails', async () => {
+    socialServiceMocks.loadSocialHome.mockResolvedValueOnce({
+      ...baseSocial,
+      feedItems: [baseFeedItem],
+      metrics: { ...baseSocial.metrics, feedItems: 1 }
+    });
+    socialServiceMocks.commentOnSocialPost.mockRejectedValueOnce(new Error('Unable to add comment.'));
+
+    renderHome(signedInAuth, '/home?section=feed');
+
+    await screen.findByRole('heading', { name: 'Feed' });
+    const commentInput = screen.getByPlaceholderText('Comment · 1') as HTMLInputElement;
+    fireEvent.change(commentInput, { target: { value: 'Nice play!' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect((screen.getByPlaceholderText('Comment · 2') as HTMLInputElement).value).toBe('');
+
+    await waitFor(() => {
+      expect(screen.getByText('Unable to add comment.')).toBeTruthy();
+    });
+
+    expect((screen.getByPlaceholderText('Comment · 1') as HTMLInputElement).value).toBe('Nice play!');
+  });
+
   it('refreshes the social feed after creating a post', async () => {
     socialServiceMocks.createSocialPost.mockResolvedValueOnce('post-1');
     renderHome(signedInAuth, '/home?section=feed&social=create');
