@@ -76,3 +76,50 @@ export type ScheduleEventFirestoreRecord = {
     isSeriesMaster?: boolean;
     recurrence?: Record<string, unknown> | null;
 };
+
+export type GameReportStatValue = string | number | boolean | null;
+
+export type GameReportStatsRecord = Record<string, GameReportStatValue>;
+
+export type GameReportPlayerFirestoreRecord = {
+    id: string;
+    name?: string | null;
+    number?: string | null;
+    photoUrl?: string | null;
+    [key: string]: unknown;
+};
+
+export type GameReportTeamFirestoreRecord = {
+    id: string;
+    name?: string | null;
+    sport?: string | null;
+    [key: string]: unknown;
+};
+
+export type GameReportOpponentFirestoreRecord = {
+    name?: string | null;
+    number?: string | null;
+    notes?: string | null;
+    photoUrl?: string | null;
+    [key: string]: unknown;
+};
+
+export type GameReportGameFirestoreRecord = {
+    id: string;
+    summary?: string | null;
+    statSheetPhotoUrl?: string | null;
+    opponentStats?: Record<string, GameReportOpponentFirestoreRecord>;
+    [key: string]: unknown;
+};
+
+export type GameReportAggregatedStatsFirestoreRecord = {
+    id: string;
+    stats: GameReportStatsRecord;
+    timeMs: number;
+    didNotPlay: boolean;
+    participated: boolean;
+    participationStatus: string;
+    participationSource: string;
+};
+
+export type GameReportTeamStatsFirestoreRecord = GameReportStatsRecord;

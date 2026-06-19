@@ -72,4 +72,70 @@ describe('gameReportService', () => {
     expect(report.visiblePlayerRows.map((player) => player.playerId)).toEqual(['player-recorded']);
     expect(report.deferredPlayerRows.map((player) => player.playerId)).toEqual(['player-deferred']);
   });
+
+  it('normalizes malformed and partial Firestore stats payloads at the mapper boundary', async () => {
+    dbMocks.getGame.mockResolvedValue({
+      id: 'game-1',
+      summary: 42,
+      statSheetPhotoUrl: 123,
+      opponentStats: {
+        'opp-1': {
+          name: 'Opponent Guard',
+          number: 5,
+          pts: 11,
+          fouls: '2',
+          assists: { invalid: true },
+          photoUrl: false
+        },
+        'opp-2': 'bad-payload'
+      }
+    });
+    dbMocks.getTeamStatsForGame.mockResolvedValue({ turnovers: 7, assists: '11', nested: { invalid: true } });
+    firebaseMocks.getDocs.mockResolvedValue({
+      forEach(callback: (docSnap: any) => void) {
+        callback({
+          id: 'player-recorded',
+          data: () => ({
+            stats: { pts: 14, rebounds: '6', bogus: { nope: true }, tech: false },
+            timeMs: '900000',
+            didNotPlay: 'no',
+            participated: true,
+            participationStatus: 8,
+            participationSource: null
+          })
+        });
+      }
+    });
+
+    const report = await loadGameReportSections('team-1', 'game-1');
+
+    expect(report.summary).toBe('42');
+    expect(report.statSheetPhotoUrl).toBe('123');
+    expect(report.playerRows[0]).toMatchObject({
+      playerId: 'player-recorded',
+      stats: { pts: 14, rebounds: '6', tech: false },
+      timeMs: 900000,
+      didNotPlay: false,
+      participated: true,
+      participationStatus: '8',
+      participationSource: ''
+    });
+    expect(report.opponentRows).toEqual([
+      {
+        id: 'opp-1',
+        name: 'Opponent Guard',
+        number: '5',
+        photoUrl: undefined,
+        stats: { pts: 11, fouls: '2' }
+      },
+      {
+        id: 'opp-2',
+        name: 'Opponent Player',
+        number: '-',
+        photoUrl: undefined,
+        stats: {}
+      }
+    ]);
+    expect(report.teamStats).toEqual({ turnovers: 7, assists: '11' });
+  });
 });
