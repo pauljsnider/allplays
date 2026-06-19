@@ -100,12 +100,16 @@ describe('notification delivery metadata', () => {
             badge: '/img/logo_small.png'
         });
         expect(firstSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })');
+        expect(firstSendPath).toContain('const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === \'function\'');
+        expect(firstSendPath).toContain('if (!runtimeDeliveryOptions?.webpush) return baseWebpush;');
         expect(firstSendPath).toContain('...deliveryOptions');
-        expect(firstSendPath).toContain('webpush: mergeNotificationWebpushOptions({');
+        expect(firstSendPath).toContain('webpush: mergeWebpushOptions({');
         expect(firstSendPath).toContain('notification: WEB_PUSH_NOTIFICATION_ASSETS');
         expect(secondSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })');
+        expect(secondSendPath).toContain('const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === \'function\'');
+        expect(secondSendPath).toContain('if (!runtimeDeliveryOptions?.webpush) return baseWebpush;');
         expect(secondSendPath).toContain('...deliveryOptions');
-        expect(secondSendPath).toContain('webpush: mergeNotificationWebpushOptions({');
+        expect(secondSendPath).toContain('webpush: mergeWebpushOptions({');
         expect(secondSendPath).toContain('notification: WEB_PUSH_NOTIFICATION_ASSETS');
     });
 
