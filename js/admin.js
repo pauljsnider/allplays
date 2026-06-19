@@ -281,7 +281,7 @@ async function ensureCurrentTeamGamesLoaded() {
 }
 
 async function ensureCurrentPageOfficialsLoaded() {
-    await loadOfficialUserLinks(getCurrentTeamPage());
+    await loadOfficialUserLinks();
 }
 
 function getTelemetryRangeDays() {
