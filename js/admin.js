@@ -1,6 +1,8 @@
 import {
     getAdminTeamsPage,
     getAdminUsersPage,
+    getTeams,
+    getAllUsers,
     getGames,
     getOfficials,
     addOfficial,
@@ -37,6 +39,8 @@ import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 
 let allTeams = [];
 let allUsers = [];
+let dashboardTeams = [];
+let dashboardUsers = [];
 let officialUserLookup = new Map();
 let officialsByTeamId = new Map();
 let currentUser = null; // Declare currentUser
@@ -65,7 +69,9 @@ const userPageState = {
 };
 
 let loadedGamesPageKey = '';
-let loadedOfficialsPageKey = '';
+let loadedDashboardGamesKey = '';
+let loadedTeamsOfficialsPageKey = '';
+let loadedUsersOfficialsKey = '';
 
 function getCurrentTeamPage() {
     return teamPageState.pages[teamPageState.currentIndex] || [];
@@ -75,8 +81,20 @@ function getCurrentUsersPage() {
     return userPageState.pages[userPageState.currentIndex] || [];
 }
 
+function getTeamsKey(teams = []) {
+    return teams.map((team) => team.id).join('|');
+}
+
 function getCurrentTeamPageKey() {
-    return getCurrentTeamPage().map((team) => team.id).join('|');
+    return getTeamsKey(getCurrentTeamPage());
+}
+
+function getDashboardTeams() {
+    return dashboardTeams.length ? dashboardTeams : allTeams;
+}
+
+function getDashboardUsers() {
+    return dashboardUsers.length ? dashboardUsers : allUsers;
 }
 
 function applyCurrentTeamPage() {
@@ -203,6 +221,17 @@ checkAuth(async (user) => {
 
 async function loadData() {
     try {
+        loadedGamesPageKey = '';
+        loadedDashboardGamesKey = '';
+        loadedTeamsOfficialsPageKey = '';
+        loadedUsersOfficialsKey = '';
+        allGames = [];
+        dashboardGames = [];
+        dashboardTeams = [];
+        dashboardUsers = [];
+        officialUserLookup = new Map();
+        officialsByTeamId = new Map();
+
         const { teamsPage, usersPage, telemetryPromise } = await loadInitialAdminBootstrap({
             getTeamsPage: getAdminTeamsPage,
             getUsersPage: getAdminUsersPage,
@@ -212,7 +241,10 @@ async function loadData() {
         setTeamsPage(teamsPage.teams, teamsPage.nextCursor);
         setUsersPage(usersPage.users, usersPage.nextCursor);
 
-        await ensureCurrentTeamGamesLoaded();
+        await Promise.all([
+            ensureCurrentTeamGamesLoaded(),
+            loadDashboardData()
+        ]);
         telemetryPromise.then(() => {
             if (activeTab === 'telemetry') {
                 updateTelemetryDashboard();
@@ -230,10 +262,14 @@ async function loadData() {
 }
 
 let allGames = [];
+let dashboardGames = [];
 
-async function loadOfficialUserLinks(teams = allTeams) {
-    const pageKey = teams.map((team) => team.id).join('|');
-    if (pageKey && loadedOfficialsPageKey === pageKey) {
+async function loadOfficialUserLinks(teams = allTeams, { scope = 'page' } = {}) {
+    const teamsKey = getTeamsKey(teams);
+    if (scope === 'page' && teamsKey && loadedTeamsOfficialsPageKey === teamsKey) {
+        return;
+    }
+    if (scope === 'all' && teamsKey && loadedUsersOfficialsKey === teamsKey) {
         return;
     }
 
@@ -253,13 +289,21 @@ async function loadOfficialUserLinks(teams = allTeams) {
         }
     }))).flat();
 
-    officialUserLookup = buildOfficialUserLookup(officialEntries);
-    loadedOfficialsPageKey = pageKey;
+    if (scope === 'all') {
+        officialUserLookup = buildOfficialUserLookup(officialEntries);
+        loadedUsersOfficialsKey = teamsKey;
+        return;
+    }
+
+    loadedTeamsOfficialsPageKey = teamsKey;
 }
 
-async function loadGameStatsForTeams(teams = allTeams) {
-    const pageKey = teams.map((team) => team.id).join('|');
-    if (pageKey && loadedGamesPageKey === pageKey) {
+async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) {
+    const teamsKey = getTeamsKey(teams);
+    if (scope === 'page' && teamsKey && loadedGamesPageKey === teamsKey) {
+        return;
+    }
+    if (scope === 'dashboard' && teamsKey && loadedDashboardGamesKey === teamsKey) {
         return;
     }
 
@@ -272,16 +316,34 @@ async function loadGameStatsForTeams(teams = allTeams) {
         }
     });
     const gamesArrays = await Promise.all(gamesPromises);
-    allGames = gamesArrays.flat();
-    loadedGamesPageKey = pageKey;
+    const nextGames = gamesArrays.flat();
+
+    if (scope === 'dashboard') {
+        dashboardGames = nextGames;
+        loadedDashboardGamesKey = teamsKey;
+        return;
+    }
+
+    allGames = nextGames;
+    loadedGamesPageKey = teamsKey;
+}
+
+async function loadDashboardData() {
+    dashboardTeams = await getTeams({ includeInactive: true });
+    dashboardUsers = await getAllUsers();
+    await loadGameStatsForTeams(dashboardTeams, { scope: 'dashboard' });
 }
 
 async function ensureCurrentTeamGamesLoaded() {
-    await loadGameStatsForTeams(getCurrentTeamPage());
+    await loadGameStatsForTeams(getCurrentTeamPage(), { scope: 'page' });
 }
 
-async function ensureCurrentPageOfficialsLoaded() {
-    await loadOfficialUserLinks();
+async function ensureCurrentTeamOfficialsLoaded() {
+    await loadOfficialUserLinks(getCurrentTeamPage(), { scope: 'page' });
+}
+
+async function ensureAllOfficialsLoaded() {
+    await loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' });
 }
 
 function getTelemetryRangeDays() {
@@ -343,9 +405,11 @@ async function loadTelemetryData({ silent = false } = {}) {
 }
 
 function updateDashboard() {
-    const visibleTeams = getVisibleTeams();
+    const sourceTeams = getDashboardTeams();
+    const sourceUsers = getDashboardUsers();
+    const visibleTeams = showInactiveTeams ? sourceTeams : sourceTeams.filter(isTeamActive);
     const visibleTeamIds = new Set(visibleTeams.map(team => team.id));
-    const visibleGames = allGames.filter(game => visibleTeamIds.has(game.teamId));
+    const visibleGames = dashboardGames.filter(game => visibleTeamIds.has(game.teamId));
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -356,8 +420,8 @@ function updateDashboard() {
     document.getElementById('stat-teams-growth').textContent = `+${newTeamsLast30} this month`;
 
     // Total users with growth
-    const newUsersLast30 = allUsers.filter(u => u.createdAt && u.createdAt.toDate() > thirtyDaysAgo).length;
-    document.getElementById('stat-total-users').textContent = allUsers.length;
+    const newUsersLast30 = sourceUsers.filter(u => u.createdAt && u.createdAt.toDate() > thirtyDaysAgo).length;
+    document.getElementById('stat-total-users').textContent = sourceUsers.length;
     document.getElementById('stat-users-growth').textContent = `+${newUsersLast30} this month`;
 
     // Total games
@@ -435,7 +499,7 @@ function updateDashboard() {
     `).join('');
 
     // Recent users
-    const recentUsersList = [...allUsers]
+    const recentUsersList = [...sourceUsers]
         .sort((a, b) => {
             const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(0);
             const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(0);
@@ -781,7 +845,7 @@ function getDeferredOfficialsSummary() {
 
 function renderTeams(teams) {
     const tbody = document.getElementById('teams-table-body');
-    const officialsReady = loadedOfficialsPageKey === getCurrentTeamPageKey();
+    const officialsReady = loadedTeamsOfficialsPageKey === getCurrentTeamPageKey();
     tbody.innerHTML = teams.map(team => {
         const officialsSummary = officialsReady
             ? buildAdminTeamOfficialsSummary(team, officialsByTeamId.get(team.id) || [], allGames)
@@ -968,6 +1032,8 @@ async function saveOfficialsAdmin(event) {
     }
 
     message.textContent = officialId ? 'Official updated.' : 'Official saved.';
+    loadedTeamsOfficialsPageKey = '';
+    loadedUsersOfficialsKey = '';
     resetOfficialsAdminFormState();
     document.getElementById('officials-admin-form').classList.remove('hidden');
     await loadOfficialsForActiveTeam();
@@ -993,6 +1059,8 @@ async function handleOfficialsAdminListClick(event) {
             resetOfficialsAdminFormState();
             document.getElementById('officials-admin-form').classList.remove('hidden');
         }
+        loadedTeamsOfficialsPageKey = '';
+        loadedUsersOfficialsKey = '';
         message.textContent = 'Official removed.';
         await loadOfficialsForActiveTeam();
     } catch (error) {
@@ -1350,18 +1418,18 @@ async function loadNextTeamsPage() {
     try {
         if (teamPageState.currentIndex < teamPageState.pages.length - 1) {
             loadedGamesPageKey = '';
-            loadedOfficialsPageKey = '';
+            loadedTeamsOfficialsPageKey = '';
             setTeamsPage(teamPageState.pages[teamPageState.currentIndex + 1] || [], teamPageState.nextCursor, teamPageState.currentIndex + 1);
         } else if (teamPageState.nextCursor) {
-        const nextIndex = teamPageState.currentIndex + 1;
-        const page = await loadAdminCollectionPage({
-            fetchPage: getAdminTeamsPage,
-            cursor: teamPageState.nextCursor,
-            pageSize: teamPageState.pageSize
-        });
-        loadedGamesPageKey = '';
-        loadedOfficialsPageKey = '';
-        setTeamsPage(page.teams, page.nextCursor, nextIndex);
+            const nextIndex = teamPageState.currentIndex + 1;
+            const page = await loadAdminCollectionPage({
+                fetchPage: getAdminTeamsPage,
+                cursor: teamPageState.nextCursor,
+                pageSize: teamPageState.pageSize
+            });
+            loadedGamesPageKey = '';
+            loadedTeamsOfficialsPageKey = '';
+            setTeamsPage(page.teams, page.nextCursor, nextIndex);
         } else {
             return;
         }
@@ -1370,10 +1438,10 @@ async function loadNextTeamsPage() {
             updateDashboard();
         }
         if (activeTab === 'teams') {
-            await ensureCurrentPageOfficialsLoaded();
+            await ensureCurrentTeamOfficialsLoaded();
         }
         if (activeTab === 'users') {
-            await ensureCurrentPageOfficialsLoaded();
+            await ensureAllOfficialsLoaded();
             renderCurrentUsersView();
         }
         renderCurrentTeamsView();
@@ -1389,7 +1457,7 @@ async function loadPreviousTeamsPage() {
     updateTeamsPaginationControls();
     try {
         loadedGamesPageKey = '';
-        loadedOfficialsPageKey = '';
+        loadedTeamsOfficialsPageKey = '';
         const previousIndex = teamPageState.currentIndex - 1;
         setTeamsPage(teamPageState.pages[previousIndex] || [], teamPageState.nextCursor, previousIndex);
         if (activeTab === 'dashboard') {
@@ -1397,10 +1465,10 @@ async function loadPreviousTeamsPage() {
             updateDashboard();
         }
         if (activeTab === 'teams') {
-            await ensureCurrentPageOfficialsLoaded();
+            await ensureCurrentTeamOfficialsLoaded();
         }
         if (activeTab === 'users') {
-            await ensureCurrentPageOfficialsLoaded();
+            await ensureAllOfficialsLoaded();
             renderCurrentUsersView();
         }
         renderCurrentTeamsView();
@@ -1463,12 +1531,12 @@ async function handleTabChange(tab) {
         return;
     }
     if (tab === 'teams') {
-        await ensureCurrentPageOfficialsLoaded();
+        await ensureCurrentTeamOfficialsLoaded();
         renderCurrentTeamsView();
         return;
     }
     if (tab === 'users') {
-        await ensureCurrentPageOfficialsLoaded();
+        await ensureAllOfficialsLoaded();
         renderCurrentUsersView();
         return;
     }
@@ -1547,7 +1615,7 @@ function getTeamOwnerEmail(team) {
     if (team.ownerEmail) return team.ownerEmail;
     // Try to find owner in allUsers
     if (team.ownerId) {
-        const owner = allUsers.find(u => u.id === team.ownerId);
+        const owner = getDashboardUsers().find(u => u.id === team.ownerId);
         if (owner) return owner.email;
     }
     // Fallback to first admin email

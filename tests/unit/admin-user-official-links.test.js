@@ -69,7 +69,7 @@ describe('admin users official links', () => {
         expect(formatOfficialUserSummary(summary)).toBe('1 team: Falcons');
     });
 
-    it('wires the admin users tab to show and filter official-linked users', () => {
+    it('wires the admin users tab to show and filter official-linked users across every team', () => {
         const adminHtml = readSource('admin.html');
         const adminJs = readSource('js/admin.js');
 
@@ -79,7 +79,7 @@ describe('admin users official links', () => {
         expect(adminHtml).toContain('Official</th>');
 
         expect(adminJs).toContain('getOfficials');
-        expect(adminJs).toContain('loadOfficialUserLinks()');
+        expect(adminJs).toContain("loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' })");
         expect(adminJs).toContain('buildOfficialUserLookup');
         expect(adminJs).toContain('formatOfficialUserSummary');
         expect(adminJs).toContain('matchesOfficialUserSearch');
@@ -87,11 +87,12 @@ describe('admin users official links', () => {
         expect(adminJs).toContain('inline-flex items-center rounded-full bg-emerald-100');
     });
 
-    it('reloads official links from the active team page when tabs request officials on demand', () => {
+    it('loads team-page summaries separately from the full users-tab official lookup', () => {
         const adminJs = readSource('js/admin.js');
 
-        expect(adminJs).toContain('async function ensureCurrentPageOfficialsLoaded() {');
-        expect(adminJs).toContain('await loadOfficialUserLinks();');
-        expect(adminJs).not.toContain('await loadOfficialUserLinks(getCurrentTeamPage());');
+        expect(adminJs).toContain("async function ensureCurrentTeamOfficialsLoaded() {");
+        expect(adminJs).toContain("await loadOfficialUserLinks(getCurrentTeamPage(), { scope: 'page' });");
+        expect(adminJs).toContain("async function ensureAllOfficialsLoaded() {");
+        expect(adminJs).toContain("await loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' });");
     });
 });
