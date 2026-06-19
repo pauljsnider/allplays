@@ -17,12 +17,11 @@ describe('registration payment reminder helpers', () => {
         expect(buildRegistrationPaymentRetryUrl('https://allplays.ai/', {
             teamId: 'team_123',
             formId: 'form_456',
-            registrationId: 'reg_789',
-            checkoutAttemptToken: 'attempt-token-123456'
-        })).toBe('https://allplays.ai/registration.html?teamId=team_123&formId=form_456&registrationId=reg_789&retryPayment=1&checkoutAttemptToken=attempt-token-123456');
+            publicCheckoutCapability: 'publiccapabilitytoken1234567890'
+        })).toBe('https://allplays.ai/registration.html?teamId=team_123&formId=form_456&retryPayment=1&publicCheckoutCapability=publiccapabilitytoken1234567890');
     });
 
-    it('does not build a retry URL when the checkout attempt token is missing', () => {
+    it('does not build a retry URL when the public checkout capability is missing', () => {
         expect(buildRegistrationPaymentRetryUrl('https://allplays.ai/', {
             teamId: 'team_123',
             formId: 'form_456',
@@ -35,14 +34,14 @@ describe('registration payment reminder helpers', () => {
             programName: 'Summer Skills Camp',
             amountDueCents: 12500,
             currency: 'USD',
-            retryUrl: 'https://allplays.ai/registration.html?teamId=team_123&formId=form_456&registrationId=reg_789&retryPayment=1'
+            retryUrl: 'https://allplays.ai/registration.html?teamId=team_123&formId=form_456&retryPayment=1&publicCheckoutCapability=publiccapabilitytoken1234567890'
         });
 
         expect(message.subject).toBe('Payment reminder: Summer Skills Camp');
         expect(message.text).toContain('Program: Summer Skills Camp');
         expect(message.text).toContain('Amount due: $125.00');
-        expect(message.text).toContain('Retry payment: https://allplays.ai/registration.html?teamId=team_123&formId=form_456&registrationId=reg_789&retryPayment=1');
-        expect(message.html).toContain('href="https://allplays.ai/registration.html?teamId=team_123&amp;formId=form_456&amp;registrationId=reg_789&amp;retryPayment=1"');
+        expect(message.text).toContain('Retry payment: https://allplays.ai/registration.html?teamId=team_123&formId=form_456&retryPayment=1&publicCheckoutCapability=publiccapabilitytoken1234567890');
+        expect(message.html).toContain('href="https://allplays.ai/registration.html?teamId=team_123&amp;formId=form_456&amp;retryPayment=1&amp;publicCheckoutCapability=publiccapabilitytoken1234567890"');
         expect(message.html).toContain('Summer Skills Camp');
     });
 
@@ -64,14 +63,13 @@ describe('registration payment reminder helpers', () => {
             registration: {
                 feeSnapshot: { finalAmountDueCents: 9800 },
                 guardian: { email: 'Parent@Example.com' },
-                checkoutAttemptToken: 'attempt-token-123456',
                 programName: 'Fall Soccer'
             },
             input: {
                 teamId: 'team_123',
                 formId: 'form_456',
                 registrationId: 'reg_789',
-                checkoutAttemptToken: 'attempt-token-123456'
+                publicCheckoutCapability: 'publiccapabilitytoken1234567890'
             },
             eventId: 'evt_123',
             appUrl: 'https://allplays.ai',

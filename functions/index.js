@@ -230,6 +230,25 @@ function normalizeCheckoutAttemptToken(value, label = 'checkoutAttemptToken') {
   return token;
 }
 
+function normalizePublicCheckoutCapability(value, label = 'publicCheckoutCapability') {
+  const capability = String(value || '').trim();
+  if (!capability) return '';
+  if (!/^[A-Za-z0-9_-]{24,160}$/.test(capability)) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return capability;
+}
+
+function createRawPublicCheckoutCapability() {
+  return (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(24).toString('hex')).replace(/-/g, '');
+}
+
+function hashPublicCheckoutCapability(capability) {
+  const normalizedCapability = normalizePublicCheckoutCapability(capability);
+  if (!normalizedCapability) return '';
+  return crypto.createHash('sha256').update(normalizedCapability).digest('hex');
+}
+
 function normalizeRegistrationCheckoutInput(data = {}) {
   const hasAmount = data.amount !== undefined || data.amountCents !== undefined;
   const amountCents = hasAmount ? Math.round(Number(data.amount ?? data.amountCents ?? 0)) : null;
@@ -240,23 +259,27 @@ function normalizeRegistrationCheckoutInput(data = {}) {
   if (currency && !/^[a-z]{3}$/.test(currency)) {
     throw new Error('A valid checkout currency is required.');
   }
+  const publicCheckoutCapability = normalizePublicCheckoutCapability(data.publicCheckoutCapability);
   return {
     teamId: normalizeFirestoreId(data.teamId, 'teamId'),
     formId: normalizeFirestoreId(data.formId, 'formId'),
-    registrationId: normalizeFirestoreId(data.registrationId, 'registrationId'),
+    registrationId: publicCheckoutCapability ? String(data.registrationId || '').trim() : normalizeFirestoreId(data.registrationId, 'registrationId'),
     amountCents,
     currency,
     checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken),
+    publicCheckoutCapability,
     retryPayment: data.retryPayment === true || String(data.retryPayment || '').trim() === '1'
   };
 }
 
 function normalizeRegistrationCheckoutCancelInput(data = {}) {
+  const publicCheckoutCapability = normalizePublicCheckoutCapability(data.publicCheckoutCapability);
   return {
     teamId: normalizeFirestoreId(data.teamId, 'teamId'),
     formId: normalizeFirestoreId(data.formId, 'formId'),
-    registrationId: normalizeFirestoreId(data.registrationId, 'registrationId'),
-    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)
+    registrationId: publicCheckoutCapability ? String(data.registrationId || '').trim() : normalizeFirestoreId(data.registrationId, 'registrationId'),
+    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken),
+    publicCheckoutCapability
   };
 }
 
@@ -276,11 +299,10 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
   const params = new URLSearchParams({
     teamId: input.teamId,
-    formId: input.formId,
-    registrationId: input.registrationId
+    formId: input.formId
   });
-  if (input.checkoutAttemptToken) {
-    params.set('checkoutAttemptToken', input.checkoutAttemptToken);
+  if (input.publicCheckoutCapability) {
+    params.set('publicCheckoutCapability', input.publicCheckoutCapability);
   }
   if (input.retryPayment) {
     params.set('retryPayment', '1');
@@ -378,13 +400,29 @@ function registrationCheckoutAttemptStrictlyMatches(registration = {}, input = {
   return Boolean(registrationToken && inputToken && registrationToken === inputToken);
 }
 
+function registrationPublicCheckoutCapabilityMatches(registration = {}, input = {}) {
+  const registrationCapabilityHash = String(registration.publicCheckoutCapabilityHash || '').trim();
+  const inputCapabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
+  return Boolean(registrationCapabilityHash && inputCapabilityHash && registrationCapabilityHash === inputCapabilityHash);
+}
+
+function registrationCheckoutAuthorityMatches(registration = {}, input = {}) {
+  return registrationPublicCheckoutCapabilityMatches(registration, input)
+    || registrationCheckoutAttemptMatches(registration, input);
+}
+
+function registrationCheckoutAuthorityStrictlyMatches(registration = {}, input = {}) {
+  return registrationPublicCheckoutCapabilityMatches(registration, input)
+    || registrationCheckoutAttemptStrictlyMatches(registration, input);
+}
+
 function canReuseRegistrationCheckoutSession(registration = {}, amountCents, input = {}) {
   return Boolean(
     registration.checkoutUrl
     && registration.stripeCheckoutSessionId
     && registration.checkoutStatus === 'open'
     && Number(registration.checkoutAmountCents || 0) === amountCents
-    && registrationCheckoutAttemptMatches(registration, input)
+    && registrationCheckoutAuthorityMatches(registration, input)
   );
 }
 
@@ -395,8 +433,50 @@ function buildRegistrationCheckoutMetadata({ input, registration }) {
     formId: input.formId,
     registrationId: input.registrationId,
     checkoutAttemptToken: input.checkoutAttemptToken || '',
+    publicCheckoutCapability: input.publicCheckoutCapability || '',
     selectedOptionId: String(registration.selectedOption?.id || ''),
     paymentPlanId: String(registration.paymentPlan?.id || '')
+  };
+}
+
+function buildPublicCheckoutCapabilityError() {
+  return new functions.https.HttpsError('failed-precondition', 'Public checkout capability is invalid or expired.');
+}
+
+async function resolveRegistrationCheckoutInput(input = {}) {
+  if (!input.publicCheckoutCapability) {
+    return {
+      ...input,
+      registrationRef: buildRegistrationRef(input)
+    };
+  }
+
+  const capabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
+  const querySnap = await firestore.collectionGroup('registrations')
+    .where('publicCheckoutCapabilityHash', '==', capabilityHash)
+    .limit(2)
+    .get();
+
+  if (querySnap.empty || querySnap.size !== 1) {
+    throw buildPublicCheckoutCapabilityError();
+  }
+
+  const registrationSnap = querySnap.docs[0];
+  const pathParts = registrationSnap.ref.path.split('/');
+  const resolvedTeamId = pathParts[1] || '';
+  const resolvedFormId = pathParts[3] || '';
+  const resolvedRegistrationId = pathParts[5] || registrationSnap.id;
+  if ((input.teamId && input.teamId !== resolvedTeamId) || (input.formId && input.formId !== resolvedFormId)) {
+    throw buildPublicCheckoutCapabilityError();
+  }
+
+  return {
+    ...input,
+    teamId: resolvedTeamId,
+    formId: resolvedFormId,
+    registrationId: resolvedRegistrationId,
+    registrationRef: registrationSnap.ref,
+    resolvedPublicCheckoutCapabilityHash: capabilityHash
   };
 }
 
@@ -602,8 +682,8 @@ async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) 
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
-    if (!registrationCheckoutAttemptStrictlyMatches(registration, input)) {
-      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to retry this payment.');
+    if (!registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to retry this payment.');
     }
     if (registration.registrationCapacityReleased !== true) {
       return { reserved: false, reason: 'already-held' };
@@ -667,6 +747,12 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
     }
+    if (registration.publicCheckoutCapabilityHash) {
+      const inputCapabilityHash = hashPublicCheckoutCapability(input.publicCheckoutCapability);
+      if (!inputCapabilityHash || inputCapabilityHash !== String(registration.publicCheckoutCapabilityHash || '')) {
+        throw buildPublicCheckoutCapabilityError();
+      }
+    }
 
     if (registration.paymentStatus === 'paid') {
       return { released: false, reason: 'already-paid' };
@@ -696,15 +782,15 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
     if (!checkoutIsOpen && !canReleasePreCheckoutReservation && !canReleaseRetryCapacityReservation) {
       throw new functions.https.HttpsError('failed-precondition', 'Registration checkout is not releasable.');
     }
-    if (canReleasePreCheckoutReservation && !registrationCheckoutAttemptStrictlyMatches(registration, input)) {
-      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to release this reservation.');
+    if (canReleasePreCheckoutReservation && !registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to release this reservation.');
     }
-    if (canReleaseRetryCapacityReservation && !registrationCheckoutAttemptStrictlyMatches(registration, input)) {
-      throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt is required to release this reservation.');
+    if (canReleaseRetryCapacityReservation && !registrationCheckoutAuthorityStrictlyMatches(registration, input)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required to release this reservation.');
     }
-    if (!canReleasePreCheckoutReservation && !registrationCheckoutAttemptMatches(registration, input)) {
+    if (!canReleasePreCheckoutReservation && !registrationCheckoutAuthorityMatches(registration, input)) {
       if (!canReleaseRetryCapacityReservation) {
-        throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
+        throw new functions.https.HttpsError('failed-precondition', 'Public checkout capability does not match.');
       }
     }
 
@@ -729,13 +815,16 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
       transaction.update(formRef, updates);
     }
 
+    const nextPublicCheckoutCapability = createRawPublicCheckoutCapability();
+
     transaction.set(registrationRef, {
       ...registrationUpdate,
       registrationCapacityReleased: true,
-      capacityReleasedAt: now
+      capacityReleasedAt: now,
+      publicCheckoutCapabilityHash: hashPublicCheckoutCapability(nextPublicCheckoutCapability)
     }, { merge: true });
 
-    return { released };
+    return { released, nextPublicCheckoutCapability };
   });
 }
 
@@ -2000,9 +2089,11 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout request.');
   }
 
+  const resolvedInput = await resolveRegistrationCheckoutInput(input);
+
   const [formSnap, registrationSnap] = await Promise.all([
-    firestore.doc(`teams/${input.teamId}/registrationForms/${input.formId}`).get(),
-    buildRegistrationRef(input).get()
+    firestore.doc(`teams/${resolvedInput.teamId}/registrationForms/${resolvedInput.formId}`).get(),
+    resolvedInput.registrationRef.get()
   ]);
   if (!formSnap.exists) {
     throw new functions.https.HttpsError('not-found', 'Registration form not found.');
@@ -2013,13 +2104,19 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
 
   const form = formSnap.data() || {};
   const registration = registrationSnap.data() || {};
+  if (registration.publicCheckoutCapabilityHash && !resolvedInput.publicCheckoutCapability) {
+    throw new functions.https.HttpsError('failed-precondition', 'Public checkout capability is required.');
+  }
+  if (resolvedInput.publicCheckoutCapability && String(registration.publicCheckoutCapabilityHash || '') !== String(resolvedInput.resolvedPublicCheckoutCapabilityHash || '')) {
+    throw buildPublicCheckoutCapabilityError();
+  }
   if (form.published !== true && form.status !== 'published') {
     throw new functions.https.HttpsError('failed-precondition', 'This registration form is not accepting submissions.');
   }
   if (form.paymentSettings?.onlineCheckoutEnabled !== true) {
     throw new functions.https.HttpsError('failed-precondition', 'Online checkout is not enabled for this registration.');
   }
-  if (registration.teamId !== input.teamId || registration.formId !== input.formId) {
+  if (registration.teamId !== resolvedInput.teamId || registration.formId !== resolvedInput.formId) {
     throw new functions.https.HttpsError('failed-precondition', 'Registration does not match the requested form.');
   }
   if (registration.status === 'waitlisted') {
@@ -2036,23 +2133,28 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   const currency = String(
     form.currency || registration.feeSnapshot?.currency || registration.currency || 'usd'
   ).trim().toLowerCase() || 'usd';
-  if (!registrationCheckoutAttemptMatches(registration, input)) {
-    throw new functions.https.HttpsError('failed-precondition', 'Registration checkout attempt does not match.');
+  if (!registrationCheckoutAuthorityMatches(registration, resolvedInput)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Current public checkout capability is required.');
   }
-  const retryCapacityReservationId = input.retryPayment ? crypto.randomUUID() : '';
+  const retryCapacityReservationId = resolvedInput.retryPayment ? crypto.randomUUID() : '';
   let retryCapacityReservation = { reserved: false, retryCapacityReservationId: null };
-  if (input.retryPayment && registration.registrationCapacityReleased === true) {
-    retryCapacityReservation = await reserveRegistrationCheckoutCapacityForRetry(input, {
+  if (resolvedInput.retryPayment && registration.registrationCapacityReleased === true) {
+    retryCapacityReservation = await reserveRegistrationCheckoutCapacityForRetry(resolvedInput, {
       retryCapacityReservationId
     });
   }
-  if (canReuseRegistrationCheckoutSession(registration, amountCents, input)) {
+  if (canReuseRegistrationCheckoutSession(registration, amountCents, resolvedInput)) {
     return { checkoutUrl: registration.checkoutUrl, sessionId: registration.stripeCheckoutSessionId };
   }
 
   const stripe = createStripeClient();
   const { appUrl } = getStripeConfig();
-  const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, input);
+  const issuedPublicCheckoutCapability = createRawPublicCheckoutCapability();
+  const checkoutUrlInput = {
+    ...resolvedInput,
+    publicCheckoutCapability: issuedPublicCheckoutCapability
+  };
+  const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, checkoutUrlInput);
   const title = registration.programName || form.programName || form.title || form.name || 'Program registration';
   let session;
   try {
@@ -2071,20 +2173,23 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
       success_url: successUrl,
       cancel_url: cancelUrl,
       customer_email: getRegistrationCustomerEmail(registration),
-      client_reference_id: `${input.teamId}:${input.formId}:${input.registrationId}`,
-      metadata: buildRegistrationCheckoutMetadata({ input, registration })
+      client_reference_id: `${resolvedInput.teamId}:${resolvedInput.formId}:${resolvedInput.registrationId}`,
+      metadata: buildRegistrationCheckoutMetadata({ input: checkoutUrlInput, registration })
     });
   } catch (error) {
     if (retryCapacityReservation.reserved) {
       try {
-        await releaseRegistrationCheckoutCapacity(input, {}, {
+        await releaseRegistrationCheckoutCapacity({
+          ...resolvedInput,
+          publicCheckoutCapability: resolvedInput.publicCheckoutCapability || issuedPublicCheckoutCapability
+        }, {}, {
           retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId
         });
       } catch (releaseError) {
         functions.logger.error('Failed to roll back registration retry capacity after Stripe checkout creation failed.', {
-          teamId: input.teamId,
-          formId: input.formId,
-          registrationId: input.registrationId,
+          teamId: resolvedInput.teamId,
+          formId: resolvedInput.formId,
+          registrationId: resolvedInput.registrationId,
           releaseError: releaseError?.message || releaseError
         });
       }
@@ -2093,7 +2198,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp();
-  await buildRegistrationRef(input).set({
+  await resolvedInput.registrationRef.set({
     checkoutUrl: session.url,
     paymentLink: session.url,
     checkoutStatus: 'open',
@@ -2103,6 +2208,7 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     stripePaymentStatus: session.payment_status || 'unpaid',
     checkoutAmountCents: amountCents,
     checkoutAttemptToken: input.checkoutAttemptToken || null,
+    publicCheckoutCapabilityHash: hashPublicCheckoutCapability(issuedPublicCheckoutCapability),
     checkoutCreatedAt: now,
     retryCapacityReservationId: admin.firestore.FieldValue.delete(),
     updatedAt: now
@@ -2119,7 +2225,9 @@ exports.cancelStripeRegistrationCheckout = functions.https.onCall(async (data) =
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid registration checkout cancellation request.');
   }
 
-  return releaseRegistrationCheckoutCapacity(input, {
+  const resolvedInput = await resolveRegistrationCheckoutInput(input);
+
+  return releaseRegistrationCheckoutCapacity(resolvedInput, {
     checkoutStatus: 'cancelled',
     paymentStatus: 'checkout_cancelled'
   });
@@ -2195,7 +2303,7 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
         } else {
           const form = formSnap.data() || {};
           const registration = registrationSnap.data() || {};
-          if (!registrationCheckoutAttemptMatches(registration, registrationInput)) {
+          if (!registrationCheckoutAuthorityMatches(registration, registrationInput)) {
             transaction.set(eventRef, {
               provider: 'stripe',
               product: 'registration',

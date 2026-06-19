@@ -47,7 +47,7 @@ describe('parent invite auto-linking', () => {
         expect(source).toContain('if (result.autoLinked)');
         expect(source).toContain('were linked to ${currentInvitePlayer.name} automatically');
         expect(source).toContain("codeSection.classList.add('hidden')");
-        expect(source).toContain("from './js/db.js?v=50';");
+        expect(source).toContain("from './js/db.js?v=53';");
     });
 
     it('sends a notification email to existing users even when auto-linked', () => {

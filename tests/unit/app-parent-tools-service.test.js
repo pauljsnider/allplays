@@ -156,6 +156,7 @@ const scheduleMocks = vi.hoisted(() => ({
 }));
 
 const stripeMocks = vi.hoisted(() => ({
+    cancelStripeRegistrationCheckout: vi.fn(),
     initiateTeamFeeCheckout: vi.fn()
 }));
 
@@ -219,6 +220,7 @@ import {
     updateTeamMediaItemForApp,
     approveTeamRegistrationForApp,
     rejectTeamRegistrationForApp,
+    cancelRegistrationCheckout,
     initiateRegistrationCheckout,
     initiateParentTeamFeeCheckout,
     canInitiateParentTeamFeeCheckout,
@@ -1098,9 +1100,40 @@ describe('React app parent tools service', () => {
             amountCents,
             currency,
             undefined,
+            undefined,
             undefined
         );
         expect(result).toEqual({ success: true, checkoutUrl: mockCheckoutUrl });
+    });
+
+    it('allows capability-based retry checkout without a raw registration id', async () => {
+        dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: 'https://checkout.stripe.com/mock-session-456' });
+
+        await expect(initiateRegistrationCheckout(
+            'team-1',
+            'form-1',
+            '',
+            'option-1',
+            'pay_full',
+            1,
+            5000,
+            'USD',
+            { publicCheckoutCapability: 'publiccapabilitytoken1234567890', retryPayment: true }
+        )).resolves.toEqual({ success: true, checkoutUrl: 'https://checkout.stripe.com/mock-session-456' });
+
+        expect(dbMocks.createRegistrationCheckoutSession).toHaveBeenCalledWith(
+            'team-1',
+            'form-1',
+            '',
+            'option-1',
+            'pay_full',
+            1,
+            5000,
+            'USD',
+            undefined,
+            true,
+            'publiccapabilitytoken1234567890'
+        );
     });
 
     it('throws error if required fields are missing for checkout', async () => {
@@ -1112,6 +1145,8 @@ describe('React app parent tools service', () => {
             .rejects.toThrow('Missing required fields for checkout.');
         await expect(initiateRegistrationCheckout('t', 'f', '', 'o', 'p', 1, 100, 'USD'))
             .rejects.toThrow('Missing required fields for checkout.');
+        await expect(initiateRegistrationCheckout('t', 'f', '', 'o', 'p', 1, 100, 'USD', { publicCheckoutCapability: 'publiccapabilitytoken1234567890' }))
+            .resolves.toEqual({ success: true, checkoutUrl: mockCheckoutUrl });
         await expect(initiateRegistrationCheckout('t', 'f', 'r', '', 'p', 1, 100, 'USD'))
             .resolves.toEqual({ success: true, checkoutUrl: mockCheckoutUrl });
         await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', '', 1, 100, 'USD'))
@@ -1128,6 +1163,26 @@ describe('React app parent tools service', () => {
         dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: null });
         await expect(initiateRegistrationCheckout('t', 'f', 'r', 'o', 'p', 1, 100, 'USD'))
             .rejects.toThrow('Failed to get checkout URL.');
+    });
+
+    it('allows capability-based checkout cancellation without a raw registration id', async () => {
+        stripeMocks.cancelStripeRegistrationCheckout.mockResolvedValue({ released: true, nextPublicCheckoutCapability: 'publiccapabilitytoken999999999999' });
+
+        await expect(cancelRegistrationCheckout(
+            'team-1',
+            'form-1',
+            '',
+            '',
+            'publiccapabilitytoken1234567890'
+        )).resolves.toEqual({ released: true, nextPublicCheckoutCapability: 'publiccapabilitytoken999999999999' });
+
+        expect(stripeMocks.cancelStripeRegistrationCheckout).toHaveBeenCalledWith({
+            teamId: 'team-1',
+            formId: 'form-1',
+            registrationId: '',
+            checkoutAttemptToken: '',
+            publicCheckoutCapability: 'publiccapabilitytoken1234567890'
+        });
     });
 
     it('initiates Stripe checkout for team fees and requires a returned URL', async () => {

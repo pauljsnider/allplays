@@ -111,7 +111,7 @@ async function renderRegistrationDetail(teamId = 'team-1', formId = 'form-1') {
   return { container, root };
 }
 
-async function renderPublicRegistrationDetail(teamId = 'team-public', formId = 'form-public') {
+async function renderPublicRegistrationDetail(teamId = 'team-public', formId = 'form-public', search = '') {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -119,7 +119,7 @@ async function renderPublicRegistrationDetail(teamId = 'team-public', formId = '
   await act(async () => {
     root.render(React.createElement(
       MemoryRouter,
-      { initialEntries: [`/registration?teamId=${teamId}&formId=${formId}`] },
+      { initialEntries: [`/registration?teamId=${teamId}&formId=${formId}${search ? `&${search}` : ''}`] },
       React.createElement(
         Routes,
         null,

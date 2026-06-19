@@ -49,9 +49,10 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const formId = publicAccess ? (searchParams.get('formId') || '') : (params.formId || '');
   const returnRegistrationId = searchParams.get('registrationId') || '';
   const returnCheckoutAttemptToken = searchParams.get('checkoutAttemptToken') || '';
-  const retryPaymentRequested = searchParams.get('retryPayment') === '1' && Boolean(returnRegistrationId);
+  const returnPublicCheckoutCapability = searchParams.get('publicCheckoutCapability') || '';
+  const retryPaymentRequested = searchParams.get('retryPayment') === '1' && Boolean(returnPublicCheckoutCapability || returnRegistrationId);
   const returnStatus = normalizeRegistrationReturnStatus(searchParams.get('status'));
-  const isPaymentSuccessReturn = returnStatus === 'success' && Boolean(returnRegistrationId);
+  const isPaymentSuccessReturn = returnStatus === 'success' && Boolean(returnPublicCheckoutCapability || returnRegistrationId);
   const isRetryPaymentMode = retryPaymentRequested && !isPaymentSuccessReturn;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -65,6 +66,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [selectedOptionId, setSelectedOptionId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [selectedPaymentPlanId, setSelectedPaymentPlanId] = useState('pay_full');
+  const [currentPublicCheckoutCapability, setCurrentPublicCheckoutCapability] = useState(returnPublicCheckoutCapability);
   const [queue, setQueue] = useState<TeamRegistrationQueueModel | null>(null);
   const [selectedReviewId, setSelectedReviewId] = useState('');
   const [selectedMergePlayerId, setSelectedMergePlayerId] = useState('');
@@ -147,9 +149,11 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   }, [selectedReview?.id]);
 
   useEffect(() => {
-    if (staffReview || returnStatus !== 'cancelled' || !returnRegistrationId) return;
+    if (staffReview || returnStatus !== 'cancelled' || (!returnPublicCheckoutCapability && !returnRegistrationId)) return;
 
-    const releaseKey = `${teamId}:${formId}:${returnRegistrationId}:${returnCheckoutAttemptToken}`;
+    const releaseAuthority = returnPublicCheckoutCapability || `${returnRegistrationId}:${returnCheckoutAttemptToken}`;
+    if (!releaseAuthority) return;
+    const releaseKey = `${teamId}:${formId}:${releaseAuthority}`;
     if (cancelledCheckoutReleaseKeyRef.current === releaseKey) return;
     cancelledCheckoutReleaseKeyRef.current = releaseKey;
 
@@ -158,10 +162,24 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
       ? 'Stripe payment was cancelled. You can retry payment for this registration.'
       : 'Stripe payment was cancelled.');
 
-    void parentToolsService.cancelRegistrationCheckout(teamId, formId, returnRegistrationId, returnCheckoutAttemptToken).catch(() => {
+    void parentToolsService.cancelRegistrationCheckout(
+      teamId,
+      formId,
+      returnRegistrationId,
+      returnCheckoutAttemptToken,
+      returnPublicCheckoutCapability
+    ).then((result: any) => {
+      if (result?.nextPublicCheckoutCapability) {
+        setCurrentPublicCheckoutCapability(result.nextPublicCheckoutCapability);
+      }
+    }).catch(() => {
       // Keep the retry path available even if release cleanup fails.
     });
-  }, [formId, returnCheckoutAttemptToken, returnRegistrationId, returnStatus, retryPaymentRequested, staffReview, teamId]);
+  }, [formId, returnCheckoutAttemptToken, returnPublicCheckoutCapability, returnRegistrationId, returnStatus, retryPaymentRequested, staffReview, teamId]);
+
+  useEffect(() => {
+    setCurrentPublicCheckoutCapability(returnPublicCheckoutCapability);
+  }, [returnPublicCheckoutCapability]);
 
   const updateParticipant = (fieldId: string, value: string) => setParticipant((current) => ({ ...current, [fieldId]: value }));
   const updateGuardian = (fieldId: string, value: string) => setGuardian((current) => ({ ...current, [fieldId]: value }));
@@ -201,14 +219,14 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
       const checkoutAttemptToken = isRetryPaymentMode ? returnCheckoutAttemptToken : createCheckoutAttemptToken();
       if (form.onlineCheckout && Number(currentFeeSnapshot.finalAmountDueCents || 0) > 0) {
         if (isRetryPaymentMode) {
-          if (!checkoutAttemptToken) {
+          if (!currentPublicCheckoutCapability && !checkoutAttemptToken) {
             setError('We could not restore your previous checkout attempt. Please restart registration or contact the organizer.');
             return;
           }
           const checkout = await parentToolsService.initiateRegistrationCheckout(
             form.teamId,
             form.id,
-            returnRegistrationId,
+            currentPublicCheckoutCapability ? '' : returnRegistrationId,
             requiresRegistrationOption(form) ? currentSelectedOptionId : currentSelectedOptionId || '',
             currentSelectedPaymentPlanId,
             currentQuantity,
@@ -216,7 +234,8 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
             currentFeeSnapshot.currency || form.currency || 'USD',
             {
               checkoutAttemptToken,
-              retryPayment: true
+              retryPayment: true,
+              publicCheckoutCapability: currentPublicCheckoutCapability || ''
             }
           );
           await openPublicUrl(checkout.checkoutUrl);

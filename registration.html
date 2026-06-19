@@ -126,8 +126,10 @@
         const formId = params.get('formId') || params.get('id') || '';
         const retryRegistrationId = params.get('registrationId') || '';
         const retryCheckoutAttemptToken = params.get('checkoutAttemptToken') || '';
-        const retryPaymentRequested = params.get('retryPayment') === '1' && !!retryRegistrationId;
+        const retryPublicCheckoutCapability = params.get('publicCheckoutCapability') || '';
+        const retryPaymentRequested = params.get('retryPayment') === '1' && !!(retryPublicCheckoutCapability || retryRegistrationId);
         let activeForm = null;
+        let currentPublicCheckoutCapability = retryPublicCheckoutCapability;
 
         const loadingState = document.getElementById('loading-state');
         const payRegistrationButton = document.getElementById('pay-registration');
@@ -152,8 +154,9 @@
             } else if (stripeStatus === 'cancelled') {
                 const cancelledRegistrationId = urlParams.get('registrationId') || '';
                 const cancelledCheckoutAttemptToken = urlParams.get('checkoutAttemptToken') || '';
-                if (cancelledRegistrationId) {
-                    void releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken);
+                const cancelledPublicCheckoutCapability = urlParams.get('publicCheckoutCapability') || '';
+                if (cancelledRegistrationId || cancelledPublicCheckoutCapability) {
+                    void releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken, cancelledPublicCheckoutCapability);
                 }
                 errorMessage.textContent = 'Stripe payment was cancelled. You can try again.';
                 errorMessage.classList.remove('hidden');
@@ -177,9 +180,12 @@
             return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 18)}`;
         }
 
-        async function releaseCancelledStripeRegistration(registrationId, checkoutAttemptToken = '') {
+        async function releaseCancelledStripeRegistration(registrationId, checkoutAttemptToken = '', publicCheckoutCapability = '') {
             try {
-                await cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken });
+                const result = await cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken, publicCheckoutCapability });
+                if (result?.nextPublicCheckoutCapability) {
+                    currentPublicCheckoutCapability = result.nextPublicCheckoutCapability;
+                }
             } catch (error) {
                 console.error('Failed to release cancelled registration checkout:', error);
             }
@@ -654,9 +660,10 @@
                     const checkoutUrl = await initiateStripeCheckout({
                         teamId,
                         formId,
-                        registrationId: retryRegistrationId,
+                        registrationId: currentPublicCheckoutCapability ? '' : retryRegistrationId,
                         checkoutAttemptToken: retryCheckoutAttemptToken,
-                        retryPayment: true
+                        retryPayment: true,
+                        publicCheckoutCapability: currentPublicCheckoutCapability
                     });
                     if (checkoutUrl) {
                         window.location.href = checkoutUrl;
@@ -698,18 +705,6 @@
                 }
                 preparedCheckoutRegistration = { retryKey, result, checkoutAttemptToken };
 
-                const returnParams = new URLSearchParams({
-                    teamId,
-                    formId,
-                    registrationId: result.registrationId,
-                    checkoutAttemptToken
-                });
-                if (retryPaymentRequested) {
-                    returnParams.set('retryPayment', '1');
-                }
-                const successUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=success`;
-                const cancelUrl = `${window.location.origin}/registration.html?${returnParams.toString()}&status=cancelled`;
-
                 let checkoutUrl = '';
                 try {
                     checkoutUrl = await initiateStripeCheckout({
@@ -719,8 +714,6 @@
                         amount: amountCents,
                         currency,
                         checkoutAttemptToken,
-                        successUrl,
-                        cancelUrl,
                         metadata: {
                             teamId,
                             formId,

@@ -9,17 +9,16 @@ function normalizeFirestoreId(value, label) {
 }
 
 function buildRegistrationPaymentRetryUrl(appUrl, input = {}) {
-  const checkoutAttemptToken = String(input.checkoutAttemptToken || '').trim();
-  if (!checkoutAttemptToken) {
+  const publicCheckoutCapability = String(input.publicCheckoutCapability || '').trim();
+  if (!publicCheckoutCapability) {
     return '';
   }
   const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
   const params = new URLSearchParams({
     teamId: normalizeFirestoreId(input.teamId, 'teamId'),
     formId: normalizeFirestoreId(input.formId, 'formId'),
-    registrationId: normalizeFirestoreId(input.registrationId, 'registrationId'),
     retryPayment: '1',
-    checkoutAttemptToken
+    publicCheckoutCapability
   });
   return `${baseUrl}/registration.html?${params.toString()}`;
 }
@@ -133,8 +132,7 @@ function buildRegistrationFailedPaymentReminderState({
     retryUrl: buildRegistrationPaymentRetryUrl(appUrl, {
       teamId: input.teamId,
       formId: input.formId,
-      registrationId: input.registrationId,
-      checkoutAttemptToken: input.checkoutAttemptToken || registration.checkoutAttemptToken || ''
+      publicCheckoutCapability: input.publicCheckoutCapability || ''
     }),
     lastEventId: String(eventId || '').trim() || null,
     firstQueuedAt: queuedAtIso,
