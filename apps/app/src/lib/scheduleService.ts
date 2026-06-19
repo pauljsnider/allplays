@@ -259,6 +259,19 @@ export type GameScoreSnapshot = {
   awayScore: number;
 };
 
+type LiveScoreUpdateResult = GameScoreSnapshot & {
+  eventId: string;
+  type: 'score_update';
+  period: string | null;
+  gameClockMs: number;
+  description: string;
+  previousHomeScore: number | null;
+  previousAwayScore: number | null;
+  createdBy: string;
+  createdByName: string;
+  createdAt: Date;
+};
+
 export type ScheduleHomeScoringPlayer = {
   id: string;
   name: string;
@@ -775,6 +788,269 @@ async function nativeDeleteDocument(path: string) {
   await nativeFirestoreRequest(`/${path}`, {
     method: 'DELETE'
   });
+}
+
+type NativeDocumentSnapshot = {
+  exists: boolean;
+  updateTime: string | null;
+  document: FirestoreDocument | null;
+};
+
+type PendingLivePublishOperation =
+  | {
+    id: string;
+    kind: 'score_update';
+    teamId: string;
+    gameId: string;
+    score: GameScoreSnapshot;
+    previousScore?: Partial<GameScoreSnapshot> | null;
+    user: Pick<AuthUser, 'uid' | 'displayName' | 'email'>;
+    createdAt: string;
+  }
+  | {
+    id: string;
+    kind: 'player_game_stat';
+    teamId: string;
+    gameId: string;
+    playerId: string;
+    stat: PlayerGameStatInput;
+    user: Pick<AuthUser, 'uid' | 'displayName' | 'email'>;
+    createdAt: string;
+  };
+
+const pendingLivePublishQueueStorageKey = 'allplays.pendingLivePublishQueue.v1';
+const liveGameSnapshotStorageKey = 'allplays.liveGameSnapshots.v1';
+const livePublishLocks = new Map<string, { active: boolean; waiters: Array<() => void> }>();
+let livePublishQueueFlushPromise: Promise<void> | null = null;
+let livePublishQueueListenerRegistered = false;
+
+function getLivePublishLock(key: string) {
+  if (!livePublishLocks.has(key)) {
+    livePublishLocks.set(key, { active: false, waiters: [] });
+  }
+  return livePublishLocks.get(key)!;
+}
+
+async function withLivePublishLock<T>(key: string, work: () => Promise<T>) {
+  const lock = getLivePublishLock(key);
+  if (lock.active) {
+    await new Promise<void>((resolve) => {
+      lock.waiters.push(resolve);
+    });
+  }
+  lock.active = true;
+  try {
+    return await work();
+  } finally {
+    const next = lock.waiters.shift();
+    if (next) {
+      next();
+    } else {
+      lock.active = false;
+    }
+  }
+}
+
+function getFirestoreDocumentName(path: string) {
+  return `projects/${getProjectId()}/databases/(default)/documents/${path}`;
+}
+
+function buildFirestoreFields(data: Record<string, unknown>) {
+  return Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(data[key]);
+    return acc;
+  }, {});
+}
+
+async function nativeCommitWrites(writes: Record<string, unknown>[]) {
+  return nativeFirestoreRequest(':commit', {
+    method: 'POST',
+    body: JSON.stringify({ writes })
+  });
+}
+
+async function nativeGetDocumentSnapshot(path: string): Promise<NativeDocumentSnapshot> {
+  try {
+    const payload = await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument & { updateTime?: string };
+    return {
+      exists: true,
+      updateTime: typeof payload?.updateTime === 'string' ? payload.updateTime : null,
+      document: mapFirestoreDocument(payload)
+    };
+  } catch (error: any) {
+    const message = String(error?.message || '').toLowerCase();
+    if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
+      return {
+        exists: false,
+        updateTime: null,
+        document: null
+      };
+    }
+    throw error;
+  }
+}
+
+function isNativeConflictError(error: any) {
+  const message = String(error?.message || '').toLowerCase();
+  return error?.status === 409 || error?.status === 412 || message.includes('failed_precondition') || message.includes('aborted');
+}
+
+function isNativeOfflineError(error: any) {
+  const message = String(error?.message || '').toLowerCase();
+  return !error?.status || message.includes('failed to fetch') || message.includes('network') || message.includes('offline') || message.includes('timed out');
+}
+
+function getSafeLocalStorage() {
+  try {
+    return typeof window !== 'undefined' ? window.localStorage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readPendingLivePublishQueue(): PendingLivePublishOperation[] {
+  const storage = getSafeLocalStorage();
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(pendingLivePublishQueueStorageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingLivePublishQueue(queue: PendingLivePublishOperation[]) {
+  const storage = getSafeLocalStorage();
+  if (!storage) return;
+  if (!queue.length) {
+    storage.removeItem(pendingLivePublishQueueStorageKey);
+    return;
+  }
+  storage.setItem(pendingLivePublishQueueStorageKey, JSON.stringify(queue));
+}
+
+type LocalLiveGameSnapshot = {
+  homeScore: number;
+  awayScore: number;
+  playerPoints: Record<string, number>;
+};
+
+function readLocalLiveGameSnapshots() {
+  const storage = getSafeLocalStorage();
+  if (!storage) return {} as Record<string, LocalLiveGameSnapshot>;
+  try {
+    const raw = storage.getItem(liveGameSnapshotStorageKey);
+    if (!raw) return {} as Record<string, LocalLiveGameSnapshot>;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, LocalLiveGameSnapshot> : {};
+  } catch {
+    return {} as Record<string, LocalLiveGameSnapshot>;
+  }
+}
+
+function writeLocalLiveGameSnapshots(snapshots: Record<string, LocalLiveGameSnapshot>) {
+  const storage = getSafeLocalStorage();
+  if (!storage) return;
+  if (!Object.keys(snapshots).length) {
+    storage.removeItem(liveGameSnapshotStorageKey);
+    return;
+  }
+  storage.setItem(liveGameSnapshotStorageKey, JSON.stringify(snapshots));
+}
+
+function makeLiveGameSnapshotKey(teamId: string, gameId: string) {
+  return `${compactString(teamId)}::${compactString(gameId)}`;
+}
+
+function readLocalLiveGameSnapshot(teamId: string, gameId: string): LocalLiveGameSnapshot {
+  const snapshots = readLocalLiveGameSnapshots();
+  return snapshots[makeLiveGameSnapshotKey(teamId, gameId)] || { homeScore: 0, awayScore: 0, playerPoints: {} };
+}
+
+function writeLocalLiveGameSnapshot(teamId: string, gameId: string, snapshot: LocalLiveGameSnapshot) {
+  const snapshots = readLocalLiveGameSnapshots();
+  snapshots[makeLiveGameSnapshotKey(teamId, gameId)] = snapshot;
+  writeLocalLiveGameSnapshots(snapshots);
+}
+
+function updateLocalLiveGameSnapshot(teamId: string, gameId: string, updater: (snapshot: LocalLiveGameSnapshot) => LocalLiveGameSnapshot) {
+  writeLocalLiveGameSnapshot(teamId, gameId, updater(readLocalLiveGameSnapshot(teamId, gameId)));
+}
+
+function buildPendingLivePublishId() {
+  return `pending-live-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function enqueuePendingLivePublish(operation: PendingLivePublishOperation) {
+  const queue = readPendingLivePublishQueue();
+  queue.push(operation);
+  queue.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  writePendingLivePublishQueue(queue);
+}
+
+function ensureLivePublishQueueFlushListener() {
+  if (livePublishQueueListenerRegistered || typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+  window.addEventListener('online', () => {
+    void flushPendingLivePublishQueue();
+  });
+  livePublishQueueListenerRegistered = true;
+}
+
+function isPointsLikeStatKey(statKey: unknown) {
+  const key = String(statKey || '').trim().toLowerCase();
+  return key === 'pts' || key === 'points' || key === 'goals' || key === 'r' || key === 'run' || key === 'runs';
+}
+
+function deriveScoreFromTrackerLog(log: Array<Record<string, any>>) {
+  return log.reduce((totals, entry) => {
+    const undoData = entry?.undoData;
+    if (!undoData || undoData.type !== 'stat' || !isPointsLikeStatKey(undoData.statKey)) return totals;
+    const value = Number(undoData.value) || 0;
+    if (!value) return totals;
+    if (undoData.isOpponent) totals.away += value;
+    else totals.home += value;
+    totals.count += 1;
+    return totals;
+  }, { home: 0, away: 0, count: 0 });
+}
+
+async function loadTrackerEventLog(teamId: string, gameId: string) {
+  try {
+    if (isNativeRuntime()) {
+      return await nativeListCollection(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/events`);
+    }
+    const snapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/events`));
+    return snapshot.docs.map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
+  } catch {
+    return [];
+  }
+}
+
+async function loadLiveScoreIntegrityState(teamId: string, gameId: string) {
+  const log = await loadTrackerEventLog(teamId, gameId);
+  const derived = deriveScoreFromTrackerLog(log as Array<Record<string, any>>);
+  return {
+    hasScoringEvents: derived.count > 0,
+    homeScore: derived.home,
+    awayScore: derived.away
+  };
+}
+
+function resolveScoreFromIntegrityState(game: Record<string, any> | null | undefined, integrityState: { hasScoringEvents: boolean; homeScore: number; awayScore: number } | null) {
+  const liveHome = normalizeGameScoreValue(game?.homeScore);
+  const liveAway = normalizeGameScoreValue(game?.awayScore);
+  const hasPersistedLiveScore = game?.homeScore !== null && game?.homeScore !== undefined && game?.homeScore !== ''
+    && game?.awayScore !== null && game?.awayScore !== undefined && game?.awayScore !== '';
+  if (!integrityState?.hasScoringEvents || hasPersistedLiveScore) {
+    return { homeScore: liveHome, awayScore: liveAway, reconciled: false };
+  }
+  return {
+    homeScore: integrityState.homeScore,
+    awayScore: integrityState.awayScore,
+    reconciled: true
+  };
 }
 
 async function readWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
@@ -2551,11 +2827,129 @@ function buildLiveTrackingGamePatch(game: Record<string, any> | null | undefined
   return payload;
 }
 
-async function loadGameForLivePublishing(teamId: string, gameId: string) {
-  if (isNativeRuntime()) {
-    return nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`);
+async function runNativeScoreUpdatePublish(
+  teamId: string,
+  gameId: string,
+  score: GameScoreSnapshot,
+  user: AuthUser,
+  previousScore?: Partial<GameScoreSnapshot> | null,
+  createdAt = new Date()
+) {
+  const gamePath = `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const snapshot = await nativeGetDocumentSnapshot(gamePath);
+      const currentGame = (snapshot.document || {}) as Record<string, unknown>;
+      assertGameAllowsLivePublishing(currentGame);
+      const liveGamePatch = buildLiveTrackingGamePatch(currentGame, user, createdAt);
+      const payload = {
+        eventId: createAppLiveEventId(),
+        type: 'score_update',
+        period: getLiveEventPeriod(currentGame),
+        gameClockMs: getLiveEventClockMs(currentGame),
+        description: buildLiveScoreUpdateDescription(score),
+        homeScore: normalizeGameScoreValue(score.homeScore),
+        awayScore: normalizeGameScoreValue(score.awayScore),
+        previousHomeScore: previousScore?.homeScore !== undefined ? normalizeGameScoreValue(previousScore.homeScore) : normalizeGameScoreValue(currentGame?.homeScore),
+        previousAwayScore: previousScore?.awayScore !== undefined ? normalizeGameScoreValue(previousScore.awayScore) : normalizeGameScoreValue(currentGame?.awayScore),
+        createdBy: user.uid,
+        createdByName: user.displayName || user.email || 'Staff',
+        createdAt
+      };
+      await nativeCommitWrites([
+        {
+          update: {
+            name: getFirestoreDocumentName(`teams/${teamId}/games/${gameId}`),
+            fields: buildFirestoreFields({
+              homeScore: payload.homeScore,
+              awayScore: payload.awayScore,
+              scoreUpdatedAt: createdAt,
+              scoreUpdatedBy: user.uid,
+              ...liveGamePatch
+            })
+          },
+          updateMask: {
+            fieldPaths: ['homeScore', 'awayScore', 'scoreUpdatedAt', 'scoreUpdatedBy', ...Object.keys(liveGamePatch)]
+          },
+          currentDocument: snapshot.exists
+            ? { updateTime: snapshot.updateTime }
+            : { exists: false }
+        },
+        {
+          update: {
+            name: getFirestoreDocumentName(`teams/${teamId}/games/${gameId}/liveEvents/${payload.eventId}`),
+            fields: buildFirestoreFields(payload)
+          },
+          currentDocument: { exists: false }
+        }
+      ]);
+      updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
+        ...local,
+        homeScore: payload.homeScore,
+        awayScore: payload.awayScore
+      }));
+      return payload;
+    } catch (error) {
+      if (isNativeConflictError(error) && attempt < 2) continue;
+      throw error;
+    }
   }
-  return Promise.resolve(getGame(teamId, gameId));
+  throw new Error('Unable to publish live score update.');
+}
+
+export async function flushPendingLivePublishOperations(
+  queue: PendingLivePublishOperation[],
+  processor: (operation: PendingLivePublishOperation) => Promise<void>
+) {
+  const remaining: PendingLivePublishOperation[] = [];
+  for (let index = 0; index < queue.length; index += 1) {
+    const operation = queue[index];
+    try {
+      await processor(operation);
+    } catch (error) {
+      remaining.push(operation);
+      if (isNativeOfflineError(error)) {
+        remaining.push(...queue.slice(index + 1));
+        break;
+      }
+    }
+  }
+  return remaining;
+}
+
+async function flushPendingLivePublishQueue() {
+  if (!isNativeRuntime()) return;
+  if (livePublishQueueFlushPromise) return livePublishQueueFlushPromise;
+
+  livePublishQueueFlushPromise = (async () => {
+    const queue = readPendingLivePublishQueue();
+    if (!queue.length) return;
+    const remaining = await flushPendingLivePublishOperations(queue, async (operation) => {
+      if (operation.kind === 'score_update') {
+        await runNativeScoreUpdatePublish(
+          operation.teamId,
+          operation.gameId,
+          operation.score,
+          operation.user as AuthUser,
+          operation.previousScore,
+          new Date(operation.createdAt)
+        );
+        return;
+      }
+      await runNativePlayerGameStatWrite(
+        operation.teamId,
+        operation.gameId,
+        operation.playerId,
+        operation.stat,
+        operation.user as AuthUser,
+        new Date(operation.createdAt)
+      );
+    });
+    writePendingLivePublishQueue(remaining);
+  })().finally(() => {
+    livePublishQueueFlushPromise = null;
+  });
+  return livePublishQueueFlushPromise;
 }
 
 export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string, score: GameScoreSnapshot, user: AuthUser, previousScore?: Partial<GameScoreSnapshot> | null) {
@@ -2566,40 +2960,99 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
     throw new Error('Sign in before posting live play-by-play.');
   }
 
-  const currentGame = await loadGameForLivePublishing(teamId, gameId);
-  assertGameAllowsLivePublishing(currentGame);
-  const now = new Date();
-  const liveGamePatch = buildLiveTrackingGamePatch(currentGame, user, now);
-  const payload = {
-    eventId: createAppLiveEventId(),
-    type: 'score_update',
-    period: getLiveEventPeriod(currentGame),
-    gameClockMs: getLiveEventClockMs(currentGame),
-    description: buildLiveScoreUpdateDescription(score),
-    homeScore: normalizeGameScoreValue(score.homeScore),
-    awayScore: normalizeGameScoreValue(score.awayScore),
-    previousHomeScore: previousScore?.homeScore !== undefined ? normalizeGameScoreValue(previousScore.homeScore) : null,
-    previousAwayScore: previousScore?.awayScore !== undefined ? normalizeGameScoreValue(previousScore.awayScore) : null,
-    createdBy: user.uid,
-    createdByName: user.displayName || user.email || 'Staff',
-    createdAt: now
-  };
-
-  try {
-    if (Object.keys(liveGamePatch).length) {
-      await withTimeout(Promise.resolve(updateGame(teamId, gameId, liveGamePatch)), 'Live status sync');
+  ensureLivePublishQueueFlushListener();
+  const lockKey = `score-update:${teamId}:${gameId}`;
+  return withLivePublishLock(lockKey, async () => {
+    if (isNativeRuntime()) {
+      await flushPendingLivePublishQueue().catch(() => undefined);
     }
-    await withTimeout(Promise.resolve(broadcastLiveEvent(teamId, gameId, payload)), 'Live score event');
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST live score event publish:', sanitizeErrorForLogging(error));
-    if (Object.keys(liveGamePatch).length) {
-      await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, liveGamePatch);
-    }
-    await nativeCreateDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`, payload);
-  }
 
-  return payload;
+    const createdAt = new Date();
+    try {
+      if (isNativeRuntime()) {
+        return await runNativeScoreUpdatePublish(teamId, gameId, score, user, previousScore, createdAt);
+      }
+
+      const gamePath = `teams/${teamId}/games/${gameId}`;
+      const payload: LiveScoreUpdateResult = await withTimeout(runTransaction(db, async (transaction: any) => {
+        const gameRef = doc(db, gamePath);
+        const gameSnap = await transaction.get(gameRef);
+        const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
+        assertGameAllowsLivePublishing(gameData);
+        const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, createdAt);
+        const nextPayload = {
+          eventId: createAppLiveEventId(),
+          type: 'score_update',
+          period: getLiveEventPeriod(gameData),
+          gameClockMs: getLiveEventClockMs(gameData),
+          description: buildLiveScoreUpdateDescription(score),
+          homeScore: normalizeGameScoreValue(score.homeScore),
+          awayScore: normalizeGameScoreValue(score.awayScore),
+          previousHomeScore: previousScore?.homeScore !== undefined ? normalizeGameScoreValue(previousScore.homeScore) : normalizeGameScoreValue(gameData?.homeScore),
+          previousAwayScore: previousScore?.awayScore !== undefined ? normalizeGameScoreValue(previousScore.awayScore) : normalizeGameScoreValue(gameData?.awayScore),
+          createdBy: user.uid,
+          createdByName: user.displayName || user.email || 'Staff',
+          createdAt
+        };
+        transaction.set(gameRef, {
+          homeScore: nextPayload.homeScore,
+          awayScore: nextPayload.awayScore,
+          scoreUpdatedAt: createdAt,
+          scoreUpdatedBy: user.uid,
+          ...liveGamePatch
+        }, { merge: true });
+        transaction.set(doc(db, `${gamePath}/liveEvents/${nextPayload.eventId}`), nextPayload);
+        return nextPayload;
+      }) as Promise<LiveScoreUpdateResult>, 'Live score event');
+      updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
+        ...local,
+        homeScore: payload.homeScore,
+        awayScore: payload.awayScore
+      }));
+      return payload;
+    } catch (error) {
+      if (!isNativeRuntime()) throw error;
+      console.warn('[schedule-service] Queueing native live score event publish:', sanitizeErrorForLogging(error));
+      if (!isNativeOfflineError(error)) throw error;
+      const queuedOperation: PendingLivePublishOperation = {
+        id: buildPendingLivePublishId(),
+        kind: 'score_update',
+        teamId,
+        gameId,
+        score: {
+          homeScore: normalizeGameScoreValue(score.homeScore),
+          awayScore: normalizeGameScoreValue(score.awayScore)
+        },
+        previousScore,
+        user: {
+          uid: user.uid,
+          displayName: compactString(user.displayName),
+          email: compactString(user.email)
+        },
+        createdAt: createdAt.toISOString()
+      };
+      enqueuePendingLivePublish(queuedOperation);
+      updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
+        ...local,
+        homeScore: normalizeGameScoreValue(score.homeScore),
+        awayScore: normalizeGameScoreValue(score.awayScore)
+      }));
+      return {
+        eventId: createAppLiveEventId(),
+        type: 'score_update',
+        period: null,
+        gameClockMs: 0,
+        description: buildLiveScoreUpdateDescription(score),
+        homeScore: normalizeGameScoreValue(score.homeScore),
+        awayScore: normalizeGameScoreValue(score.awayScore),
+        previousHomeScore: previousScore?.homeScore !== undefined ? normalizeGameScoreValue(previousScore.homeScore) : null,
+        previousAwayScore: previousScore?.awayScore !== undefined ? normalizeGameScoreValue(previousScore.awayScore) : null,
+        createdBy: user.uid,
+        createdByName: user.displayName || user.email || 'Staff',
+        createdAt
+      };
+    }
+  });
 }
 
 export async function loadGameDayLiveEventsForApp(teamId: string, gameId: string) {
@@ -2750,6 +3203,157 @@ export function buildPlayerScoringLiveEvent({
   return buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game, eventId });
 }
 
+async function runNativePlayerGameStatWrite(
+  teamId: string,
+  gameId: string,
+  playerId: string,
+  stat: PlayerGameStatInput,
+  user: AuthUser,
+  scoreUpdatedAt = new Date()
+): Promise<PlayerGameStatResult> {
+  const playerName = compactString(stat.playerName) || 'Player';
+  const playerNumber = compactString(stat.playerNumber);
+  const teamSide = stat.teamSide === 'away' ? 'away' : 'home';
+  const gamePath = `teams/${teamId}/games/${gameId}`;
+  const encodedGamePath = `teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`;
+  const statKey = stat.statKey;
+  const value = Number(stat.value) as 1 | 2;
+  const integrityState = await loadLiveScoreIntegrityState(teamId, gameId).catch(() => null);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const [gameSnapshot, statsSnapshot] = await Promise.all([
+        nativeGetDocumentSnapshot(encodedGamePath),
+        nativeGetDocumentSnapshot(`${encodedGamePath}/aggregatedStats/${encodeURIComponent(playerId)}`)
+      ]);
+      const gameDoc = (gameSnapshot.document || {}) as Record<string, unknown>;
+      assertGameAllowsLivePublishing(gameDoc);
+      const scoreBase = resolveScoreFromIntegrityState(gameDoc, integrityState);
+      const statsDoc = (statsSnapshot.document || {}) as Record<string, unknown>;
+      const awayScore = scoreBase.awayScore + (statKey === 'pts' && teamSide === 'away' ? value : 0);
+      const homeScore = scoreBase.homeScore + (statKey === 'pts' && teamSide === 'home' ? value : 0);
+      const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
+      const playerStatTotal = normalizeGameScoreValue(existingStats[statKey]) + value;
+      existingStats[statKey] = playerStatTotal;
+      const liveGamePatch = buildLiveTrackingGamePatch(gameDoc, user, scoreUpdatedAt);
+      const liveEventId = createAppLiveEventId();
+      const trackerEventId = createAppLiveEventId();
+      const liveEvent = buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game: gameDoc, eventId: liveEventId });
+      const trackerEvent = buildTrackerEventDocument({
+        text: buildPlayerGameStatTrackerText(playerName, playerNumber, statKey, value),
+        clock: formatTrackerClock(getLiveEventClockMs(gameDoc)),
+        period: getLiveEventPeriod(gameDoc),
+        timestamp: scoreUpdatedAt,
+        playerName,
+        playerNumber,
+        teamSide,
+        undoData: {
+          type: 'stat',
+          playerId,
+          statKey,
+          value,
+          isOpponent: false
+        }
+      }, user);
+      const gamePatch: Record<string, unknown> = {
+        scoreUpdatedAt,
+        scoreUpdatedBy: user.uid,
+        ...liveGamePatch
+      };
+      if (statKey === 'pts') {
+        gamePatch.homeScore = homeScore;
+        gamePatch.awayScore = awayScore;
+      }
+
+      await nativeCommitWrites([
+        {
+          update: {
+            name: getFirestoreDocumentName(gamePath),
+            fields: buildFirestoreFields(gamePatch)
+          },
+          updateMask: {
+            fieldPaths: Object.keys(gamePatch)
+          },
+          currentDocument: gameSnapshot.exists
+            ? { updateTime: gameSnapshot.updateTime }
+            : { exists: false }
+        },
+        {
+          update: {
+            name: getFirestoreDocumentName(`${gamePath}/aggregatedStats/${playerId}`),
+            fields: buildFirestoreFields({
+              playerName,
+              playerNumber,
+              stats: existingStats
+            })
+          },
+          updateMask: {
+            fieldPaths: ['playerName', 'playerNumber', 'stats']
+          },
+          currentDocument: statsSnapshot.exists
+            ? { updateTime: statsSnapshot.updateTime }
+            : { exists: false }
+        },
+        {
+          update: {
+            name: getFirestoreDocumentName(`${gamePath}/liveEvents/${liveEventId}`),
+            fields: buildFirestoreFields({
+              ...liveEvent,
+              eventId: liveEventId,
+              createdAt: scoreUpdatedAt
+            })
+          },
+          currentDocument: { exists: false }
+        },
+        {
+          update: {
+            name: getFirestoreDocumentName(`${gamePath}/events/${trackerEventId}`),
+            fields: buildFirestoreFields({
+              ...trackerEvent,
+              eventId: trackerEventId,
+              timestamp: scoreUpdatedAt.getTime()
+            })
+          },
+          currentDocument: { exists: false }
+        }
+      ]);
+
+      updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
+        ...local,
+        homeScore,
+        awayScore,
+        playerPoints: {
+          ...(local.playerPoints || {}),
+          [playerId]: statKey === 'pts' ? playerStatTotal : normalizeGameScoreValue(local.playerPoints?.[playerId])
+        }
+      }));
+
+      return {
+        homeScore,
+        awayScore,
+        playerId,
+        playerName,
+        playerNumber,
+        statKey,
+        value,
+        playerStatTotal,
+        trackerEventId,
+        liveEventId,
+        liveEvent: {
+          ...liveEvent,
+          eventId: liveEventId,
+          createdAt: scoreUpdatedAt
+        }
+      };
+    } catch (error) {
+      if (isNativeConflictError(error) && attempt < 2) continue;
+      throw error;
+    }
+  }
+
+  throw new Error('Unable to record player game stat.');
+}
+
 export async function recordPlayerGameStat(teamId: string, gameId: string, playerId: string, stat: PlayerGameStatInput, user: AuthUser): Promise<PlayerGameStatResult> {
   if (!teamId || !gameId) {
     throw new Error('A scheduled game is required before recording player stats.');
@@ -2771,24 +3375,33 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
   const statsPath = `${gamePath}/aggregatedStats/${playerId}`;
   const liveEventsPath = `${gamePath}/liveEvents`;
   const eventsPath = `${gamePath}/events`;
+  const integrityState = await loadLiveScoreIntegrityState(teamId, gameId).catch(() => null);
+  ensureLivePublishQueueFlushListener();
 
-  try {
-    return await withTimeout(runTransaction(db, async (transaction: any) => {
+  return withLivePublishLock(`player-stat:${teamId}:${gameId}`, async () => {
+    if (isNativeRuntime()) {
+      await flushPendingLivePublishQueue().catch(() => undefined);
+    }
+
+    try {
+      const result: PlayerGameStatResult = await withTimeout(runTransaction(db, async (transaction: any) => {
       const gameRef = doc(db, gamePath);
       const statsRef = doc(db, statsPath);
       const [gameSnap, statsSnap] = await Promise.all([
         transaction.get(gameRef),
         transaction.get(statsRef)
       ]);
-      const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+      const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
       assertGameAllowsLivePublishing(gameData);
-      const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
+      const scoreBase = resolveScoreFromIntegrityState(gameData, integrityState);
+      const statsData = (statsSnap.exists?.() ? statsSnap.data() || {} : {}) as Record<string, unknown>;
       const scoreUpdatedAt = new Date();
       const statKey = stat.statKey;
       const value = Number(stat.value) as 1 | 2;
-      const awayScore = normalizeGameScoreValue(gameData.awayScore) + (statKey === 'pts' && teamSide === 'away' ? value : 0);
-      const homeScore = normalizeGameScoreValue(gameData.homeScore) + (statKey === 'pts' && teamSide === 'home' ? value : 0);
-      const playerStatTotal = normalizeGameScoreValue(statsData?.stats?.[statKey]) + value;
+      const awayScore = scoreBase.awayScore + (statKey === 'pts' && teamSide === 'away' ? value : 0);
+      const homeScore = scoreBase.homeScore + (statKey === 'pts' && teamSide === 'home' ? value : 0);
+      const playerStats = (statsData.stats && typeof statsData.stats === 'object' ? statsData.stats : {}) as Record<string, unknown>;
+      const playerStatTotal = normalizeGameScoreValue(playerStats[statKey]) + value;
       const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, scoreUpdatedAt);
       const liveEventId = createAppLiveEventId();
       const trackerEventId = createAppLiveEventId();
@@ -2842,84 +3455,88 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
         liveEventId,
         liveEvent
       };
-    }), 'Player game stat');
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST player stat:', sanitizeErrorForLogging(error));
-    const [gameDoc, statsDoc] = await Promise.all([
-      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
-      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`)
-    ]);
-    assertGameAllowsLivePublishing(gameDoc);
-    const statKey = stat.statKey;
-    const value = Number(stat.value) as 1 | 2;
-    const awayScore = normalizeGameScoreValue(gameDoc?.awayScore) + (statKey === 'pts' && teamSide === 'away' ? value : 0);
-    const homeScore = normalizeGameScoreValue(gameDoc?.homeScore) + (statKey === 'pts' && teamSide === 'home' ? value : 0);
-    const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
-    const playerStatTotal = normalizeGameScoreValue(existingStats[statKey]) + value;
-    existingStats[statKey] = playerStatTotal;
-    const scoreUpdatedAt = new Date();
-    const liveGamePatch = buildLiveTrackingGamePatch(gameDoc, user, scoreUpdatedAt);
-    const liveEventId = createAppLiveEventId();
-    const trackerEventId = createAppLiveEventId();
-    const liveEvent = buildPlayerGameStatLiveEvent({ playerId, playerName, playerNumber, statKey, value, homeScore, awayScore, user, game: gameDoc, eventId: liveEventId });
-    const trackerEvent = buildTrackerEventDocument({
-      text: buildPlayerGameStatTrackerText(playerName, playerNumber, statKey, value),
-      clock: formatTrackerClock(getLiveEventClockMs(gameDoc)),
-      period: getLiveEventPeriod(gameDoc),
-      timestamp: scoreUpdatedAt,
-      playerName,
-      playerNumber,
-      teamSide,
-      undoData: {
-        type: 'stat',
+    }) as Promise<PlayerGameStatResult>, 'Player game stat');
+
+      updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
+        ...local,
+        homeScore: result.homeScore,
+        awayScore: result.awayScore,
+        playerPoints: {
+          ...(local.playerPoints || {}),
+          [playerId]: stat.statKey === 'pts' ? result.playerStatTotal : normalizeGameScoreValue(local.playerPoints?.[playerId])
+        }
+      }));
+      return result;
+    } catch (error) {
+      if (!isNativeRuntime()) throw error;
+      console.warn('[schedule-service] Queueing native player stat write:', sanitizeErrorForLogging(error));
+      if (!isNativeOfflineError(error)) {
+        return runNativePlayerGameStatWrite(teamId, gameId, playerId, stat, user);
+      }
+
+      const createdAt = new Date();
+      enqueuePendingLivePublish({
+        id: buildPendingLivePublishId(),
+        kind: 'player_game_stat',
+        teamId,
+        gameId,
         playerId,
-        statKey,
-        value,
-        isOpponent: false
-      }
-    }, user);
+        stat,
+        user: {
+          uid: user.uid,
+          displayName: compactString(user.displayName),
+          email: compactString(user.email)
+        },
+        createdAt: createdAt.toISOString()
+      });
+      const localSnapshot = readLocalLiveGameSnapshot(teamId, gameId);
+      const optimisticAwayScore = localSnapshot.awayScore + (stat.statKey === 'pts' && teamSide === 'away' ? Number(stat.value) : 0);
+      const optimisticHomeScore = localSnapshot.homeScore + (stat.statKey === 'pts' && teamSide === 'home' ? Number(stat.value) : 0);
+      const optimisticPlayerStatTotal = normalizeGameScoreValue(localSnapshot.playerPoints?.[playerId]) + (stat.statKey === 'pts' ? Number(stat.value) : 0);
+      updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
+        ...local,
+        homeScore: optimisticHomeScore,
+        awayScore: optimisticAwayScore,
+        playerPoints: {
+          ...(local.playerPoints || {}),
+          [playerId]: optimisticPlayerStatTotal
+        }
+      }));
 
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
-      ...(statKey === 'pts' ? { homeScore, awayScore } : {}),
-      scoreUpdatedAt,
-      scoreUpdatedBy: user.uid,
-      ...liveGamePatch
-    });
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`, {
-      playerName,
-      playerNumber,
-      stats: existingStats
-    });
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents/${encodeURIComponent(liveEventId)}`, {
-      ...liveEvent,
-      eventId: liveEventId,
-      createdAt: scoreUpdatedAt
-    });
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/events/${encodeURIComponent(trackerEventId)}`, {
-      ...trackerEvent,
-      eventId: trackerEventId,
-      timestamp: scoreUpdatedAt.getTime()
-    });
-
-    return {
-      homeScore,
-      awayScore,
-      playerId,
-      playerName,
-      playerNumber,
-      statKey,
-      value,
-      playerStatTotal,
-      trackerEventId,
-      liveEventId,
-      liveEvent: {
-        ...liveEvent,
+      const liveEventId = createAppLiveEventId();
+      const trackerEventId = createAppLiveEventId();
+      const liveEvent = {
+        ...buildPlayerGameStatLiveEvent({
+          playerId,
+          playerName,
+          playerNumber,
+          statKey: stat.statKey,
+          value: Number(stat.value),
+          homeScore: optimisticHomeScore,
+          awayScore: optimisticAwayScore,
+          user,
+          game: null,
+          eventId: liveEventId
+        }),
         eventId: liveEventId,
-        createdAt: scoreUpdatedAt
-      }
-    };
-  }
+        createdAt
+      };
+
+      return {
+        homeScore: optimisticHomeScore,
+        awayScore: optimisticAwayScore,
+        playerId,
+        playerName,
+        playerNumber,
+        statKey: stat.statKey,
+        value: Number(stat.value) as 1 | 2,
+        playerStatTotal: optimisticPlayerStatTotal,
+        trackerEventId,
+        liveEventId,
+        liveEvent
+      };
+    }
+  });
 }
 
 export async function undoRecordedPlayerGameStat(teamId: string, gameId: string, stat: UndoPlayerGameStatInput, user: AuthUser): Promise<UndoPlayerGameStatResult> {
@@ -3105,103 +3722,18 @@ export async function recordPlayerScoringStat(teamId: string, gameId: string, pl
     throw new Error('Only the +2 player scoring action is supported here.');
   }
 
-  const playerName = compactString(stat.playerName) || 'Player';
-  const playerNumber = compactString(stat.playerNumber);
-  const teamSide = stat.teamSide === 'away' ? 'away' : 'home';
-  const gamePath = `teams/${teamId}/games/${gameId}`;
-  const statsPath = `${gamePath}/aggregatedStats/${playerId}`;
-  const liveEventsPath = `${gamePath}/liveEvents`;
-
-  try {
-    return await withTimeout(runTransaction(db, async (transaction: any) => {
-      const gameRef = doc(db, gamePath);
-      const statsRef = doc(db, statsPath);
-      const [gameSnap, statsSnap] = await Promise.all([
-        transaction.get(gameRef),
-        transaction.get(statsRef)
-      ]);
-      const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
-      assertGameAllowsLivePublishing(gameData);
-      const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
-      const awayScore = normalizeGameScoreValue(gameData.awayScore) + (teamSide === 'away' ? 2 : 0);
-      const homeScore = normalizeGameScoreValue(gameData.homeScore) + (teamSide === 'home' ? 2 : 0);
-      const playerPoints = normalizeGameScoreValue(statsData?.stats?.pts) + 2;
-      const scoreUpdatedAt = new Date();
-      const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, scoreUpdatedAt);
-      const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user, game: gameData });
-
-      transaction.set(gameRef, {
-        homeScore,
-        awayScore,
-        scoreUpdatedAt,
-        scoreUpdatedBy: user.uid,
-        ...liveGamePatch
-      }, { merge: true });
-      transaction.set(statsRef, {
-        playerName,
-        playerNumber,
-        stats: { pts: increment(2) }
-      }, { merge: true });
-      transaction.set(doc(collection(db, liveEventsPath), String(liveEvent.eventId)), liveEvent);
-
-      return {
-        homeScore,
-        awayScore,
-        playerId,
-        playerName,
-        playerNumber,
-        statKey: 'pts',
-        value: 2,
-        playerPoints,
-        liveEvent
-      };
-    }), 'Player scoring stat');
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    console.warn('[schedule-service] Falling back to REST player scoring stat:', sanitizeErrorForLogging(error));
-    const [gameDoc, statsDoc] = await Promise.all([
-      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`),
-      nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`)
-    ]);
-    assertGameAllowsLivePublishing(gameDoc);
-    const awayScore = normalizeGameScoreValue(gameDoc?.awayScore) + (teamSide === 'away' ? 2 : 0);
-    const homeScore = normalizeGameScoreValue(gameDoc?.homeScore) + (teamSide === 'home' ? 2 : 0);
-    const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
-    const playerPoints = normalizeGameScoreValue(existingStats.pts) + 2;
-    existingStats.pts = playerPoints;
-    const scoreUpdatedAt = new Date();
-    const liveGamePatch = buildLiveTrackingGamePatch(gameDoc, user, scoreUpdatedAt);
-    const liveEvent = buildPlayerScoringLiveEvent({ playerId, playerName, playerNumber, statKey: 'pts', value: 2, homeScore, awayScore, user, game: gameDoc });
-
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, {
-      homeScore,
-      awayScore,
-      scoreUpdatedAt,
-      scoreUpdatedBy: user.uid,
-      ...liveGamePatch
-    });
-    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/aggregatedStats/${encodeURIComponent(playerId)}`, {
-      playerName,
-      playerNumber,
-      stats: existingStats
-    });
-    await nativeCreateDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/liveEvents`, {
-      ...liveEvent,
-      createdAt: scoreUpdatedAt
-    });
-
-    return {
-      homeScore,
-      awayScore,
-      playerId,
-      playerName,
-      playerNumber,
-      statKey: 'pts',
-      value: 2,
-      playerPoints,
-      liveEvent
-    };
-  }
+  const result = await recordPlayerGameStat(teamId, gameId, playerId, stat, user);
+  return {
+    homeScore: result.homeScore,
+    awayScore: result.awayScore,
+    playerId: result.playerId,
+    playerName: result.playerName,
+    playerNumber: result.playerNumber,
+    statKey: 'pts',
+    value: 2,
+    playerPoints: result.playerStatTotal,
+    liveEvent: result.liveEvent
+  };
 }
 
 function assertStaffRsvpReminderEvent(event: ParentScheduleEvent, user: AuthUser | null) {

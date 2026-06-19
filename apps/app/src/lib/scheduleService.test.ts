@@ -119,7 +119,7 @@ import { getNativeAuthIdToken } from './authService';
 import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, flushPendingLivePublishOperations, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
@@ -129,6 +129,8 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleHelpers");
   expect(scheduleServiceSource).toContain("./adapters/legacyAvailability");
+  expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
+  expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");
   expect(scheduleEventDetailSource).toContain("../lib/adapters/legacyScheduleHelpers");
 });
@@ -410,18 +412,20 @@ describe('live game clock state', () => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-12T04:00:15.000Z'));
-    vi.mocked(getGame).mockResolvedValue({
-      liveClockMs: 120000,
-      liveClockRunning: true,
-      liveClockPeriod: 'Q2',
-      liveClockUpdatedAt: new Date('2026-06-12T04:00:00.000Z')
-    } as any);
-    vi.mocked(updateGame).mockResolvedValue(undefined as any);
-    vi.mocked(broadcastLiveEvent).mockResolvedValue(undefined as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({
+        liveClockMs: 120000,
+        liveClockRunning: true,
+        liveClockPeriod: 'Q2',
+        liveClockUpdatedAt: new Date('2026-06-12T04:00:00.000Z')
+      })
+    });
 
     await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, { uid: 'coach-1', displayName: 'Coach' } as any);
 
-    expect(broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents/') }), expect.objectContaining({
       period: 'Q2',
       gameClockMs: 135000
     }));
@@ -434,25 +438,32 @@ describe('live score publishing', () => {
   beforeEach(() => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.clearAllMocks();
-    vi.mocked(getGame).mockResolvedValue({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q2', liveClockMs: 321000 } as any);
-    vi.mocked(updateGame).mockResolvedValue(undefined as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', liveHasData: false, period: 'Q2', liveClockMs: 321000 })
+    });
   });
 
-  it('marks the game live before broadcasting app score updates', async () => {
+  it('writes the game score and live event in the same transaction', async () => {
     const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user, { homeScore: 10, awayScore: 8 });
 
-    expect(updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({
+      homeScore: 12,
+      awayScore: 8,
       liveStatus: 'live',
       liveHasData: true,
       liveStartedAt: expect.any(Date)
-    }));
-    expect(broadcastLiveEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+    }), { merge: true });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: expect.stringContaining('teams/team-1/games/game-1/liveEvents/') }), expect.objectContaining({
       eventId: expect.stringMatching(/^app-live-/),
       type: 'score_update',
       period: 'Q2',
       gameClockMs: 321000,
       homeScore: 12,
-      awayScore: 8
+      awayScore: 8,
+      previousHomeScore: 10,
+      previousAwayScore: 8
     }));
     expect(result).toMatchObject({
       type: 'score_update',
@@ -467,11 +478,214 @@ describe('live score publishing', () => {
     });
   });
 
+  it('keeps the persisted live score when tracker totals are partial', async () => {
+    vi.mocked(getDocs).mockResolvedValue({
+      docs: [
+        {
+          id: 'tracker-1',
+          data: () => ({
+            undoData: {
+              type: 'stat',
+              statKey: 'pts',
+              value: 2,
+              isOpponent: false
+            }
+          })
+        }
+      ]
+    } as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet
+      .mockResolvedValueOnce({
+        exists: () => true,
+        data: () => ({ homeScore: 10, awayScore: 8, period: 'Q3', liveClockMs: 245000 })
+      })
+      .mockResolvedValueOnce({ exists: () => true, data: () => ({ stats: { pts: 4 } }) });
+
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts',
+      value: 2,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] });
+
+    expect(result).toMatchObject({
+      homeScore: 12,
+      awayScore: 8,
+      playerStatTotal: 6
+    });
+    expect(mocks.transactionSet).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/games/game-1' }), expect.objectContaining({
+      homeScore: 12,
+      awayScore: 8
+    }), { merge: true });
+  });
+
   it('rejects score broadcasts after the game is final', async () => {
-    vi.mocked(getGame).mockResolvedValue({ id: 'game-1', status: 'completed', liveStatus: 'completed' } as any);
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValueOnce({ exists: () => true, data: () => ({ id: 'game-1', status: 'completed', liveStatus: 'completed' }) });
 
     await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('game is final');
-    expect(updateGame).not.toHaveBeenCalled();
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+});
+
+describe('native live publishing fallbacks', () => {
+  const user = { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] };
+  let localStorageState: Record<string, string>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorageState = {};
+    (globalThis as any).window = {
+      location: { protocol: 'capacitor:' },
+      setTimeout,
+      clearTimeout,
+      localStorage: {
+        getItem: vi.fn((key: string) => (Object.prototype.hasOwnProperty.call(localStorageState, key) ? localStorageState[key] : null)),
+        setItem: vi.fn((key: string, value: string) => {
+          localStorageState[key] = String(value);
+        }),
+        removeItem: vi.fn((key: string) => {
+          delete localStorageState[key];
+        })
+      }
+    } as any;
+    (globalThis as any).fetch = vi.fn();
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+  });
+
+  it('publishes native live score updates from mapped Firestore documents', async () => {
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+          updateTime: '2026-06-19T16:00:00.000Z',
+          fields: {
+            status: { stringValue: 'scheduled' },
+            homeScore: { integerValue: '9' },
+            awayScore: { integerValue: '7' },
+            period: { stringValue: 'Q2' },
+            liveClockMs: { integerValue: '321000' }
+          }
+        })
+      } as any)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) } as any);
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user as any);
+
+    expect(result).toMatchObject({
+      homeScore: 12,
+      awayScore: 8,
+      previousHomeScore: 9,
+      previousAwayScore: 7,
+      createdByName: 'coach@example.com',
+      period: 'Q2',
+      gameClockMs: 321000
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('records native player stats from mapped Firestore documents', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(new Error('native fallback'));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
+      const url = String(input || '');
+      if (url.includes('/events')) {
+        return { ok: true, json: async () => ({ documents: [] }) } as any;
+      }
+      if (url.includes('/aggregatedStats/player-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/aggregatedStats/player-1',
+            updateTime: '2026-06-19T16:00:00.000Z',
+            fields: {
+              stats: {
+                mapValue: {
+                  fields: {
+                    pts: { integerValue: '4' }
+                  }
+                }
+              }
+            }
+          })
+        } as any;
+      }
+      if (url.includes(':commit')) {
+        return { ok: true, json: async () => ({}) } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+          updateTime: '2026-06-19T16:00:00.000Z',
+          fields: {
+            status: { stringValue: 'scheduled' },
+            homeScore: { integerValue: '10' },
+            awayScore: { integerValue: '8' },
+            period: { stringValue: 'Q3' },
+            liveClockMs: { integerValue: '245000' }
+          }
+        })
+      } as any;
+    });
+
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts',
+      value: 2,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, user as any);
+
+    expect(result).toMatchObject({
+      playerId: 'player-1',
+      statKey: 'pts',
+      value: 2,
+      liveEvent: expect.objectContaining({
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'pts',
+        value: 2
+      })
+    });
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  it('keeps only failed queued publishes after a partial flush', async () => {
+    const queue = [
+      {
+        id: 'pending-score-1',
+        kind: 'score_update',
+        teamId: 'team-1',
+        gameId: 'game-1',
+        score: { homeScore: 11, awayScore: 8 },
+        user: { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com' },
+        createdAt: '2026-06-19T16:00:00.000Z'
+      },
+      {
+        id: 'pending-score-2',
+        kind: 'score_update',
+        teamId: 'team-1',
+        gameId: 'game-1',
+        score: { homeScore: 13, awayScore: 8 },
+        user: { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com' },
+        createdAt: '2026-06-19T16:00:01.000Z'
+      }
+    ] as any;
+    const processor = vi.fn(async (operation: any) => {
+      if (operation.id === 'pending-score-1') {
+        const error = new Error('server validation failed') as Error & { status?: number };
+        error.status = 500;
+        throw error;
+      }
+    });
+
+    const remaining = await flushPendingLivePublishOperations(queue, processor);
+
+    expect(processor).toHaveBeenCalledTimes(2);
+    expect(remaining).toEqual([
+      expect.objectContaining({ id: 'pending-score-1', kind: 'score_update' })
+    ]);
   });
 });
 
@@ -1042,6 +1256,7 @@ describe('native parent schedule Firestore mapping', () => {
       calendarUrls: ['https://calendar.example.com/team-1.ics']
     } as any);
     vi.mocked(getGame).mockRejectedValue(new Error('offline'));
+    vi.mocked(getGames).mockRejectedValue(new Error('offline'));
     vi.mocked(getPracticeSession).mockResolvedValue(null as any);
     vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
