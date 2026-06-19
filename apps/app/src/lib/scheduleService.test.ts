@@ -129,6 +129,9 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleHelpers");
   expect(scheduleServiceSource).toContain("./adapters/legacyAvailability");
+  expect(scheduleServiceSource).toContain("./logger");
+  expect(scheduleServiceSource).toContain("createLogger('schedule-service')");
+  expect(scheduleServiceSource).not.toContain('console.');
   expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");

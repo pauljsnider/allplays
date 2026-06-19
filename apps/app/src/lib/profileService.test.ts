@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
@@ -37,6 +38,14 @@ vi.mock('../../../../js/team-visibility.js', () => ({
 
 import { normalizeProfilePhoto } from './profilePhotoService';
 import { requestAccountMerge } from './profileService';
+
+it('routes handled profile-service failures through the shared logger helper', () => {
+    const profileServiceSource = readFileSync('src/lib/profileService.ts', 'utf8');
+
+    expect(profileServiceSource).toContain("from './logger'");
+    expect(profileServiceSource).toContain("createLogger('profile-service')");
+    expect(profileServiceSource).not.toContain('console.');
+});
 
 describe('normalizeProfilePhoto', () => {
     beforeEach(() => {
