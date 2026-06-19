@@ -5430,6 +5430,10 @@ exports.notifyPracticePacketCompleted = functions.firestore
     return null;
   });
 
+const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
+const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
+const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
+
 exports.notifyPracticePacketAssigned = functions.firestore
   .document('teams/{teamId}/practiceSessions/{sessionId}')
   .onWrite(async (change, context) => {
@@ -5438,10 +5442,6 @@ exports.notifyPracticePacketAssigned = functions.firestore
     await practicePacketAssignedNotification(beforeData, afterData, context);
     return null;
   });
-
-const PUBLIC_RSVP_TOKEN_TTL_DAYS = 14;
-const PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT = 500;
-const PUBLIC_RSVP_RESPONSES = new Set(['going', 'maybe', 'not_going']);
 
 function writePublicRsvpCors(req, res) {
   const allowedOrigins = new Set([
