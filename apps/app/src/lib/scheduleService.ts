@@ -118,6 +118,8 @@ import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments } from './firestore/mappers';
+import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument } from './firestore/types';
 import type { AuthUser } from './types';
 
 const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
@@ -203,7 +205,7 @@ export type StaffScheduleRsvpBreakdown = {
   counts: Required<ScheduleRsvpSummary>;
 };
 
-type FirestoreDocument = Record<string, any> & { id: string };
+type FirestoreDocument = FirestoreDecodedDocument;
 
 export type StaffRsvpReminderSendResult = StaffRsvpReminderPreview & {
   emailSentCount: number;
@@ -686,37 +688,9 @@ function encodeFirestoreValue(value: any): Record<string, unknown> {
   return { stringValue: String(value) };
 }
 
-function decodeFirestoreValue(value: any): any {
-  if (!value || typeof value !== 'object') return null;
-  if ('stringValue' in value) return value.stringValue;
-  if ('booleanValue' in value) return value.booleanValue;
-  if ('integerValue' in value) return Number(value.integerValue || 0);
-  if ('doubleValue' in value) return Number(value.doubleValue || 0);
-  if ('timestampValue' in value) return new Date(value.timestampValue);
-  if ('nullValue' in value) return null;
-  if ('arrayValue' in value) return (value.arrayValue?.values || []).map((entry: any) => decodeFirestoreValue(entry));
-  if ('mapValue' in value) return decodeFirestoreFields(value.mapValue?.fields || {});
-  return null;
-}
-
-function decodeFirestoreFields(fields: Record<string, any> = {}) {
-  return Object.keys(fields).reduce<Record<string, any>>((acc, key) => {
-    acc[key] = decodeFirestoreValue(fields[key]);
-    return acc;
-  }, {});
-}
-
-function decodeFirestoreDocument(document: any): FirestoreDocument | null {
-  if (!document?.name) return null;
-  return {
-    id: String(document.name).split('/').pop() || '',
-    ...decodeFirestoreFields(document.fields || {})
-  };
-}
-
 async function nativeGetDocument(path: string) {
   try {
-    return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`));
+    return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument);
   } catch (error: any) {
     const message = String(error?.message || '').toLowerCase();
     if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
@@ -728,8 +702,8 @@ async function nativeGetDocument(path: string) {
 
 async function nativeListCollection(path: string) {
   const payload = await nativeFirestoreRequest(`/${path}`);
-  return (payload.documents || [])
-    .map((document: any) => decodeFirestoreDocument(document))
+  return ((payload.documents || []) as NativeFirestoreDocument[])
+    .map((document) => mapFirestoreDocument(document))
     .filter(Boolean) as FirestoreDocument[];
 }
 
@@ -751,8 +725,25 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
   });
 
   return Array.isArray(payload)
-    ? payload.map((entry) => decodeFirestoreDocument(entry.document)).filter(Boolean) as FirestoreDocument[]
+    ? payload.map((entry) => mapFirestoreDocument(entry.document as NativeFirestoreDocument)).filter(Boolean) as FirestoreDocument[]
     : [];
+}
+
+async function nativeGetScheduleEventDocument(path: string) {
+  try {
+    return mapScheduleEventDocument(await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument);
+  } catch (error: any) {
+    const message = String(error?.message || '').toLowerCase();
+    if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function nativeListScheduleEventDocuments(path: string) {
+  const payload = await nativeFirestoreRequest(`/${path}`);
+  return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
 }
 
 async function nativePatchDocument(path: string, data: Record<string, unknown>) {
@@ -774,10 +765,10 @@ async function nativeCreateDocument(path: string, data: Record<string, unknown>)
     acc[key] = encodeFirestoreValue(data[key]);
     return acc;
   }, {});
-  return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
+  return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
     method: 'POST',
     body: JSON.stringify({ fields })
-  }));
+  }) as NativeFirestoreDocument);
 }
 
 async function nativeDeleteDocument(path: string) {
@@ -1238,7 +1229,7 @@ async function loadGames(teamId: string) {
     `games ${teamId}`,
     () => Promise.resolve(getGames(teamId)),
     async () => {
-      const docs = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/games`);
+      const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
       return docs.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
     }
   );
@@ -1248,7 +1239,7 @@ async function loadGameById(teamId: string, gameId: string) {
   return readWithNativeFallback(
     `game ${teamId}/${gameId}`,
     () => Promise.resolve(getGame(teamId, gameId)),
-    () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)
+    () => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)
   );
 }
 
@@ -3311,7 +3302,9 @@ async function updateRsvpReminderMetadata(event: ParentScheduleEvent, user: Auth
 
   if (isNativeRuntime()) {
     const existing = await nativeGetDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(persistedEventId)}`).catch(() => null);
-    const existingNotifications = existing?.scheduleNotifications || {};
+    const existingNotifications = (existing?.scheduleNotifications && typeof existing.scheduleNotifications === 'object' && !Array.isArray(existing.scheduleNotifications)
+      ? existing.scheduleNotifications
+      : {}) as Record<string, any>;
     await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(persistedEventId)}`, {
       scheduleNotifications: {
         ...existingNotifications,
@@ -4087,7 +4080,11 @@ async function nativeUpdateRideRequestDecision(event: ParentScheduleEvent, offer
   if (!requestDoc) throw new Error('Ride request not found.');
   if (normalizeRideOfferStatus(offerDoc.status) !== 'open') throw new Error('Ride offer is closed.');
 
-  const nextSeatCount = getNextRideConfirmedSeatCount(offerDoc.seatCountConfirmed, requestDoc.status, status);
+  const nextSeatCount = getNextRideConfirmedSeatCount(
+    Number.parseInt(String(offerDoc.seatCountConfirmed || 0), 10) || 0,
+    requestDoc.status,
+    status
+  );
   const seatCapacity = Math.max(0, Number.parseInt(String(offerDoc.seatCapacity || 0), 10) || 0);
   if (nextSeatCount > seatCapacity) {
     throw new Error('Offer is full.');
@@ -4126,7 +4123,11 @@ async function nativeCancelRideRequestForChild(event: ParentScheduleEvent, offer
   if (!requestDoc) return;
   await nativeDeleteDocument(requestPath);
   if (!offerDoc) return;
-  const nextSeatCount = getNextRideConfirmedSeatCount(offerDoc.seatCountConfirmed, requestDoc.status, 'declined');
+  const nextSeatCount = getNextRideConfirmedSeatCount(
+    Number.parseInt(String(offerDoc.seatCountConfirmed || 0), 10) || 0,
+    requestDoc.status,
+    'declined'
+  );
   await nativePatchDocument(offerPath, {
     seatCountConfirmed: nextSeatCount,
     updatedAt: new Date()
