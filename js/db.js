@@ -1500,6 +1500,44 @@ export async function getRegistrationSources() {
     return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
 }
 
+const DEFAULT_ADMIN_COLLECTION_PAGE_SIZE = 25;
+
+function normalizeAdminCollectionPageSize(rawPageSize) {
+    const pageSize = Number(rawPageSize);
+    if (!Number.isFinite(pageSize)) return DEFAULT_ADMIN_COLLECTION_PAGE_SIZE;
+    return Math.min(Math.max(Math.floor(pageSize), 1), 100);
+}
+
+export async function getAdminTeamsPage(options = {}) {
+    const pageSize = normalizeAdminCollectionPageSize(options.pageSize);
+    const constraints = [orderBy('name')];
+    if (options.cursor) {
+        constraints.push(startAfterQuery(options.cursor));
+    }
+    constraints.push(limitQuery(pageSize));
+
+    const snapshot = await getDocs(query(collection(db, 'teams'), ...constraints));
+    return {
+        teams: snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })),
+        nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null
+    };
+}
+
+export async function getAdminUsersPage(options = {}) {
+    const pageSize = normalizeAdminCollectionPageSize(options.pageSize);
+    const constraints = [orderBy('email')];
+    if (options.cursor) {
+        constraints.push(startAfterQuery(options.cursor));
+    }
+    constraints.push(limitQuery(pageSize));
+
+    const snapshot = await getDocs(query(collection(db, 'users'), ...constraints));
+    return {
+        users: snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })),
+        nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null
+    };
+}
+
 export async function getAllUsers() {
     const q = query(collection(db, "users"), orderBy("email"));
     const snapshot = await getDocs(q);

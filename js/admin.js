@@ -1,6 +1,9 @@
 import {
+    getAdminTeamsPage,
+    getAdminUsersPage,
     getTeams,
     getAllUsers,
+    getGames,
     getOfficials,
     addOfficial,
     updateOfficial,
@@ -11,10 +14,11 @@ import {
     getTelemetryPageDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=50';
+} from './db.js?v=51';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=18';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=25';
+import { DEFAULT_ADMIN_PAGE_SIZE, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=1';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
@@ -35,6 +39,8 @@ import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 
 let allTeams = [];
 let allUsers = [];
+let dashboardTeams = [];
+let dashboardUsers = [];
 let officialUserLookup = new Map();
 let officialsByTeamId = new Map();
 let currentUser = null; // Declare currentUser
@@ -44,6 +50,106 @@ let activeOfficials = [];
 let activeRegistrationTeam = null;
 let activeRegistrationForms = [];
 let activeRegistrationOptions = [];
+let activeTab = 'dashboard';
+
+const teamPageState = {
+    pageSize: DEFAULT_ADMIN_PAGE_SIZE,
+    pages: [],
+    currentIndex: 0,
+    nextCursor: null,
+    loading: false
+};
+
+const userPageState = {
+    pageSize: DEFAULT_ADMIN_PAGE_SIZE,
+    pages: [],
+    currentIndex: 0,
+    nextCursor: null,
+    loading: false
+};
+
+let loadedGamesPageKey = '';
+let loadedDashboardGamesKey = '';
+let loadedTeamsOfficialsPageKey = '';
+let loadedUsersOfficialsKey = '';
+
+function getCurrentTeamPage() {
+    return teamPageState.pages[teamPageState.currentIndex] || [];
+}
+
+function getCurrentUsersPage() {
+    return userPageState.pages[userPageState.currentIndex] || [];
+}
+
+function getTeamsKey(teams = []) {
+    return teams.map((team) => team.id).join('|');
+}
+
+function getCurrentTeamPageKey() {
+    return getTeamsKey(getCurrentTeamPage());
+}
+
+function getDashboardTeams() {
+    return dashboardTeams.length ? dashboardTeams : allTeams;
+}
+
+function getDashboardUsers() {
+    return dashboardUsers.length ? dashboardUsers : allUsers;
+}
+
+function applyCurrentTeamPage() {
+    allTeams = getCurrentTeamPage();
+}
+
+function applyCurrentUsersPage() {
+    allUsers = getCurrentUsersPage();
+}
+
+function setTeamsPage(page, nextCursor, index = 0) {
+    teamPageState.pages[index] = page;
+    teamPageState.currentIndex = index;
+    teamPageState.nextCursor = nextCursor;
+    applyCurrentTeamPage();
+    updateTeamsPaginationControls();
+}
+
+function setUsersPage(page, nextCursor, index = 0) {
+    userPageState.pages[index] = page;
+    userPageState.currentIndex = index;
+    userPageState.nextCursor = nextCursor;
+    applyCurrentUsersPage();
+    updateUsersPaginationControls();
+}
+
+function updateTeamsPaginationControls() {
+    const status = document.getElementById('teams-pagination-status');
+    const prev = document.getElementById('teams-prev-page');
+    const next = document.getElementById('teams-next-page');
+    if (status) {
+        status.textContent = `Teams page ${teamPageState.currentIndex + 1} · ${allTeams.length} loaded`;
+    }
+    if (prev) {
+        prev.disabled = teamPageState.loading || teamPageState.currentIndex === 0;
+    }
+    if (next) {
+        next.disabled = teamPageState.loading || (teamPageState.currentIndex >= teamPageState.pages.length - 1 && !teamPageState.nextCursor);
+    }
+}
+
+function updateUsersPaginationControls() {
+    const status = document.getElementById('users-pagination-status');
+    const prev = document.getElementById('users-prev-page');
+    const next = document.getElementById('users-next-page');
+    if (status) {
+        status.textContent = `Users page ${userPageState.currentIndex + 1} · ${allUsers.length} loaded`;
+    }
+    if (prev) {
+        prev.disabled = userPageState.loading || userPageState.currentIndex === 0;
+    }
+    if (next) {
+        next.disabled = userPageState.loading || (userPageState.currentIndex >= userPageState.pages.length - 1 && !userPageState.nextCursor);
+    }
+}
 
 function inlineJsString(value) {
     return escapeHtml(JSON.stringify(String(value || '')));
@@ -115,16 +221,35 @@ checkAuth(async (user) => {
 
 async function loadData() {
     try {
-        const [teams, users] = await Promise.all([getTeams({ includeInactive: true }), getAllUsers()]);
-        allTeams = teams;
-        allUsers = users;
+        loadedGamesPageKey = '';
+        loadedDashboardGamesKey = '';
+        loadedTeamsOfficialsPageKey = '';
+        loadedUsersOfficialsKey = '';
+        allGames = [];
+        dashboardGames = [];
+        dashboardTeams = [];
+        dashboardUsers = [];
+        officialUserLookup = new Map();
+        officialsByTeamId = new Map();
 
-        // Load game stats for all teams and telemetry in parallel after core data is available.
+        const { teamsPage, usersPage, telemetryPromise } = await loadInitialAdminBootstrap({
+            getTeamsPage: getAdminTeamsPage,
+            getUsersPage: getAdminUsersPage,
+            loadTelemetryData
+        });
+
+        setTeamsPage(teamsPage.teams, teamsPage.nextCursor);
+        setUsersPage(usersPage.users, usersPage.nextCursor);
+
         await Promise.all([
-            loadGameStats(),
-            loadTelemetryData({ silent: true }),
-            loadOfficialUserLinks()
+            ensureCurrentTeamGamesLoaded(),
+            loadDashboardData()
         ]);
+        telemetryPromise.then(() => {
+            if (activeTab === 'telemetry') {
+                updateTelemetryDashboard();
+            }
+        });
 
         updateDashboard();
         renderTeams(getVisibleTeams());
@@ -137,9 +262,18 @@ async function loadData() {
 }
 
 let allGames = [];
+let dashboardGames = [];
 
-async function loadOfficialUserLinks() {
-    const officialEntries = (await Promise.all(allTeams.map(async (team) => {
+async function loadOfficialUserLinks(teams = allTeams, { scope = 'page' } = {}) {
+    const teamsKey = getTeamsKey(teams);
+    if (scope === 'page' && teamsKey && loadedTeamsOfficialsPageKey === teamsKey) {
+        return;
+    }
+    if (scope === 'all' && teamsKey && loadedUsersOfficialsKey === teamsKey) {
+        return;
+    }
+
+    const officialEntries = (await Promise.all(teams.map(async (team) => {
         try {
             const officials = await getOfficials(team.id);
             officialsByTeamId.set(team.id, officials);
@@ -155,14 +289,26 @@ async function loadOfficialUserLinks() {
         }
     }))).flat();
 
-    officialUserLookup = buildOfficialUserLookup(officialEntries);
+    if (scope === 'all') {
+        officialUserLookup = buildOfficialUserLookup(officialEntries);
+        loadedUsersOfficialsKey = teamsKey;
+        return;
+    }
+
+    loadedTeamsOfficialsPageKey = teamsKey;
 }
 
-async function loadGameStats() {
-    // Load games from all teams
-    const gamesPromises = allTeams.map(async (team) => {
+async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) {
+    const teamsKey = getTeamsKey(teams);
+    if (scope === 'page' && teamsKey && loadedGamesPageKey === teamsKey) {
+        return;
+    }
+    if (scope === 'dashboard' && teamsKey && loadedDashboardGamesKey === teamsKey) {
+        return;
+    }
+
+    const gamesPromises = teams.map(async (team) => {
         try {
-            const { getGames } = await import('./db.js?v=50');
             const games = await getGames(team.id);
             return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
         } catch (e) {
@@ -170,7 +316,34 @@ async function loadGameStats() {
         }
     });
     const gamesArrays = await Promise.all(gamesPromises);
-    allGames = gamesArrays.flat();
+    const nextGames = gamesArrays.flat();
+
+    if (scope === 'dashboard') {
+        dashboardGames = nextGames;
+        loadedDashboardGamesKey = teamsKey;
+        return;
+    }
+
+    allGames = nextGames;
+    loadedGamesPageKey = teamsKey;
+}
+
+async function loadDashboardData() {
+    dashboardTeams = await getTeams({ includeInactive: true });
+    dashboardUsers = await getAllUsers();
+    await loadGameStatsForTeams(dashboardTeams, { scope: 'dashboard' });
+}
+
+async function ensureCurrentTeamGamesLoaded() {
+    await loadGameStatsForTeams(getCurrentTeamPage(), { scope: 'page' });
+}
+
+async function ensureCurrentTeamOfficialsLoaded() {
+    await loadOfficialUserLinks(getCurrentTeamPage(), { scope: 'page' });
+}
+
+async function ensureAllOfficialsLoaded() {
+    await loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' });
 }
 
 function getTelemetryRangeDays() {
@@ -232,9 +405,11 @@ async function loadTelemetryData({ silent = false } = {}) {
 }
 
 function updateDashboard() {
-    const visibleTeams = getVisibleTeams();
+    const sourceTeams = getDashboardTeams();
+    const sourceUsers = getDashboardUsers();
+    const visibleTeams = showInactiveTeams ? sourceTeams : sourceTeams.filter(isTeamActive);
     const visibleTeamIds = new Set(visibleTeams.map(team => team.id));
-    const visibleGames = allGames.filter(game => visibleTeamIds.has(game.teamId));
+    const visibleGames = dashboardGames.filter(game => visibleTeamIds.has(game.teamId));
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -245,8 +420,8 @@ function updateDashboard() {
     document.getElementById('stat-teams-growth').textContent = `+${newTeamsLast30} this month`;
 
     // Total users with growth
-    const newUsersLast30 = allUsers.filter(u => u.createdAt && u.createdAt.toDate() > thirtyDaysAgo).length;
-    document.getElementById('stat-total-users').textContent = allUsers.length;
+    const newUsersLast30 = sourceUsers.filter(u => u.createdAt && u.createdAt.toDate() > thirtyDaysAgo).length;
+    document.getElementById('stat-total-users').textContent = sourceUsers.length;
     document.getElementById('stat-users-growth').textContent = `+${newUsersLast30} this month`;
 
     // Total games
@@ -324,7 +499,7 @@ function updateDashboard() {
     `).join('');
 
     // Recent users
-    const recentUsersList = [...allUsers]
+    const recentUsersList = [...sourceUsers]
         .sort((a, b) => {
             const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(0);
             const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(0);
@@ -659,10 +834,22 @@ function getOfficialsCellClasses(tone) {
     return 'bg-emerald-100 text-emerald-700';
 }
 
+function getDeferredOfficialsSummary() {
+    return {
+        badgeTone: 'warning',
+        badgeLabel: 'Loads on demand',
+        detailTone: 'default',
+        detailLabel: 'Open this team page or users tab to fetch officials.'
+    };
+}
+
 function renderTeams(teams) {
     const tbody = document.getElementById('teams-table-body');
+    const officialsReady = loadedTeamsOfficialsPageKey === getCurrentTeamPageKey();
     tbody.innerHTML = teams.map(team => {
-        const officialsSummary = buildAdminTeamOfficialsSummary(team, officialsByTeamId.get(team.id) || [], allGames);
+        const officialsSummary = officialsReady
+            ? buildAdminTeamOfficialsSummary(team, officialsByTeamId.get(team.id) || [], allGames)
+            : getDeferredOfficialsSummary();
         const manageOfficialsHref = `edit-schedule.html?teamId=${encodeURIComponent(team.id)}#officials`;
         return `
         <tr>
@@ -845,6 +1032,8 @@ async function saveOfficialsAdmin(event) {
     }
 
     message.textContent = officialId ? 'Official updated.' : 'Official saved.';
+    loadedTeamsOfficialsPageKey = '';
+    loadedUsersOfficialsKey = '';
     resetOfficialsAdminFormState();
     document.getElementById('officials-admin-form').classList.remove('hidden');
     await loadOfficialsForActiveTeam();
@@ -870,6 +1059,8 @@ async function handleOfficialsAdminListClick(event) {
             resetOfficialsAdminFormState();
             document.getElementById('officials-admin-form').classList.remove('hidden');
         }
+        loadedTeamsOfficialsPageKey = '';
+        loadedUsersOfficialsKey = '';
         message.textContent = 'Official removed.';
         await loadOfficialsForActiveTeam();
     } catch (error) {
@@ -1198,10 +1389,167 @@ async function saveRegistrationForm(event) {
     }
 }
 
+function renderCurrentTeamsView() {
+    const term = (document.getElementById('search-teams')?.value || '').toLowerCase();
+    const filtered = getVisibleTeams().filter((team) =>
+        !term
+        || (team.name || '').toLowerCase().includes(term)
+        || (team.sport || '').toLowerCase().includes(term)
+    );
+    renderTeams(filtered);
+}
+
+function renderCurrentUsersView() {
+    const term = (document.getElementById('search-users')?.value || '').toLowerCase();
+    const officialFilter = document.getElementById('filter-users-official-status')?.value || 'all';
+    const filtered = allUsers.filter((u) => {
+        const officialSummary = getOfficialUserSummary(u, officialUserLookup);
+        if (officialFilter === 'officials' && !officialSummary) return false;
+        if (officialFilter === 'non-officials' && officialSummary) return false;
+        return matchesOfficialUserSearch(u, officialSummary, term);
+    });
+    renderUsers(filtered);
+}
+
+async function loadNextTeamsPage() {
+    if (teamPageState.loading) return;
+    teamPageState.loading = true;
+    updateTeamsPaginationControls();
+    try {
+        if (teamPageState.currentIndex < teamPageState.pages.length - 1) {
+            loadedGamesPageKey = '';
+            loadedTeamsOfficialsPageKey = '';
+            setTeamsPage(teamPageState.pages[teamPageState.currentIndex + 1] || [], teamPageState.nextCursor, teamPageState.currentIndex + 1);
+        } else if (teamPageState.nextCursor) {
+            const nextIndex = teamPageState.currentIndex + 1;
+            const page = await loadAdminCollectionPage({
+                fetchPage: getAdminTeamsPage,
+                cursor: teamPageState.nextCursor,
+                pageSize: teamPageState.pageSize
+            });
+            loadedGamesPageKey = '';
+            loadedTeamsOfficialsPageKey = '';
+            setTeamsPage(page.teams, page.nextCursor, nextIndex);
+        } else {
+            return;
+        }
+        if (activeTab === 'dashboard') {
+            await ensureCurrentTeamGamesLoaded();
+            updateDashboard();
+        }
+        if (activeTab === 'teams') {
+            await ensureCurrentTeamOfficialsLoaded();
+        }
+        if (activeTab === 'users') {
+            await ensureAllOfficialsLoaded();
+            renderCurrentUsersView();
+        }
+        renderCurrentTeamsView();
+    } finally {
+        teamPageState.loading = false;
+        updateTeamsPaginationControls();
+    }
+}
+
+async function loadPreviousTeamsPage() {
+    if (teamPageState.loading || teamPageState.currentIndex === 0) return;
+    teamPageState.loading = true;
+    updateTeamsPaginationControls();
+    try {
+        loadedGamesPageKey = '';
+        loadedTeamsOfficialsPageKey = '';
+        const previousIndex = teamPageState.currentIndex - 1;
+        setTeamsPage(teamPageState.pages[previousIndex] || [], teamPageState.nextCursor, previousIndex);
+        if (activeTab === 'dashboard') {
+            await ensureCurrentTeamGamesLoaded();
+            updateDashboard();
+        }
+        if (activeTab === 'teams') {
+            await ensureCurrentTeamOfficialsLoaded();
+        }
+        if (activeTab === 'users') {
+            await ensureAllOfficialsLoaded();
+            renderCurrentUsersView();
+        }
+        renderCurrentTeamsView();
+    } finally {
+        teamPageState.loading = false;
+        updateTeamsPaginationControls();
+    }
+}
+
+async function loadNextUsersPage() {
+    if (userPageState.loading) return;
+    userPageState.loading = true;
+    updateUsersPaginationControls();
+    try {
+        if (userPageState.currentIndex < userPageState.pages.length - 1) {
+            setUsersPage(userPageState.pages[userPageState.currentIndex + 1] || [], userPageState.nextCursor, userPageState.currentIndex + 1);
+        } else if (userPageState.nextCursor) {
+            const nextIndex = userPageState.currentIndex + 1;
+            const page = await loadAdminCollectionPage({
+                fetchPage: getAdminUsersPage,
+                cursor: userPageState.nextCursor,
+                pageSize: userPageState.pageSize
+            });
+            setUsersPage(page.users, page.nextCursor, nextIndex);
+        } else {
+            return;
+        }
+        renderCurrentUsersView();
+        if (activeTab === 'dashboard') {
+            updateDashboard();
+        }
+    } finally {
+        userPageState.loading = false;
+        updateUsersPaginationControls();
+    }
+}
+
+async function loadPreviousUsersPage() {
+    if (userPageState.loading || userPageState.currentIndex === 0) return;
+    userPageState.loading = true;
+    updateUsersPaginationControls();
+    try {
+        const previousIndex = userPageState.currentIndex - 1;
+        setUsersPage(userPageState.pages[previousIndex] || [], userPageState.nextCursor, previousIndex);
+        renderCurrentUsersView();
+        if (activeTab === 'dashboard') {
+            updateDashboard();
+        }
+    } finally {
+        userPageState.loading = false;
+        updateUsersPaginationControls();
+    }
+}
+
+async function handleTabChange(tab) {
+    activeTab = tab;
+    if (tab === 'dashboard') {
+        await ensureCurrentTeamGamesLoaded();
+        updateDashboard();
+        return;
+    }
+    if (tab === 'teams') {
+        await ensureCurrentTeamOfficialsLoaded();
+        renderCurrentTeamsView();
+        return;
+    }
+    if (tab === 'users') {
+        await ensureAllOfficialsLoaded();
+        renderCurrentUsersView();
+        return;
+    }
+    if (tab === 'telemetry' && !telemetryState.loaded && !telemetryState.loading) {
+        await loadTelemetryData();
+        updateTelemetryDashboard();
+    }
+}
+
 function setupTabs() {
     const tabs = ['dashboard', 'teams', 'users', 'telemetry'];
     tabs.forEach(tab => {
-        document.getElementById(`tab-${tab}`).addEventListener('click', () => {
+        document.getElementById(`tab-${tab}`).addEventListener('click', async () => {
             // Update tab styles
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-${t}`);
@@ -1217,9 +1565,7 @@ function setupTabs() {
                 }
             });
 
-            if (tab === 'telemetry' && !telemetryState.loaded && !telemetryState.loading) {
-                loadTelemetryData().then(updateTelemetryDashboard);
-            }
+            await handleTabChange(tab);
         });
     });
 }
@@ -1234,33 +1580,17 @@ function setupSearch() {
         inactiveToggle.addEventListener('change', (e) => {
             showInactiveTeams = !!e.target.checked;
             updateDashboard();
-            renderTeams(getVisibleTeams());
+            renderCurrentTeamsView();
         });
     }
 
-    document.getElementById('search-teams').addEventListener('input', (e) => {
-        const term = e.target.value.toLowerCase();
-        const filtered = getVisibleTeams().filter(t =>
-            (t.name || '').toLowerCase().includes(term) ||
-            (t.sport || '').toLowerCase().includes(term)
-        );
-        renderTeams(filtered);
-    });
-
-    const filterUsers = () => {
-        const term = (document.getElementById('search-users')?.value || '').toLowerCase();
-        const officialFilter = document.getElementById('filter-users-official-status')?.value || 'all';
-        const filtered = allUsers.filter((u) => {
-            const officialSummary = getOfficialUserSummary(u, officialUserLookup);
-            if (officialFilter === 'officials' && !officialSummary) return false;
-            if (officialFilter === 'non-officials' && officialSummary) return false;
-            return matchesOfficialUserSearch(u, officialSummary, term);
-        });
-        renderUsers(filtered);
-    };
-
-    document.getElementById('search-users').addEventListener('input', filterUsers);
-    document.getElementById('filter-users-official-status')?.addEventListener('change', filterUsers);
+    document.getElementById('search-teams').addEventListener('input', renderCurrentTeamsView);
+    document.getElementById('search-users').addEventListener('input', renderCurrentUsersView);
+    document.getElementById('filter-users-official-status')?.addEventListener('change', renderCurrentUsersView);
+    document.getElementById('teams-prev-page')?.addEventListener('click', loadPreviousTeamsPage);
+    document.getElementById('teams-next-page')?.addEventListener('click', loadNextTeamsPage);
+    document.getElementById('users-prev-page')?.addEventListener('click', loadPreviousUsersPage);
+    document.getElementById('users-next-page')?.addEventListener('click', loadNextUsersPage);
 
     const telemetryRange = document.getElementById('telemetry-range');
     const telemetryRefresh = document.getElementById('telemetry-refresh');
@@ -1285,7 +1615,7 @@ function getTeamOwnerEmail(team) {
     if (team.ownerEmail) return team.ownerEmail;
     // Try to find owner in allUsers
     if (team.ownerId) {
-        const owner = allUsers.find(u => u.id === team.ownerId);
+        const owner = getDashboardUsers().find(u => u.id === team.ownerId);
         if (owner) return owner.email;
     }
     // Fallback to first admin email
