@@ -59,7 +59,7 @@ const registrationFlowMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
-vi.mock('../../js/registration-flow.js', () => registrationFlowMocks);
+vi.mock('@legacy/registration-flow.js', () => registrationFlowMocks);
 
 import { RegistrationDetail, TeamRegistrationReview, selectInitialRegistrationOption } from '../../apps/app/src/pages/RegistrationDetail.tsx';
 

@@ -43,7 +43,8 @@ export default defineConfig({
       '@capacitor/share': resolveModule('@capacitor/share'),
       '@capacitor-firebase/messaging': resolveModule('@capacitor-firebase/messaging'),
       '@capawesome/capacitor-badge': resolveModule('@capawesome/capacitor-badge'),
-      'dompurify': resolveModule('dompurify')
+      'dompurify': resolveModule('dompurify'),
+      '@legacy': path.resolve(workspaceRoot, 'js')
     },
     dedupe: ['react', 'react-dom', 'react-router-dom']
   }
