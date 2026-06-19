@@ -259,6 +259,19 @@ export type GameScoreSnapshot = {
   awayScore: number;
 };
 
+type LiveScoreUpdateResult = GameScoreSnapshot & {
+  eventId: string;
+  type: 'score_update';
+  period: string | null;
+  gameClockMs: number;
+  description: string;
+  previousHomeScore: number | null;
+  previousAwayScore: number | null;
+  createdBy: string;
+  createdByName: string;
+  createdAt: Date;
+};
+
 export type ScheduleHomeScoringPlayer = {
   id: string;
   name: string;
@@ -2820,7 +2833,7 @@ async function runNativeScoreUpdatePublish(
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const snapshot = await nativeGetDocumentSnapshot(gamePath);
-      const currentGame = snapshot.document || {};
+      const currentGame = (snapshot.document || {}) as Record<string, unknown>;
       assertGameAllowsLivePublishing(currentGame);
       const liveGamePatch = buildLiveTrackingGamePatch(currentGame, user, createdAt);
       const payload = {
@@ -2941,10 +2954,10 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
       }
 
       const gamePath = `teams/${teamId}/games/${gameId}`;
-      const payload = await withTimeout(runTransaction(db, async (transaction: any) => {
+      const payload: LiveScoreUpdateResult = await withTimeout(runTransaction(db, async (transaction: any) => {
         const gameRef = doc(db, gamePath);
         const gameSnap = await transaction.get(gameRef);
-        const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+        const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
         assertGameAllowsLivePublishing(gameData);
         const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, createdAt);
         const nextPayload = {
@@ -2970,7 +2983,7 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
         }, { merge: true });
         transaction.set(doc(db, `${gamePath}/liveEvents/${nextPayload.eventId}`), nextPayload);
         return nextPayload;
-      }), 'Live score event');
+      }) as Promise<LiveScoreUpdateResult>, 'Live score event');
       updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
         ...local,
         homeScore: payload.homeScore,
@@ -2993,8 +3006,8 @@ export async function publishLiveScoreUpdateEvent(teamId: string, gameId: string
         previousScore,
         user: {
           uid: user.uid,
-          displayName: user.displayName || null,
-          email: user.email || null
+          displayName: compactString(user.displayName),
+          email: compactString(user.email)
         },
         createdAt: createdAt.toISOString()
       };
@@ -3193,10 +3206,10 @@ async function runNativePlayerGameStatWrite(
         nativeGetDocumentSnapshot(encodedGamePath),
         nativeGetDocumentSnapshot(`${encodedGamePath}/aggregatedStats/${encodeURIComponent(playerId)}`)
       ]);
-      const gameDoc = gameSnapshot.document || {};
+      const gameDoc = (gameSnapshot.document || {}) as Record<string, unknown>;
       assertGameAllowsLivePublishing(gameDoc);
       const scoreBase = resolveScoreFromIntegrityState(gameDoc, integrityState);
-      const statsDoc = statsSnapshot.document || {};
+      const statsDoc = (statsSnapshot.document || {}) as Record<string, unknown>;
       const awayScore = scoreBase.awayScore + (statKey === 'pts' && teamSide === 'away' ? value : 0);
       const homeScore = scoreBase.homeScore + (statKey === 'pts' && teamSide === 'home' ? value : 0);
       const existingStats = { ...((statsDoc?.stats || {}) as Record<string, unknown>) };
@@ -3351,23 +3364,24 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
     }
 
     try {
-      const result = await withTimeout(runTransaction(db, async (transaction: any) => {
+      const result: PlayerGameStatResult = await withTimeout(runTransaction(db, async (transaction: any) => {
       const gameRef = doc(db, gamePath);
       const statsRef = doc(db, statsPath);
       const [gameSnap, statsSnap] = await Promise.all([
         transaction.get(gameRef),
         transaction.get(statsRef)
       ]);
-      const gameData = gameSnap.exists?.() ? gameSnap.data() || {} : {};
+      const gameData = (gameSnap.exists?.() ? gameSnap.data() || {} : {}) as Record<string, unknown>;
       assertGameAllowsLivePublishing(gameData);
       const scoreBase = resolveScoreFromIntegrityState(gameData, integrityState);
-      const statsData = statsSnap.exists?.() ? statsSnap.data() || {} : {};
+      const statsData = (statsSnap.exists?.() ? statsSnap.data() || {} : {}) as Record<string, unknown>;
       const scoreUpdatedAt = new Date();
       const statKey = stat.statKey;
       const value = Number(stat.value) as 1 | 2;
       const awayScore = scoreBase.awayScore + (statKey === 'pts' && teamSide === 'away' ? value : 0);
       const homeScore = scoreBase.homeScore + (statKey === 'pts' && teamSide === 'home' ? value : 0);
-      const playerStatTotal = normalizeGameScoreValue(statsData?.stats?.[statKey]) + value;
+      const playerStats = (statsData.stats && typeof statsData.stats === 'object' ? statsData.stats : {}) as Record<string, unknown>;
+      const playerStatTotal = normalizeGameScoreValue(playerStats[statKey]) + value;
       const liveGamePatch = buildLiveTrackingGamePatch(gameData, user, scoreUpdatedAt);
       const liveEventId = createAppLiveEventId();
       const trackerEventId = createAppLiveEventId();
@@ -3421,7 +3435,7 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
         liveEventId,
         liveEvent
       };
-    }), 'Player game stat');
+    }) as Promise<PlayerGameStatResult>, 'Player game stat');
 
       updateLocalLiveGameSnapshot(teamId, gameId, (local) => ({
         ...local,
@@ -3450,8 +3464,8 @@ export async function recordPlayerGameStat(teamId: string, gameId: string, playe
         stat,
         user: {
           uid: user.uid,
-          displayName: user.displayName || null,
-          email: user.email || null
+          displayName: compactString(user.displayName),
+          email: compactString(user.email)
         },
         createdAt: createdAt.toISOString()
       });

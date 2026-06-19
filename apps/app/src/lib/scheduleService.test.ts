@@ -485,6 +485,114 @@ describe('live score publishing', () => {
   });
 });
 
+describe('native live publishing fallbacks', () => {
+  const user = { uid: 'coach-1', displayName: '', email: 'coach@example.com', roles: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    (globalThis as any).fetch = vi.fn();
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+  });
+
+  it('publishes native live score updates from mapped Firestore documents', async () => {
+    vi.mocked(globalThis.fetch)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+          updateTime: '2026-06-19T16:00:00.000Z',
+          fields: {
+            status: { stringValue: 'scheduled' },
+            homeScore: { integerValue: '9' },
+            awayScore: { integerValue: '7' },
+            period: { stringValue: 'Q2' },
+            liveClockMs: { integerValue: '321000' }
+          }
+        })
+      } as any)
+      .mockResolvedValueOnce({ ok: true, json: async () => ({}) } as any);
+
+    const result = await publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user as any);
+
+    expect(result).toMatchObject({
+      homeScore: 12,
+      awayScore: 8,
+      previousHomeScore: 9,
+      previousAwayScore: 7,
+      createdByName: 'coach@example.com',
+      period: 'Q2',
+      gameClockMs: 321000
+    });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('records native player stats from mapped Firestore documents', async () => {
+    mocks.runTransactionMock.mockRejectedValueOnce(new Error('native fallback'));
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any) => {
+      const url = String(input || '');
+      if (url.includes('/events')) {
+        return { ok: true, json: async () => ({ documents: [] }) } as any;
+      }
+      if (url.includes('/aggregatedStats/player-1')) {
+        return {
+          ok: true,
+          json: async () => ({
+            name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/aggregatedStats/player-1',
+            updateTime: '2026-06-19T16:00:00.000Z',
+            fields: {
+              stats: {
+                mapValue: {
+                  fields: {
+                    pts: { integerValue: '4' }
+                  }
+                }
+              }
+            }
+          })
+        } as any;
+      }
+      if (url.includes(':commit')) {
+        return { ok: true, json: async () => ({}) } as any;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1',
+          updateTime: '2026-06-19T16:00:00.000Z',
+          fields: {
+            status: { stringValue: 'scheduled' },
+            homeScore: { integerValue: '10' },
+            awayScore: { integerValue: '8' },
+            period: { stringValue: 'Q3' },
+            liveClockMs: { integerValue: '245000' }
+          }
+        })
+      } as any;
+    });
+
+    const result = await recordPlayerGameStat('team-1', 'game-1', 'player-1', {
+      statKey: 'pts',
+      value: 2,
+      playerName: 'Avery Smith',
+      playerNumber: '12'
+    }, user as any);
+
+    expect(result).toMatchObject({
+      playerId: 'player-1',
+      statKey: 'pts',
+      value: 2,
+      liveEvent: expect.objectContaining({
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'pts',
+        value: 2
+      })
+    });
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+});
+
 describe('player-attributed live scoring', () => {
   beforeEach(() => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
