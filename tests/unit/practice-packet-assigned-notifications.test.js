@@ -19,43 +19,28 @@ function extractNotifyPracticePacketAssigned() {
     ].join('\n');
 }
 
+function createDeferred() {
+    let resolve;
+    const promise = new Promise((resolver) => {
+        resolve = resolver;
+    });
+    return { promise, resolve };
+}
+
 function buildHarness({
     categories = ['practice', 'schedule'],
     targets = [],
-    packetSession = { eventId: 'practice-1', title: 'Thursday Practice' },
-    parentDocsByKey = {}
+    users = [],
+    sendResult = null
 } = {}) {
-    const sendDirectTargetsNotification = vi.fn(async () => ({ successCount: 1, failureCount: 0 }));
+    const sendDirectTargetsNotification = vi.fn(() => sendResult || Promise.resolve({ successCount: 1, failureCount: 0 }));
     const getTargetsForCategory = vi.fn(async () => targets);
-    const queryCalls = [];
-    const firestore = {
-        collection: vi.fn((path) => ({
-            where: vi.fn((field, operator, values) => ({
-                get: vi.fn(async () => {
-                    queryCalls.push({ path, field, operator, values });
-                    const docs = (parentDocsByKey[values.join('|')] || []).map((doc) => ({
-                        id: doc.id,
-                        data: () => doc.data
-                    }));
-                    return {
-                        forEach(callback) {
-                            docs.forEach(callback);
-                        }
-                    };
-                })
-            }))
-        })),
-        doc: vi.fn((path) => ({
-            get: vi.fn(async () => ({
-                exists: path === 'teams/team-1/practiceSessions/session-1',
-                data: () => packetSession
-            }))
-        }))
-    };
+    const getCandidateUsersForTeam = vi.fn(async () => users);
+    const firestore = {};
     const functions = {
         firestore: {
             document: vi.fn(() => ({
-                onCreate: vi.fn((handler) => handler)
+                onWrite: vi.fn((handler) => handler)
             }))
         },
         logger: {
@@ -70,6 +55,7 @@ function buildHarness({
         'firestore',
         'NOTIFICATION_CATEGORIES',
         'getTargetsForCategory',
+        'getCandidateUsersForTeam',
         'sendDirectTargetsNotification',
         `${extractNotifyPracticePacketAssigned()}\nreturn exports.notifyPracticePacketAssigned;`
     );
@@ -79,55 +65,58 @@ function buildHarness({
         firestore,
         categories,
         getTargetsForCategory,
+        getCandidateUsersForTeam,
         sendDirectTargetsNotification
     );
 
     return {
         trigger,
-        firestore,
         functions,
         getTargetsForCategory,
-        sendDirectTargetsNotification,
-        queryCalls
+        getCandidateUsersForTeam,
+        sendDirectTargetsNotification
     };
 }
 
 describe('notifyPracticePacketAssigned trigger', () => {
-    it('targets only parents of assigned players and sends the packet deep link', async () => {
+    it('fires from the practice session write and targets only parent devices', async () => {
         const harness = buildHarness({
             targets: [
                 { uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' },
                 { uid: 'parent-2', token: 'parent-2-token', teamId: 'team-1' },
-                { uid: 'parent-3', token: 'parent-3-token', teamId: 'team-1' }
+                { uid: 'staff-1', token: 'staff-token', teamId: 'team-1' }
             ],
-            packetSession: { eventId: 'practice-44', title: 'Thursday Practice' },
-            parentDocsByKey: {
-                'team-1::player-1|team-1::player-2': [
-                    { id: 'parent-1', data: { parentPlayerKeys: ['team-1::player-1'] } },
-                    { id: 'parent-2', data: { parentPlayerKeys: ['team-1::player-2', 'team-1::player-9'] } }
-                ]
-            }
+            users: [
+                { uid: 'parent-1', roles: ['parent'] },
+                { uid: 'parent-2', roles: ['parent'] },
+                { uid: 'staff-1', roles: ['staff'] }
+            ]
         });
 
         await harness.trigger({
-            data: () => ({
-                title: 'Ball handling packet',
-                dueDate: '2026-06-21',
-                assignedPlayerIds: ['player-1', 'player-2']
-            })
+            before: {
+                exists: true,
+                data: () => ({ title: 'Thursday Practice', eventId: 'practice-44' })
+            },
+            after: {
+                exists: true,
+                data: () => ({
+                    title: 'Thursday Practice',
+                    eventId: 'practice-44',
+                    date: '2026-06-21',
+                    homePacketContent: {
+                        blocks: [{ id: 'block-1', title: 'Ball handling' }],
+                        totalMinutes: 20,
+                        updatedAt: '2026-06-19T20:15:00.000Z'
+                    }
+                })
+            }
         }, {
-            params: { teamId: 'team-1', sessionId: 'session-1', packetId: 'packet-1' }
+            params: { teamId: 'team-1', sessionId: 'session-1' }
         });
 
-        expect(harness.queryCalls).toEqual([
-            {
-                path: 'users',
-                field: 'parentPlayerKeys',
-                operator: 'array-contains-any',
-                values: ['team-1::player-1', 'team-1::player-2']
-            }
-        ]);
         expect(harness.getTargetsForCategory).toHaveBeenCalledWith('team-1', 'practice', null);
+        expect(harness.getCandidateUsersForTeam).toHaveBeenCalledWith('team-1');
         expect(harness.sendDirectTargetsNotification).toHaveBeenCalledWith(expect.objectContaining({
             targets: [
                 { uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' },
@@ -135,23 +124,64 @@ describe('notifyPracticePacketAssigned trigger', () => {
             ],
             category: 'practice',
             title: 'Practice packet ready',
-            body: 'Ball handling packet is ready. Due Jun 21, 2026.',
+            body: 'Thursday Practice is ready. Due Jun 21, 2026.',
             eventId: 'session-1',
             linkOverride: 'https://allplays.ai/app/#/schedule/team-1/practice-44?section=game',
             appRouteOverride: '/schedule/team-1/practice-44?section=game'
         }));
     });
 
+    it('awaits notification delivery before completing the write handler', async () => {
+        const sendDeferred = createDeferred();
+        const harness = buildHarness({
+            targets: [{ uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' }],
+            users: [{ uid: 'parent-1', roles: ['parent'] }],
+            sendResult: sendDeferred.promise
+        });
+
+        let completed = false;
+        const triggerPromise = harness.trigger({
+            before: { exists: false, data: () => null },
+            after: {
+                exists: true,
+                data: () => ({
+                    title: 'Thursday Practice',
+                    eventId: 'practice-44',
+                    homePacketContent: {
+                        blocks: [{ id: 'block-1' }],
+                        updatedAt: '2026-06-19T20:15:00.000Z'
+                    }
+                })
+            }
+        }, {
+            params: { teamId: 'team-1', sessionId: 'session-1' }
+        }).then(() => {
+            completed = true;
+        });
+
+        await Promise.resolve();
+        expect(completed).toBe(false);
+
+        sendDeferred.resolve({ successCount: 1, failureCount: 0 });
+        await triggerPromise;
+        expect(completed).toBe(true);
+    });
+
     it('logs and exits when practice notifications are unavailable', async () => {
         const harness = buildHarness({ categories: ['schedule'] });
 
         await harness.trigger({
-            data: () => ({
-                title: 'Ball handling packet',
-                assignedPlayerIds: ['player-1']
-            })
+            before: { exists: false, data: () => null },
+            after: {
+                exists: true,
+                data: () => ({
+                    homePacketContent: {
+                        blocks: [{ id: 'block-1' }]
+                    }
+                })
+            }
         }, {
-            params: { teamId: 'team-1', sessionId: 'session-1', packetId: 'packet-1' }
+            params: { teamId: 'team-1', sessionId: 'session-1' }
         });
 
         expect(harness.functions.logger.error).toHaveBeenCalledWith(
@@ -162,30 +192,38 @@ describe('notifyPracticePacketAssigned trigger', () => {
         expect(harness.sendDirectTargetsNotification).not.toHaveBeenCalled();
     });
 
-    it('does not notify unassigned parents even when they have practice devices', async () => {
+    it('does not re-notify when the home packet payload is unchanged', async () => {
         const harness = buildHarness({
-            targets: [
-                { uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' },
-                { uid: 'parent-9', token: 'parent-9-token', teamId: 'team-1' }
-            ],
-            parentDocsByKey: {
-                'team-1::player-1': [
-                    { id: 'parent-1', data: { parentPlayerKeys: ['team-1::player-1'] } }
-                ]
-            }
+            targets: [{ uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' }],
+            users: [{ uid: 'parent-1', roles: ['parent'] }]
         });
+        const packet = {
+            blocks: [{ id: 'block-1' }],
+            updatedAt: '2026-06-19T20:15:00.000Z'
+        };
 
         await harness.trigger({
-            data: () => ({
-                packetTitle: 'Shooting packet',
-                assignedPlayers: [{ playerId: 'player-1' }]
-            })
+            before: {
+                exists: true,
+                data: () => ({
+                    title: 'Thursday Practice',
+                    eventId: 'practice-44',
+                    homePacketContent: packet
+                })
+            },
+            after: {
+                exists: true,
+                data: () => ({
+                    title: 'Thursday Practice',
+                    eventId: 'practice-44',
+                    attendancePlayers: 8,
+                    homePacketContent: { ...packet }
+                })
+            }
         }, {
-            params: { teamId: 'team-1', sessionId: 'session-1', packetId: 'packet-2' }
+            params: { teamId: 'team-1', sessionId: 'session-1' }
         });
 
-        expect(harness.sendDirectTargetsNotification).toHaveBeenCalledWith(expect.objectContaining({
-            targets: [{ uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' }]
-        }));
+        expect(harness.sendDirectTargetsNotification).not.toHaveBeenCalled();
     });
 });

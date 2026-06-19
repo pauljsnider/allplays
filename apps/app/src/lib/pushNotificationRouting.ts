@@ -114,8 +114,13 @@ export function resolvePushNotificationRoute(input: unknown) {
         }
         return `/games/${encodeRouteParam(gameId)}`;
     }
-    if (category === 'practice' && teamId && eventId) {
-        return buildScheduleEventRoute(teamId, eventId, 'game');
+    if (category === 'practice') {
+        if (appRoute) {
+            return appRoute;
+        }
+        if (teamId && eventId) {
+            return buildScheduleEventRoute(teamId, eventId, 'game');
+        }
     }
     if (category === 'liveChat' && teamId && conversationId) {
         return buildMessagesRoute(teamId, conversationId);
