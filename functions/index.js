@@ -3337,13 +3337,17 @@ async function getUserRecordsByIds(userIds) {
 }
 
 function normalizeNotificationAlbumVisibility(value) {
-  return String(value || '').trim().toLowerCase() === 'private' ? 'private' : 'team';
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  return ['private', 'staff', 'staff-only'].includes(normalized) ? 'private' : 'team';
 }
 
 function canReceiveCategoryNotification(category, user, audienceContext = {}) {
   if (!user?.uid || !notificationAudienceAllowsRoles(category, user.roles)) return false;
   if (category !== 'media') return true;
-  if (normalizeNotificationAlbumVisibility(audienceContext.albumVisibility) !== 'private') return true;
+  const albumVisibility = audienceContext?.staffOnly === true
+    ? 'private'
+    : normalizeNotificationAlbumVisibility(audienceContext.albumVisibility);
+  if (albumVisibility !== 'private') return true;
   return Array.isArray(user.roles) && user.roles.includes('staff');
 }
 
