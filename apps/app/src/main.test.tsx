@@ -7,6 +7,8 @@ const telemetryMocks = vi.hoisted(() => {
   const end = vi.fn();
   return {
     end,
+    captureAppStartupFailure: vi.fn(),
+    initializeAppErrorTracking: vi.fn(),
     startAppStartupTimer: vi.fn(() => ({ end })),
     installReactErrorTelemetry: vi.fn()
   };
@@ -33,10 +35,11 @@ describe('main startup telemetry wiring', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    renderMock.mockReset();
     document.body.innerHTML = '<div id="root"></div>';
   });
 
-  it('starts the app startup timer and ends it after the first animation frame', async () => {
+  it('initializes error tracking, starts the startup timer, and ends it after the first animation frame', async () => {
     const requestAnimationFrameMock = vi.fn((callback: FrameRequestCallback) => {
       callback(0);
       return 1;
@@ -45,10 +48,26 @@ describe('main startup telemetry wiring', () => {
 
     await import('./main');
 
+    expect(telemetryMocks.initializeAppErrorTracking).toHaveBeenCalledTimes(1);
     expect(telemetryMocks.installReactErrorTelemetry).toHaveBeenCalledTimes(1);
     expect(telemetryMocks.startAppStartupTimer).toHaveBeenCalledTimes(1);
     expect(renderMock).toHaveBeenCalledTimes(1);
     expect(requestAnimationFrameMock).toHaveBeenCalledTimes(1);
     expect(telemetryMocks.end).toHaveBeenCalledWith({ phase: 'initial-render' });
+    expect(telemetryMocks.captureAppStartupFailure).not.toHaveBeenCalled();
+  });
+
+  it('captures startup failures before rethrowing them', async () => {
+    const startupError = new Error('render failed');
+    renderMock.mockImplementationOnce(() => {
+      throw startupError;
+    });
+    vi.stubGlobal('requestAnimationFrame', vi.fn());
+
+    await expect(import('./main')).rejects.toThrow('render failed');
+
+    expect(telemetryMocks.initializeAppErrorTracking).toHaveBeenCalledTimes(1);
+    expect(telemetryMocks.captureAppStartupFailure).toHaveBeenCalledWith(startupError, { phase: 'initial-render' });
+    expect(telemetryMocks.end).toHaveBeenCalledWith({ phase: 'initial-render', error: startupError });
   });
 });

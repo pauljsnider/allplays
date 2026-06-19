@@ -3,9 +3,15 @@ import ReactDOM from 'react-dom/client';
 import { HashRouter } from 'react-router-dom';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { installReactErrorTelemetry, startAppStartupTimer } from './lib/telemetry';
+import {
+  captureAppStartupFailure,
+  initializeAppErrorTracking,
+  installReactErrorTelemetry,
+  startAppStartupTimer
+} from './lib/telemetry';
 import './styles/index.css';
 
+initializeAppErrorTracking();
 installReactErrorTelemetry();
 const startupTimer = startAppStartupTimer();
 
@@ -26,6 +32,7 @@ try {
     startupTimer.end({ phase: 'initial-render' });
   });
 } catch (error) {
+  captureAppStartupFailure(error, { phase: 'initial-render' });
   startupTimer.end({ phase: 'initial-render', error });
   throw error;
 }
