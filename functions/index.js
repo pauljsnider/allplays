@@ -3365,6 +3365,83 @@ function hasPracticePacketContent(packet = null) {
   return Array.isArray(packet?.blocks) && packet.blocks.length > 0;
 }
 
+function getCertificateNotificationPlayerKey(certificate = {}, teamId = '') {
+  const resolvedTeamId = String(certificate.teamId || teamId || '').trim();
+  const playerId = String(certificate.playerId || certificate.childId || '').trim();
+  if (!resolvedTeamId || !playerId) return '';
+  return `${resolvedTeamId}::${playerId}`;
+}
+
+async function resolvePublishedCertificateParentUserIds(teamId, certificate = {}) {
+  const resolvedTeamId = String(teamId || certificate.teamId || '').trim();
+  const playerId = String(certificate.playerId || certificate.childId || '').trim();
+  if (!resolvedTeamId || !playerId) return [];
+
+  const playerKey = getCertificateNotificationPlayerKey(certificate, resolvedTeamId);
+  const [playerKeySnap, teamParentSnap] = await Promise.all([
+    playerKey
+      ? firestore.collection('users').where('parentPlayerKeys', 'array-contains', playerKey).get()
+      : Promise.resolve({ docs: [] }),
+    firestore.collection('users').where('parentTeamIds', 'array-contains', resolvedTeamId).get()
+  ]);
+
+  const userIds = new Set(
+    (playerKeySnap.docs || [])
+      .map((docSnap) => String(docSnap.id || '').trim())
+      .filter(Boolean)
+  );
+
+  (teamParentSnap.docs || []).forEach((docSnap) => {
+    const data = docSnap.data() || {};
+    const linkedPlayer = Array.isArray(data.parentOf) && data.parentOf.some((entry) => (
+      String(entry?.teamId || '').trim() === resolvedTeamId
+      && String(entry?.playerId || '').trim() === playerId
+    ));
+    if (linkedPlayer) {
+      userIds.add(String(docSnap.id || '').trim());
+    }
+  });
+
+  return Array.from(userIds).filter(Boolean);
+}
+
+async function claimPublishedCertificateAwardNotification(certificateRef) {
+  if (!certificateRef) return false;
+
+  return firestore.runTransaction(async (transaction) => {
+    const snap = await transaction.get(certificateRef);
+    if (!snap.exists) return false;
+
+    const data = snap.data() || {};
+    if (String(data.status || '').trim() !== 'published') {
+      return false;
+    }
+    if (data.awardNotificationProcessedAt) {
+      return false;
+    }
+
+    transaction.update(certificateRef, {
+      awardNotificationProcessedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return true;
+  });
+}
+
+function buildAwardNotificationDestination({ teamId, certificateId }) {
+  const params = new URLSearchParams();
+  if (teamId) {
+    params.set('teamId', teamId);
+  }
+  if (certificateId) {
+    params.set('certificateId', certificateId);
+  }
+  const query = params.toString();
+  return {
+    link: `https://allplays.ai/app/#/parent-tools/certificates${query ? `?${query}` : ''}`,
+    appRoute: `/parent-tools/certificates${query ? `?${query}` : ''}`
+  };
+}
+
 async function practicePacketAssignedNotification(beforeData = null, afterData = null, context = {}) {
   if (!afterData) return null;
 
@@ -5548,6 +5625,54 @@ exports.notifyFeeMarkedPaid = functions.firestore
     }
 
     await Promise.allSettled(promises);
+    return null;
+  });
+
+exports.notifyPublishedCertificateAward = functions.firestore
+  .document('teams/{teamId}/certificates/{certificateId}')
+  .onWrite(async (change, context) => {
+    const beforeData = change.before.exists ? (change.before.data() || null) : null;
+    const afterData = change.after.exists ? (change.after.data() || null) : null;
+    if (!afterData) return null;
+
+    const wasPublished = String(beforeData?.status || '').trim() === 'published';
+    const isPublished = String(afterData.status || '').trim() === 'published';
+    if (!isPublished || wasPublished) return null;
+
+    if (!NOTIFICATION_CATEGORIES.includes('awards')) {
+      functions.logger.error('notifyPublishedCertificateAward requires the awards notification category.', {
+        teamId: context.params?.teamId || null,
+        availableCategories: NOTIFICATION_CATEGORIES
+      });
+      return null;
+    }
+
+    const claimed = await claimPublishedCertificateAwardNotification(change.after.ref);
+    if (!claimed) return null;
+
+    const { teamId, certificateId } = context.params || {};
+    const parentUserIds = await resolvePublishedCertificateParentUserIds(teamId, afterData);
+    if (!parentUserIds.length) return null;
+
+    const allAwardTargets = await getTargetsForCategory(teamId, 'awards', null);
+    const parentUserIdSet = new Set(parentUserIds);
+    const parentTargets = allAwardTargets.filter((target) => parentUserIdSet.has(target.uid));
+    if (!parentTargets.length) return null;
+
+    const destination = buildAwardNotificationDestination({ teamId, certificateId });
+    const playerName = String(afterData.recipientName || afterData.playerName || 'A player').trim() || 'A player';
+    const awardTitle = String(afterData.awardTitle || afterData.title || 'Award').trim() || 'Award';
+
+    await sendDirectTargetsNotification({
+      targets: parentTargets,
+      category: 'awards',
+      title: `Award published for ${playerName}`,
+      body: `${awardTitle} is ready to view in ParentTools.`,
+      teamId,
+      eventId: certificateId,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
     return null;
   });
 
