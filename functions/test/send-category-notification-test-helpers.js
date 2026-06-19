@@ -72,13 +72,14 @@ function makeDocSnapshot({ id, ref, data, exists = true }) {
         id,
         ref,
         exists,
-        data: () => (data == null ? data : JSON.parse(JSON.stringify(data)))
+        data: () => data
     };
 }
 
 function makeQuerySnapshot(docSnaps) {
     return {
         empty: docSnaps.length === 0,
+        size: docSnaps.length,
         docs: docSnaps,
         forEach(callback) {
             docSnaps.forEach(callback);
@@ -90,6 +91,10 @@ function buildNotificationTestEnv({
     teamId = 'team-1',
     teamDoc = {},
     parentUserIds = [],
+    userDocs = {},
+    authUsersByEmail = {},
+    playerDocs = {},
+    privateProfileDocs = {},
     indexedRecipients = [],
     indexedTargets = [],
     preferenceDocs = {},
@@ -98,15 +103,20 @@ function buildNotificationTestEnv({
 } = {}) {
     const dedupWrites = [];
     const inboxWrites = [];
+    const auditWrites = [];
     const deletedPaths = [];
+    const updatedDocs = [];
     const messagingCalls = [];
+    const docStore = new Map();
     const counts = {
         teamDocGets: 0,
         parentQueries: 0,
         recipientQueries: 0,
+        targetQueries: 0,
         recipientCollectionGets: 0,
         preferenceGets: 0,
         deviceGets: 0,
+        userRecordGets: 0,
         inboxAdds: 0,
         inboxCleanupQueries: 0,
         dedupTransactions: 0,
@@ -123,6 +133,32 @@ function buildNotificationTestEnv({
         }
     }));
 
+    const notificationTargetDocs = indexedTargets.map((target, index) => ({
+        id: `${target.uid || `user-${index}`}__${target.deviceId || `device-${index}`}`,
+        data: {
+            uid: target.uid,
+            deviceId: target.deviceId,
+            token: target.token,
+            categories: target.categories || {}
+        }
+    }));
+
+    function clone(value) {
+        return value == null ? value : JSON.parse(JSON.stringify(value));
+    }
+
+    function writeStoredDoc(path, value) {
+        docStore.set(path, clone(value));
+    }
+
+    function mergeStoredDoc(path, value) {
+        const current = docStore.get(path) || {};
+        docStore.set(path, {
+            ...clone(current),
+            ...clone(value)
+        });
+    }
+
     function doc(path) {
         return {
             path,
@@ -131,6 +167,38 @@ function buildNotificationTestEnv({
                 if (path === `teams/${teamId}`) {
                     counts.teamDocGets += 1;
                     return makeDocSnapshot({ id: teamId, ref: this, data: teamDoc, exists: true });
+                }
+                if (path.startsWith('users/') && !path.includes('/notificationPreferences/') && !path.includes('/notificationDevices/') && path.split('/').length === 2) {
+                    counts.userRecordGets += 1;
+                    const data = userDocs[this.id];
+                    return makeDocSnapshot({
+                        id: this.id,
+                        ref: this,
+                        data,
+                        exists: data !== undefined
+                    });
+                }
+                const playerMatch = path.match(/^teams\/([^/]+)\/players\/([^/]+)$/);
+                if (playerMatch) {
+                    const playerId = playerMatch[2];
+                    const data = playerDocs[playerId];
+                    return makeDocSnapshot({
+                        id: playerId,
+                        ref: this,
+                        data,
+                        exists: data !== undefined
+                    });
+                }
+                const privateProfileMatch = path.match(/^teams\/([^/]+)\/players\/([^/]+)\/private\/profile$/);
+                if (privateProfileMatch) {
+                    const playerId = privateProfileMatch[2];
+                    const data = privateProfileDocs[playerId];
+                    return makeDocSnapshot({
+                        id: 'profile',
+                        ref: this,
+                        data,
+                        exists: data !== undefined
+                    });
                 }
                 if (path.startsWith('users/') && path.includes('/notificationPreferences/')) {
                     counts.preferenceGets += 1;
@@ -143,15 +211,34 @@ function buildNotificationTestEnv({
                     });
                 }
                 if (path.startsWith(`teams/${teamId}/notificationSendLog/`)) {
-                    return makeDocSnapshot({ id: this.id, ref: this, data: undefined, exists: false });
+                    const data = docStore.get(path);
+                    return makeDocSnapshot({ id: this.id, ref: this, data, exists: data !== undefined });
+                }
+                if (docStore.has(path)) {
+                    return makeDocSnapshot({ id: this.id, ref: this, data: docStore.get(path), exists: true });
                 }
                 return makeDocSnapshot({ id: this.id, ref: this, data: undefined, exists: false });
             },
             async set(value) {
+                if (path.startsWith(`teams/${teamId}/notificationSendLog/`)) {
+                    docStore.set(path, {
+                        ...clone(value),
+                        sentAt: {
+                            toMillis: () => Date.now()
+                        }
+                    });
+                } else {
+                    writeStoredDoc(path, value);
+                }
                 dedupWrites.push({ path, value });
+            },
+            async update(value) {
+                mergeStoredDoc(path, value);
+                updatedDocs.push({ path, value });
             },
             async delete() {
                 counts.deleteCalls += 1;
+                docStore.delete(path);
                 deletedPaths.push(path);
             },
             collection(name) {
@@ -212,6 +299,38 @@ function buildNotificationTestEnv({
                             })));
                         }
                     };
+                },
+                async get() {
+                    counts.recipientCollectionGets += 1;
+                    return makeQuerySnapshot(notificationRecipientDocs.map((entry) => makeDocSnapshot({
+                        id: entry.id,
+                        ref: doc(`${path}/${entry.id}`),
+                        data: entry.data,
+                        exists: true
+                    })));
+                }
+            };
+        }
+
+        if (path === `teams/${teamId}/notificationTargets`) {
+            return {
+                async get() {
+                    counts.targetQueries += 1;
+                    return makeQuerySnapshot(notificationTargetDocs.map((entry) => makeDocSnapshot({
+                        id: entry.id,
+                        ref: doc(`${path}/${entry.id}`),
+                        data: entry.data,
+                        exists: true
+                    })));
+                }
+            };
+        }
+
+        if (path === `teams/${teamId}/notificationAudit`) {
+            return {
+                async add(value) {
+                    auditWrites.push({ path, value });
+                    return { id: `audit-${auditWrites.length}` };
                 }
             };
         }
@@ -279,6 +398,9 @@ function buildNotificationTestEnv({
     const firestoreState = {
         doc,
         collection,
+        async getAll(...refs) {
+            return Promise.all(refs.map((ref) => ref.get()));
+        },
         async runTransaction(handler) {
             counts.dedupTransactions += 1;
             return handler({
@@ -313,7 +435,10 @@ function buildNotificationTestEnv({
         firestore: firestoreFactory,
         auth: () => ({
             verifyIdToken: async () => null,
-            getUserByEmail: async () => ({ uid: '' })
+            getUserByEmail: async (email) => {
+                const uid = authUsersByEmail[String(email || '').trim().toLowerCase()];
+                return uid ? { uid } : { uid: '' };
+            }
         }),
         messaging: () => ({
             async sendEachForMulticast(message) {
@@ -351,6 +476,8 @@ function buildNotificationTestEnv({
         dedupWrites,
         deletedPaths,
         inboxWrites,
+        auditWrites,
+        updatedDocs,
         messagingCalls,
         adminStub,
         firestoreState,
@@ -376,11 +503,13 @@ function loadNotificationInternals(options = {}) {
     };
 
     delete require.cache[repoIndexPath];
-    const internals = require(repoIndexPath)._internal;
+    const moduleExports = require(repoIndexPath);
+    const internals = moduleExports._internal;
 
     return {
         env,
         internals,
+        moduleExports,
         cleanup() {
             delete require.cache[repoIndexPath];
             Module._load = originalModuleLoad;
