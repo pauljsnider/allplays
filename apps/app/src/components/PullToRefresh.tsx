@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react';
 import { Loader2, ArrowDown } from 'lucide-react';
 
 const triggerThresholdPx = 72;
@@ -27,6 +27,11 @@ export function PullToRefresh({ onRefresh, disabled = false, className, children
   const [refreshing, setRefreshing] = useState(false);
   const startYRef = useRef<number | null>(null);
   const trackingRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+  }, []);
 
   const beginTracking = (clientY: number) => {
     if (disabled || refreshing || scrollTop() > 0) {
@@ -38,13 +43,19 @@ export function PullToRefresh({ onRefresh, disabled = false, className, children
     startYRef.current = clientY;
   };
 
-  const updateTracking = (clientY: number) => {
+  const updateTracking = (event: ReactTouchEvent<HTMLDivElement>) => {
     if (!trackingRef.current || startYRef.current === null || refreshing) return;
-    const delta = clientY - startYRef.current;
+
+    const delta = (event.touches[0]?.clientY ?? 0) - startYRef.current;
     if (delta <= 0 || scrollTop() > 0) {
       setPullDistance(0);
       return;
     }
+
+    if (event.cancelable) {
+      event.preventDefault();
+    }
+
     setPullDistance(Math.min(maxPullPx, delta * pullResistance));
   };
 
@@ -63,6 +74,7 @@ export function PullToRefresh({ onRefresh, disabled = false, className, children
     } catch {
       // The wrapped page surfaces its own load errors; PTR just stops spinning.
     } finally {
+      if (!mountedRef.current) return;
       setRefreshing(false);
       setPullDistance(0);
     }
@@ -77,7 +89,7 @@ export function PullToRefresh({ onRefresh, disabled = false, className, children
       className={className}
       data-testid="pull-to-refresh"
       onTouchStart={(event) => beginTracking(event.touches[0]?.clientY ?? 0)}
-      onTouchMove={(event) => updateTracking(event.touches[0]?.clientY ?? 0)}
+      onTouchMove={updateTracking}
       onTouchEnd={() => { void endTracking(); }}
       onTouchCancel={() => { void endTracking(); }}
     >
