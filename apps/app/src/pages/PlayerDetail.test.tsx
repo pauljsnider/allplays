@@ -160,6 +160,20 @@ describe('PlayerDetail athlete profile season selection', () => {
     cleanup();
   });
 
+  it('shows a retryable player detail error state and reloads on retry', async () => {
+    playerServiceMocks.loadParentPlayerDetail
+      .mockRejectedValueOnce(new Error('Player detail unavailable.'))
+      .mockResolvedValueOnce(buildDetailData());
+
+    renderPlayerDetail();
+
+    expect(await screen.findByText('Player detail unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Sam Player')).toBeTruthy();
+    expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenCalledTimes(2);
+  });
+
   it('preselects existing saved seasons and passes updated selections on save', async () => {
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
       athleteProfile: {

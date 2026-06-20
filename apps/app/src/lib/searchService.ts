@@ -950,6 +950,13 @@ async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], 
   return buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric, completedAllQueries);
 }
 
+// Player search runs scoped per-team queries against the teams the user can
+// already access (loadPlayerSearchDocsByTeam) rather than a global
+// collectionGroup('players') scan. The collectionGroup path is intentionally
+// absent: it was permission-denied for non-admins and re-paid a failed cascade
+// every session (#2036). Caller-side guards (min length, debounce in
+// AppSearchDialog) plus the session-level playerSearchCache keep repeat searches
+// from re-reading Firestore. See searchService.test.ts for the regression guard.
 async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean, teamsById: Map<string, AppSearchTeam> = new Map()) {
   return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamsById);
 }

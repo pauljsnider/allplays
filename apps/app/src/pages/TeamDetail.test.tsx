@@ -171,6 +171,26 @@ describe('TeamDetail', () => {
     expect(screen.queryByText('Getting the team photo, roster, schedule, standings, and parent-visible insights.')).toBeNull();
   });
 
+  it('shows a retryable team detail error state and reloads on retry', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockRejectedValueOnce(new Error('Team detail unavailable.'))
+      .mockResolvedValueOnce(model);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Team detail unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+  });
+
   it('does not reload team detail when the auth object identity changes but the signed-in user does not', async () => {
     const initialAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
     const nextAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };

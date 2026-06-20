@@ -129,6 +129,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
 }));
 
 import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
+import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
@@ -152,6 +153,7 @@ function user() {
 }
 
 beforeEach(() => {
+    clearAppDataCache();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     installWindow();
@@ -315,6 +317,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    clearAppDataCache();
     vi.unstubAllGlobals();
 });
 

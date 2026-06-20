@@ -41,6 +41,7 @@ import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-pe
 import { buildTrackingStatusPayload, summarizeTrackingStatus } from '../../../../js/tracking-status-admin.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
+import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { AuthUser } from './types';
@@ -435,20 +436,26 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...(await getNativeHeaders()),
-      ...(init.headers || {})
+  const url = `${getFirestoreBaseUrl()}${path}`;
+  const runRequest = async () => {
+    const response = await withTimeout(fetch(url, {
+      ...init,
+      headers: {
+        ...(await getNativeHeaders()),
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  return shouldDedupNativeRestRequest(path, init)
+    ? loadDedupedNativeRestRequest(getNativeRestDedupKey(url, init), runRequest)
+    : runRequest();
 }
 
 function decodeFirestoreValue(value: any): any {

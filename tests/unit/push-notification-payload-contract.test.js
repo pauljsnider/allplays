@@ -18,7 +18,7 @@ describe('push notification payload contract', () => {
     it('includes native app routing fields alongside the legacy web link', () => {
         expect(source).toContain('function buildNotificationAppRoute');
         expect(source).toContain('appRoute,');
-        expect(source).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}`;");
+        expect(source).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=game`;");
         expect(source).toContain('eventId: String(eventId || gameId || \'\')');
         expect(source).toContain('conversationId: String(conversationId || \'\')');
         expect(source).toContain("if (category === 'liveChat' || category === 'mentions') {");
@@ -42,6 +42,18 @@ describe('push notification payload contract', () => {
             batchId: 'batch/1',
             recipientId: 'recipient?1'
         })).toBe('/parent-tools/fees?teamId=team+1&batchId=batch%2F1&recipientId=recipient%3F1');
+    });
+
+    it('builds media notification routes to the team media page', () => {
+        expect(buildNotificationLink({
+            category: 'media',
+            teamId: 'team 1'
+        })).toBe('https://allplays.ai/app/#/teams/team%201/media');
+
+        expect(buildNotificationAppRoute({
+            category: 'media',
+            teamId: 'team 1'
+        })).toBe('/teams/team%201/media');
     });
 
     it('builds staff fee notification routes to the team fee management page', () => {

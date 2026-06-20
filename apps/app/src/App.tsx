@@ -14,7 +14,7 @@ import {
 } from './lib/nativeBackButton';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { shouldReloadTeamsToHome } from './lib/reloadRouting';
-import { addPushNotificationOpenListener, ensureAndroidNotificationChannels } from './lib/pushService';
+import { readAuthBootstrapHint } from './lib/authBootstrapHint';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
 
@@ -46,7 +46,7 @@ const TeamMedia = lazy(() => import('./pages/TeamMedia').then((module) => ({ def
 const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
 const VerifyPending = lazy(() => import('./pages/VerifyPending').then((module) => ({ default: module.VerifyPending })));
 
-const protectedRouteBootstrapGraceMs = 3000;
+const protectedRouteBootstrapGraceMs = 750;
 
 export default function App() {
   const auth = useAuth();
@@ -135,19 +135,29 @@ export default function App() {
   }, [navigate]);
 
   useEffect(() => {
-    let removeListener = async () => {};
+    let active = true;
+    let removeListener = () => {};
 
     async function registerPushListener() {
+      // Dynamically import the push stack (Firebase messaging) so it stays out of
+      // the boot critical path; registration only needs to run after first paint.
+      const { addPushNotificationOpenListener, ensureAndroidNotificationChannels } = await import('./lib/pushService');
       await ensureAndroidNotificationChannels();
-      removeListener = await addPushNotificationOpenListener((route) => {
+      const remove = await addPushNotificationOpenListener((route) => {
         if (authUserRef.current) {
           navigate(route, { replace: true });
         }
       });
+      if (!active) {
+        remove();
+        return;
+      }
+      removeListener = remove;
     }
 
-    registerPushListener();
+    void registerPushListener();
     return () => {
+      active = false;
       removeListener();
     };
   }, [navigate]);
@@ -226,6 +236,7 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
   const [bootstrapGraceExpired, setBootstrapGraceExpired] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const hasAuthBootstrapHint = Boolean(readAuthBootstrapHint()?.uid);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -234,6 +245,14 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
 
     return () => window.clearTimeout(timeoutId);
   }, []);
+
+  if (auth.loading && !auth.user && hasAuthBootstrapHint) {
+    return (
+      <AppShell auth={auth}>
+        <ProtectedRouteLoadingState pathname={location.pathname} />
+      </AppShell>
+    );
+  }
 
   if (auth.loading && !auth.user) {
     return <LoadingScreen />;

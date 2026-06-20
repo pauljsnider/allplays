@@ -29,12 +29,17 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadOfficialAssignmentsAccess: vi.fn()
 }));
 
+const uxTimingMocks = vi.hoisted(() => ({
+  recordFirstMeaningfulRender: vi.fn()
+}));
+
 vi.mock('../components/PageSkeletons', () => ({
   HomePageSkeleton: () => <div>Loading Home</div>
 }));
 vi.mock('../lib/homeService', () => homeServiceMocks);
 vi.mock('../lib/socialService', () => socialServiceMocks);
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
+vi.mock('../lib/uxTiming', () => uxTimingMocks);
 vi.mock('lucide-react', () => {
   const Icon = () => null;
   return {
@@ -312,6 +317,32 @@ describe('Home', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('waits for the initial secondary Home load to finish before recording first meaningful render', async () => {
+    let resolveBootstrap!: (value: { home: typeof baseHome; schedule: [] }) => void;
+    let resolveSecondary!: (value: typeof baseHome) => void;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveBootstrap = resolve;
+    }));
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSecondary = resolve;
+    }));
+
+    renderHome(signedInAuth);
+
+    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
+
+    resolveBootstrap({ home: baseHome, schedule: [] });
+
+    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
+
+    resolveSecondary(baseHome);
+
+    await waitFor(() => {
+      expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
+    });
   });
 
   it('renders the feed for signed-out users without crashing', async () => {

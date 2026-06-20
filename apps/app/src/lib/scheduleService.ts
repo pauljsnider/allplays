@@ -79,7 +79,7 @@ import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailability
 import { buildTrackerEventDocument } from './statTrackingService';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
-import { startUxTimer } from './uxTiming';
+import { startInteractionTimer, startUxTimer, UX_TIMING } from './uxTiming';
 import {
   getNextRideConfirmedSeatCount,
   getScheduleRideshareSummary,
@@ -123,9 +123,10 @@ import {
 } from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
+import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments } from './firestore/mappers';
 import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument } from './firestore/types';
 import type { AuthUser } from './types';
@@ -134,6 +135,9 @@ const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPa
 
 const primaryDataTimeoutMs = 5000;
 const parentScheduleTeamConcurrency = 3;
+const scheduleHydrationCacheTtlMs = 30 * 1000;
+const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
+const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 
 function logScheduleWarning(message: string, operation: string, error: unknown, context: Record<string, unknown> = {}) {
@@ -690,20 +694,26 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...(await getNativeHeaders()),
-      ...(init.headers || {})
+  const url = `${getFirestoreBaseUrl()}${path}`;
+  const runRequest = async () => {
+    const response = await withTimeout(fetch(url, {
+      ...init,
+      headers: {
+        ...(await getNativeHeaders()),
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  return shouldDedupNativeRestRequest(path, init)
+    ? loadDedupedNativeRestRequest(getNativeRestDedupKey(url, init), runRequest)
+    : runRequest();
 }
 
 function encodeFirestoreValue(value: any): Record<string, unknown> {
@@ -2572,11 +2582,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const firstEvent = matchingEvents[0];
     if (!firstEvent) return;
 
-    const [rsvps, offers, claims] = await Promise.all([
-      loadRsvps(teamId, gameId).catch(() => []),
-      loadRideOffers(teamId, gameId).catch(() => []),
-      loadAssignmentClaims(teamId, gameId).catch(() => ({}))
-    ]);
+    const { rsvps, offers, claims } = await loadCachedEventHydrationDetails(teamId, gameId);
     const myRsvpByChild = resolveMyRsvpByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || firstEvent.rsvpSummary || summarizeRsvps(rsvps);
@@ -2600,11 +2606,36 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
   return events;
 }
 
+function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs = Date.now()) {
+  const eventTime = event.date?.getTime?.();
+  if (!Number.isFinite(eventTime)) return false;
+  return eventTime >= nowMs - parentHomeHydrationLookBehindMs
+    && eventTime <= nowMs + parentHomeHydrationLookAheadMs;
+}
+
+function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
+  return loadCachedAppData(
+    `event-details:${teamId}:${gameId}`,
+    async () => {
+      const [rsvps, offers, claims] = await Promise.all([
+        loadRsvps(teamId, gameId).catch(() => []),
+        loadRideOffers(teamId, gameId).catch(() => []),
+        loadAssignmentClaims(teamId, gameId).catch(() => ({}))
+      ]);
+      return { rsvps, offers, claims };
+    },
+    {
+      ttlMs: scheduleHydrationCacheTtlMs,
+      persist: false
+    }
+  );
+}
+
 export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadResult, user: AuthUser | null): Promise<ParentScheduleLoadResult> {
   if (!user?.uid || !schedule.events.length) {
     return schedule;
   }
-  await hydrateEventDetails(schedule.events, user);
+  await hydrateEventDetails(schedule.events.filter((event) => shouldEagerlyHydrateParentHomeEvent(event)), user);
   return schedule;
 }
 
@@ -2985,17 +3016,25 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     throw new Error('Select a child before submitting RSVP.');
   }
 
+  const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });
   try {
-    return await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
+    const result = await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
       displayName: user.displayName || user.email,
       playerId: event.childId,
       response,
       note: compactString(note) || null
     })), 'RSVP submit');
+    interaction.end({ path: 'sdk' });
+    return result;
   } catch (error) {
-    if (!isNativeRuntime()) throw error;
+    if (!isNativeRuntime()) {
+      interaction.end({ error: (error as Error)?.message || 'RSVP submit failed' });
+      throw error;
+    }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
-    return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note);
+    const fallback = await nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note);
+    interaction.end({ path: 'rest' });
+    return fallback;
   }
 }
 

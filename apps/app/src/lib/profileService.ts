@@ -14,6 +14,7 @@ import {
 import { normalizeTeamNotificationPreferences } from '../../../../js/notification-preferences.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { createLogger } from './logger';
+import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { isTeamActive } from '../../../../js/team-visibility.js';
 
 export {
@@ -130,21 +131,27 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const headers = await getNativeHeaders();
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...headers,
-      ...(init.headers || {})
+  const url = `${getFirestoreBaseUrl()}${path}`;
+  const runRequest = async () => {
+    const headers = await getNativeHeaders();
+    const response = await withTimeout(fetch(url, {
+      ...init,
+      headers: {
+        ...headers,
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  return shouldDedupNativeRestRequest(path, init)
+    ? loadDedupedNativeRestRequest(getNativeRestDedupKey(url, init), runRequest)
+    : runRequest();
 }
 
 function encodeFirestoreValue(value: any): Record<string, unknown> {

@@ -30,12 +30,8 @@ import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
-import {
-  countUnread,
-  markNotificationRead,
-  subscribeToNotificationInbox,
-  type NotificationInboxItem
-} from '../lib/notificationInboxService';
+import type { NotificationInboxItem } from '../lib/notificationInboxService';
+import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoader';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 import { Modal } from './Modal';
@@ -80,7 +76,10 @@ export function AppShell({ auth, children }: AppShellProps) {
   const isAiRoute = location.pathname === '/ai';
   const isMobileChatDetail = !isDesktopWeb && location.pathname.startsWith('/messages/') && location.pathname !== '/messages';
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
-  const unreadCount = countUnread(inboxItems);
+  // Inlined from notificationInboxService.countUnread so this boot-path component
+  // does not statically import the module (which pulls the vendored Firestore SDK
+  // into the entry chunk). The module is dynamically imported on subscribe below.
+  const unreadCount = inboxItems.filter((item) => !item.readAt).length;
 
   useEffect(() => {
     const startedAt = routeStartedAtRef.current;
@@ -130,18 +129,37 @@ export function AppShell({ auth, children }: AppShellProps) {
     const uid = auth.user?.uid;
     if (!uid) return;
     setInboxState('loading');
-    const unsubscribe = subscribeToNotificationInbox(
-      uid,
-      (items) => {
-        setInboxItems(items);
-        setInboxState('ready');
-      },
-      () => {
-        setInboxState('error');
-      }
-    );
-    return unsubscribe;
+    let active = true;
+    let unsubscribe = () => {};
+    // Lazy-import the inbox service (and its Firestore dependency) so it stays out
+    // of the entry chunk and loads after first paint.
+    void loadNotificationInboxService()
+      .then((mod) => {
+        if (!active) return;
+        unsubscribe = mod.subscribeToNotificationInbox(
+          uid,
+          (items) => {
+            setInboxItems(items);
+            setInboxState('ready');
+          },
+          () => {
+            setInboxState('error');
+          }
+        );
+      })
+      .catch(() => {
+        if (active) setInboxState('error');
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [auth.user?.uid]);
+
+  const handleMarkNotificationRead = async (uid: string, itemId: string) => {
+    const mod = await loadNotificationInboxService();
+    await mod.markNotificationRead(uid, itemId);
+  };
 
   const addWorkflows = buildAddWorkflows();
 
@@ -375,7 +393,7 @@ export function AppShell({ auth, children }: AppShellProps) {
             inboxState={inboxState}
             uid={auth.user?.uid ?? ''}
             onClose={() => setInboxOpen(false)}
-            onMarkRead={markNotificationRead}
+            onMarkRead={handleMarkNotificationRead}
           />
         </Suspense>
       ) : null}

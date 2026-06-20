@@ -37,6 +37,8 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendo
 import { resolveImageFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
 import { isTeamActive } from '../../../../js/team-visibility.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { loadCachedAppData } from './appDataCache';
+import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
   MAX_CHAT_MEDIA_SIZE,
@@ -53,6 +55,7 @@ import {
   type ChatTargetType
 } from './chatLogic';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { startInteractionTimer, UX_TIMING } from './uxTiming';
 import { mapChatConversationRecord, mapChatMessageRecord, mapFirestoreDocument } from './firestore/mappers';
 import type {
   ChatAttachmentFirestoreRecord,
@@ -65,6 +68,7 @@ import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
 const chatUploadTimeoutMs = 25000;
+const chatPreviewCacheTtlMs = 20 * 1000;
 const imageUploadSessionKey = 'allplays-chat-image-upload-session';
 const aiStatsGamesLimit = 10;
 const aiGamesContextLimit = 20;
@@ -266,20 +270,26 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...(await getNativeHeaders()),
-      ...(init.headers || {})
+  const url = `${getFirestoreBaseUrl()}${path}`;
+  const runRequest = async () => {
+    const response = await withTimeout(fetch(url, {
+      ...init,
+      headers: {
+        ...(await getNativeHeaders()),
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  return shouldDedupNativeRestRequest(path, init)
+    ? loadDedupedNativeRestRequest(getNativeRestDedupKey(url, init), runRequest)
+    : runRequest();
 }
 
 function encodeFirestoreValue(value: any): Record<string, unknown> {
@@ -536,21 +546,38 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
   if (previewMessage.message) return previewMessage;
 
   const attemptedConversationIds = new Set(previewCandidates.map((conversation) => conversation.id));
-  for (const { conversation } of rankedConversations) {
-    if (!conversation?.id || attemptedConversationIds.has(conversation.id)) continue;
-    const fallbackMessage = await getLatestConversationMessage(teamId, conversation.id);
-    if (fallbackMessage) {
-      return {
-        message: fallbackMessage,
-        conversationId: conversation.id
-      };
-    }
-  }
+  const fallbackMessages = await Promise.allSettled(
+    rankedConversations
+      .map(({ conversation }) => conversation)
+      .filter((conversation): conversation is ChatConversation => Boolean(conversation?.id && !attemptedConversationIds.has(conversation.id)))
+      .map(async (conversation) => ({
+        conversationId: conversation.id,
+        message: await getLatestConversationMessage(teamId, conversation.id)
+      }))
+  );
+  const fallbackPreview = fallbackMessages.reduce<{ message: ChatMessage | null; conversationId: string | null }>((newest, result) => {
+    if (result.status !== 'fulfilled') return newest;
+    return getMessageTime(result.value.message) > getMessageTime(newest.message)
+      ? result.value
+      : newest;
+  }, { message: null, conversationId: null });
+  if (fallbackPreview.message) return fallbackPreview;
 
   return {
     message: null,
     conversationId: null
   };
+}
+
+function loadCachedMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean) {
+  return loadCachedAppData(
+    `chat-preview:${user.uid}:${teamId}:${canModerate ? 'moderator' : 'member'}`,
+    () => getLatestMessagePreview(teamId, user, team, canModerate),
+    {
+      ttlMs: chatPreviewCacheTtlMs,
+      persist: false
+    }
+  );
 }
 
 export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
@@ -600,7 +627,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({
       team,
       canModerate,
-      preview: await getLatestMessagePreview(team.id, userWithProfile, team, canModerate)
+      preview: await loadCachedMessagePreview(team.id, userWithProfile, team, canModerate)
     })))
     : previewInputs.map(({ team, canModerate }) => ({
       team,
@@ -611,7 +638,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   if (!includeLastMessages && onPreview && accessibleTeams.length > 0) {
     void Promise.allSettled(previewInputs.map(async ({ team, canModerate }) => {
       try {
-        const preview = await getLatestMessagePreview(team.id, userWithProfile, team, canModerate);
+        const preview = await loadCachedMessagePreview(team.id, userWithProfile, team, canModerate);
         onPreview({
           teamId: team.id,
           lastMessage: preview.message,
@@ -994,6 +1021,10 @@ export async function sendTeamChatMessage({
     throw new Error('Choose at least one selected member before sending.');
   }
 
+  const interaction = startInteractionTimer(UX_TIMING.chatSend, {
+    attachments: files.length,
+    target: selectedRecipientTarget
+  });
   const uploadedAttachments: ChatAttachment[] = [];
   try {
     for (const file of files) {
@@ -1046,12 +1077,14 @@ export async function sendTeamChatMessage({
       await withTimeout(Promise.resolve(postChatMessage(teamId, payload)), 'Chat message send');
     }
 
+    interaction.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
     return {
       conversationId,
       createdConversation,
       wantsAi: hasAllPlaysMention(text)
     };
   } catch (error) {
+    interaction.end({ error: (error as Error)?.message || 'Chat send failed' });
     if (uploadedAttachments.length > 0) {
       try {
         await deleteUploadedChatAttachments(uploadedAttachments);

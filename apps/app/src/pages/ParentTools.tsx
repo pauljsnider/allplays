@@ -230,6 +230,55 @@ function KeepAliveTool({ active, mounted, children }: { active: boolean; mounted
   return <div hidden={!active}>{children}</div>;
 }
 
+type ParentToolAsyncOptions<T> = {
+  onSuccess?: (value: T) => void | Promise<void>;
+  onError?: (error: AppServiceError) => void | Promise<void>;
+  clearError?: boolean;
+};
+
+function useParentToolAsyncOperation() {
+  const { loading, clearError: clearOperationError, run: runOperation } = useAsyncOperation();
+  const [error, setError] = useState<AppServiceError | null>(null);
+
+  const clearError = useCallback(() => {
+    setError(null);
+    clearOperationError();
+  }, [clearOperationError]);
+
+  const run = useCallback(async function runParentToolAsyncOperation<T>(
+    task: () => Promise<T>,
+    fallbackMessage: string,
+    options: ParentToolAsyncOptions<T> = {}
+  ) {
+    if (options.clearError ?? true) {
+      setError(null);
+      clearOperationError();
+    }
+
+    return runOperation(task, {
+      rethrow: false,
+      getErrorMessage: (taskError) => getParentToolErrorMessage(toAppServiceError(taskError, fallbackMessage), fallbackMessage),
+      onSuccess: async (value) => {
+        setError(null);
+        await options.onSuccess?.(value);
+      },
+      onError: async (taskError) => {
+        const appError = toAppServiceError(taskError, fallbackMessage);
+        setError(appError);
+        await options.onError?.(appError);
+      }
+    });
+  }, [clearOperationError, runOperation]);
+
+  return {
+    loading,
+    error,
+    setError,
+    clearError,
+    run
+  };
+}
+
 function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChanged: () => void }) {
   const [teams, setTeams] = useState<ParentAccessTeam[]>([]);
   const [requests, setRequests] = useState<ParentAccessRequest[]>([]);
@@ -519,30 +568,22 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
 function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [fees, setFees] = useState<ParentFeeAppRecord[]>([]);
   const [filter, setFilter] = useState<'open' | 'all' | 'paid'>('open');
-  const [error, setError] = useState<AppServiceError | null>(null);
   const [payingFeeId, setPayingFeeId] = useState('');
   const [feeErrors, setFeeErrors] = useState<Record<string, string>>({});
-  const loadOperation = useAsyncOperation();
+  const { loading, error, run: runLoad } = useParentToolAsyncOperation();
   const payOperation = useAsyncOperation();
-  const loading = loadOperation.loading;
 
   const refresh = useCallback(async () => {
-    setError(null);
-    return loadOperation.run(
+    return runLoad(
       () => loadParentFeesForApp(auth.user),
+      'Unable to load fees.',
       {
-        rethrow: false,
-        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load fees.'), 'Unable to load fees.'),
         onSuccess: (result) => {
           setFees(result);
-          setError(null);
-        },
-        onError: (loadError) => {
-          setError(toAppServiceError(loadError, 'Unable to load fees.'));
         }
       }
     );
-  }, [auth.user, loadOperation]);
+  }, [auth.user, runLoad]);
 
   useEffect(() => {
     void refresh();
@@ -1070,26 +1111,19 @@ function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
 
 function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [cards, setCards] = useState<ParentRegistrationCard[]>([]);
-  const [error, setError] = useState<AppServiceError | null>(null);
-  const loadOperation = useAsyncOperation();
-  const loading = loadOperation.loading;
+  const { loading, error, run: runLoad } = useParentToolAsyncOperation();
 
   const refresh = useCallback(async () => {
-    setError(null);
-    return loadOperation.run(
+    return runLoad(
       () => loadParentRegistrations(auth.user),
+      'Unable to load registrations.',
       {
-        rethrow: false,
-        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load registrations.'), 'Unable to load registrations.'),
         onSuccess: (result) => {
           setCards(result);
-        },
-        onError: (loadError) => {
-          setError(toAppServiceError(loadError, 'Unable to load registrations.'));
         }
       }
     );
-  }, [auth.user, loadOperation]);
+  }, [auth.user, runLoad]);
 
   useEffect(() => {
     void refresh();
@@ -1115,26 +1149,19 @@ function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshV
 
 function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [cards, setCards] = useState<ParentCertificateCard[]>([]);
-  const [error, setError] = useState<AppServiceError | null>(null);
-  const loadOperation = useAsyncOperation();
-  const loading = loadOperation.loading;
+  const { loading, error, run: runLoad } = useParentToolAsyncOperation();
 
   const refresh = useCallback(async () => {
-    setError(null);
-    return loadOperation.run(
+    return runLoad(
       () => loadParentCertificates(auth.user),
+      'Unable to load awards.',
       {
-        rethrow: false,
-        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load awards.'), 'Unable to load awards.'),
         onSuccess: (result) => {
           setCards(result);
-        },
-        onError: (loadError) => {
-          setError(toAppServiceError(loadError, 'Unable to load awards.'));
         }
       }
     );
-  }, [auth.user, loadOperation]);
+  }, [auth.user, runLoad]);
 
   useEffect(() => {
     void refresh();
