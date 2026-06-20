@@ -31,6 +31,7 @@ import { recordUxTiming } from '../lib/uxTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
+import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoader';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
 
@@ -131,7 +132,7 @@ export function AppShell({ auth, children }: AppShellProps) {
     let unsubscribe = () => {};
     // Lazy-import the inbox service (and its Firestore dependency) so it stays out
     // of the entry chunk and loads after first paint.
-    void import('../lib/notificationInboxService')
+    void loadNotificationInboxService()
       .then((mod) => {
         if (!active) return;
         unsubscribe = mod.subscribeToNotificationInbox(
@@ -155,7 +156,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   }, [auth.user?.uid]);
 
   const handleMarkNotificationRead = async (uid: string, itemId: string) => {
-    const mod = await import('../lib/notificationInboxService');
+    const mod = await loadNotificationInboxService();
     await mod.markNotificationRead(uid, itemId);
   };
 
