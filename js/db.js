@@ -293,12 +293,14 @@ function normalizeSharedGameSnapshot(docSnap) {
     };
 }
 
-async function getSharedGamesForTeam(teamId) {
+async function getSharedGamesForTeam(teamId, options = {}) {
     const sharedGamesRef = collectionGroup(db, 'sharedGames');
+    const dateConstraints = buildDateWindowConstraints(options);
+    const windowConstraints = dateConstraints.length > 0 ? [...dateConstraints, orderBy('date')] : [];
     const queries = [
-        query(sharedGamesRef, where('homeTeamId', '==', teamId)),
-        query(sharedGamesRef, where('awayTeamId', '==', teamId)),
-        query(sharedGamesRef, where('teamIds', 'array-contains', teamId))
+        query(sharedGamesRef, where('homeTeamId', '==', teamId), ...windowConstraints),
+        query(sharedGamesRef, where('awayTeamId', '==', teamId), ...windowConstraints),
+        query(sharedGamesRef, where('teamIds', 'array-contains', teamId), ...windowConstraints)
     ];
 
     const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
@@ -598,7 +600,7 @@ export async function uploadStatSheetPhoto(teamId, file) {
     }
 }
 
-import { resolveZip } from './utils.js?v=9'; // Import resolveZip
+import { expandRecurrence, resolveZip } from './utils.js?v=9'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -2730,21 +2732,56 @@ function buildDateWindowConstraints(options = {}) {
     return constraints;
 }
 
-function filterItemsByDateWindow(items = [], options = {}) {
+function buildRecurringSeriesMasterConstraints(options = {}) {
+    const { endDate } = normalizeDateWindowOptions(options);
+    const constraints = [where('isSeriesMaster', '==', true)];
+    if (endDate) constraints.push(where('date', '<=', Timestamp.fromDate(endDate)));
+    constraints.push(orderBy('date'));
+    return constraints;
+}
+
+function getDateWindowMillis(options = {}) {
     const { startDate, endDate } = normalizeDateWindowOptions(options);
-    if (!startDate && !endDate) return items;
-    const startMs = startDate ? startDate.getTime() : Number.NEGATIVE_INFINITY;
-    const endMs = endDate ? endDate.getTime() : Number.POSITIVE_INFINITY;
-    return (Array.isArray(items) ? items : []).filter((item) => {
-        const value = item?.date;
-        const date = value instanceof Date
-            ? value
-            : value && typeof value.toDate === 'function'
-                ? value.toDate()
-                : new Date(value);
-        const time = date?.getTime?.();
-        return Number.isFinite(time) && time >= startMs && time <= endMs;
+    return {
+        startMs: startDate ? startDate.getTime() : Number.NEGATIVE_INFINITY,
+        endMs: endDate ? endDate.getTime() : Number.POSITIVE_INFINITY,
+        hasWindow: Boolean(startDate || endDate)
+    };
+}
+
+function getItemDateMillis(item) {
+    const value = item?.date;
+    const date = value instanceof Date
+        ? value
+        : value && typeof value.toDate === 'function'
+            ? value.toDate()
+            : new Date(value);
+    const time = date?.getTime?.();
+    return Number.isFinite(time) ? time : null;
+}
+
+function itemFallsWithinDateWindow(item, options = {}) {
+    const { startMs, endMs, hasWindow } = getDateWindowMillis(options);
+    if (!hasWindow) return true;
+    const time = getItemDateMillis(item);
+    return time !== null && time >= startMs && time <= endMs;
+}
+
+function hasRecurringOccurrenceInDateWindow(item, options = {}) {
+    const { startMs, endMs, hasWindow } = getDateWindowMillis(options);
+    if (!hasWindow || !item?.isSeriesMaster || !item?.recurrence) return false;
+    return expandRecurrence(item).some((occurrence) => {
+        const time = getItemDateMillis(occurrence);
+        return time !== null && time >= startMs && time <= endMs;
     });
+}
+
+function filterItemsByDateWindow(items = [], options = {}) {
+    return (Array.isArray(items) ? items : []).filter((item) => itemFallsWithinDateWindow(item, options));
+}
+
+function filterScheduleItemsByDateWindow(items = [], options = {}) {
+    return (Array.isArray(items) ? items : []).filter((item) => itemFallsWithinDateWindow(item, options) || hasRecurringOccurrenceInDateWindow(item, options));
 }
 
 // Games
@@ -2753,23 +2790,40 @@ export async function getGames(teamId, options = {}) {
     let teamGames = [];
     const dateConstraints = buildDateWindowConstraints(options);
     try {
-        const q = query(gamesRef, ...dateConstraints, orderBy("date"));
-        const snapshot = await getDocs(q);
-        teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (dateConstraints.length > 0) {
+            const [windowSnapshot, recurringMasterSnapshot] = await Promise.all([
+                getDocs(query(gamesRef, ...dateConstraints, orderBy("date"))),
+                getDocs(query(gamesRef, ...buildRecurringSeriesMasterConstraints(options)))
+            ]);
+            const teamGamesById = new Map();
+            windowSnapshot.docs.forEach((doc) => teamGamesById.set(doc.id, { id: doc.id, ...doc.data() }));
+            recurringMasterSnapshot.docs.forEach((doc) => teamGamesById.set(doc.id, { id: doc.id, ...doc.data() }));
+            teamGames = Array.from(teamGamesById.values()).sort((a, b) => {
+                const aTime = getItemDateMillis(a);
+                const bTime = getItemDateMillis(b);
+                if (aTime === null && bTime === null) return 0;
+                if (aTime === null) return 1;
+                if (bTime === null) return -1;
+                return aTime - bTime;
+            });
+        } else {
+            const snapshot = await getDocs(query(gamesRef, orderBy("date")));
+            teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        }
     } catch (error) {
         // Fallback when indexes are still building or unavailable.
         const snapshot = await getDocs(gamesRef);
-        teamGames = filterItemsByDateWindow(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })), options);
+        teamGames = filterScheduleItemsByDateWindow(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })), options);
     }
 
     let sharedGames = [];
     try {
-        sharedGames = await getSharedGamesForTeam(teamId);
+        sharedGames = await getSharedGamesForTeam(teamId, options);
     } catch (error) {
         console.warn('[getGames] Failed to load shared games for team', teamId, error);
     }
 
-    return filterItemsByDateWindow(mergeGamesForTeam(teamGames, sharedGames, teamId), options);
+    return filterScheduleItemsByDateWindow(mergeGamesForTeam(teamGames, sharedGames, teamId), options);
 }
 
 export async function getAggregatedStatsForGames(teamId, gameIds) {
