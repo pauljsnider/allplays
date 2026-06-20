@@ -67,6 +67,14 @@ function renderSchedule() {
   );
 }
 
+function resolveAppSourcePath(relativePath: string) {
+  const cwd = process.cwd();
+  const appRoot = cwd.endsWith('/apps/app') || cwd.endsWith('\\apps\\app')
+    ? cwd
+    : resolve(cwd, 'apps/app');
+  return resolve(appRoot, relativePath);
+}
+
 describe('Schedule', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -167,7 +175,7 @@ describe('Schedule', () => {
   });
 
   it('keeps a dedicated labeled close control alongside the text close action in the calendar picker', () => {
-    const source = readFileSync(resolve(process.cwd(), 'apps/app/src/pages/Schedule.tsx'), 'utf8');
+    const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
 
     expect(source).toContain('aria-label="Close calendar events"');
     expect(source).toContain('>\n              Close\n            </button>');
