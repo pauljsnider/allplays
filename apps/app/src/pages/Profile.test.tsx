@@ -142,10 +142,10 @@ describe('Profile', () => {
     renderProfile();
 
     expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeInTheDocument();
-    const alertsButton = screen.getByRole('button', { name: 'Alerts', exact: true });
+    const alertsButton = screen.getByRole('button', { name: /^Alerts$/ });
     expect(alertsButton).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Invites', exact: true })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Security', exact: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Invites$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Security$/ })).toBeInTheDocument();
 
     const sectionGrid = alertsButton.parentElement;
     expect(sectionGrid).not.toBeNull();
