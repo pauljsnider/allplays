@@ -1,6 +1,6 @@
 import { listParentTeamFeeRecipients } from '../../../../js/db.js';
 import { normalizeParentFeeRecord } from '../../../../js/parent-dashboard-fees.js';
-import { loadChatInbox } from './chatService.ts';
+import { loadChatInbox } from './chatService';
 import { startUxTimer } from './uxTiming';
 import {
   buildParentHomeModel,
