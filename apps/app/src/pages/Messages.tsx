@@ -266,7 +266,7 @@ export function Messages({ auth }: { auth: AuthState }) {
 
   if (isDesktopWeb) {
     return (
-      <PullToRefresh onRefresh={refreshMessages} disabled={!auth.user?.uid}>
+      <PullToRefresh className="h-full min-h-0" onRefresh={refreshMessages} disabled={!auth.user?.uid}>
         <div className="messages-page messages-page-web">
           <MessagesHeader teams={teams} loading={loading} onRefresh={refreshMessages} />
           <section className="messages-two-pane mt-4">

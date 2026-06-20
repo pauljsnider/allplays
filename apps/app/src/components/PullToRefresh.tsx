@@ -12,13 +12,15 @@ type PullToRefreshProps = {
   onRefresh: () => Promise<unknown> | unknown;
   disabled?: boolean;
   threshold?: number;
+  className?: string;
 };
 
 export function PullToRefresh({
   children,
   onRefresh,
   disabled = false,
-  threshold = PULL_TO_REFRESH_THRESHOLD_PX
+  threshold = PULL_TO_REFRESH_THRESHOLD_PX,
+  className = ''
 }: PullToRefreshProps) {
   const startYRef = useRef<number | null>(null);
   const hapticTickedRef = useRef(false);
@@ -82,7 +84,7 @@ export function PullToRefresh({
 
   return (
     <div
-      className="pull-to-refresh-root"
+      className={`pull-to-refresh-root ${className}`.trim()}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
