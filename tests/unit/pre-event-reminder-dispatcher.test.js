@@ -58,13 +58,25 @@ describe('pre-event reminder dispatcher function', () => {
         const chatErrorIndex = dispatchBody.indexOf("console.error('Failed to write pre-event reminder chat fallback'");
         const pushSendIndex = dispatchBody.indexOf('sendCategoryNotification({');
         const emailSendIndex = dispatchBody.indexOf('createPublicRsvpEmailDeliveries({');
+        const rsvpPushSendIndex = dispatchBody.indexOf('sendRsvpReminderPushNotifications({');
 
         expect(chatWriteIndex).toBeGreaterThan(-1);
         expect(chatErrorIndex).toBeGreaterThan(chatWriteIndex);
         expect(pushSendIndex).toBeGreaterThan(chatErrorIndex);
         expect(emailSendIndex).toBeGreaterThan(pushSendIndex);
+        expect(rsvpPushSendIndex).toBeGreaterThan(emailSendIndex);
+        expect(dispatchBody).toContain('recipientUserIds: emailResult.recipientUserIds');
         expect(functionsSource).toContain("'scheduleNotifications.chatMessageError'");
         expect(functionsSource).toContain("firestore.collection(`teams/${teamId}/notificationTargets`)");
+    });
+
+    it('records separate RSVP reminder push metrics for scheduled reminders', () => {
+        expect(functionsSource).toContain('async function sendRsvpReminderPushNotifications');
+        expect(functionsSource).toContain("category: 'rsvp'");
+        expect(functionsSource).toContain("'scheduleNotifications.rsvpPushSuccessCount'");
+        expect(functionsSource).toContain("'scheduleNotifications.rsvpPushFailureCount'");
+        expect(functionsSource).toContain("'scheduleNotifications.rsvpPushTargetCount'");
+        expect(functionsSource).toContain("'scheduleNotifications.rsvpPushError'");
     });
 
     it('does not route reminder fallback chat docs through live-chat push preferences', () => {

@@ -149,6 +149,18 @@ export function resolvePushNotificationRoute(input: unknown) {
             return `/schedule?teamId=${encodeRouteParam(teamId)}&section=game`;
         }
     }
+    if (category === 'rsvp') {
+        if (appRoute) {
+            return appRoute;
+        }
+        if (teamId && eventId) {
+            return buildScheduleEventRoute(teamId, eventId, 'availability');
+        }
+        if (teamId) {
+            return `/schedule?teamId=${encodeRouteParam(teamId)}`;
+        }
+        return '/schedule';
+    }
     if (category === 'media') {
         if (appRoute) {
             return appRoute;
@@ -179,9 +191,6 @@ export function resolvePushNotificationRoute(input: unknown) {
             return buildScheduleEventRoute(teamId, eventId, 'rideshare');
         }
         return teamId ? `/schedule?teamId=${encodeRouteParam(teamId)}&section=rideshare` : '/schedule?section=rideshare';
-    }
-    if (category === 'media' && teamId) {
-        return `/teams/${encodeRouteParam(teamId)}/media`;
     }
     if (category === 'awards') {
         return appendQuery('/parent-tools/certificates', { teamId, certificateId });

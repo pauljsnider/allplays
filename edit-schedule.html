@@ -1743,7 +1743,11 @@
                     'scheduleNotifications.lastSentAt': sentAt,
                     'scheduleNotifications.lastSentBy': currentUser.uid || null,
                     'scheduleNotifications.lastRsvpReminderCount': missingCount,
-                    'scheduleNotifications.lastRsvpEmailCount': emailResult?.sentCount || 0
+                    'scheduleNotifications.lastRsvpEmailCount': emailResult?.sentCount || 0,
+                    'scheduleNotifications.lastRsvpPushSuccessCount': emailResult?.rsvpPushSuccessCount || 0,
+                    'scheduleNotifications.lastRsvpPushFailureCount': emailResult?.rsvpPushFailureCount || 0,
+                    'scheduleNotifications.lastRsvpPushTargetCount': emailResult?.rsvpPushTargetCount || 0,
+                    'scheduleNotifications.lastRsvpPushError': emailResult?.rsvpPushError || null
                 });
             }
         }
