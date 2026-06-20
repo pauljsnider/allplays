@@ -308,7 +308,244 @@ test('notifyFeeMarkedPaid avoids payment wording when a credit marks the fee as 
     }
 });
 
-for (const category of ['schedule', 'practice', 'liveScore', 'liveChat', 'mentions', 'fees']) {
+test('notifyParentMembershipRequestCreated sends access notifications only to staff reviewers', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
+        parentUserIds: ['parent-1'],
+        authUsersByEmail: { 'assistant@example.com': 'coach-2' },
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { access: true } },
+            { uid: 'coach-2', deviceId: 'assistant-device', token: 'assistant-token', categories: { access: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { access: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/membershipRequests/request-1');
+        const snapshot = makeSnapshot(ref, {
+            requesterUserId: 'parent-1',
+            requesterName: 'Sam P.',
+            playerName: 'Jordan B.',
+            relation: 'Parent'
+        });
+        const context = { params: { teamId: 'team-1', requestId: 'request-1' } };
+
+        await moduleExports.notifyParentMembershipRequestCreated(snapshot, context);
+
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens.sort(), ['assistant-token', 'coach-token']);
+        assert.equal(env.messagingCalls[0].title, 'Access request: Sam P. for Jordan B.');
+        assert.equal(env.messagingCalls[0].data.category, 'access');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/parent-tools/access?teamId=team-1');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/edit-roster.html?teamId=team-1');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyParentMembershipRequestUpdated sends approval and decline decisions only once to the requester', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', name: 'Team Bears', adminEmails: [] },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { access: true } }
+        ]
+    });
+
+    try {
+        const approveRef = env.firestoreState.doc('teams/team-1/membershipRequests/request-2');
+        const declineRef = env.firestoreState.doc('teams/team-1/membershipRequests/request-3');
+        const approveContext = { params: { teamId: 'team-1', requestId: 'request-2' } };
+        const declineContext = { params: { teamId: 'team-1', requestId: 'request-3' } };
+
+        const firstResult = await moduleExports.notifyParentMembershipRequestUpdated(
+            makeChange(approveRef,
+                { requesterUserId: 'parent-1', playerName: 'Jordan B.', status: 'pending' },
+                { requesterUserId: 'parent-1', playerName: 'Jordan B.', status: 'approved' }
+            ),
+            approveContext
+        );
+        const secondResult = await moduleExports.notifyParentMembershipRequestUpdated(
+            makeChange(approveRef,
+                { requesterUserId: 'parent-1', playerName: 'Jordan B.', status: 'approved' },
+                { requesterUserId: 'parent-1', playerName: 'Jordan B.', status: 'approved', decisionNote: 'Still approved' }
+            ),
+            approveContext
+        );
+        await moduleExports.notifyParentMembershipRequestUpdated(
+            makeChange(declineRef,
+                { requesterUserId: 'parent-1', playerName: 'Casey B.', status: 'pending' },
+                { requesterUserId: 'parent-1', playerName: 'Casey B.', status: 'declined' }
+            ),
+            declineContext
+        );
+        await moduleExports.notifyParentMembershipRequestUpdated(
+            makeChange(declineRef,
+                { requesterUserId: 'parent-1', playerName: 'Casey B.', status: 'declined' },
+                { requesterUserId: 'parent-1', playerName: 'Casey B.', status: 'declined', decisionNote: 'Still declined' }
+            ),
+            declineContext
+        );
+
+        assert.equal(firstResult, null);
+        assert.equal(secondResult, null);
+        assert.equal(env.messagingCalls.length, 2);
+        assert.equal(env.messagingCalls[0].tokens[0], 'parent-token');
+        assert.equal(env.messagingCalls[0].title, 'You now have access to Team Bears');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/teams/team-1');
+        assert.equal(env.messagingCalls[1].tokens[0], 'parent-token');
+        assert.equal(env.messagingCalls[1].title, 'Access request declined for Team Bears');
+        assert.equal(env.messagingCalls[1].body, 'Your request for Casey B. was declined.');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyRegistrationSubmitted sends access notifications to staff review targets', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { access: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { access: true } }
+        ],
+        parentUserIds: ['parent-1']
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/registrationForms/form-1/registrations/reg-1');
+        const snapshot = makeSnapshot(ref, {
+            participant: { name: 'Jordan B.' },
+            programName: 'Summer Skills Camp'
+        });
+        const context = { params: { teamId: 'team-1', formId: 'form-1', registrationId: 'reg-1' } };
+
+        await moduleExports.notifyRegistrationSubmitted(snapshot, context);
+
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['coach-token']);
+        assert.equal(env.messagingCalls[0].title, 'Registration submitted: Jordan B.');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/teams/team-1/registrations/form-1');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/edit-roster.html?teamId=team-1');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyRegistrationStatusChanged sends distinct approve, decline, and promotion notifications without refiring on resave', async () => {
+    const baseOptions = {
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        authUsersByEmail: { 'guardian@example.com': 'parent-1' },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { access: true } }
+        ]
+    };
+
+    const approvedEnv = loadNotificationInternals(baseOptions);
+    try {
+        const ref = approvedEnv.env.firestoreState.doc('teams/team-1/registrationForms/form-1/registrations/reg-approved');
+        const context = { params: { teamId: 'team-1', formId: 'form-1', registrationId: 'reg-approved' } };
+        await approvedEnv.moduleExports.notifyRegistrationStatusChanged(
+            makeChange(ref,
+                { guardian: { email: 'guardian@example.com' }, participant: { name: 'Jordan B.' }, programName: 'Summer Skills Camp', status: 'pending' },
+                { guardian: { email: 'guardian@example.com' }, participant: { name: 'Jordan B.' }, programName: 'Summer Skills Camp', status: 'enrolled' }
+            ),
+            context
+        );
+        await approvedEnv.moduleExports.notifyRegistrationStatusChanged(
+            makeChange(ref,
+                { guardian: { email: 'guardian@example.com' }, participant: { name: 'Jordan B.' }, programName: 'Summer Skills Camp', status: 'enrolled' },
+                { guardian: { email: 'guardian@example.com' }, participant: { name: 'Jordan B.' }, programName: 'Summer Skills Camp', status: 'enrolled', decisionNote: 'Resaved' }
+            ),
+            context
+        );
+
+        assert.equal(approvedEnv.env.messagingCalls.length, 1);
+        assert.equal(approvedEnv.env.messagingCalls[0].title, 'Registration approved: Jordan B.');
+        assert.equal(approvedEnv.env.messagingCalls[0].body, 'Jordan B. is approved for Summer Skills Camp.');
+        assert.equal(approvedEnv.env.messagingCalls[0].data.appRoute, '/parent-tools/registrations/team-1/form-1?registrationId=reg-approved');
+    } finally {
+        approvedEnv.cleanup();
+    }
+
+    const declinedEnv = loadNotificationInternals(baseOptions);
+    try {
+        const ref = declinedEnv.env.firestoreState.doc('teams/team-1/registrationForms/form-1/registrations/reg-declined');
+        const context = { params: { teamId: 'team-1', formId: 'form-1', registrationId: 'reg-declined' } };
+        await declinedEnv.moduleExports.notifyRegistrationStatusChanged(
+            makeChange(ref,
+                { guardian: { email: 'guardian@example.com' }, participant: { name: 'Jordan B.' }, programName: 'Summer Skills Camp', status: 'pending' },
+                { guardian: { email: 'guardian@example.com' }, participant: { name: 'Jordan B.' }, programName: 'Summer Skills Camp', status: 'rejected' }
+            ),
+            context
+        );
+
+        assert.equal(declinedEnv.env.messagingCalls.length, 1);
+        assert.equal(declinedEnv.env.messagingCalls[0].title, 'Registration declined: Jordan B.');
+        assert.equal(declinedEnv.env.messagingCalls[0].body, "Jordan B.'s Summer Skills Camp application was declined.");
+    } finally {
+        declinedEnv.cleanup();
+    }
+
+    const promotedEnv = loadNotificationInternals(baseOptions);
+    try {
+        const ref = promotedEnv.env.firestoreState.doc('teams/team-1/registrationForms/form-1/registrations/reg-promoted');
+        const context = { params: { teamId: 'team-1', formId: 'form-1', registrationId: 'reg-promoted' } };
+        await promotedEnv.moduleExports.notifyRegistrationStatusChanged(
+            makeChange(ref,
+                { guardian: { email: 'guardian@example.com' }, participant: { name: 'Jordan B.' }, programName: 'Summer Skills Camp', status: 'waitlisted' },
+                { guardian: { email: 'guardian@example.com' }, participant: { name: 'Jordan B.' }, programName: 'Summer Skills Camp', status: 'offer-extended' }
+            ),
+            context
+        );
+
+        assert.equal(promotedEnv.env.messagingCalls.length, 1);
+        assert.equal(promotedEnv.env.messagingCalls[0].title, 'Spot available: Jordan B.');
+        assert.equal(promotedEnv.env.messagingCalls[0].body, 'Summer Skills Camp has an available spot for Jordan B..');
+    } finally {
+        promotedEnv.cleanup();
+    }
+});
+
+test('notifyInviteRedeemed resolves the inviter only when a roster or staff invite is accepted', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-2': { displayName: 'Pat R.' }
+        },
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { access: true } },
+            { uid: 'coach-2', deviceId: 'other-coach-device', token: 'other-coach-token', categories: { access: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('accessCodes/CODE123');
+        const context = { params: { codeId: 'CODE123' } };
+
+        await moduleExports.notifyInviteRedeemed(
+            makeChange(ref,
+                { type: 'parent_invite', teamId: 'team-1', generatedBy: 'coach-1', used: false },
+                { type: 'parent_invite', teamId: 'team-1', generatedBy: 'coach-1', used: true, usedBy: 'parent-2' }
+            ),
+            context
+        );
+        await moduleExports.notifyInviteRedeemed(
+            makeChange(ref,
+                { type: 'parent_invite', teamId: 'team-1', generatedBy: 'coach-1', used: true, usedBy: 'parent-2' },
+                { type: 'parent_invite', teamId: 'team-1', generatedBy: 'coach-1', used: true, usedBy: 'parent-2', note: 'Resaved' }
+            ),
+            context
+        );
+
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['coach-token']);
+        assert.equal(env.messagingCalls[0].title, 'Pat R. accepted your invite');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/teams/team-1');
+    } finally {
+        cleanup();
+    }
+});
+
+for (const category of ['schedule', 'practice', 'liveScore', 'liveChat', 'mentions', 'fees', 'access']) {
     test(`sendCategoryNotification suppresses ${category} when every indexed recipient opted out`, async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: { ownerId: 'coach-1', adminEmails: [] },
