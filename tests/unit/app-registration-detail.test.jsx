@@ -319,25 +319,34 @@ beforeEach(() => {
   parentToolsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true });
   parentToolsServiceMocks.extendTeamRegistrationOfferForApp.mockResolvedValue({ success: true });
   parentToolsServiceMocks.rejectTeamRegistrationForApp.mockResolvedValue({ success: true });
-  parentToolsServiceMocks.loadTeamRegistrationQueuePage.mockResolvedValue({
-    reviews: [{
-      id: 'reg-1',
-      status: 'pending',
-      participantName: 'Riley Runner',
-      guardianLabel: 'parent@example.com',
-      guardianEmails: ['parent@example.com'],
-      participant: { name: 'Riley Runner', grade: '5' },
-      guardian: { email: 'parent@example.com', phone: '555-0100' },
-      submittedData: {},
-      submittedAt: null,
-      selectedOptionLabel: 'Travel',
-      paymentLabel: 'paid · $150.00',
-      waiverAccepted: true,
-      linkedPlayerId: '',
-      decisionNote: '',
-    }],
-    lastDoc: { id: 'reg-1' },
-    hasMore: false,
+  parentToolsServiceMocks.loadTeamRegistrationQueuePage.mockImplementation(async (_teamId, _formId, options = {}) => {
+    if (options?.status === 'waitlisted') {
+      return {
+        reviews: [],
+        lastDoc: null,
+        hasMore: false,
+      };
+    }
+    return {
+      reviews: [{
+        id: 'reg-1',
+        status: 'pending',
+        participantName: 'Riley Runner',
+        guardianLabel: 'parent@example.com',
+        guardianEmails: ['parent@example.com'],
+        participant: { name: 'Riley Runner', grade: '5' },
+        guardian: { email: 'parent@example.com', phone: '555-0100' },
+        submittedData: {},
+        submittedAt: null,
+        selectedOptionLabel: 'Travel',
+        paymentLabel: 'paid · $150.00',
+        waiverAccepted: true,
+        linkedPlayerId: '',
+        decisionNote: '',
+      }],
+      lastDoc: { id: 'reg-1' },
+      hasMore: false,
+    };
   });
   parentToolsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([
     { id: 'player-9', name: 'Riley Runner', number: '12' }
@@ -394,9 +403,16 @@ describe('RegistrationDetail page', () => {
       'team-coach',
       'form-review'
     );
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenCalledWith(
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+      1,
       'team-coach',
       'form-review'
+    );
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+      2,
+      'team-coach',
+      'form-review',
+      { status: 'waitlisted' }
     );
     expect(parentToolsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledWith(
       expect.objectContaining({ uid: 'user-1' }),
@@ -448,9 +464,121 @@ describe('RegistrationDetail page', () => {
     await waitForText(container, 'Riley Runner');
 
     expect(container.textContent).not.toContain('This linked registration form is not published right now.');
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenCalledWith(
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+      1,
       'team-coach',
       'form-review'
+    );
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+      2,
+      'team-coach',
+      'form-review',
+      { status: 'waitlisted' }
+    );
+  });
+
+  it('loads waitlisted applicants separately when they fall outside the first all-status page', async () => {
+    parentToolsServiceMocks.loadStaffRegistrationDetail.mockResolvedValueOnce({
+      teamName: 'Coach Bears',
+      isPublished: true,
+      onlineCheckout: false,
+      legacyUrl: '/registration-review.html?teamId=team-coach&formId=form-review',
+      form: {
+        id: 'form-review',
+        teamId: 'team-coach',
+        programName: 'Travel Tryouts',
+        description: 'Review queue',
+        season: 'Spring',
+        currency: 'USD',
+        participantFields: [],
+        guardianFields: [],
+        registrationOptionCounts: { 'opt-1': { enrolled: 25, waitlisted: 2 } },
+        status: 'published',
+        published: true,
+      },
+      options: [{ id: 'opt-1', countKey: 'opt-1', title: 'Travel', capacityLimit: 25 }],
+      feeSnapshot: { finalAmountDueCents: 15000, currency: 'USD' },
+      paymentNotice: '',
+      paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
+    });
+    parentToolsServiceMocks.loadTeamRegistrationQueuePage
+      .mockResolvedValueOnce({
+        reviews: [{
+          id: 'reg-pending',
+          status: 'pending',
+          participantName: 'Pending Parker',
+          guardianLabel: 'pending@example.com',
+          guardianEmails: ['pending@example.com'],
+          participant: { name: 'Pending Parker' },
+          guardian: { email: 'pending@example.com' },
+          submittedData: {},
+          submittedAt: null,
+          selectedOption: { id: 'opt-1', countKey: 'opt-1', title: 'Travel' },
+          selectedOptionLabel: 'Travel',
+          paymentLabel: 'unpaid · $150.00',
+          waiverAccepted: true,
+          linkedPlayerId: '',
+          decisionNote: '',
+        }],
+        lastDoc: { id: 'reg-pending' },
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        reviews: [
+          {
+            id: 'reg-wait-1',
+            status: 'waitlisted',
+            participantName: 'Riley Runner',
+            guardianLabel: 'riley@example.com',
+            guardianEmails: ['riley@example.com'],
+            participant: { name: 'Riley Runner' },
+            guardian: { email: 'riley@example.com' },
+            submittedData: {},
+            submittedAt: '2026-06-20T18:00:00.000Z',
+            selectedOption: { id: 'opt-1', countKey: 'opt-1', title: 'Travel' },
+            selectedOptionLabel: 'Travel',
+            paymentLabel: 'unpaid · $150.00',
+            waiverAccepted: true,
+            linkedPlayerId: '',
+            decisionNote: '',
+          },
+          {
+            id: 'reg-wait-2',
+            status: 'waitlisted',
+            participantName: 'Avery Ace',
+            guardianLabel: 'avery@example.com',
+            guardianEmails: ['avery@example.com'],
+            participant: { name: 'Avery Ace' },
+            guardian: { email: 'avery@example.com' },
+            submittedData: {},
+            submittedAt: '2026-06-20T17:00:00.000Z',
+            selectedOption: { id: 'opt-1', countKey: 'opt-1', title: 'Travel' },
+            selectedOptionLabel: 'Travel',
+            paymentLabel: 'unpaid · $150.00',
+            waiverAccepted: true,
+            linkedPlayerId: '',
+            decisionNote: '',
+          },
+        ],
+        lastDoc: { id: 'reg-wait-2' },
+        hasMore: false,
+      });
+
+    const { container } = await renderStaffRegistrationReview();
+    await waitForText(container, 'Waitlisted applicants (2)');
+    expect(container.textContent).toContain('Pending Parker');
+    expect(container.textContent).toContain('Riley Runner');
+    expect(container.textContent).toContain('Avery Ace');
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+      1,
+      'team-coach',
+      'form-review'
+    );
+    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+      2,
+      'team-coach',
+      'form-review',
+      { status: 'waitlisted' }
     );
   });
 
@@ -539,6 +667,46 @@ describe('RegistrationDetail page', () => {
       .mockResolvedValueOnce({
         reviews: [
           {
+            id: 'reg-wait-1',
+            status: 'waitlisted',
+            participantName: 'Riley Runner',
+            guardianLabel: 'riley@example.com',
+            guardianEmails: ['riley@example.com'],
+            participant: { name: 'Riley Runner' },
+            guardian: { email: 'riley@example.com' },
+            submittedData: {},
+            submittedAt: '2026-06-20T18:00:00.000Z',
+            selectedOption: { id: 'opt-1', countKey: 'opt-1', title: 'Travel' },
+            selectedOptionLabel: 'Travel',
+            paymentLabel: 'unpaid · $150.00',
+            waiverAccepted: true,
+            linkedPlayerId: '',
+            decisionNote: '',
+          },
+          {
+            id: 'reg-wait-2',
+            status: 'waitlisted',
+            participantName: 'Avery Ace',
+            guardianLabel: 'avery@example.com',
+            guardianEmails: ['avery@example.com'],
+            participant: { name: 'Avery Ace' },
+            guardian: { email: 'avery@example.com' },
+            submittedData: {},
+            submittedAt: '2026-06-20T17:00:00.000Z',
+            selectedOption: { id: 'opt-1', countKey: 'opt-1', title: 'Travel' },
+            selectedOptionLabel: 'Travel',
+            paymentLabel: 'unpaid · $150.00',
+            waiverAccepted: true,
+            linkedPlayerId: '',
+            decisionNote: '',
+          },
+        ],
+        lastDoc: { id: 'reg-wait-2' },
+        hasMore: false,
+      })
+      .mockResolvedValueOnce({
+        reviews: [
+          {
             id: 'reg-pending',
             status: 'pending',
             participantName: 'Pending Parker',
@@ -572,6 +740,29 @@ describe('RegistrationDetail page', () => {
             linkedPlayerId: '',
             decisionNote: '',
           },
+          {
+            id: 'reg-wait-2',
+            status: 'waitlisted',
+            participantName: 'Avery Ace',
+            guardianLabel: 'avery@example.com',
+            guardianEmails: ['avery@example.com'],
+            participant: { name: 'Avery Ace' },
+            guardian: { email: 'avery@example.com' },
+            submittedData: {},
+            submittedAt: '2026-06-20T17:00:00.000Z',
+            selectedOption: { id: 'opt-1', countKey: 'opt-1', title: 'Travel' },
+            selectedOptionLabel: 'Travel',
+            paymentLabel: 'unpaid · $150.00',
+            waiverAccepted: true,
+            linkedPlayerId: '',
+            decisionNote: '',
+          },
+        ],
+        lastDoc: { id: 'reg-wait-2' },
+        hasMore: false,
+      })
+      .mockResolvedValueOnce({
+        reviews: [
           {
             id: 'reg-wait-2',
             status: 'waitlisted',

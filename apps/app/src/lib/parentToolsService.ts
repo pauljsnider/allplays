@@ -182,6 +182,8 @@ export type TeamRegistrationReviewCard = Record<string, any> & {
 export type TeamRegistrationQueueModel = {
   reviews: TeamRegistrationReviewCard[];
   rosterPlayers: TeamRegistrationRosterPlayer[];
+  waitlistedReviews?: TeamRegistrationReviewCard[];
+  totalWaitlisted?: number;
 };
 
 export type ParentCalendarTeam = {

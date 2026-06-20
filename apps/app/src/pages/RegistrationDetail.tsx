@@ -96,17 +96,23 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         }
         setForm(nextForm);
         if (staffReview) {
-          const [nextPage, rosterPlayers] = await Promise.all([
+          const [nextPage, waitlistedPage, rosterPlayers] = await Promise.all([
             (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
+            (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId, { status: 'waitlisted' }) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
             (parentToolsService as any).loadTeamRegistrationRosterPlayers(auth.user, teamId).catch(() => [])
           ]);
           if (cancelled) return;
-          const nextQueue: TeamRegistrationQueueModel = { reviews: nextPage.reviews, rosterPlayers };
+          const nextQueue: TeamRegistrationQueueModel = {
+            reviews: nextPage.reviews,
+            rosterPlayers,
+            waitlistedReviews: waitlistedPage.reviews,
+            totalWaitlisted: getTotalWaitlistedCount(nextForm.registrationOptionCounts, waitlistedPage.reviews.length)
+          };
           setQueue(nextQueue);
           setLastDoc(nextPage.lastDoc);
           setHasMore(nextPage.hasMore);
-          const firstReviewId = nextQueue.reviews[0]?.id || '';
-          setSelectedReviewId((current) => current && nextQueue.reviews.some((review) => review.id === current) ? current : firstReviewId);
+          const firstReviewId = nextQueue.reviews[0]?.id || nextQueue.waitlistedReviews?.[0]?.id || '';
+          setSelectedReviewId((current) => current && [...nextQueue.reviews, ...(nextQueue.waitlistedReviews || [])].some((review) => review.id === current) ? current : firstReviewId);
         } else {
           setQueue(null);
           setLastDoc(null);
@@ -139,8 +145,12 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const effectiveQuantity = useMemo(() => hasQuantityDiscount ? quantity : 1, [hasQuantityDiscount, quantity]);
   const displayFeeSnapshot = useMemo(() => form ? calculateRegistrationFeeSnapshot(form, { quantity: effectiveQuantity, now: new Date() }) : null, [form, effectiveQuantity]);
   const displayFeeLines = useMemo<FeeSummaryLine[]>(() => displayFeeSnapshot ? formatFeeSnapshotLines(displayFeeSnapshot) : [], [displayFeeSnapshot]);
-  const selectedReview = useMemo(() => queue?.reviews.find((review) => review.id === selectedReviewId) || queue?.reviews[0] || null, [queue, selectedReviewId]);
-  const waitlistedReviews = useMemo(() => (queue?.reviews || []).filter((review) => review.status === 'waitlisted'), [queue?.reviews]);
+  const selectedReview = useMemo(() => {
+    const allReviews = [...(queue?.reviews || []), ...(queue?.waitlistedReviews || [])];
+    return allReviews.find((review) => review.id === selectedReviewId) || allReviews[0] || null;
+  }, [queue, selectedReviewId]);
+  const waitlistedReviews = useMemo(() => queue?.waitlistedReviews || (queue?.reviews || []).filter((review) => review.status === 'waitlisted'), [queue]);
+  const totalWaitlisted = queue?.totalWaitlisted ?? waitlistedReviews.length;
   const canApproveSelectedReview = selectedReview ? ['pending', 'offer-accepted'].includes(selectedReview.status) : false;
   const canPromoteSelectedReview = selectedReview?.status === 'waitlisted';
   const canDeclineSelectedReview = selectedReview ? ['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(selectedReview.status) : false;
@@ -414,7 +424,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
             <div className="mt-3 grid gap-2">
               {waitlistedReviews.length ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-                  <div className="text-sm font-black text-amber-950">Waitlisted applicants ({waitlistedReviews.length})</div>
+                  <div className="text-sm font-black text-amber-950">Waitlisted applicants ({totalWaitlisted})</div>
                   <div className="mt-1 text-xs font-semibold text-amber-800">Promote a waitlisted applicant into the same offer and payment path used on the legacy site.</div>
                   <div className="mt-3 grid gap-2" data-waitlist-list>
                     {waitlistedReviews.map((review) => (
@@ -650,6 +660,14 @@ function normalizeRegistrationReturnStatus(value: string | null) {
   const status = String(value || '').trim().toLowerCase();
   if (status === 'success' || status === 'cancelled') return status;
   return '';
+}
+
+function getTotalWaitlistedCount(registrationOptionCounts: Record<string, any> | undefined, fallback = 0) {
+  const total = Object.values(registrationOptionCounts || {}).reduce((sum, counts) => {
+    const nextCount = Number((counts as Record<string, any>)?.waitlisted || 0);
+    return sum + (Number.isFinite(nextCount) ? nextCount : 0);
+  }, 0);
+  return total > 0 ? total : fallback;
 }
 
 function collectFieldValues(formElement: HTMLFormElement | null, group: string, fallback: Record<string, string>) {
