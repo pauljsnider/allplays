@@ -58,6 +58,7 @@ import {
   type ChatTeam
 } from '../lib/chatService';
 import { MessagesPageSkeleton } from '../components/PageSkeletons';
+import { PullToRefresh } from '../components/PullToRefresh';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
   MAX_CHAT_MEDIA_SIZE,
@@ -316,6 +317,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   }
 
   return (
+    <PullToRefresh onRefresh={() => refreshInbox()} disabled={!auth.user?.uid}>
     <div className="messages-page space-y-4">
       <MessagesHeader teams={teams} loading={loading} onRefresh={refreshInbox} />
       <InboxSearch query={query} onChange={setQuery} />
@@ -329,6 +331,7 @@ export function Messages({ auth }: { auth: AuthState }) {
         onClearSearch={() => setQuery('')}
       />
     </div>
+    </PullToRefresh>
   );
 }
 

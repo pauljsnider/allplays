@@ -29,6 +29,7 @@ import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
 import { loadParentHomeSummary, loadParentTeamsSummary } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
+import { PullToRefresh } from '../components/PullToRefresh';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
@@ -161,6 +162,7 @@ export function Teams({ auth }: { auth: AuthState }) {
   };
 
   return (
+    <PullToRefresh onRefresh={() => loadTeams()} disabled={!auth.user?.uid}>
     <div className={`teams-page ${isDesktopWeb ? 'teams-page-web' : ''} space-y-4`}>
       <TeamsHeader
         loading={loading}
@@ -213,6 +215,7 @@ export function Teams({ auth }: { auth: AuthState }) {
         </div>
       </section>
     </div>
+    </PullToRefresh>
   );
 }
 
