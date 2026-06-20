@@ -505,6 +505,52 @@ test('preference writes update the aggregated notificationRecipients doc', async
     }
 });
 
+test('backfill sync preserves legacy recipient docs when skipLegacyCleanup is enabled', async () => {
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs: {
+            'team-1': { ownerId: 'coach-1', adminEmails: [] }
+        },
+        userDocs: {
+            'parent-1': { email: 'parent@example.com', parentTeamIds: ['team-1'] }
+        },
+        preferenceDocs: {
+            'users/parent-1/notificationPreferences/team-1': { schedule: true }
+        },
+        deviceDocs: {
+            'parent-1': [
+                { id: 'device-a', token: 'token-a', platform: 'ios' }
+            ]
+        },
+        initialRecipientDocs: {
+            'teams/team-1/notificationRecipients/parent-1__device-a': {
+                uid: 'parent-1',
+                teamId: 'team-1',
+                deviceId: 'device-a',
+                token: 'token-a',
+                categories: { schedule: true }
+            }
+        }
+    });
+
+    try {
+        const result = await env.internals.syncNotificationRecipientForTeamUser('team-1', 'parent-1', {
+            skipLegacyCleanup: true
+        });
+
+        assert.deepEqual(result, {
+            uid: 'parent-1',
+            teamId: 'team-1',
+            roles: ['parent'],
+            tokenCount: 1
+        });
+        assert.equal(env.getDoc('teams/team-1/notificationRecipients/parent-1__device-a')?.token, 'token-a');
+        assert.deepEqual(env.deletedPaths, []);
+        assert.equal(env.getDoc('teams/team-1/notificationRecipients/parent-1')?.uid, 'parent-1');
+    } finally {
+        env.cleanup();
+    }
+});
+
 test('device writes refresh token lists for every team the user belongs to', async () => {
     const env = loadNotificationRecipientIndexEnv({
         teamDocs: {
