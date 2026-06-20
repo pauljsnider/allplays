@@ -14,7 +14,7 @@ vi.mock('../../js/firebase-images.js?v=8', () => ({
     requireImageAuth: mocks.requireImageAuth
 }));
 
-vi.mock('../../js/firebase.js?v=18', () => ({
+vi.mock('../../js/firebase.js?v=19', () => ({
     db: {},
     collection: mocks.collection,
     addDoc: mocks.addDoc,

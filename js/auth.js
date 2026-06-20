@@ -14,7 +14,7 @@ import {
     isSignInWithEmailLink,
     signInWithEmailLink,
     updatePassword
-} from './firebase.js?v=18';
+} from './firebase.js?v=19';
 import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=53';
 import { executeEmailPasswordSignup } from './signup-flow.js?v=4';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=5';

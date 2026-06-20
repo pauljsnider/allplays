@@ -66,6 +66,64 @@ describe('firebase runtime config', () => {
         });
     });
 
+    it('prefers hosted firebase config over inline config when both are present', async () => {
+        resetGlobals();
+        globalThis.window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'inline-key',
+                authDomain: 'inline-allplays.firebaseapp.com',
+                projectId: 'inline-allplays',
+                messagingSenderId: '999',
+                appId: 'inline-app'
+            }
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: true,
+            json: async () => ({
+                apiKey: 'hosted-key',
+                authDomain: 'hosted-allplays.firebaseapp.com',
+                projectId: 'hosted-allplays',
+                messagingSenderId: '123',
+                appId: 'hosted-app'
+            })
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config).toMatchObject({
+            apiKey: 'hosted-key',
+            authDomain: 'hosted-allplays.firebaseapp.com',
+            projectId: 'hosted-allplays',
+            appId: 'hosted-app'
+        });
+    });
+
+    it('falls back to inline config before bundled defaults when hosted init lookup fails', async () => {
+        resetGlobals();
+        globalThis.window.__ALLPLAYS_CONFIG__ = {
+            firebase: {
+                apiKey: 'inline-key',
+                authDomain: 'inline-allplays.firebaseapp.com',
+                projectId: 'inline-allplays',
+                messagingSenderId: '999',
+                appId: 'inline-app'
+            }
+        };
+        globalThis.fetch = vi.fn().mockResolvedValue({
+            ok: false,
+            status: 404
+        });
+
+        const config = await resolvePrimaryFirebaseConfig();
+
+        expect(config).toMatchObject({
+            apiKey: 'inline-key',
+            authDomain: 'inline-allplays.firebaseapp.com',
+            projectId: 'inline-allplays',
+            appId: 'inline-app'
+        });
+    });
+
     it('returns the bundled image firebase config when no inline image config is present', () => {
         resetGlobals();
 
