@@ -3981,6 +3981,32 @@ async function backfillNotificationRecipientsForTeam(teamId, users, options = {}
   return writeCount;
 }
 
+function buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid = null, eligibleUsers = new Map() } = {}) {
+  const data = docSnap?.data?.() || {};
+  const uid = String(data.uid || docSnap?.id || '').trim();
+  if (!uid || uid === actorUid || !eligibleUsers.has(uid) || data.categories?.[category] !== true) return [];
+
+  const tokenEntries = Array.isArray(data.tokens)
+    ? data.tokens
+    : [{
+      deviceId: data.deviceId,
+      token: data.token,
+      platform: data.platform,
+      userAgent: data.userAgent
+    }];
+
+  return tokenEntries
+    .map((entry) => ({
+      uid,
+      deviceId: String(entry?.deviceId || '').trim(),
+      token: String(entry?.token || '').trim(),
+      teamId,
+      platform: String(entry?.platform || '').trim(),
+      userAgent: String(entry?.userAgent || '').trim()
+    }))
+    .filter((entry) => entry.deviceId && entry.token);
+}
+
 async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
@@ -4014,31 +4040,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
     .filter((user) => canReceiveCategoryNotification(category, user, audienceContext))
     .map((user) => [user.uid, user]));
   const indexedTargets = targetSnap.docs
-    .flatMap((docSnap) => {
-      const data = docSnap.data() || {};
-      const uid = String(data.uid || '').trim();
-      if (!uid || uid === actorUid || !eligibleUsers.has(uid)) return [];
-
-      const tokenEntries = Array.isArray(data.tokens)
-        ? data.tokens
-        : [{
-          deviceId: data.deviceId,
-          token: data.token,
-          platform: data.platform,
-          userAgent: data.userAgent
-        }];
-
-      return tokenEntries
-        .map((entry) => ({
-          uid,
-          deviceId: String(entry?.deviceId || '').trim(),
-          token: String(entry?.token || '').trim(),
-          teamId,
-          platform: String(entry?.platform || '').trim(),
-          userAgent: String(entry?.userAgent || '').trim()
-        }))
-        .filter((entry) => entry.deviceId && entry.token);
-    })
+    .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
     .filter(Boolean);
 
   const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
@@ -4069,6 +4071,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
 }
 
 async function getTargetsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
+  if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
   const recipientUserIds = new Set(
     (Array.isArray(userIds) ? userIds : [])
       .map((uid) => String(uid || '').trim())
@@ -4076,15 +4079,32 @@ async function getTargetsForCategoryUserIds(teamId, category, userIds = [], acto
   );
   if (!recipientUserIds.size) return [];
 
-  const targets = await getTargetsForCategory(
-    teamId,
-    category,
-    actorUid,
-    audienceContext,
-    Array.from(recipientUserIds).map((uid) => ({ uid, roles: ['parent'] }))
-  );
+  const users = Array.from(recipientUserIds).map((uid) => ({ uid, roles: ['parent'] }));
+  const eligibleUsers = new Map(users
+    .filter((user) => user.uid !== actorUid && canReceiveCategoryNotification(category, user, audienceContext))
+    .map((user) => [user.uid, user]));
+  if (!eligibleUsers.size) return [];
+
+  const recipientRefs = Array.from(eligibleUsers.keys())
+    .map((uid) => buildTeamNotificationRecipientRef(teamId, uid))
+    .filter(Boolean);
+  const recipientSnaps = recipientRefs.length ? await firestore.getAll(...recipientRefs) : [];
+  const indexedTargets = recipientSnaps
+    .filter((docSnap) => docSnap.exists)
+    .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }));
+  const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
+  const missingUsers = users.filter((user) => (
+    user?.uid
+    && user.uid !== actorUid
+    && !indexedUserIds.has(user.uid)
+    && eligibleUsers.has(user.uid)
+  ));
+  const fallbackTargets = missingUsers.length
+    ? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)
+    : [];
+
   const seenTargetIds = new Set();
-  return targets.filter((target) => {
+  return [...indexedTargets, ...fallbackTargets].filter((target) => {
     const uid = String(target?.uid || '').trim();
     if (!recipientUserIds.has(uid)) return false;
     const key = `${uid}:${target?.deviceId || ''}:${target?.token || ''}`;

@@ -238,6 +238,49 @@ test('getTargetsForCategoryUserIds restricts RSVP targets to requested recipient
         }
 });
 
+test('getTargetsForCategoryUserIds limits legacy RSVP fallback to requested recipients', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1', 'parent-2', 'parent-3'],
+            indexedTargets: [
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-1-device',
+                    token: 'parent-1-token',
+                    categories: { rsvp: true }
+                }
+            ],
+            preferenceDocs: {
+                'users/parent-2/notificationPreferences/team-1': { rsvp: true },
+                'users/parent-3/notificationPreferences/team-1': { rsvp: true }
+            },
+            deviceDocs: {
+                'parent-2': [
+                    { id: 'parent-2-device', token: 'parent-2-token' }
+                ],
+                'parent-3': [
+                    { id: 'parent-3-device', token: 'parent-3-token' }
+                ]
+            }
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategoryUserIds('team-1', 'rsvp', ['parent-1', 'parent-2']);
+
+            assert.deepEqual(targets.map((target) => target.token).sort(), ['parent-1-token', 'parent-2-token']);
+            assert.equal(env.counts.recipientQueries, 0);
+            assert.equal(env.counts.recipientDocGets, 2);
+            assert.equal(env.counts.parentQueries, 0);
+            assert.equal(env.counts.preferenceGets, 1);
+            assert.equal(env.counts.deviceGets, 1);
+        } finally {
+            cleanup();
+        }
+});
+
 test('sendRsvpReminderPushNotifications sends availability pushes only to email recipient user ids', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
