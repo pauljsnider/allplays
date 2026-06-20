@@ -80,6 +80,15 @@ export function AppShell({ auth, children }: AppShellProps) {
   // does not statically import the module (which pulls the vendored Firestore SDK
   // into the entry chunk). The module is dynamically imported on subscribe below.
   const unreadCount = inboxItems.filter((item) => !item.readAt).length;
+  const unreadNotificationStatus = auth.user
+    ? inboxState === 'loading' && inboxItems.length === 0
+      ? 'Loading notifications…'
+      : inboxState === 'error' && inboxItems.length === 0
+        ? 'Could not load notifications'
+        : unreadCount > 0
+          ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
+          : 'No unread notifications'
+    : 'No unread notifications';
 
   useEffect(() => {
     const startedAt = routeStartedAtRef.current;
@@ -174,6 +183,9 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   return (
     <div className={isDesktopWeb ? `desktop-app-page ${isDesktopMessages ? 'desktop-app-page-messages' : ''}` : `app-page ${isMobileChatDetail ? 'app-page-chat-detail' : ''} ${isAiRoute ? 'app-page-ai' : ''}`}>
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="Notification status" data-testid="app-shell-notification-status">
+        {unreadNotificationStatus}
+      </div>
       {isDesktopWeb ? (
         <>
           <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
