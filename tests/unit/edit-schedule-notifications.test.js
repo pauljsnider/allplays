@@ -147,16 +147,13 @@ describe('notifyGameCreated Cloud Function trigger', () => {
 
         expect(triggerBody).toContain(".document('teams/{teamId}/games/{gameId}')");
         expect(triggerBody).toContain('.onCreate(');
-        expect(triggerBody).toContain("sendCategoryNotification({");
-        expect(triggerBody).toContain('actorUid: game.createdBy || null');
+        expect(triggerBody).toContain('return sendCreatedScheduleEventNotification({ teamId, gameId, game });');
     });
 
-    it('sends a schedule category notification for a new game', () => {
-        const triggerBody = readNotifyGameCreatedTrigger();
-
-        expect(triggerBody).toContain("isPractice ? 'practice' : 'schedule'");
-        expect(triggerBody).toContain("New game: ");
-        expect(triggerBody).toContain("New practice: ");
+    it('routes standard create pushes through the shared schedule notification helper', () => {
+        expect(functionsSource).toContain("async function sendCreatedScheduleEventNotification({ teamId, gameId, game }) {");
+        expect(functionsSource).toContain("const category = isPractice ? 'practice' : 'schedule';");
+        expect(functionsSource).toContain("const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;");
     });
 
     it('skips draft events and returns null', () => {
@@ -165,12 +162,18 @@ describe('notifyGameCreated Cloud Function trigger', () => {
         expect(triggerBody).toContain("if (status === 'draft') return null;");
     });
 
-    it('routes large app import batches to the summary workflow before skipping legacy imported events', () => {
+    it('routes large app import batches to the summary workflow', () => {
         const triggerBody = readNotifyGameCreatedTrigger();
 
         expect(triggerBody).toContain('if (importBatch && importBatch.totalCount > 3) {');
         expect(triggerBody).toContain('return registerScheduleImportBatchEvent({ teamId, gameId, game, batch: importBatch });');
-        expect(triggerBody).toContain('if (game.source || game.sourceMetadata) return null;');
+    });
+
+    it('finalizes partial app import batches after the client writes the successful import count', () => {
+        expect(functionsSource).toContain("const notifyScheduleImportBatchCompleted = functions.firestore");
+        expect(functionsSource).toContain(".document('teams/{teamId}/scheduleImportNotificationBatches/{batchId}')");
+        expect(functionsSource).toContain('return sendScheduleImportBatchNotifications({');
+        expect(functionsSource).toContain('if (!after || !after.importCompletedAt || after.sentAt || after.notificationClaimedAt) {');
     });
 
     it('stamps createdBy in db helpers so creators are excluded from create pushes', () => {

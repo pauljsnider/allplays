@@ -8,6 +8,7 @@ const scheduleMocks = vi.hoisted(() => ({
     addTeamCalendarUrl: vi.fn(),
     createScheduleImportGame: vi.fn(),
     createScheduleImportPractice: vi.fn(),
+    finalizeScheduleImportBatch: vi.fn(),
     loadParentSchedule: vi.fn(),
     removeTeamCalendarUrl: vi.fn(),
     generateScheduleAiImportRows: vi.fn(),
@@ -169,6 +170,7 @@ beforeEach(() => {
     scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-new');
+    scheduleMocks.finalizeScheduleImportBatch.mockResolvedValue(undefined);
     scheduleMocks.removeTeamCalendarUrl.mockResolvedValue({ removed: true, calendarUrls: [] });
     scheduleMocks.generateScheduleAiImportRows.mockResolvedValue({ rows: [], errors: [] });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -693,6 +695,46 @@ describe('React app desktop Schedule controls', () => {
         expect(container.textContent).toContain('Firestore write failed');
         expect(container.textContent).toContain('Game vs Tigers');
         expect(container.textContent).not.toContain('Row 3: Practice');
+        expect(scheduleMocks.finalizeScheduleImportBatch).not.toHaveBeenCalled();
+    });
+
+    it('finalizes large CSV imports with the successful import count after partial failures', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+        scheduleMocks.createScheduleImportPractice.mockRejectedValueOnce(new Error('Practice write failed'));
+        scheduleMocks.createScheduleImportGame
+            .mockResolvedValueOnce('game-1')
+            .mockResolvedValueOnce('game-2')
+            .mockResolvedValueOnce('game-4');
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Import schedule CSV');
+        const input = container.querySelector('input[aria-label="Schedule CSV file"]');
+        const file = new File([
+            'Type,Date,Start,Opponent,Location\n',
+            'Game,4/2/2026,6:30 PM,Tigers,Field 1\n',
+            'Game,4/3/2026,6:30 PM,Hawks,Field 2\n',
+            'Practice,4/4/2026,7:00 AM,,Field 3\n',
+            'Game,4/5/2026,8:00 AM,Lions,Field 4\n'
+        ], 'large-partial-schedule.csv', { type: 'text/csv' });
+
+        await act(async () => {
+            Object.defineProperty(input, 'files', { value: [file], configurable: true });
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await Promise.resolve();
+        });
+        await waitForText(container, 'Loaded large-partial-schedule.csv');
+
+        await clickButton(container, 'Preview rows');
+        await waitForText(container, 'Game vs Tigers');
+        await clickButton(container, 'Import rows');
+
+        await waitForText(container, 'Imported 3 row(s); 1 row(s) failed and remain below for retry.');
+        expect(scheduleMocks.finalizeScheduleImportBatch).toHaveBeenCalledWith('team-1', expect.any(String), 3, auth.user);
     });
 
 });

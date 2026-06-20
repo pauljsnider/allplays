@@ -105,4 +105,91 @@ describe('schedule import batch push notifications', () => {
             harness.cleanup();
         }
     });
+
+    it('falls back to per-event create pushes when a large app import finishes with only three successful events', async () => {
+        const harness = loadNotificationInternals({
+            teamDoc: { ownerId: 'user-1' },
+            indexedTargets: [{
+                uid: 'user-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                categories: { schedule: true, practice: true }
+            }]
+        });
+
+        try {
+            const batch = {
+                batchId: 'batch-partial',
+                totalCount: 4
+            };
+            const events = [
+                { gameId: 'game-1', type: 'game', opponent: 'Opponent 1', rowNumber: 1 },
+                { gameId: 'game-2', type: 'game', opponent: 'Opponent 2', rowNumber: 2 },
+                { gameId: 'game-4', type: 'practice', title: 'Speed Session', rowNumber: 4 }
+            ];
+
+            for (const item of events) {
+                await harness.internals.notifyGameCreated(
+                    createSnapshot({
+                        type: item.type,
+                        title: item.title || null,
+                        opponent: item.opponent || null,
+                        status: 'scheduled',
+                        createdBy: 'coach-1',
+                        importBatch: {
+                            ...batch,
+                            rowNumber: item.rowNumber
+                        }
+                    }),
+                    { params: { teamId: 'team-1', gameId: item.gameId } }
+                );
+            }
+
+            expect(harness.env.messagingCalls).toHaveLength(0);
+
+            await harness.env.firestoreState.doc('teams/team-1/games/game-1').set({
+                type: 'game',
+                opponent: 'Opponent 1',
+                status: 'scheduled',
+                createdBy: 'coach-1'
+            });
+            await harness.env.firestoreState.doc('teams/team-1/games/game-2').set({
+                type: 'game',
+                opponent: 'Opponent 2',
+                status: 'scheduled',
+                createdBy: 'coach-1'
+            });
+            await harness.env.firestoreState.doc('teams/team-1/games/game-4').set({
+                type: 'practice',
+                title: 'Speed Session',
+                status: 'scheduled',
+                createdBy: 'coach-1'
+            });
+
+            await harness.internals.notifyScheduleImportBatchCompleted(
+                {
+                    before: createSnapshot(null),
+                    after: {
+                        exists: true,
+                        data: () => ({
+                            batchId: 'batch-partial',
+                            totalCount: 3,
+                            eventIds: ['game-1', 'game-2', 'game-4'],
+                            importCompletedAt: { toMillis: () => Date.now() },
+                            gameCount: 2,
+                            practiceCount: 1
+                        })
+                    }
+                },
+                { params: { teamId: 'team-1', batchId: 'batch-partial' } }
+            );
+
+            expect(harness.env.messagingCalls).toHaveLength(3);
+            expect(harness.env.messagingCalls[0].title).toContain('New game:');
+            expect(harness.env.messagingCalls[1].title).toContain('New game:');
+            expect(harness.env.messagingCalls[2].title).toContain('New practice:');
+        } finally {
+            harness.cleanup();
+        }
+    });
 });

@@ -1611,6 +1611,25 @@ export async function createScheduleImportGame(teamId: string, row: ScheduleImpo
   }
 }
 
+export async function finalizeScheduleImportBatch(teamId: string, batchId: string, totalCount: number, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedBatchId = compactString(batchId);
+  const safeTotalCount = Math.max(0, Number.parseInt(String(totalCount || 0), 10) || 0);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedBatchId || safeTotalCount <= 0) return;
+  await requireScheduleImportStaff(normalizedTeamId, user);
+
+  await withTimeout(runTransaction(db, async (transaction: any) => {
+    transaction.set(doc(db, `teams/${normalizedTeamId}/scheduleImportNotificationBatches/${normalizedBatchId}`), {
+      batchId: normalizedBatchId,
+      totalCount: safeTotalCount,
+      importCompletedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      finalizedBy: user?.uid || null
+    }, { merge: true });
+  }), 'Schedule import batch finalize');
+}
+
 export async function createScheduleImportPractice(teamId: string, row: ScheduleImportNormalizedRow, user: AuthUser | null) {
   const normalizedTeamId = compactString(teamId);
   if (!normalizedTeamId) throw new Error('Team is required.');
