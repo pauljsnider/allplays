@@ -138,6 +138,10 @@ const parentScheduleTeamConcurrency = 3;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
+// Default games window for schedule views: ~13 months covers the current and
+// previous season so the "Past Events" filter still shows recent history before
+// an explicit full-history load. Tune here if season length assumptions change.
+const defaultScheduleHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 
 function logScheduleWarning(message: string, operation: string, error: unknown, context: Record<string, unknown> = {}) {
@@ -171,6 +175,8 @@ export type ParentScheduleLoadResult = {
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
   expandStaffPlayers?: boolean;
+  /** Load the team's full game history instead of the default recent window (#2034). */
+  includePastGames?: boolean;
 };
 
 export type OfficialAssignmentsAccess = {
@@ -1867,13 +1873,27 @@ async function loadTeam(teamId: string) {
   return isTeamActive(team as Record<string, any> | null) ? team : null;
 }
 
-async function loadGames(teamId: string) {
+type ScheduleDateRange = { startDate?: Date | null; endDate?: Date | null };
+
+function isEventWithinRange(game: any, range: ScheduleDateRange) {
+  if (!range.startDate && !range.endDate) return true;
+  const date = toEventDate(game?.date);
+  if (Number.isNaN(date.getTime())) return true;
+  if (range.startDate && date < range.startDate) return false;
+  if (range.endDate && date > range.endDate) return false;
+  return true;
+}
+
+async function loadGames(teamId: string, range: ScheduleDateRange = {}) {
   return readWithNativeFallback(
     `games ${teamId}`,
-    () => Promise.resolve(getGames(teamId)),
+    () => Promise.resolve(getGames(teamId, range)),
     async () => {
       const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
-      return docs.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
+      const windowed = (range.startDate || range.endDate)
+        ? docs.filter((doc) => isEventWithinRange(doc, range))
+        : docs;
+      return windowed.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
     }
   );
 }
@@ -2191,11 +2211,17 @@ function createScheduleEvent(input: {
   };
 }
 
-async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
+async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser, options: { includePastGames?: boolean } = {}) {
   const events: ParentScheduleEvent[] = [];
+  // Default schedule views only need upcoming + recent games; window the games
+  // query so teams with several seasons of history don't read hundreds of docs
+  // on every load (#2034). Explicit history views pass includePastGames.
+  const gamesRange: ScheduleDateRange = options.includePastGames
+    ? {}
+    : { startDate: new Date(Date.now() - defaultScheduleHistoryWindowMs) };
   const [team, dbGames, practiceSessions] = await Promise.all([
     loadTeam(teamId),
-    loadGames(teamId),
+    loadGames(teamId, gamesRange),
     loadPracticeSessions(teamId)
   ]);
   if (!team) return events;
@@ -2709,7 +2735,8 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
     let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);
     if (!events.length) {
       fallback = true;
-      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user);
+      // Full history here so a deep-linked past event outside the default window is still found.
+      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });
       teamEventRows = teamEvents.length;
       events = teamEvents.filter((event) => event.id === requestedEventId);
     }
@@ -2776,7 +2803,8 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
       return { children, events: [] };
     }
 
-    const events = await buildTeamSchedule(child.teamId, [child], user);
+    // Single-player view: keep full history so past games still appear.
+    const events = await buildTeamSchedule(child.teamId, [child], user, { includePastGames: true });
     if (hydrateDetails && events.length) {
       await hydrateEventDetails(events, user);
     }
@@ -2862,6 +2890,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   const timer = startUxTimer('parent schedule service load');
   const hydrateDetails = options.hydrateDetails !== false;
   const expandStaffPlayers = options.expandStaffPlayers !== false;
+  const includePastGames = options.includePastGames === true;
 
   try {
     const profile = await loadProfileDocument(user.uid);
@@ -2870,7 +2899,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     const teamEntries = [...byTeam.entries()];
     const eventBatches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
       try {
-        return await buildTeamSchedule(teamId, teamChildren, user);
+        return await buildTeamSchedule(teamId, teamChildren, user, { includePastGames });
       } catch (error) {
         logScheduleWarning('Failed to load team schedule.', 'team-schedule-load', error, { teamId });
         throw toAppServiceError(error, 'Unable to load schedule.');
