@@ -42,7 +42,9 @@ import {
   type ParentPlayerDetailData,
   type ParentPlayerStatRow
 } from '../lib/playerService';
+import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { getEventDetailPath } from '../lib/homeLogic';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -122,7 +124,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const [activeSection, setActiveSection] = useState<PlayerSectionId>('overview');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
 
   const refreshPlayer = async ({ showLoading = data === null }: { showLoading?: boolean } = {}) => {
     const fullPageLoading = showLoading || data === null;
@@ -131,14 +133,14 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     } else {
       setRefreshing(true);
     }
-    setError('');
+    setError(null);
     try {
       setData(await loadParentPlayerDetail(auth.user, teamId, playerId));
     } catch (loadError: any) {
       if (fullPageLoading) {
         setData(null);
       }
-      setError(loadError?.message || 'Unable to load player.');
+      setError(toAppServiceError(loadError, 'Unable to load player.'));
     } finally {
       if (fullPageLoading) {
         setLoading(false);
@@ -172,13 +174,16 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 
   if (!data) {
     return (
-      <div className="space-y-3">
-        <Link to="/home" className="ghost-button min-h-9 px-3 text-xs">
-          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-          Home
-        </Link>
-        <Status tone="error" message={error || 'This player is not available for your account.'} />
-      </div>
+      <DetailLoadErrorState
+        icon={UserRound}
+        title="Player unavailable"
+        error={error}
+        fallbackMessage="This player is not available for your account."
+        backTo="/home"
+        backLabel="Home"
+        onRetry={() => refreshPlayer({ showLoading: true })}
+        retrying={loading}
+      />
     );
   }
 
@@ -232,7 +237,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         </div>
       </div>
 
-      {error ? <Status tone="error" message={error} /> : null}
+      {error ? <Status tone="error" message={error.message} /> : null}
       {activeSection === 'overview' ? <OverviewSection data={data} /> : null}
       {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} /> : null}
       {activeSection === 'performance' ? <ReportsSection data={data} /> : null}
