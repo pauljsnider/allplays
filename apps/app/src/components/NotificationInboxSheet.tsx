@@ -1,4 +1,4 @@
-import { AlertCircle, Bell, Loader2, X } from 'lucide-react';
+import { AlertCircle, Bell, CheckCheck, Loader2, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
 
@@ -8,10 +8,12 @@ interface NotificationInboxSheetProps {
     uid: string;
     onClose: () => void;
     onMarkRead: (uid: string, itemId: string) => Promise<void>;
+    onMarkAllRead?: (uid: string, items: NotificationInboxItem[]) => Promise<void>;
 }
 
-export function NotificationInboxSheet({ items, inboxState, uid, onClose, onMarkRead }: NotificationInboxSheetProps) {
+export function NotificationInboxSheet({ items, inboxState, uid, onClose, onMarkRead, onMarkAllRead }: NotificationInboxSheetProps) {
     const navigate = useNavigate();
+    const unreadItems = items.filter((item) => !item.readAt);
 
     const handleItemClick = (item: NotificationInboxItem) => {
         if (item.appRoute) {
@@ -24,6 +26,13 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onMark
                 console.error('Failed to mark notification read:', error);
             });
         }
+    };
+
+    const handleMarkAllRead = () => {
+        if (!onMarkAllRead || unreadItems.length === 0) return;
+        void onMarkAllRead(uid, unreadItems).catch((error) => {
+            console.error('Failed to mark notifications read:', error);
+        });
     };
 
     const renderBody = () => {
@@ -120,14 +129,26 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onMark
                         <div className="app-label">Inbox</div>
                         <h2 className="text-lg font-black text-gray-950">Notifications</h2>
                     </div>
-                    <button
-                        type="button"
-                        className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
-                        onClick={onClose}
-                        aria-label="Close notifications"
-                    >
-                        <X className="h-5 w-5" aria-hidden="true" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        {unreadItems.length > 0 && onMarkAllRead ? (
+                            <button
+                                type="button"
+                                className="ghost-button !h-10 !min-h-10 text-xs"
+                                onClick={handleMarkAllRead}
+                            >
+                                <CheckCheck className="h-4 w-4" aria-hidden="true" />
+                                Mark all read
+                            </button>
+                        ) : null}
+                        <button
+                            type="button"
+                            className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
+                            onClick={onClose}
+                            aria-label="Close notifications"
+                        >
+                            <X className="h-5 w-5" aria-hidden="true" />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="max-h-[70vh] overflow-y-auto">

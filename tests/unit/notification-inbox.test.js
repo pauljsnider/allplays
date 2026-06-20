@@ -11,6 +11,7 @@ const {
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const rulesSource = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const appNotificationInboxServiceSource = readFileSync(new URL('../../apps/app/src/lib/notificationInboxService.ts', import.meta.url), 'utf8');
 
 describe('notification inbox pipeline', () => {
     it('builds bounded inbox payloads with the required notification center fields', () => {
@@ -70,6 +71,8 @@ describe('notification inbox pipeline', () => {
         expect(functionsSource).toContain('exports.markAllNotificationInboxRead = functions.https.onCall');
         expect(functionsSource).toContain(".where('readAt', '==', null)");
         expect(functionsSource).toContain('.limit(NOTIFICATION_INBOX_MAX_ITEMS)');
+        expect(appNotificationInboxServiceSource).toContain("httpsCallable(functions, 'markAllNotificationInboxRead')");
+        expect(appNotificationInboxServiceSource).not.toContain('writeBatch(db)');
     });
 
     it('keeps notification inbox records owner-readable and server-writable only', () => {

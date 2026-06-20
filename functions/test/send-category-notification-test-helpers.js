@@ -95,6 +95,9 @@ function buildNotificationTestEnv({
     authUsersByEmail = {},
     playerDocs = {},
     privateProfileDocs = {},
+    gameDocs = {},
+    rideOfferDocs = {},
+    rideRequestDocs = {},
     indexedRecipients = [],
     indexedTargets = [],
     notificationRecipientDocs = null,
@@ -216,6 +219,30 @@ function buildNotificationTestEnv({
                     const data = playerDocs[playerId];
                     return makeDocSnapshot({
                         id: playerId,
+                        ref: this,
+                        data,
+                        exists: data !== undefined
+                    });
+                }
+                const gameMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)$/);
+                if (gameMatch) {
+                    const gameId = gameMatch[2];
+                    const storedData = docStore.get(path);
+                    const seededData = gameDocs[gameId];
+                    const data = storedData !== undefined ? storedData : seededData;
+                    return makeDocSnapshot({
+                        id: gameId,
+                        ref: this,
+                        data,
+                        exists: data !== undefined
+                    });
+                }
+                const rideOfferMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)\/rideOffers\/([^/]+)$/);
+                if (rideOfferMatch) {
+                    const key = `${rideOfferMatch[2]}/${rideOfferMatch[3]}`;
+                    const data = rideOfferDocs[key];
+                    return makeDocSnapshot({
+                        id: rideOfferMatch[3],
                         ref: this,
                         data,
                         exists: data !== undefined
@@ -388,6 +415,22 @@ function buildNotificationTestEnv({
                 async add(value) {
                     auditWrites.push({ path, value });
                     return { id: `audit-${auditWrites.length}` };
+                }
+            };
+        }
+
+        const rideRequestsMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)\/rideOffers\/([^/]+)\/requests$/);
+        if (rideRequestsMatch) {
+            const key = `${rideRequestsMatch[2]}/${rideRequestsMatch[3]}`;
+            return {
+                async get() {
+                    const docs = (rideRequestDocs[key] || []).map((entry, index) => makeDocSnapshot({
+                        id: entry.id || `request-${index}`,
+                        ref: doc(`${path}/${entry.id || `request-${index}`}`),
+                        data: entry,
+                        exists: true
+                    }));
+                    return makeQuerySnapshot(docs);
                 }
             };
         }
