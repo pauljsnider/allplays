@@ -3270,6 +3270,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
   const normalizedUid = String(uid || '').trim();
   const user = options.userData !== undefined ? options.userData : null;
   const team = options.teamData !== undefined ? options.teamData : null;
+  const skipLegacyCleanup = options.skipLegacyCleanup === true;
 
   const [resolvedUser, resolvedTeam] = await Promise.all([
     user === null ? firestore.doc(`users/${normalizedUid}`).get().then((snap) => (snap.exists ? (snap.data() || {}) : null)) : Promise.resolve(user),
@@ -3277,7 +3278,9 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
   ]);
 
   if (!resolvedUser || !resolvedTeam) {
-    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
     await recipientRef.delete();
     return null;
   }
@@ -3291,7 +3294,9 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     email
   });
   if (!roles.length) {
-    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
     await recipientRef.delete();
     return null;
   }
@@ -3305,12 +3310,16 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     : DEFAULT_NOTIFICATION_PREFERENCES;
   const tokens = buildNotificationRecipientTokens(devicesSnap);
   if (!tokens.length || !hasEnabledNotificationCategory(preferences)) {
-    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
     await recipientRef.delete();
     return null;
   }
 
-  await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+  if (!skipLegacyCleanup) {
+    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+  }
 
   await recipientRef.set({
     uid: normalizedUid,
@@ -3938,14 +3947,17 @@ async function getLegacyTargetsForCategory(teamId, category, users, actorUid = n
   return targetGroups.flat();
 }
 
-async function backfillNotificationRecipientsForTeam(teamId, users) {
+async function backfillNotificationRecipientsForTeam(teamId, users, options = {}) {
   const uniqueUsers = Array.from(new Map(
     (Array.isArray(users) ? users : [])
       .filter((user) => user?.uid)
       .map((user) => [user.uid, user])
   ).values());
   if (!uniqueUsers.length) return 0;
-  const results = await Promise.all(uniqueUsers.map((user) => syncNotificationRecipientForTeamUser(teamId, user.uid)));
+  const syncOptions = {
+    skipLegacyCleanup: options.skipLegacyCleanup === true
+  };
+  const results = await Promise.all(uniqueUsers.map((user) => syncNotificationRecipientForTeamUser(teamId, user.uid, syncOptions)));
   const writeCount = results.filter(Boolean).length;
   return writeCount;
 }
@@ -4023,7 +4035,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
 
   if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId)) {
     try {
-      await backfillNotificationRecipientsForTeam(teamId, users);
+      await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });
     } catch (error) {
       functions.logger.warn('Failed to backfill notification recipient index after empty lookup', {
         teamId,
