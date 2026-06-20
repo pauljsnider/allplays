@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getDirectThreadMountKey, getMessagesInboxLoadRouteKey, mergeInboxTeams, shouldRecordDirectThreadMount } from './Messages';
+import { getDirectThreadMountKey, getMessagesInboxLoadRouteKey, mergeInboxTeams, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
 
 function buildTeam(overrides: Partial<ChatTeam> = {}): ChatTeam {
@@ -52,6 +52,14 @@ describe('mergeInboxTeams', () => {
 
     expect(merged[0].lastMessage).toBeNull();
     expect(merged[0].preferredConversationId).toBeNull();
+  });
+});
+
+describe('conversation id normalization', () => {
+  it('falls back to the default team conversation when the route state is blank', () => {
+    expect(normalizeConversationId(undefined)).toBe('team');
+    expect(normalizeConversationId('')).toBe('team');
+    expect(normalizeConversationId(' staff-room ')).toBe('staff-room');
   });
 });
 

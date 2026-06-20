@@ -189,6 +189,10 @@ function mergeVisibleChatMessages(liveMessages: ChatMessage[], optimisticMessage
   return mergeChatMessageLists(pendingOnly, liveMessages) as ChatMessage[];
 }
 
+export function normalizeConversationId(conversationId: string | null | undefined) {
+  return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
+}
+
 export function Messages({ auth }: { auth: AuthState }) {
   const { teamId } = useParams();
   const location = useLocation();
@@ -711,6 +715,7 @@ function ChatWindow({
     preferredConversationId,
     onTeamReset: resetChatSelectionState
   });
+  const effectiveConversationId = normalizeConversationId(selectedConversationId);
 
   const handleBeforeLiveUpdate = useCallback(() => isNearBottom(messagesRef.current), []);
   const handleLiveUpdateState = useCallback(({ isInitialSnapshot, wasNearBottom }: { isInitialSnapshot: boolean; wasNearBottom: boolean }) => {
@@ -745,7 +750,7 @@ function ChatWindow({
     teamId,
     team,
     user: auth.user,
-    selectedConversationId,
+    selectedConversationId: effectiveConversationId,
     onBeforeLiveUpdate: handleBeforeLiveUpdate,
     onLiveUpdateState: handleLiveUpdateState,
     onMessagesReset: handleMessagesReset,
@@ -769,21 +774,21 @@ function ChatWindow({
   }, [messages, optimisticMessages]);
 
   const selectedConversation = useMemo(() => (
-    conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null
-  ), [conversations, selectedConversationId]);
+    conversations.find((conversation) => conversation.id === effectiveConversationId) || conversations[0] || null
+  ), [conversations, effectiveConversationId]);
   const audienceMetadata = useMemo(() => buildChatAudienceMetadata({
     selectedConversation,
-    selectedConversationId,
+    selectedConversationId: effectiveConversationId,
     selectedRecipientTarget,
     selectedRecipientIds
-  }), [selectedConversation, selectedConversationId, selectedRecipientIds, selectedRecipientTarget]);
+  }), [effectiveConversationId, selectedConversation, selectedRecipientIds, selectedRecipientTarget]);
   const emailAudienceMetadata = useMemo(() => buildEmailAudienceMetadata({
     selectedConversation,
-    selectedConversationId,
+    selectedConversationId: effectiveConversationId,
     selectedRecipientTarget,
     selectedRecipientIds,
     recipientOptions
-  }), [recipientOptions, selectedConversation, selectedConversationId, selectedRecipientIds, selectedRecipientTarget]);
+  }), [effectiveConversationId, recipientOptions, selectedConversation, selectedRecipientIds, selectedRecipientTarget]);
   const audienceSummary = useMemo(() => getAudienceSummaryText(audienceMetadata, recipientOptions), [audienceMetadata, recipientOptions]);
   const mentionSuggestions = useMemo(
     () => buildChatMentionSuggestions(recipientOptions, text),
@@ -978,8 +983,8 @@ function ChatWindow({
   }, [teamId]);
 
   useEffect(() => {
-    setIsMuted(resolveMutedState(teamId, selectedConversationId, inboxTeam, profile));
-  }, [inboxTeam, profile, selectedConversationId, teamId]);
+    setIsMuted(resolveMutedState(teamId, effectiveConversationId, inboxTeam, profile));
+  }, [effectiveConversationId, inboxTeam, profile, teamId]);
 
   useLayoutEffect(() => {
     if (!pendingScrollRef.current) return;
@@ -1095,7 +1100,7 @@ function ChatWindow({
     }
 
     if (target === 'full_team') {
-      if (!isDefaultTeamConversation(selectedConversationId)) {
+      if (!isDefaultTeamConversation(effectiveConversationId)) {
         switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
       }
       closeAudienceSheet();
@@ -1213,7 +1218,7 @@ function ChatWindow({
       if (result.createdConversation) {
         await reloadConversations();
       }
-      if (result.conversationId !== selectedConversationId) {
+      if (result.conversationId !== effectiveConversationId) {
         setSelectedConversationId(result.conversationId);
       }
 
@@ -1231,7 +1236,7 @@ function ChatWindow({
               user: request.user,
               question,
               selectedConversation: request.selectedConversation,
-              selectedConversationId: result.conversationId,
+              selectedConversationId: normalizeConversationId(result.conversationId),
               selectedRecipientTarget: request.selectedRecipientTarget,
               selectedRecipientIds: request.selectedRecipientIds
             });
@@ -1254,7 +1259,7 @@ function ChatWindow({
       setPendingSendCount((current) => Math.max(0, current - 1));
       setComposerNotice('');
     }
-  }, [reloadConversations, selectedConversationId, setSelectedConversationId, teamId]);
+  }, [effectiveConversationId, reloadConversations, setSelectedConversationId, teamId]);
 
   const enqueueChatSend = useCallback((request: PendingChatSendRequest) => {
     setPendingSendCount((current) => current + 1);
@@ -1305,7 +1310,7 @@ function ChatWindow({
       profile,
       team,
       selectedConversation,
-      selectedConversationId,
+      selectedConversationId: effectiveConversationId,
       selectedRecipientTarget,
       selectedRecipientIds: [...selectedRecipientIds]
     };
@@ -1393,7 +1398,7 @@ function ChatWindow({
   const handleApplyEmailDraft = (draftId: string) => {
     const draft = emailState.drafts.find((item) => item.id === draftId);
     if (!draft) return;
-    if (!isDefaultTeamConversation(selectedConversationId)) {
+    if (!isDefaultTeamConversation(effectiveConversationId)) {
       switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
     }
     setSelectedRecipientTarget('individuals');
@@ -1655,12 +1660,12 @@ function ChatWindow({
   const handleToggleReaction = useCallback(async (messageId: string, reactionKey: string) => {
     if (!auth.user) return;
     try {
-      await toggleTeamChatReaction(teamId, messageId, reactionKey, auth.user.uid, selectedConversationId);
+      await toggleTeamChatReaction(teamId, messageId, reactionKey, auth.user.uid, effectiveConversationId);
       setReactionMessageId('');
     } catch (reactionError: any) {
       setStatus({ tone: 'error', message: reactionError?.message || 'Failed to update reaction.' });
     }
-  }, [auth.user, selectedConversationId, teamId]);
+  }, [auth.user, effectiveConversationId, teamId]);
 
   const handleEdit = useCallback((message: ChatMessage) => {
     setEditingMessage(message);
@@ -1676,7 +1681,7 @@ function ChatWindow({
       return;
     }
     try {
-      await editTeamChatMessage(teamId, editingMessage.id, trimmed, selectedConversationId);
+      await editTeamChatMessage(teamId, editingMessage.id, trimmed, effectiveConversationId);
       setEditingMessage(null);
       setEditText('');
     } catch (editError: any) {
@@ -1688,16 +1693,16 @@ function ChatWindow({
     setActionMessageId('');
     if (!window.confirm('Delete this message?')) return;
     try {
-      await deleteTeamChatMessage(teamId, message.id, selectedConversationId);
+      await deleteTeamChatMessage(teamId, message.id, effectiveConversationId);
     } catch (deleteError: any) {
       setStatus({ tone: 'error', message: deleteError?.message || 'Failed to delete message.' });
     }
-  }, [selectedConversationId, teamId]);
+  }, [effectiveConversationId, teamId]);
 
   const handleToggleMute = useCallback(async () => {
     if (!auth.user?.uid) return;
     const next = !isMuted;
-    const conversationId = selectedConversationId || DEFAULT_TEAM_CONVERSATION_ID;
+    const conversationId = effectiveConversationId;
     setIsMuted(next);
     onInboxMuteChange?.(conversationId, next);
     try {
@@ -1710,7 +1715,7 @@ function ChatWindow({
       setIsMuted(!next);
       onInboxMuteChange?.(conversationId, !next);
     }
-  }, [auth.user?.uid, isMuted, onInboxMuteChange, selectedConversationId, teamId]);
+  }, [auth.user?.uid, effectiveConversationId, isMuted, onInboxMuteChange, teamId]);
 
   if (loadingContext) {
     return <MessagesPageSkeleton embedded={embedded} />;
@@ -1770,7 +1775,7 @@ function ChatWindow({
         {isDesktopWeb ? (
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
             {conversations.map((conversation) => {
-              const active = conversation.id === selectedConversationId;
+              const active = conversation.id === effectiveConversationId;
               return (
                 <button
                   key={conversation.id}
@@ -1851,7 +1856,7 @@ function ChatWindow({
         aiThinking={aiThinking}
         voiceListening={voiceListening}
         voiceSupported={voiceSupported}
-        canModerate={canModerate && isDefaultTeamConversation(selectedConversationId)}
+        canModerate={canModerate && isDefaultTeamConversation(effectiveConversationId)}
         canSendTeamEmail={canModerate}
         mentionSuggestions={mentionSuggestions}
         mentionSuggestionsLoading={hasChatMentionTrigger(text) && recipientOptionsLoading}
@@ -1877,7 +1882,7 @@ function ChatWindow({
         <ConversationSheet
           conversations={conversations}
           team={team || {}}
-          selectedConversationId={selectedConversationId}
+          selectedConversationId={effectiveConversationId}
           onSelect={switchConversation}
           onClose={closeConversationSheet}
         />
@@ -3024,7 +3029,7 @@ function ConversationSheet({
     <Sheet title="Conversations" onClose={onClose}>
       <div className="space-y-2">
         {conversations.map((conversation) => {
-          const active = conversation.id === selectedConversationId;
+          const active = conversation.id === effectiveConversationId;
           const typeLabel = conversation.type === 'direct' ? 'Direct' : conversation.type === 'group' ? 'Group' : 'Team';
           return (
             <button
