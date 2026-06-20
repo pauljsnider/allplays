@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 
+import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ParentScheduleEvent } from '../../lib/scheduleLogic';
+import type { ParentScheduleEvent } from '../../apps/app/src/lib/scheduleLogic';
 import {
   AttentionPanel,
   AvailabilityNotesList,
   QuickAvailabilityPanel,
   getAvailabilityNoteSaveState,
   type AttentionItem
-} from './AvailabilityPanels';
+} from '../../apps/app/src/components/schedule/AvailabilityPanels';
 
 afterEach(() => {
   cleanup();
