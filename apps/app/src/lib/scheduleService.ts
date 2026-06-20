@@ -125,6 +125,7 @@ import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
+import { dedupeNativeRead } from './nativeReadDedup';
 import { createLogger } from './logger';
 import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments } from './firestore/mappers';
 import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument } from './firestore/types';
@@ -693,20 +694,27 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...(await getNativeHeaders()),
-      ...(init.headers || {})
+  const method = (init.method || 'GET').toUpperCase();
+  const performRequest = async () => {
+    const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
+      ...init,
+      headers: {
+        ...(await getNativeHeaders()),
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  // Dedup idempotent GET reads within a short window; writes always execute.
+  return method === 'GET'
+    ? dedupeNativeRead(`${getFirestoreBaseUrl()}${path}`, performRequest)
+    : performRequest();
 }
 
 function encodeFirestoreValue(value: any): Record<string, unknown> {

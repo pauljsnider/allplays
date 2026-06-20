@@ -42,6 +42,7 @@ import { buildTrackingStatusPayload, summarizeTrackingStatus } from '../../../..
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { dedupeNativeRead } from './nativeReadDedup';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { AuthUser } from './types';
 
@@ -435,20 +436,27 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...(await getNativeHeaders()),
-      ...(init.headers || {})
+  const method = (init.method || 'GET').toUpperCase();
+  const performRequest = async () => {
+    const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
+      ...init,
+      headers: {
+        ...(await getNativeHeaders()),
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  // Dedup idempotent GET reads within a short window; writes always execute.
+  return method === 'GET'
+    ? dedupeNativeRead(`${getFirestoreBaseUrl()}${path}`, performRequest)
+    : performRequest();
 }
 
 function decodeFirestoreValue(value: any): any {
