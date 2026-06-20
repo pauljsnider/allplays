@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeInboxTeams } from './Messages';
+import { getDirectThreadMountKey, mergeInboxTeams, shouldRecordDirectThreadMount } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
 
 function buildTeam(overrides: Partial<ChatTeam> = {}): ChatTeam {
@@ -52,5 +52,14 @@ describe('mergeInboxTeams', () => {
 
     expect(merged[0].lastMessage).toBeNull();
     expect(merged[0].preferredConversationId).toBeNull();
+  });
+});
+
+describe('direct thread mount telemetry', () => {
+  it('records again when the mobile direct-thread team route changes', () => {
+    expect(getDirectThreadMountKey(' team-1 ')).toBe('team-1');
+    expect(shouldRecordDirectThreadMount(null, 'team-1')).toBe(true);
+    expect(shouldRecordDirectThreadMount('team-1', 'team-1')).toBe(false);
+    expect(shouldRecordDirectThreadMount('team-1', 'team-2')).toBe(true);
   });
 });

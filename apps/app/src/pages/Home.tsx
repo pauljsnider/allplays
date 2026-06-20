@@ -171,11 +171,11 @@ export function Home({ auth }: { auth: AuthState }) {
         void runSecondaryLoad(
           async () => {
             const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
-            const socialHome = await loadSocialHome(user, secondaryHome);
             setHome(secondaryHome);
-            setSocial(socialHome);
             setLoadedHomeDetailsUserId(user.uid);
             setHomeLoadError(null);
+            const socialHome = await loadSocialHome(user, secondaryHome);
+            setSocial(socialHome);
             timer.end({
               hydrated: true,
               playerCount: secondaryHome.players.length,
