@@ -771,6 +771,20 @@ describe('live game clock state', () => {
     }));
   });
 
+  it('rejects live clock updates for games whose scheduled date is long past (#2022)', async () => {
+    await expect(updateLiveGameClockState('team-1', 'game-1', {
+      liveClockMs: 135432,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      currentGame: {
+        liveStatus: 'scheduled',
+        date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
+      }
+    }, { uid: 'coach-1', email: 'coach@example.com' } as any)).rejects.toThrow('past games');
+
+    expect(updateGame).not.toHaveBeenCalled();
+  });
+
   it('stamps live score events with the resumed running game clock', async () => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.useFakeTimers();
@@ -889,6 +903,29 @@ describe('live score publishing', () => {
 
     await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('game is final');
     expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects live score broadcasts for games whose scheduled date is long past (#2022)', async () => {
+    mocks.transactionGet.mockReset();
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', date: fiveDaysAgo })
+    });
+
+    await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('past games');
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('allows live score broadcasts for a game scheduled today', async () => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', date: new Date(), liveHasData: false, period: 'Q1' })
+    });
+
+    await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 5, awayScore: 3 }, user)).resolves.toBeDefined();
+    expect(mocks.transactionSet).toHaveBeenCalled();
   });
 });
 
