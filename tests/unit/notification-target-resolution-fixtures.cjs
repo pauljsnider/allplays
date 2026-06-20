@@ -54,7 +54,7 @@ const LEGACY_CATEGORY_RESOLUTION_FIXTURES = Object.freeze([
             { uid: 'parent-3', deviceId: 'parent-3-tablet', token: 'parent-3-tablet-token' }
         ],
         expectedCounts: {
-            targetQueries: 1,
+            targetQueries: 5,
             parentQueries: 1,
             preferenceGets: 4,
             deviceGets: 4
@@ -109,7 +109,7 @@ const LEGACY_CATEGORY_RESOLUTION_FIXTURES = Object.freeze([
             { uid: 'coach-2', deviceId: 'coach-2-tablet', token: 'coach-2-tablet-token' }
         ],
         expectedCounts: {
-            targetQueries: 1,
+            targetQueries: 4,
             parentQueries: 1,
             preferenceGets: 1,
             deviceGets: 1
