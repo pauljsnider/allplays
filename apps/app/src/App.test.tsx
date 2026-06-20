@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -54,7 +54,8 @@ vi.mock('@capacitor/app', () => ({
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: () => true,
-    isPluginAvailable: () => true
+    isPluginAvailable: () => true,
+    getPlatform: () => 'ios'
   }
 }));
 
@@ -143,6 +144,7 @@ describe('App protected route loading', () => {
   });
 
   afterEach(() => {
+    cleanup();
     consoleErrorSpy?.mockRestore();
     consoleErrorSpy = null;
   });
