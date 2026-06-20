@@ -383,6 +383,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
     };
   }, [auth.user, selectedCalendarTeam]);
 
+  useEffect(() => {
+    setGameForm((current) => {
+      if (!current.statTrackerConfigId) return current;
+      const hasMatchingConfig = gameTrackerConfigs.some((config) => config.id === current.statTrackerConfigId);
+      if (hasMatchingConfig) return current;
+      return {
+        ...current,
+        statTrackerConfigId: ''
+      };
+    });
+  }, [gameTrackerConfigs]);
+
   const handleCreateGame = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedCalendarTeam || !auth.user || savingGame) return;

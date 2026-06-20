@@ -1441,8 +1441,9 @@ function buildScheduledGamePayload(input: ScheduleGameFormInput, user: AuthUser)
 }
 
 function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
-  const { assignments, homeScore, awayScore, createdBy, ...payload } = buildScheduledGamePayload(input, user) as Record<string, unknown>;
+  const { assignments, status, homeScore, awayScore, createdBy, ...payload } = buildScheduledGamePayload(input, user) as Record<string, unknown>;
   void assignments;
+  void status;
   void homeScore;
   void awayScore;
   void createdBy;

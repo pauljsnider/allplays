@@ -142,6 +142,11 @@ vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
+vi.mock('../../apps/app/src/lib/uxTiming.ts', () => ({
+    UX_TIMING: { rsvpTap: 'rsvpTap' },
+    startInteractionTimer: vi.fn(() => ({ end: vi.fn() })),
+    startUxTimer: vi.fn(() => ({ end: vi.fn() }))
+}));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => ({
     sendTeamChatMessage: vi.fn()
 }));
@@ -983,6 +988,7 @@ describe('React app schedule service contract integration', () => {
             statTrackerConfigId: null,
             updatedBy: 'coach-1'
         }));
+        expect(updatePayload.status).toBeUndefined();
         expect(updatePayload.homeScore).toBeUndefined();
         expect(updatePayload.awayScore).toBeUndefined();
         expect(updatePayload.assignments).toBeUndefined();
