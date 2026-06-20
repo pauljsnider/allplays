@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getDirectThreadMountKey, getMessagesInboxLoadRouteKey, mergeInboxTeams, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
+import { getDirectThreadMountKey, getMessagesInboxLoadRouteKey, isSelectedConversation, mergeInboxTeams, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
 
 function buildTeam(overrides: Partial<ChatTeam> = {}): ChatTeam {
@@ -60,6 +60,11 @@ describe('conversation id normalization', () => {
     expect(normalizeConversationId(undefined)).toBe('team');
     expect(normalizeConversationId('')).toBe('team');
     expect(normalizeConversationId(' staff-room ')).toBe('staff-room');
+  });
+
+  it('marks only the selected conversation as active', () => {
+    expect(isSelectedConversation('team', 'team')).toBe(true);
+    expect(isSelectedConversation('team', 'staff-room')).toBe(false);
   });
 });
 

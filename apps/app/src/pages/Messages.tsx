@@ -193,6 +193,10 @@ export function normalizeConversationId(conversationId: string | null | undefine
   return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
 }
 
+export function isSelectedConversation(conversationId: string, selectedConversationId: string) {
+  return conversationId === selectedConversationId;
+}
+
 export function Messages({ auth }: { auth: AuthState }) {
   const { teamId } = useParams();
   const location = useLocation();
@@ -3029,7 +3033,7 @@ function ConversationSheet({
     <Sheet title="Conversations" onClose={onClose}>
       <div className="space-y-2">
         {conversations.map((conversation) => {
-          const active = conversation.id === effectiveConversationId;
+          const active = isSelectedConversation(conversation.id, selectedConversationId);
           const typeLabel = conversation.type === 'direct' ? 'Direct' : conversation.type === 'group' ? 'Group' : 'Team';
           return (
             <button
