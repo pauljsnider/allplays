@@ -3,7 +3,9 @@
 importScripts('https://www.gstatic.com/firebasejs/12.6.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/12.6.0/firebase-messaging-compat.js');
 
-const CONFIG_CACHE_NAME = 'allplays-push-config-v1';
+const CONFIG_CACHE_VERSION = 'v2';
+const CONFIG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CONFIG_CACHE_NAME = `allplays-push-config-${CONFIG_CACHE_VERSION}`;
 const CONFIG_CACHE_KEY = '/__allplays/push/firebase-config.json';
 const FIREBASE_INIT_JSON_URL = '/__/firebase/init.json';
 const WEB_PUSH_NOTIFICATION_ICON = '/img/logo_small.png';
@@ -28,8 +30,10 @@ async function readCachedFirebaseConfig() {
         const cache = await caches.open(CONFIG_CACHE_NAME);
         const response = await cache.match(CONFIG_CACHE_KEY);
         if (!response) return null;
-        const config = await response.json();
-        return isValidFirebaseConfig(config) ? config : null;
+        const cached = await response.json();
+        if (cached?.version !== CONFIG_CACHE_VERSION) return null;
+        if (!Number.isFinite(cached?.cachedAt) || Date.now() - cached.cachedAt > CONFIG_CACHE_TTL_MS) return null;
+        return isValidFirebaseConfig(cached.config) ? cached.config : null;
     } catch {
         return null;
     }
@@ -39,7 +43,11 @@ async function writeCachedFirebaseConfig(config) {
     if (typeof caches === 'undefined' || !isValidFirebaseConfig(config)) return;
     try {
         const cache = await caches.open(CONFIG_CACHE_NAME);
-        await cache.put(CONFIG_CACHE_KEY, new Response(JSON.stringify(config), {
+        await cache.put(CONFIG_CACHE_KEY, new Response(JSON.stringify({
+            version: CONFIG_CACHE_VERSION,
+            cachedAt: Date.now(),
+            config
+        }), {
             headers: { 'Content-Type': 'application/json' }
         }));
     } catch {
