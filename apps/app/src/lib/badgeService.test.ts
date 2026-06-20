@@ -28,7 +28,30 @@ vi.mock('@capawesome/capacitor-badge', () => ({
     Badge: badgeMocks
 }));
 
-import { markTeamChatReadAndRefreshBadge, refreshUnreadChatBadge, updateAppIconBadge } from './badgeService';
+import {
+    markTeamChatReadAndRefreshBadge,
+    normalizeAppIconBadgeCount,
+    refreshUnreadChatBadge,
+    updateAppIconBadge
+} from './badgeService';
+
+describe('normalizeAppIconBadgeCount', () => {
+    it('keeps positive integer counts unchanged', () => {
+        expect(normalizeAppIconBadgeCount(12)).toBe(12);
+    });
+
+    it('floors fractional unread counts before writing to native badge APIs', () => {
+        expect(normalizeAppIconBadgeCount(4.9)).toBe(4);
+    });
+
+    it('coerces numeric values and clamps invalid or negative counts to zero', () => {
+        expect(normalizeAppIconBadgeCount('7')).toBe(7);
+        expect(normalizeAppIconBadgeCount(Number.NaN)).toBe(0);
+        expect(normalizeAppIconBadgeCount(Number.POSITIVE_INFINITY)).toBe(0);
+        expect(normalizeAppIconBadgeCount(-3)).toBe(0);
+        expect(normalizeAppIconBadgeCount(undefined)).toBe(0);
+    });
+});
 
 describe('updateAppIconBadge', () => {
     beforeEach(() => {
@@ -50,7 +73,7 @@ describe('updateAppIconBadge', () => {
     });
 
     it('calls Badge.set with the total unread count when count > 0 on native', async () => {
-        await updateAppIconBadge(5);
+        await updateAppIconBadge(5.7);
 
         expect(badgeMocks.set).toHaveBeenCalledWith({ count: 5 });
         expect(badgeMocks.clear).not.toHaveBeenCalled();
@@ -94,8 +117,9 @@ describe('updateAppIconBadge', () => {
     it('refreshes the badge count from the unread inbox total on native', async () => {
         chatServiceMocks.loadChatInbox.mockResolvedValue({
             teams: [
-                { id: 'team-1', unreadCount: 2 },
-                { id: 'team-2', unreadCount: 3 }
+                { id: 'team-1', unreadCount: 2.9 },
+                { id: 'team-2', unreadCount: 3 },
+                { id: 'team-3', unreadCount: -4 }
             ]
         });
 
