@@ -114,7 +114,7 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('const missingUsers = users.filter');
         expect(targetResolverSource).toContain('teamNotificationRecipientIndexIsEmpty(teamId)');
         expect(targetResolverSource).toContain('if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId))');
-        expect(targetResolverSource).toContain('await backfillNotificationRecipientsForTeam(teamId, users);');
+        expect(targetResolverSource).toContain("await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });");
         expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
         expect(functionsSource).toContain('buildTeamNotificationTargetRef(target.teamId, target.uid, target.deviceId)');
     });
