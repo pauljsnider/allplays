@@ -84,6 +84,9 @@ jobs:
       - name: Install app dependencies
         run: npm ci --prefix apps/app
 
+      - name: Audit app dependencies
+        run: npm --prefix apps/app audit --audit-level=moderate
+
       - name: Typecheck app
         run: npm --prefix apps/app run typecheck
 
