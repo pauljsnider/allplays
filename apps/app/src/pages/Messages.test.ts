@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getDirectThreadMountKey, mergeInboxTeams, shouldRecordDirectThreadMount } from './Messages';
+import { getDirectThreadMountKey, getMessagesInboxLoadRouteKey, mergeInboxTeams, shouldRecordDirectThreadMount } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
 
 function buildTeam(overrides: Partial<ChatTeam> = {}): ChatTeam {
@@ -61,5 +61,12 @@ describe('direct thread mount telemetry', () => {
     expect(shouldRecordDirectThreadMount(null, 'team-1')).toBe(true);
     expect(shouldRecordDirectThreadMount('team-1', 'team-1')).toBe(false);
     expect(shouldRecordDirectThreadMount('team-1', 'team-2')).toBe(true);
+  });
+
+  it('does not reload desktop inbox data when only the selected team route changes', () => {
+    expect(getMessagesInboxLoadRouteKey(true, 'team-1')).toBe('');
+    expect(getMessagesInboxLoadRouteKey(true, 'team-2')).toBe('');
+    expect(getMessagesInboxLoadRouteKey(false, 'team-1')).toBe('team-1');
+    expect(getMessagesInboxLoadRouteKey(false, ' team-2 ')).toBe('team-2');
   });
 });

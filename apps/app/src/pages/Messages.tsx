@@ -129,6 +129,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [query, setQuery] = useState('');
   const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
   const shouldLoadInbox = isDesktopWeb || !teamId;
+  const inboxLoadRouteKey = getMessagesInboxLoadRouteKey(shouldLoadInbox, teamId);
   const inboxRequestIdRef = useRef(0);
   const directThreadMountRecordedTeamIdRef = useRef<string | null>(null);
 
@@ -186,12 +187,12 @@ export function Messages({ auth }: { auth: AuthState }) {
       setLoading(false);
       setError(null);
       setTeams([]);
-      const directThreadTeamId = getDirectThreadMountKey(teamId);
-      if (auth.user && shouldRecordDirectThreadMount(directThreadMountRecordedTeamIdRef.current, teamId)) {
+      const directThreadTeamId = inboxLoadRouteKey;
+      if (auth.user && shouldRecordDirectThreadMount(directThreadMountRecordedTeamIdRef.current, directThreadTeamId)) {
         directThreadMountRecordedTeamIdRef.current = directThreadTeamId;
         const timer = startScreenMountTimer('messages', {
           mode: 'direct_thread',
-          hasTeamRoute: Boolean(teamId)
+          hasTeamRoute: Boolean(directThreadTeamId)
         });
         timer.end({
           teamCount: 0,
@@ -209,7 +210,7 @@ export function Messages({ auth }: { auth: AuthState }) {
     }
     refreshInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, shouldLoadInbox, teamId]);
+  }, [auth.user?.uid, shouldLoadInbox, inboxLoadRouteKey]);
 
   useRefreshOnResume(
     () => {
@@ -371,6 +372,10 @@ export function getDirectThreadMountKey(teamId: string | null | undefined) {
 
 export function shouldRecordDirectThreadMount(recordedTeamId: string | null, teamId: string | null | undefined) {
   return recordedTeamId !== getDirectThreadMountKey(teamId);
+}
+
+export function getMessagesInboxLoadRouteKey(shouldLoadInbox: boolean, teamId: string | null | undefined) {
+  return shouldLoadInbox ? '' : getDirectThreadMountKey(teamId);
 }
 
 function InboxList({
