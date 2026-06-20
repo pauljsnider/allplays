@@ -40,6 +40,8 @@ import {
   enablePushNotificationsForUser,
   getPushNotificationPermissionStatus,
   openPushNotificationSettings,
+  runPushNotificationPrimer,
+  type PushNotificationPrimerContext,
   type PushNotificationPermissionStatus
 } from '../lib/pushService';
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
@@ -700,6 +702,18 @@ export function Profile({ auth }: { auth: AuthState }) {
     setNotificationStatus(null);
 
     try {
+      const currentPermissionStatus = isNative
+        ? (pushPermissionStatus || await getPushNotificationPermissionStatus())
+        : null;
+
+      if (currentPermissionStatus) {
+        setPushPermissionStatus(currentPermissionStatus);
+      }
+
+      if (!(await confirmPushPrimer('profile_device_push', currentPermissionStatus))) {
+        return;
+      }
+
       await enablePushNotificationsForUser(user.uid);
       await refreshPushPermissionStatus({ silent: true });
       setNotificationStatus({ message: 'Push is enabled on this device.', tone: 'success' });
@@ -714,6 +728,18 @@ export function Profile({ auth }: { auth: AuthState }) {
   const openDeviceSettingsForPush = async (statusMessage = 'Open device settings, allow notifications, then return here. We will refresh this screen when you come back.') => {
     setNotificationStatus({ message: statusMessage, tone: 'neutral' });
     await openPushNotificationSettings();
+  };
+
+  const confirmPushPrimer = async (context: PushNotificationPrimerContext, permissionStatus: PushNotificationPermissionStatus | null) => {
+    if (permissionStatus && permissionStatus.state !== 'prompt') {
+      return true;
+    }
+
+    const accepted = await runPushNotificationPrimer(context);
+    if (!accepted) {
+      setNotificationStatus({ message: 'Push setup was skipped. You can turn notifications on later from Alerts.', tone: 'neutral' });
+    }
+    return accepted;
   };
 
   const turnOnGameDayAlerts = async () => {
@@ -743,6 +769,10 @@ export function Profile({ auth }: { auth: AuthState }) {
 
       if (currentPermissionStatus?.state === 'unsupported') {
         setNotificationStatus({ message: 'Push notifications are not supported on this device.', tone: 'error' });
+        return;
+      }
+
+      if (!(await confirmPushPrimer('game_day_alerts', currentPermissionStatus))) {
         return;
       }
 
@@ -946,8 +976,8 @@ export function Profile({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      <div className="profile-section-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
-        <div className="grid min-w-max grid-cols-4 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+      <div className="profile-section-nav sticky top-24 z-30 bg-gray-50/95 py-2 backdrop-blur">
+        <div className="grid grid-cols-2 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm sm:grid-cols-4">
           {profileSections.map((section) => {
             const active = activeProfileSection === section.id;
             return (
