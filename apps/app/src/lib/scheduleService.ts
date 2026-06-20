@@ -858,6 +858,58 @@ async function nativeListScheduleEventDocuments(path: string, window: ScheduleDa
   return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
 }
 
+function scheduleEventOverlapsDateWindow(item: Record<string, any>, window: ScheduleDateWindow = {}) {
+  const firstDate = normalizeScheduleDate(item?.date);
+  const untilDate = normalizeScheduleDate(item?.recurrence?.until || item?.recurrence?.endDate || item?.recurrence?.untilDate);
+  if (window.endDate && firstDate && firstDate.getTime() > window.endDate.getTime()) return false;
+  if (window.startDate && untilDate && untilDate.getTime() < window.startDate.getTime()) return false;
+  return true;
+}
+
+function mergeScheduleDocumentsById(primary: FirestoreDocument[], extra: FirestoreDocument[]) {
+  const docsById = new Map<string, FirestoreDocument>();
+  [...primary, ...extra].forEach((doc) => {
+    const id = compactString(doc?.id || doc?.gameId);
+    if (!id || docsById.has(id)) return;
+    docsById.set(id, doc);
+  });
+  return Array.from(docsById.values());
+}
+
+async function nativeListRecurringPracticeMasters(path: string, window: ScheduleDateWindow = {}) {
+  if (!window.startDate && !window.endDate) return [];
+  const segments = path.split('/').filter(Boolean);
+  const collectionId = segments.pop();
+  const parentPath = segments.join('/');
+  if (!collectionId || !parentPath) return [];
+
+  const payload = await nativeFirestoreRequest(`/${parentPath}:runQuery`, {
+    method: 'POST',
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath: 'isSeriesMaster' },
+            op: 'EQUAL',
+            value: { booleanValue: true }
+          }
+        }
+      }
+    })
+  });
+  const documents = Array.isArray(payload)
+    ? payload.map((entry) => entry.document as NativeFirestoreDocument).filter(Boolean)
+    : [];
+  return mapScheduleEventDocuments(documents)
+    .filter((game) => (
+      game?.type === 'practice'
+      && game?.isSeriesMaster === true
+      && game?.recurrence
+      && scheduleEventOverlapsDateWindow(game, window)
+    ));
+}
+
 const nativeDeleteFieldSentinel = { __deleteField: true };
 
 function escapeFirestoreFieldPathSegment(segment: string) {
@@ -1943,7 +1995,9 @@ async function loadGames(teamId: string, window: ScheduleDateWindow = getDefault
     () => Promise.resolve(getGames(teamId, window)),
     async () => {
       const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`, window);
-      return docs.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
+      const recurringMasters = await nativeListRecurringPracticeMasters(`teams/${encodeURIComponent(teamId)}/games`, window);
+      return mergeScheduleDocumentsById(docs, recurringMasters)
+        .sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
     }
   );
 }
