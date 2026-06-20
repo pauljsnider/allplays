@@ -55,6 +55,7 @@ import {
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import { startInteractionTimer, UX_TIMING } from './uxTiming';
 import { mapChatConversationRecord, mapChatMessageRecord, mapFirestoreDocument } from './firestore/mappers';
+import { loadCachedAppData } from './appDataCache';
 import type {
   ChatAttachmentFirestoreRecord,
   ChatConversationFirestoreRecord,
@@ -157,7 +158,30 @@ type TeamChatStateEntry = {
 export type ChatInboxLoadOptions = {
   includeLastMessages?: boolean;
   onPreview?: (update: ChatInboxPreviewUpdate) => void;
+  /** Bypass the short-lived per-team preview cache (e.g. on an explicit refresh). */
+  forcePreviews?: boolean;
 };
+
+const chatPreviewCacheTtlMs = 25 * 1000;
+
+/**
+ * Per-team last-message preview cache so returning to Messages (or revisiting Home)
+ * within the cache window does not refetch every team's preview (#2035). Kept in
+ * memory only (persist: false) so a fresh session always re-reads.
+ */
+function loadTeamChatPreview(
+  teamId: string,
+  user: AuthUser,
+  team: Record<string, any>,
+  canModerate: boolean,
+  force: boolean
+) {
+  return loadCachedAppData(
+    `chat-preview:${teamId}:${user.uid}`,
+    () => getLatestMessagePreview(teamId, user, team, canModerate),
+    { ttlMs: chatPreviewCacheTtlMs, force, persist: false }
+  );
+}
 
 export type ChatSubscribeResult = {
   unsubscribe: () => void;
@@ -537,15 +561,27 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
   if (previewMessage.message) return previewMessage;
 
   const attemptedConversationIds = new Set(previewCandidates.map((conversation) => conversation.id));
-  for (const { conversation } of rankedConversations) {
-    if (!conversation?.id || attemptedConversationIds.has(conversation.id)) continue;
-    const fallbackMessage = await getLatestConversationMessage(teamId, conversation.id);
-    if (fallbackMessage) {
-      return {
-        message: fallbackMessage,
-        conversationId: conversation.id
-      };
-    }
+  const fallbackConversations = rankedConversations
+    .map(({ conversation }) => conversation)
+    .filter((conversation): conversation is ChatConversation => (
+      Boolean(conversation?.id) && !attemptedConversationIds.has(conversation.id)
+    ));
+
+  if (fallbackConversations.length > 0) {
+    // Fetch the remaining conversations' latest messages in parallel instead of
+    // paying one serial round-trip per empty conversation (#2035). Pick the newest
+    // message; ties keep ranked order (Promise.allSettled preserves input order).
+    const fallbackResults = await Promise.allSettled(
+      fallbackConversations.map((conversation) => getLatestConversationMessage(teamId, conversation.id))
+    );
+    let best: { message: ChatMessage | null; conversationId: string | null } = { message: null, conversationId: null };
+    fallbackResults.forEach((result, index) => {
+      if (result.status !== 'fulfilled' || !result.value) return;
+      if (!best.message || getMessageTime(result.value) > getMessageTime(best.message)) {
+        best = { message: result.value, conversationId: fallbackConversations[index].id };
+      }
+    });
+    if (best.message) return best;
   }
 
   return {
@@ -558,6 +594,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   if (!user?.uid) return { teams: [] };
   const includeLastMessages = options.includeLastMessages !== false;
   const onPreview = typeof options.onPreview === 'function' ? options.onPreview : null;
+  const forcePreviews = options.forcePreviews === true;
 
   const profile = await withTimeout(Promise.resolve(getUserProfile(user.uid)), 'Chat profile load').catch(async (error) => {
     if (!isNativeRuntime()) throw error;
@@ -601,7 +638,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({
       team,
       canModerate,
-      preview: await getLatestMessagePreview(team.id, userWithProfile, team, canModerate)
+      preview: await loadTeamChatPreview(team.id, userWithProfile, team, canModerate, forcePreviews)
     })))
     : previewInputs.map(({ team, canModerate }) => ({
       team,
@@ -612,7 +649,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   if (!includeLastMessages && onPreview && accessibleTeams.length > 0) {
     void Promise.allSettled(previewInputs.map(async ({ team, canModerate }) => {
       try {
-        const preview = await getLatestMessagePreview(team.id, userWithProfile, team, canModerate);
+        const preview = await loadTeamChatPreview(team.id, userWithProfile, team, canModerate, forcePreviews);
         onPreview({
           teamId: team.id,
           lastMessage: preview.message,

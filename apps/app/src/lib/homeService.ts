@@ -121,7 +121,7 @@ export async function loadParentHomeWithSecondaryData(
     const schedule = options.schedule || await loadParentScheduleSummary(user, { force: options.force });
     await hydrateParentScheduleDetails(schedule, user);
     const [chatInbox, rawFees] = await Promise.all([
-      loadChatInbox(user).catch((error) => {
+      loadChatInbox(user, { forcePreviews: options.force }).catch((error) => {
         throw toAppServiceError(error, 'Unable to load Home chat.');
       }),
       Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
