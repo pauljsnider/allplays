@@ -1750,3 +1750,48 @@ describe('native parent schedule Firestore mapping', () => {
     expect(result.events).toEqual([]);
   });
 });
+
+describe('home schedule hydration bounding (#2033)', () => {
+  const user = { uid: 'parent-1', email: 'parent@example.com' } as any;
+  const day = 24 * 60 * 60 * 1000;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getRsvps).mockResolvedValue([] as any);
+    vi.mocked(getRsvpSummaries).mockResolvedValue(new Map() as any);
+    vi.mocked(listRideOffersForEvent).mockResolvedValue([] as any);
+    vi.mocked(getAssignmentClaims).mockResolvedValue({} as any);
+  });
+
+  function makeEvent(id: string, offsetMs: number) {
+    return {
+      teamId: 'team-1',
+      id,
+      childId: 'p1',
+      isDbGame: true,
+      isCancelled: false,
+      date: new Date(Date.now() + offsetMs),
+      assignments: [],
+      availabilityPreferences: {}
+    } as any;
+  }
+
+  it('only hydrates events inside the look-ahead/look-behind window', async () => {
+    const events = [
+      makeEvent('soon', 2 * day), // within 14d ahead
+      makeEvent('far-future', 40 * day), // beyond the look-ahead window
+      makeEvent('old', -5 * day) // beyond the 12h look-behind window
+    ];
+
+    await hydrateParentScheduleDetails({ children: [], events }, user);
+
+    const hydratedGameIds = vi.mocked(getRsvps).mock.calls.map((call) => call[1]);
+    expect(hydratedGameIds).toContain('soon');
+    expect(hydratedGameIds).not.toContain('far-future');
+    expect(hydratedGameIds).not.toContain('old');
+
+    expect(events.find((event) => event.id === 'soon')?.rsvpSummary).toBeDefined();
+    expect(events.find((event) => event.id === 'far-future')?.rsvpSummary).toBeUndefined();
+    expect(events.find((event) => event.id === 'old')?.rsvpSummary).toBeUndefined();
+  });
+});
