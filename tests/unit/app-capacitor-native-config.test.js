@@ -31,7 +31,7 @@ describe('Capacitor native config', () => {
             showSpinner: false
         });
         expect(config.plugins.StatusBar).toMatchObject({
-            style: 'DARK',
+            style: 'LIGHT',
             backgroundColor: '#ffffff',
             overlaysWebView: false
         });
@@ -53,6 +53,8 @@ describe('Capacitor native config', () => {
         expect(nativeAppearance).toContain("import('@capacitor/status-bar')");
         expect(nativeAppearance).toContain("import('@capacitor/splash-screen')");
         expect(nativeAppearance).toContain('StatusBar.setOverlaysWebView({ overlay: false })');
+        expect(nativeAppearance).toContain('StatusBar.setStyle({ style: Style.Light })');
+        expect(nativeAppearance).toContain('StatusBar.setBackgroundColor({ color: \'#ffffff\' })');
         expect(nativeAppearance).toContain('SplashScreen.hide({ fadeOutDuration: 150 })');
     });
 

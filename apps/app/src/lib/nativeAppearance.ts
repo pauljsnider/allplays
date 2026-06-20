@@ -8,7 +8,7 @@ export async function initializeNativeAppearance() {
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar');
     await StatusBar.setOverlaysWebView({ overlay: false });
-    await StatusBar.setStyle({ style: Style.Dark });
+    await StatusBar.setStyle({ style: Style.Light });
     await StatusBar.setBackgroundColor({ color: '#ffffff' });
   } catch (error) {
     console.warn('[native] Unable to configure status bar.', error);
