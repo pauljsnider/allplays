@@ -15,7 +15,6 @@ import {
 } from './lib/nativeBackButton';
 import { addNativeDeepLinkListener } from './lib/nativeDeepLinkRouting';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
-import { shouldReloadTeamsToHome } from './lib/reloadRouting';
 import { readAuthBootstrapHint } from './lib/authBootstrapHint';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
@@ -59,12 +58,6 @@ export default function App() {
   const lastNativeExitBackPressRef = useRef(0);
   const nativeExitNoticeTimeoutRef = useRef<number | null>(null);
   const [nativeExitNoticeVisible, setNativeExitNoticeVisible] = useState(false);
-  const shouldDefaultReloadToHome = shouldReloadTeamsToHome({
-    hasUser: Boolean(auth.user),
-    pathname: location.pathname,
-    search: location.search,
-    isReload: isBrowserReload()
-  });
 
   useEffect(() => {
     authUserRef.current = auth.user;
@@ -216,7 +209,7 @@ export default function App() {
         <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
-        <Route path="/teams" element={shouldDefaultReloadToHome ? <Navigate to="/home" replace /> : <Protected auth={auth}><Teams auth={auth} /></Protected>} />
+        <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
         <Route path="/teams/browse" element={<Protected auth={auth}><PublicTeamsBrowse /></Protected>} />
         <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/edit" element={<Protected auth={auth}><TeamSettings auth={auth} /></Protected>} />
@@ -245,12 +238,6 @@ export default function App() {
       ) : null}
     </Suspense>
   );
-}
-
-function isBrowserReload() {
-  const navigation = performance.getEntriesByType?.('navigation')?.[0] as PerformanceNavigationTiming | undefined;
-  if (navigation?.type) return navigation.type === 'reload';
-  return (performance as Performance & { navigation?: { type?: number } }).navigation?.type === 1;
 }
 
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {

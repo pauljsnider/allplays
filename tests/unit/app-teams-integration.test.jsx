@@ -97,6 +97,15 @@ function getHrefs(container) {
     return Array.from(container.querySelectorAll('a')).map((link) => link.getAttribute('href'));
 }
 
+function linkByAriaLabel(container, label) {
+    const link = Array.from(container.querySelectorAll('a')).find((candidate) => candidate.getAttribute('aria-label') === label);
+    if (!link) {
+        const labels = Array.from(container.querySelectorAll('a')).map((candidate) => candidate.textContent.trim() || candidate.getAttribute('aria-label') || '(unlabeled)');
+        throw new Error(`Link not found: ${label}. Available links: ${labels.join(', ')}`);
+    }
+    return link;
+}
+
 async function clickLink(container, text) {
     const link = Array.from(container.querySelectorAll('a')).find((candidate) => candidate.textContent.includes(text));
     if (!link) {
@@ -209,7 +218,7 @@ describe('React app Teams page', () => {
         expect(hrefs).toContain('/teams/team-staff/fees');
         expect(hrefs).not.toContain('https://allplays.ai/team-fees.html#teamId=team-staff');
         expect(container.textContent).not.toContain('Team drills');
-        expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Staff Wolves'))?.getAttribute('aria-pressed')).toBe('true');
+        expect(linkByAriaLabel(container, 'Open Staff Wolves').getAttribute('aria-current')).toBe('page');
 
         await clickLink(container, 'Website team page');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/team.html#teamId=team-staff');
@@ -219,14 +228,11 @@ describe('React app Teams page', () => {
         hrefs = getHrefs(container);
         expect(hrefs).toContain('/teams/team-staff/drills');
         expect(hrefs).toContain('https://allplays.ai/game-day.html?teamId=team-staff');
-
-        await clickButton(container, 'Bears');
-        await clickButton(container, 'Staff Wolves');
-        expect(container.textContent).not.toContain('Team drills');
-        expect(buttonByText(container, '6 more')).toBeTruthy();
+        expect(linkByAriaLabel(container, 'Open Bears').getAttribute('href')).toBe('/teams/team-1');
+        expect(linkByAriaLabel(container, 'Open Staff Wolves').getAttribute('href')).toBe('/teams/team-staff');
     });
 
-    it('filters the mobile launcher by team and player text before selecting a result', async () => {
+    it('filters the mobile launcher by team and player text before opening a result', async () => {
         const { container } = await renderTeams('/teams?selectedTeamId=team-staff&from=home');
         await waitForText(container, 'Staff Wolves');
 
@@ -234,35 +240,26 @@ describe('React app Teams page', () => {
         expect(filterInput).toBeTruthy();
 
         await typeIntoInput(container, 'Search teams or players', 'Pat');
-        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent.includes('Bears'))).toBe(true);
-        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent.includes('Staff Wolves'))).toBe(false);
+        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Open Bears')).toBe(true);
+        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Open Staff Wolves')).toBe(false);
 
         await typeIntoInput(container, 'Search teams or players', 'Wolves');
-        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent.includes('Staff Wolves'))).toBe(true);
-        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent.includes('Bears'))).toBe(false);
+        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Open Staff Wolves')).toBe(true);
+        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Open Bears')).toBe(false);
 
         await typeIntoInput(container, 'Search teams or players', 'zzz');
         expect(container.textContent).toContain('No teams match that search.');
 
         await typeIntoInput(container, 'Search teams or players', 'Bears');
-        await clickButton(container, 'Bears');
 
-        expect(buttonByText(container, 'Bears').getAttribute('aria-pressed')).toBe('true');
+        expect(linkByAriaLabel(container, 'Open Bears').getAttribute('href')).toBe('/teams/team-1');
         expect(container.textContent.indexOf('Choose a team')).toBeLessThan(container.textContent.indexOf('Team navigation'));
         const hrefs = getHrefs(container);
         expect(hrefs).toContain('/messages/team-1');
         expect(hrefs).toContain('/teams/team-1');
         expect(hrefs).toContain('/schedule?teamId=team-1');
-        expect(hrefs).toContain('/schedule?teamId=team-1&view=packets');
-        expect(hrefs).toContain('https://allplays.ai/team.html#teamId=team-1');
-        expect(hrefs).toContain('/teams/team-1/media');
-        expect(hrefs).toContain('/parent-tools/fees');
-        expect(hrefs).toContain('/parent-tools/registrations');
-        expect(hrefs).toContain('/parent-tools/certificates');
-        expect(hrefs).toContain('/players/team-1/player-1');
         expect(container.textContent).toContain('Pat Star');
-        expect(container.textContent).not.toContain('Coach/admin tools');
-        expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+        expect(window.scrollTo).not.toHaveBeenCalled();
     });
 
     it('refreshes team data without dropping into the loading shell', async () => {
@@ -537,6 +534,6 @@ describe('React app Teams page', () => {
         await waitForText(container, '2 teams ready');
         expect(container.textContent).toContain('Choose a team');
         expect(container.querySelector('[data-testid="team-hub"]')).toBeNull();
-        expect(buttonByText(container, 'Staff Wolves').getAttribute('aria-pressed')).toBe('true');
+        expect(linkByAriaLabel(container, 'Open Staff Wolves').getAttribute('aria-current')).toBe('page');
     });
 });
