@@ -28,7 +28,9 @@ import {
   Zap
 } from 'lucide-react';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
+import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
@@ -53,7 +55,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const authUserId = auth.user?.uid || '';
   const [model, setModel] = useState<TeamDetailModel | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [activeTab, setActiveTab] = useState<TeamTab>('overview');
   const [staffPermissionsLoading, setStaffPermissionsLoading] = useState(false);
   const [staffPermissionsError, setStaffPermissionsError] = useState('');
@@ -84,7 +87,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     async function load() {
       if (!teamId) return;
       setLoading(true);
-      setError('');
+      setError(null);
       try {
         const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
         if (!cancelled) {
@@ -108,7 +111,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
         }
       } catch (loadError: any) {
         if (!cancelled) {
-          setError(loadError?.message || 'Unable to load this team.');
+          setError(toAppServiceError(loadError, 'Unable to load this team.'));
           setModel(null);
           setStaffPermissionsError('');
           setStaffPermissionsLoading(false);
@@ -135,7 +138,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authUserId, teamId]);
+  }, [authUserId, teamId, reloadVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -348,18 +351,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   if (error || !model) {
     return (
-      <div className="space-y-4">
-        <section className="app-card p-5">
-          <div className="flex items-start gap-3">
-            <Shield className="mt-0.5 h-5 w-5 flex-none text-rose-600" aria-hidden="true" />
-            <div>
-              <div className="text-sm font-black text-gray-950">Team unavailable</div>
-              <div className="mt-1 text-sm font-semibold text-gray-600">{error || 'Team not found.'}</div>
-              <Link to="/teams" className="secondary-button mt-3 !min-h-9 text-xs">Back to teams</Link>
-            </div>
-          </div>
-        </section>
-      </div>
+      <DetailLoadErrorState
+        icon={Shield}
+        title="Team unavailable"
+        error={error}
+        fallbackMessage="Team not found."
+        backTo="/teams"
+        backLabel="Back to teams"
+        onRetry={() => setReloadVersion((current) => current + 1)}
+        retrying={loading}
+      />
     );
   }
 
