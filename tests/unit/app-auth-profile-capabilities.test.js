@@ -33,7 +33,7 @@ describe('React app auth/profile capability parity', () => {
     it('does not replace signed-in screens with the loading splash during background auth refreshes', () => {
         const appRoutes = readProjectFile('apps/app/src/App.tsx');
 
-        expect(appRoutes).toContain('auth.loading && !auth.user');
+        expect(appRoutes).toContain('!auth.user && (auth.loading || !bootstrapGraceExpired)');
         expect(appRoutes).not.toContain('if (auth.loading) {');
     });
 
