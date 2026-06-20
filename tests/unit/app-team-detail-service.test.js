@@ -1387,7 +1387,7 @@ describe('React app team detail model', () => {
         expect(getTeam).toHaveBeenCalledTimes(2);
     });
 
-    it('updates only the managed basic team settings fields for app editing', async () => {
+    it('updates the managed app team settings fields, including clearing unset links', async () => {
         getTeam.mockResolvedValue({
             id: 'team-1',
             ownerId: 'owner-1',
@@ -1422,6 +1422,10 @@ describe('React app team detail model', () => {
             zip: '662101234',
             isPublic: false,
             photoUrl: 'https://img.example.test/updated.png',
+            leagueUrl: null,
+            twitchChannel: null,
+            streamEmbedUrl: null,
+            youtubeEmbedUrl: null,
             updatedAt: expect.any(Date)
         });
     });
