@@ -976,8 +976,8 @@ export function Profile({ auth }: { auth: AuthState }) {
         </div>
       </section>
 
-      <div className="profile-section-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
-        <div className="grid min-w-max grid-cols-4 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+      <div className="profile-section-nav sticky top-24 z-30 bg-gray-50/95 py-2 backdrop-blur">
+        <div className="grid grid-cols-2 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm sm:grid-cols-4">
           {profileSections.map((section) => {
             const active = activeProfileSection === section.id;
             return (
