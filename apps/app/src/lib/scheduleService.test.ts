@@ -160,7 +160,7 @@ vi.mock('./appDataCache', () => ({
 
 import { addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
-import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
+import { expandRecurrence, fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
 import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
@@ -249,8 +249,8 @@ describe('scheduled practice writes', () => {
   it('writes single-occurrence practice edits as overrides', async () => {
     await updateScheduledPracticeForApp('team-1', {
       title: 'Special Session',
-      startDate: new Date('2026-06-24T17:15:00.000Z'),
-      endDate: new Date('2026-06-24T18:45:00.000Z'),
+      startDate: new Date(2026, 5, 24, 17, 15),
+      endDate: new Date(2026, 5, 24, 18, 45),
       location: 'Indoor court',
       notes: 'Film first 15 minutes'
     }, coachUser, {
@@ -275,8 +275,8 @@ describe('scheduled practice writes', () => {
 
     await updateScheduledPracticeForApp('team-1', {
       title: 'Special Session',
-      startDate: new Date('2026-06-24T17:15:00.000Z'),
-      endDate: new Date('2026-06-24T18:45:00.000Z'),
+      startDate: new Date(2026, 5, 24, 17, 15),
+      endDate: new Date(2026, 5, 24, 18, 45),
       location: 'Indoor court',
       notes: 'Film first 15 minutes'
     }, coachUser, {
@@ -1748,5 +1748,84 @@ describe('native parent schedule Firestore mapping', () => {
     });
 
     expect(result.events).toEqual([]);
+  });
+});
+
+describe('team schedule game windowing (#2034)', () => {
+  const parentUser = {
+    uid: 'parent-1',
+    email: 'parent@example.com',
+    parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' }]
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' }]
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Team One' } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+  });
+
+  it('windows games to a recent startDate by default', async () => {
+    await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+    expect(getGames).toHaveBeenCalledTimes(1);
+    const [teamId, options] = vi.mocked(getGames).mock.calls[0] as [string, any];
+    expect(teamId).toBe('team-1');
+    expect(options?.startDate).toBeInstanceOf(Date);
+    expect(options?.endDate ?? null).toBeNull();
+  });
+
+  it('loads full history (no startDate) when includePastGames is set', async () => {
+    await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false, includePastGames: true });
+    expect(getGames).toHaveBeenCalledTimes(1);
+    const [, options] = vi.mocked(getGames).mock.calls[0] as [string, any];
+    expect(options?.startDate ?? null).toBeNull();
+  });
+
+  it('keeps recurring practice masters available during windowed schedule loads', async () => {
+    vi.mocked(getGames).mockResolvedValue([
+      {
+        id: 'game-1',
+        type: 'game',
+        date: new Date('2026-06-25T18:00:00.000Z'),
+        opponent: 'Tigers',
+        location: 'Field 1'
+      },
+      {
+        id: 'practice-master',
+        type: 'practice',
+        isSeriesMaster: true,
+        recurrence: { freq: 'weekly', interval: 1 },
+        date: new Date('2025-01-08T18:00:00.000Z'),
+        location: 'North Field',
+        title: 'Weekly Practice'
+      }
+    ] as any);
+    vi.mocked(expandRecurrence).mockReturnValue([
+      {
+        masterId: 'practice-master',
+        instanceDate: '2026-06-24',
+        date: new Date('2026-06-24T18:00:00.000Z'),
+        endDate: new Date('2026-06-24T19:30:00.000Z'),
+        location: 'North Field',
+        title: 'Weekly Practice'
+      }
+    ] as any);
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getGames).toHaveBeenCalledTimes(1);
+    expect(getDocs).not.toHaveBeenCalled();
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'practice-master__2026-06-24',
+        type: 'practice',
+        isDbGame: true,
+        location: 'North Field'
+      })
+    ]));
   });
 });

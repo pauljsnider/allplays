@@ -16,12 +16,9 @@ import { getValidatedInviteCode, normalizeInviteCode, redeemSignedInInvite } fro
 import type { AuthState } from '../lib/types';
 
 function readEmailForSignIn() {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-
   try {
-    return window.localStorage.getItem('emailForSignIn') || '';
+    const storage = typeof window !== 'undefined' ? window.localStorage : null;
+    return typeof storage?.getItem === 'function' ? storage.getItem('emailForSignIn') || '' : '';
   } catch {
     return '';
   }
