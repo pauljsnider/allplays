@@ -37,6 +37,7 @@ export function useRefreshOnResume(
 ) {
   const refreshRef = useRef(refreshFn);
   const lastRefreshAtRef = useRef<number>((deps.now || Date.now)());
+  const prevActiveRef = useRef<boolean | null>(null);
 
   useEffect(() => {
     refreshRef.current = refreshFn;
@@ -76,7 +77,10 @@ export function useRefreshOnResume(
       if (!isNativePlatform() || !isPluginAvailable('App')) return;
       const plugin = deps.appPlugin || CapacitorApp;
       const handle = await plugin.addListener('appStateChange', ({ isActive }) => {
-        if (isActive) maybeRefresh();
+        if (prevActiveRef.current === false && isActive) {
+          maybeRefresh();
+        }
+        prevActiveRef.current = isActive;
       });
       if (disposed) {
         void handle.remove();
