@@ -62,6 +62,7 @@ export function loadDedupedNativeRestRequest<T>(
   Promise.resolve()
     .then(loader)
     .then((result) => {
+      deleteNativeRestDedupEntry(key, promise);
       resolvePromise(result);
     })
     .catch((error) => {

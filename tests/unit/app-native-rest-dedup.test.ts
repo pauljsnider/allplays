@@ -12,7 +12,7 @@ describe('native REST read dedup', () => {
     clearNativeRestDedup();
   });
 
-  it('reuses the same loader promise for repeated native reads inside the dedup window', async () => {
+  it('only dedups in-flight native reads and refetches after the first read settles', async () => {
     vi.useFakeTimers();
     const loader = vi.fn(async () => ({ documents: [{ name: 'teams/team-1' }] }));
     const key = getNativeRestDedupKey('https://firestore.test/teams/team-1');
@@ -25,11 +25,11 @@ describe('native REST read dedup', () => {
     expect(loader).toHaveBeenCalledTimes(1);
 
     await expect(loadDedupedNativeRestRequest(key, loader)).resolves.toEqual({ documents: [{ name: 'teams/team-1' }] });
-    expect(loader).toHaveBeenCalledTimes(1);
+    expect(loader).toHaveBeenCalledTimes(2);
 
     vi.advanceTimersByTime(5001);
     await expect(loadDedupedNativeRestRequest(key, loader)).resolves.toEqual({ documents: [{ name: 'teams/team-1' }] });
-    expect(loader).toHaveBeenCalledTimes(2);
+    expect(loader).toHaveBeenCalledTimes(3);
   });
 
   it('retries failed reads instead of caching the rejection', async () => {
