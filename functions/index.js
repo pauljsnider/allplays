@@ -3555,6 +3555,55 @@ function buildPracticePacketNotificationDestination({ teamId, eventId = null, se
   };
 }
 
+function buildAccessNotificationDestination({ teamId }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const query = teamId ? `?teamId=${encodedTeamId}` : '';
+  return {
+    appRoute: `/parent-tools/access${query}`,
+    link: `https://allplays.ai/app/#/parent-tools/access${query}`
+  };
+}
+
+function buildStaffAccessRequestNotificationDestination({ teamId }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  return {
+    appRoute: `/parent-tools/access?teamId=${encodedTeamId}`,
+    link: `https://allplays.ai/edit-roster.html?teamId=${encodedTeamId}`
+  };
+}
+
+function buildRegistrationReviewNotificationDestination({ teamId, formId }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const encodedFormId = encodeURIComponent(formId);
+  return {
+    appRoute: `/teams/${encodedTeamId}/registrations/${encodedFormId}`,
+    link: `https://allplays.ai/edit-roster.html?teamId=${encodedTeamId}`
+  };
+}
+
+function buildParentRegistrationNotificationDestination({ teamId, formId, registrationId = null }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const encodedFormId = encodeURIComponent(formId);
+  const params = new URLSearchParams();
+  if (registrationId) {
+    params.set('registrationId', registrationId);
+  }
+  const query = params.toString();
+  const appRoute = `/parent-tools/registrations/${encodedTeamId}/${encodedFormId}${query ? `?${query}` : ''}`;
+  return {
+    appRoute,
+    link: `https://allplays.ai/app/#${appRoute}`
+  };
+}
+
+function buildTeamNotificationDestination({ teamId }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  return {
+    appRoute: `/teams/${encodedTeamId}`,
+    link: `https://allplays.ai/app/#/teams/${encodedTeamId}`
+  };
+}
+
 function getPracticePacketNotificationLabel(session = {}) {
   const sessionTitle = String(session?.title || session?.eventTitle || '').trim();
   return sessionTitle ? `home packet for ${sessionTitle}` : 'home packet';
@@ -3800,6 +3849,9 @@ function buildNotificationLink({ category, teamId, gameId, batchId = null, recip
     }
     return 'https://allplays.ai/app/#/teams';
   }
+  if (category === 'access') {
+    return buildAccessNotificationDestination({ teamId }).link;
+  }
   return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
 }
 
@@ -3856,10 +3908,107 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
     }
     return '/teams';
   }
+  if (category === 'access') {
+    return buildAccessNotificationDestination({ teamId }).appRoute;
+  }
   if (category === 'practice') {
     return buildPracticePacketNotificationDestination({ teamId, eventId }).appRoute;
   }
   return '/home';
+}
+
+function normalizeAccessNotificationStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase().replace(/[ _]+/g, '-');
+  if (['approved', 'accepted', 'enrolled', 'roster-approved'].includes(normalized)) return 'approved';
+  if (['rejected', 'denied', 'declined'].includes(normalized)) return 'denied';
+  if (['submitted', 'new', 'in-review'].includes(normalized)) return 'pending';
+  if (['waitlisted', 'offer-extended', 'offer-accepted', 'released', 'pending'].includes(normalized)) return normalized;
+  return normalized || 'pending';
+}
+
+function getRegistrationParticipantName(registration = {}) {
+  const participant = registration.participant && typeof registration.participant === 'object' ? registration.participant : {};
+  return [
+    participant.name,
+    participant.fullName,
+    participant.playerName,
+    participant.athleteName,
+    registration.participantName,
+    registration.playerName,
+    registration.recipientName
+  ].map((value) => String(value || '').trim()).find(Boolean) || 'A player';
+}
+
+function getRegistrationProgramName(registration = {}) {
+  return [registration.programName, registration.formName, registration.title]
+    .map((value) => String(value || '').trim())
+    .find(Boolean) || 'Registration';
+}
+
+function getRegistrationGuardianEmails(registration = {}) {
+  const emailSet = new Set();
+  const addEmail = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized) {
+      emailSet.add(normalized);
+    }
+  };
+  const addGuardian = (guardian = {}) => {
+    addEmail(guardian.email);
+    addEmail(guardian.parentEmail);
+    addEmail(guardian.guardianEmail);
+  };
+
+  addGuardian(registration.guardian || {});
+  (Array.isArray(registration.guardians) ? registration.guardians : []).forEach(addGuardian);
+  (Array.isArray(registration.guardianLinks) ? registration.guardianLinks : []).forEach(addGuardian);
+
+  return Array.from(emailSet);
+}
+
+async function resolveRegistrationNotificationUserIds(registration = {}) {
+  const userIds = new Set(
+    (Array.isArray(registration.guardianLinks) ? registration.guardianLinks : [])
+      .map((guardian) => String(guardian?.userId || '').trim())
+      .filter(Boolean)
+  );
+
+  const emailUserIds = await getUserIdsByEmails(getRegistrationGuardianEmails(registration));
+  emailUserIds.forEach((uid) => userIds.add(uid));
+  return Array.from(userIds);
+}
+
+async function getStaffTargetsForAccess(teamId, actorUid = null) {
+  const [allAccessTargets, candidateUsers] = await Promise.all([
+    getTargetsForCategory(teamId, 'access', actorUid),
+    getCandidateUsersForTeam(teamId)
+  ]);
+  const staffUserIds = new Set(
+    candidateUsers
+      .filter((user) => Array.isArray(user?.roles) && user.roles.includes('staff'))
+      .map((user) => user.uid)
+  );
+  return allAccessTargets.filter((target) => staffUserIds.has(target.uid));
+}
+
+async function sendRegistrationStatusNotification({ teamId, formId, registrationId, registration, title, body }) {
+  const guardianUserIds = await resolveRegistrationNotificationUserIds(registration);
+  if (!guardianUserIds.length) return null;
+
+  const guardianTargets = await getTargetsForCategoryUserIds(teamId, 'access', guardianUserIds);
+  if (!guardianTargets.length) return null;
+
+  const destination = buildParentRegistrationNotificationDestination({ teamId, formId, registrationId });
+  return sendDirectTargetsNotification({
+    targets: guardianTargets,
+    category: 'access',
+    title,
+    body,
+    teamId,
+    eventId: registrationId,
+    linkOverride: destination.link,
+    appRouteOverride: destination.appRoute
+  });
 }
 
 function normalizeTeamMediaNotificationText(value) {
@@ -6331,6 +6480,204 @@ const notifyScheduleImportBatchCompleted = functions.firestore
 
 exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
 exports._internal.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
+
+exports.notifyParentMembershipRequestCreated = functions.firestore
+  .document('teams/{teamId}/membershipRequests/{requestId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    if (!teamId) return null;
+
+    const staffTargets = await getStaffTargetsForAccess(teamId, String(data.requesterUserId || '').trim() || null);
+    if (!staffTargets.length) return null;
+
+    const destination = buildStaffAccessRequestNotificationDestination({ teamId });
+    const requesterName = String(data.requesterName || data.requesterEmail || 'A parent').trim() || 'A parent';
+    const playerName = String(data.playerName || 'a player').trim() || 'a player';
+
+    await sendDirectTargetsNotification({
+      targets: staffTargets,
+      category: 'access',
+      title: `Access request: ${requesterName} for ${playerName}`,
+      body: `${requesterName} requested ${String(data.relation || 'parent').trim() || 'parent'} access for ${playerName}.`,
+      teamId,
+      eventId: String(context.params?.requestId || '').trim() || null,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
+  });
+
+exports.notifyParentMembershipRequestUpdated = functions.firestore
+  .document('teams/{teamId}/membershipRequests/{requestId}')
+  .onUpdate(async (change, context) => {
+    const beforeData = change.before.data() || {};
+    const afterData = change.after.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    const requesterUserId = String(afterData.requesterUserId || '').trim();
+    const beforeStatus = normalizeAccessNotificationStatus(beforeData.status);
+    const afterStatus = normalizeAccessNotificationStatus(afterData.status);
+    if (!teamId || !requesterUserId || beforeStatus === afterStatus) return null;
+    if (!['approved', 'denied'].includes(afterStatus)) return null;
+
+    const requesterTargets = await getTargetsForCategoryUserIds(teamId, 'access', [requesterUserId]);
+    if (!requesterTargets.length) return null;
+
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    const teamName = String(teamSnap.exists ? (teamSnap.data()?.name || '') : '').trim() || 'your team';
+    const destination = buildTeamNotificationDestination({ teamId });
+
+    await sendDirectTargetsNotification({
+      targets: requesterTargets,
+      category: 'access',
+      title: afterStatus === 'approved'
+        ? `You now have access to ${teamName}`
+        : `Access request declined for ${teamName}`,
+      body: afterStatus === 'approved'
+        ? `${String(afterData.playerName || 'Your player').trim() || 'Your player'} is now linked in your account.`
+        : `Your request for ${String(afterData.playerName || 'this player').trim() || 'this player'} was declined.`,
+      teamId,
+      eventId: String(context.params?.requestId || '').trim() || null,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
+  });
+
+exports.notifyRegistrationSubmitted = functions.firestore
+  .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    const formId = String(context.params?.formId || '').trim();
+    if (!teamId || !formId) return null;
+
+    const staffTargets = await getStaffTargetsForAccess(teamId, null);
+    if (!staffTargets.length) return null;
+
+    const participantName = getRegistrationParticipantName(data);
+    const programName = getRegistrationProgramName(data);
+    const destination = buildRegistrationReviewNotificationDestination({ teamId, formId });
+
+    await sendDirectTargetsNotification({
+      targets: staffTargets,
+      category: 'access',
+      title: `Registration submitted: ${participantName}`,
+      body: `${participantName} submitted ${programName}.`,
+      teamId,
+      eventId: String(context.params?.registrationId || '').trim() || null,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
+  });
+
+exports.notifyRegistrationStatusChanged = functions.firestore
+  .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
+  .onUpdate(async (change, context) => {
+    const beforeData = change.before.data() || {};
+    const afterData = change.after.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    const formId = String(context.params?.formId || '').trim();
+    const registrationId = String(context.params?.registrationId || '').trim();
+    const beforeStatus = normalizeAccessNotificationStatus(beforeData.status);
+    const afterStatus = normalizeAccessNotificationStatus(afterData.status);
+    if (!teamId || !formId || !registrationId || beforeStatus === afterStatus) return null;
+
+    const participantName = getRegistrationParticipantName(afterData);
+    const programName = getRegistrationProgramName(afterData);
+
+    if (afterStatus === 'approved') {
+      return sendRegistrationStatusNotification({
+        teamId,
+        formId,
+        registrationId,
+        registration: afterData,
+        title: `Registration approved: ${participantName}`,
+        body: `${participantName} is approved for ${programName}.`
+      });
+    }
+
+    if (afterStatus === 'denied') {
+      return sendRegistrationStatusNotification({
+        teamId,
+        formId,
+        registrationId,
+        registration: afterData,
+        title: `Registration declined: ${participantName}`,
+        body: `${participantName}'s ${programName} application was declined.`
+      });
+    }
+
+    if (beforeStatus === 'waitlisted' && afterStatus === 'offer-extended') {
+      return sendRegistrationStatusNotification({
+        teamId,
+        formId,
+        registrationId,
+        registration: afterData,
+        title: `Spot available: ${participantName}`,
+        body: `${programName} has an available spot for ${participantName}.`
+      });
+    }
+
+    return null;
+  });
+
+exports.notifyInviteRedeemed = functions.firestore
+  .document('accessCodes/{codeId}')
+  .onUpdate(async (change, context) => {
+    const beforeData = change.before.data() || {};
+    const afterData = change.after.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    if (beforeData.used === true || afterData.used !== true) return null;
+
+    const inviteType = String(afterData.type || '').trim();
+    if (!['parent_invite', 'admin_invite'].includes(inviteType)) return null;
+
+    const teamId = String(afterData.teamId || '').trim();
+    const inviterUid = String(afterData.generatedBy || '').trim();
+    if (!teamId || !inviterUid) return null;
+
+    const inviteTargets = (await getTargetsForCategory(teamId, 'access', null, {}, [{ uid: inviterUid, roles: ['staff'] }]))
+      .filter((target) => target.uid === inviterUid);
+    if (!inviteTargets.length) return null;
+
+    const usedByUid = String(afterData.usedBy || '').trim();
+    const usedBySnap = usedByUid ? await firestore.doc(`users/${usedByUid}`).get() : null;
+    const usedByData = usedBySnap?.exists ? (usedBySnap.data() || {}) : {};
+    const inviteeName = String(
+      usedByData.displayName
+      || usedByData.fullName
+      || usedByData.name
+      || usedByData.email
+      || afterData.email
+      || 'A user'
+    ).trim() || 'A user';
+    const destination = buildTeamNotificationDestination({ teamId });
+
+    await sendDirectTargetsNotification({
+      targets: inviteTargets,
+      category: 'access',
+      title: `${inviteeName} accepted your invite`,
+      body: inviteType === 'admin_invite'
+        ? `${inviteeName} now has staff access to the team.`
+        : `${inviteeName} joined the team as a parent contact.`,
+      teamId,
+      eventId: String(context.params?.codeId || '').trim() || null,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
+  });
 
 exports.notifyFeeMarkedPaid = functions.firestore
   .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')

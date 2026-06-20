@@ -73,8 +73,8 @@ describe('notification target index core helpers', () => {
         });
     });
 
-    it('filters staff-only notification categories out of parent-only targets', () => {
-        expect(notificationAudienceAllowsRoles('access', ['parent'])).toBe(false);
+    it('keeps access available to parents and staff while preserving staff-only categories', () => {
+        expect(notificationAudienceAllowsRoles('access', ['parent'])).toBe(true);
         expect(notificationAudienceAllowsRoles('access', ['staff'])).toBe(true);
         expect(notificationAudienceAllowsRoles('officiating', ['parent'])).toBe(false);
         expect(notificationAudienceAllowsRoles('fees', ['parent'])).toBe(true);
