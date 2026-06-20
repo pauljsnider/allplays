@@ -137,4 +137,41 @@ describe('Sports Connect registration sync core', () => {
                 }
             });
     });
+
+    it('ignores malformed payload and contact entries instead of crashing the sync snapshot builder', () => {
+        expect(buildSportsConnectRegistrationSnapshot(null, {
+            externalTeamId: 'sc-team-1',
+            fetchedAt: '2026-06-20T12:00:00.000Z'
+        })).toMatchObject({
+            externalTeamId: 'sc-team-1',
+            playerCount: 0,
+            players: []
+        });
+
+        expect(buildSportsConnectRegistrationSnapshot({
+            externalTeamId: 'sc-team-2',
+            players: [
+                null,
+                {
+                    id: 'athlete-2',
+                    firstName: 'Jamie',
+                    lastName: 'Fox',
+                    guardians: [null, { emailAddress: 'guardian@example.com' }]
+                }
+            ]
+        }, {
+            externalTeamId: 'sc-team-2',
+            fetchedAt: '2026-06-20T12:00:00.000Z'
+        })).toMatchObject({
+            externalTeamId: 'sc-team-2',
+            playerCount: 1,
+            players: [
+                {
+                    externalPlayerId: 'athlete-2',
+                    name: 'Jamie Fox',
+                    guardians: [{ name: '', email: 'guardian@example.com', phone: '', relation: '' }]
+                }
+            ]
+        });
+    });
 });

@@ -148,59 +148,75 @@ async function fetchSportsConnectRegistrationPayload({
   }
 }
 
+function normalizeRecord(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
 function getCandidateArray(payload = {}) {
+  const source = normalizeRecord(payload);
+  const data = normalizeRecord(source.data);
   const candidates = [
-    payload.players,
-    payload.rosterPlayers,
-    payload.roster,
-    payload.athletes,
-    payload.registrations,
-    payload.data?.players,
-    payload.data?.rosterPlayers,
-    payload.data?.roster,
-    payload.data?.athletes,
-    payload.data?.registrations
+    source.players,
+    source.rosterPlayers,
+    source.roster,
+    source.athletes,
+    source.registrations,
+    data.players,
+    data.rosterPlayers,
+    data.roster,
+    data.athletes,
+    data.registrations
   ];
   return candidates.find(Array.isArray) || [];
 }
 
 function getName(record = {}) {
-  const directName = compactString(record.name || record.fullName || record.displayName || record.playerName || record.athleteName);
+  const source = normalizeRecord(record);
+  const player = normalizeRecord(source.player);
+  const athlete = normalizeRecord(source.athlete);
+  const directName = compactString(source.name || source.fullName || source.displayName || source.playerName || source.athleteName);
   if (directName) return directName;
-  const firstName = compactString(record.firstName || record.givenName || record.player?.firstName || record.athlete?.firstName);
-  const lastName = compactString(record.lastName || record.familyName || record.player?.lastName || record.athlete?.lastName);
+  const firstName = compactString(source.firstName || source.givenName || player.firstName || athlete.firstName);
+  const lastName = compactString(source.lastName || source.familyName || player.lastName || athlete.lastName);
   return [firstName, lastName].filter(Boolean).join(' ');
 }
 
 function getExternalPlayerId(record = {}) {
+  const source = normalizeRecord(record);
+  const player = normalizeRecord(source.player);
+  const athlete = normalizeRecord(source.athlete);
   return compactString(
-    record.externalPlayerId ||
-    record.playerId ||
-    record.athleteId ||
-    record.personId ||
-    record.id ||
-    record.player?.id ||
-    record.athlete?.id ||
-    record.registrationId
+    source.externalPlayerId ||
+    source.playerId ||
+    source.athleteId ||
+    source.personId ||
+    source.id ||
+    player.id ||
+    athlete.id ||
+    source.registrationId
   );
 }
 
 function normalizeContacts(value) {
   if (!Array.isArray(value)) return [];
   return value
-    .map((contact) => ({
-      name: compactString(contact.name || contact.fullName || contact.displayName),
-      email: compactString(contact.email || contact.emailAddress).toLowerCase(),
-      phone: compactString(contact.phone || contact.phoneNumber || contact.mobilePhone),
-      relation: compactString(contact.relation || contact.relationship || contact.type)
-    }))
+    .map((contact) => {
+      const source = normalizeRecord(contact);
+      return {
+        name: compactString(source.name || source.fullName || source.displayName),
+        email: compactString(source.email || source.emailAddress).toLowerCase(),
+        phone: compactString(source.phone || source.phoneNumber || source.mobilePhone),
+        relation: compactString(source.relation || source.relationship || source.type)
+      };
+    })
     .filter((contact) => contact.name || contact.email || contact.phone || contact.relation);
 }
 
 function normalizeSportsConnectPlayer(record = {}) {
-  const player = record.player && typeof record.player === 'object' ? record.player : {};
-  const athlete = record.athlete && typeof record.athlete === 'object' ? record.athlete : {};
-  const merged = { ...record, ...player, ...athlete };
+  const source = normalizeRecord(record);
+  const player = normalizeRecord(source.player);
+  const athlete = normalizeRecord(source.athlete);
+  const merged = { ...source, ...player, ...athlete };
   const externalPlayerId = getExternalPlayerId(merged);
   const name = getName(merged);
   if (!externalPlayerId || !name) return null;
@@ -224,16 +240,17 @@ function normalizeSportsConnectPlayer(record = {}) {
 }
 
 function buildSportsConnectRegistrationSnapshot(payload = {}, { externalTeamId, fetchedAt = new Date().toISOString() } = {}) {
-  const players = getCandidateArray(payload)
+  const source = normalizeRecord(payload);
+  const players = getCandidateArray(source)
     .map(normalizeSportsConnectPlayer)
     .filter(Boolean);
   return {
     provider: 'Sports Connect',
     providerId: 'sports-connect',
     sourceType: 'sports-connect',
-    sourceId: compactString(payload.sourceId || payload.id || externalTeamId || 'sports-connect'),
-    externalTeamId: compactString(payload.externalTeamId || payload.teamId || externalTeamId),
-    externalTeamName: compactString(payload.teamName || payload.name || payload.externalTeamName),
+    sourceId: compactString(source.sourceId || source.id || externalTeamId || 'sports-connect'),
+    externalTeamId: compactString(source.externalTeamId || source.teamId || externalTeamId),
+    externalTeamName: compactString(source.teamName || source.name || source.externalTeamName),
     fetchedAt,
     rosterPlayers: players,
     players,
