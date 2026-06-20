@@ -3981,32 +3981,6 @@ async function backfillNotificationRecipientsForTeam(teamId, users, options = {}
   return writeCount;
 }
 
-function buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid = null, eligibleUsers = new Map() } = {}) {
-  const data = docSnap?.data?.() || {};
-  const uid = String(data.uid || docSnap?.id || '').trim();
-  if (!uid || uid === actorUid || !eligibleUsers.has(uid) || data.categories?.[category] !== true) return [];
-
-  const tokenEntries = Array.isArray(data.tokens)
-    ? data.tokens
-    : [{
-      deviceId: data.deviceId,
-      token: data.token,
-      platform: data.platform,
-      userAgent: data.userAgent
-    }];
-
-  return tokenEntries
-    .map((entry) => ({
-      uid,
-      deviceId: String(entry?.deviceId || '').trim(),
-      token: String(entry?.token || '').trim(),
-      teamId,
-      platform: String(entry?.platform || '').trim(),
-      userAgent: String(entry?.userAgent || '').trim()
-    }))
-    .filter((entry) => entry.deviceId && entry.token);
-}
-
 async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
@@ -4112,6 +4086,33 @@ async function getTargetsForCategoryUserIds(teamId, category, userIds = [], acto
     seenTargetIds.add(key);
     return true;
   });
+}
+
+function buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid = null, eligibleUsers = new Map() } = {}) {
+  const data = docSnap?.data?.() || {};
+  const uid = String(data.uid || docSnap?.id || '').trim();
+  if (!uid || uid === actorUid || !eligibleUsers.has(uid)) return [];
+  if (data.categories && data.categories[category] !== true) return [];
+
+  const tokenEntries = Array.isArray(data.tokens)
+    ? data.tokens
+    : [{
+      deviceId: data.deviceId,
+      token: data.token,
+      platform: data.platform,
+      userAgent: data.userAgent
+    }];
+
+  return tokenEntries
+    .map((entry) => ({
+      uid,
+      deviceId: String(entry?.deviceId || '').trim(),
+      token: String(entry?.token || '').trim(),
+      teamId,
+      platform: String(entry?.platform || '').trim(),
+      userAgent: String(entry?.userAgent || '').trim()
+    }))
+    .filter((entry) => entry.deviceId && entry.token);
 }
 
 async function pruneInvalidTokens(sendResult, targets) {
