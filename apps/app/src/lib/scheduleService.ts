@@ -123,7 +123,7 @@ import {
 } from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
 import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments } from './firestore/mappers';
@@ -134,6 +134,9 @@ const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPa
 
 const primaryDataTimeoutMs = 5000;
 const parentScheduleTeamConcurrency = 3;
+const scheduleHydrationCacheTtlMs = 30 * 1000;
+const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
+const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 
 function logScheduleWarning(message: string, operation: string, error: unknown, context: Record<string, unknown> = {}) {
@@ -2572,11 +2575,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const firstEvent = matchingEvents[0];
     if (!firstEvent) return;
 
-    const [rsvps, offers, claims] = await Promise.all([
-      loadRsvps(teamId, gameId).catch(() => []),
-      loadRideOffers(teamId, gameId).catch(() => []),
-      loadAssignmentClaims(teamId, gameId).catch(() => ({}))
-    ]);
+    const { rsvps, offers, claims } = await loadCachedEventHydrationDetails(teamId, gameId);
     const myRsvpByChild = resolveMyRsvpByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || firstEvent.rsvpSummary || summarizeRsvps(rsvps);
@@ -2600,11 +2599,36 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
   return events;
 }
 
+function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs = Date.now()) {
+  const eventTime = event.date?.getTime?.();
+  if (!Number.isFinite(eventTime)) return false;
+  return eventTime >= nowMs - parentHomeHydrationLookBehindMs
+    && eventTime <= nowMs + parentHomeHydrationLookAheadMs;
+}
+
+function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
+  return loadCachedAppData(
+    `event-details:${teamId}:${gameId}`,
+    async () => {
+      const [rsvps, offers, claims] = await Promise.all([
+        loadRsvps(teamId, gameId).catch(() => []),
+        loadRideOffers(teamId, gameId).catch(() => []),
+        loadAssignmentClaims(teamId, gameId).catch(() => ({}))
+      ]);
+      return { rsvps, offers, claims };
+    },
+    {
+      ttlMs: scheduleHydrationCacheTtlMs,
+      persist: false
+    }
+  );
+}
+
 export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadResult, user: AuthUser | null): Promise<ParentScheduleLoadResult> {
   if (!user?.uid || !schedule.events.length) {
     return schedule;
   }
-  await hydrateEventDetails(schedule.events, user);
+  await hydrateEventDetails(schedule.events.filter((event) => shouldEagerlyHydrateParentHomeEvent(event)), user);
   return schedule;
 }
 
