@@ -353,6 +353,7 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.getChatMessages).toHaveBeenCalledTimes(2);
         expect(dbMocks.getChatMessages).toHaveBeenNthCalledWith(1, 'team-parent', { limit: 1, conversationId: 'direct_user-1__coach-1' });
         expect(dbMocks.getChatMessages).toHaveBeenNthCalledWith(2, 'team-parent', { limit: 1, conversationId: 'group_family' });
+        expect(dbMocks.getChatMessages).not.toHaveBeenCalledWith('team-parent', { limit: 1, conversationId: 'team' });
         expect(inbox.teams[0].lastMessage).toEqual(expect.objectContaining({
             id: 'group-last',
             text: 'Van leaves at 5:30.'

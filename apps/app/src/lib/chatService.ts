@@ -568,20 +568,18 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
     ));
 
   if (fallbackConversations.length > 0) {
-    // Fetch the remaining conversations' latest messages in parallel instead of
-    // paying one serial round-trip per empty conversation (#2035). Pick the newest
-    // message; ties keep ranked order (Promise.allSettled preserves input order).
-    const fallbackResults = await Promise.allSettled(
-      fallbackConversations.map((conversation) => getLatestConversationMessage(teamId, conversation.id))
-    );
-    let best: { message: ChatMessage | null; conversationId: string | null } = { message: null, conversationId: null };
-    fallbackResults.forEach((result, index) => {
-      if (result.status !== 'fulfilled' || !result.value) return;
-      if (!best.message || getMessageTime(result.value) > getMessageTime(best.message)) {
-        best = { message: result.value, conversationId: fallbackConversations[index].id };
+    // Preserve ranked bounded reads. Once conversations have activity metadata,
+    // walk older candidates in order until one yields a message instead of
+    // fanning out to every remaining conversation.
+    for (const conversation of fallbackConversations) {
+      const message = await getLatestConversationMessage(teamId, conversation.id);
+      if (message) {
+        return {
+          message,
+          conversationId: conversation.id
+        };
       }
-    });
-    if (best.message) return best;
+    }
   }
 
   return {
