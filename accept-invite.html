@@ -279,9 +279,19 @@
 
                     // Process the invite code
                     if (inviteCode) {
-                        const inviteResult = await processInviteOnce(userId, inviteCode, result?.user?.email || email);
-                        if (inviteResult) {
-                            showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                        try {
+                            const inviteResult = await processInviteOnce(userId, inviteCode, result?.user?.email || email);
+                            if (inviteResult) {
+                                showSuccess(inviteResult.message, inviteResult.redirectUrl);
+                            }
+                        } catch (error) {
+                            if (isInviteAlreadyRedeemedError(error)) {
+                                // Returning user re-opening an already-redeemed invite link (#1808):
+                                // behave like a normal login and route to their dashboard.
+                                showSuccess('You’re already set up — taking you to your dashboard.', getInviteDashboardUrl(inviteType));
+                            } else {
+                                throw error;
+                            }
                         }
                     } else {
                         // No invite code - just redirect to dashboard

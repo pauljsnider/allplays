@@ -461,6 +461,37 @@ describe('accept-invite page admin flow', () => {
         expect(loggedOut.window.location.href).toBe('http://example.com/login.html?code=NEW11122&type=admin');
     });
 
+    it('routes same-device email-link reopen with an already-used invite code to the dashboard', async () => {
+        const { elements, window, auth, db } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=exist111&type=admin',
+            authUser: null,
+            storageEntries: {
+                emailForSignIn: 'coach@example.com'
+            },
+            authOverrides: {
+                isEmailSignInLink: vi.fn(() => true),
+                completeEmailLinkSignIn: vi.fn().mockResolvedValue({
+                    user: {
+                        uid: 'admin-1',
+                        email: 'coach@example.com'
+                    }
+                })
+            },
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: false,
+                    message: 'Code already used'
+                })
+            }
+        });
+
+        expect(auth.completeEmailLinkSignIn).toHaveBeenCalledWith('coach@example.com');
+        expect(db.validateAccessCode).toHaveBeenCalledWith('exist111');
+        expect(elements.get('error-state').classList.contains('hidden')).toBe(true);
+        expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
+        expect(window.location.href).toBe('http://example.com/dashboard.html');
+    });
+
     it('completes cross-device email-link admin redemption after the user confirms their email', async () => {
         const { elements, window, auth, db } = await bootAcceptInvite({
             href: 'http://example.com/accept-invite.html?code=exist111&type=admin',
