@@ -63,6 +63,11 @@ describe('app push notification routing', () => {
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/game-day.html?teamId=team-1&gameId=game-7' })).toBe('/schedule/team-1/game-7?section=game');
     });
 
+    it('returns the home route when notification data is missing', () => {
+        expect(resolvePushNotificationRoute(undefined)).toBe('/home');
+        expect(resolvePushNotificationRoute(null)).toBe('/home');
+    });
+
     it('keeps and clears pending notification routes for delayed auth hydration', () => {
         rememberPendingPushRoute('/teams/team-1/fees/batch-1?recipientId=recipient-1');
         expect(readPendingPushRoute()).toBe('/teams/team-1/fees/batch-1?recipientId=recipient-1');

@@ -65,13 +65,6 @@ function normalizeAppRoute(route: unknown) {
     return value;
 }
 
-function readPayload(input: unknown): PushPayload {
-    if (!input || typeof input !== 'object') {
-        return {};
-    }
-    return input as PushPayload;
-}
-
 function buildLegacyLinkFallback(link: string) {
     if (!link) {
         return '';
@@ -115,7 +108,11 @@ function buildLegacyLinkFallback(link: string) {
 }
 
 export function resolvePushNotificationRoute(input: unknown) {
-    const payload = readPayload(input);
+    if (!input || typeof input !== 'object') {
+        return '/home';
+    }
+
+    const payload = input as PushPayload;
     const appRoute = normalizeAppRoute(payload.appRoute);
     if (appRoute) {
         return appRoute;
