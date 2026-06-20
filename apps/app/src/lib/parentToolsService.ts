@@ -66,6 +66,7 @@ import {
   sortByMediaOrder
 } from '../../../../js/team-media-utils.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { formatCurrencyFromCents as formatCurrency } from './money';
 import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
@@ -1138,13 +1139,6 @@ function getArrayField(source: any, keys: string[]) {
     if (Array.isArray(source?.[key])) return source[key].filter(Boolean);
   }
   return [];
-}
-
-function formatCurrency(cents: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency || 'USD'
-  }).format((Number(cents) || 0) / 100);
 }
 
 function escapeIcs(value: unknown) {
