@@ -432,6 +432,11 @@
                     }
                 } catch (error) {
                     console.error('Error:', error);
+                    if (isInviteAlreadyRedeemedError(error)) {
+                        // Already redeemed previously (#1808) — route to dashboard like a normal login.
+                        showSuccess('You’re already set up — taking you to your dashboard.', getInviteDashboardUrl(inviteType));
+                        return;
+                    }
                     errorDiv.textContent = error.message || 'Invalid or expired code';
                     errorDiv.classList.remove('hidden');
                     btn.disabled = false;
