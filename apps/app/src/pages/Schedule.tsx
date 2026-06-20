@@ -5,7 +5,7 @@ import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { addTeamCalendarUrl, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
-import { recordFirstMeaningfulRender, startUxTimer } from '../lib/uxTiming';
+import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -213,8 +213,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
     clearError();
     setScheduleLoadError(null);
     setStatusMessage(null);
-    const timer = startUxTimer('schedule summary load');
     const hasExistingSchedule = hasLoadedScheduleRef.current;
+    const timer = startScreenMountTimer('schedule', {
+      force,
+      hasExistingSchedule
+    });
     const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);
     const scheduleCacheTtlMs = 60 * 1000 * 5;
     const cached = getCachedAppData(cacheKey);
@@ -256,9 +259,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
           timer.end({
             cacheHit: Boolean(cached) && !force,
             force,
-            children: result.children.length,
-            eventRows: result.events.length,
-            groupedEvents: getCalendarScheduleEntries(result.events).length
+            childCount: result.children.length,
+            eventRowCount: result.events.length,
+            groupedEventCount: getCalendarScheduleEntries(result.events).length
           });
         },
         onError: (loadError) => {

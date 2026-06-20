@@ -8,9 +8,20 @@ import { recordAppUxTiming } from './telemetry';
 export const UX_TIMING = {
   appStartup: 'app startup',
   firstMeaningfulRender: 'first meaningful render',
+  homeMount: 'home mount load',
+  scheduleMount: 'schedule mount load',
+  messagesMount: 'messages mount load',
   rsvpTap: 'rsvp tap latency',
   chatSend: 'chat send latency'
 } as const;
+
+type ScreenMountRoute = 'home' | 'schedule' | 'messages';
+
+const SCREEN_MOUNT_TIMING: Record<ScreenMountRoute, typeof UX_TIMING[keyof typeof UX_TIMING]> = {
+  home: UX_TIMING.homeMount,
+  schedule: UX_TIMING.scheduleMount,
+  messages: UX_TIMING.messagesMount
+};
 
 export function now() {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -23,6 +34,18 @@ export function startUxTimer(label: string, baseMeta: Record<string, unknown> = 
       recordUxTiming(label, startedAt, { ...baseMeta, ...meta });
     }
   };
+}
+
+/**
+ * Times a top-level app screen load using stable labels and bounded metadata so
+ * local logs and telemetry payloads can compare before/after screen work.
+ */
+export function startScreenMountTimer(route: ScreenMountRoute, baseMeta: Record<string, unknown> = {}) {
+  return startUxTimer(SCREEN_MOUNT_TIMING[route], {
+    category: 'screen_mount',
+    route,
+    ...baseMeta
+  });
 }
 
 /**
