@@ -56,6 +56,7 @@ export type ChatAttachmentFirestoreRecord = {
 
 export type ChatMessageFirestoreRecord = {
     id: string;
+    clientMessageId?: string | null;
     text?: string | null;
     senderId?: string | null;
     senderName?: string | null;
@@ -79,6 +80,9 @@ export type ChatMessageFirestoreRecord = {
     recipientIds?: string[];
     targetRole?: string | null;
     conversationId?: string | null;
+    sendStatus?: 'pending' | 'failed';
+    sendError?: string | null;
+    attachmentCount?: number;
     _doc?: unknown;
 };
 

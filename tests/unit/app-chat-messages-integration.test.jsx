@@ -1882,6 +1882,73 @@ describe('React app messages integration', () => {
         await flush();
     });
 
+    it('queues optimistic chat sends without blocking the composer', async () => {
+        const firstSend = createDeferred();
+        const secondSend = createDeferred();
+        chatMocks.sendTeamChatMessage
+            .mockImplementationOnce(() => firstSend.promise)
+            .mockImplementationOnce(() => secondSend.promise);
+        const { container } = await renderMessages('/messages/team-1');
+        const textarea = container.querySelector('textarea');
+
+        await setFieldValue(textarea, 'First update');
+        await click(container, 'Send message');
+
+        expect(textarea.value).toBe('');
+        expect(container.textContent).toContain('First update');
+        expect(container.textContent).toContain('Sending');
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1);
+
+        await setFieldValue(textarea, 'Second update');
+        await click(container, 'Send message');
+
+        expect(textarea.value).toBe('');
+        expect(container.textContent).toContain('Second update');
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            firstSend.resolve({ conversationId: 'team', createdConversation: null, wantsAi: false });
+        });
+        await flush();
+
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledTimes(2);
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            text: 'First update',
+            clientMessageId: expect.stringMatching(/^client_user-1_/)
+        }));
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            text: 'Second update',
+            clientMessageId: expect.stringMatching(/^client_user-1_/)
+        }));
+
+        await act(async () => {
+            secondSend.resolve({ conversationId: 'team', createdConversation: null, wantsAi: false });
+        });
+        await flush();
+    });
+
+    it('marks failed optimistic sends retryable with the same client message id', async () => {
+        chatMocks.sendTeamChatMessage
+            .mockRejectedValueOnce(new Error('Callable down'))
+            .mockResolvedValueOnce({ conversationId: 'team', createdConversation: null, wantsAi: false });
+        const { container } = await renderMessages('/messages/team-1');
+        const textarea = container.querySelector('textarea');
+
+        await setFieldValue(textarea, 'Retry this update');
+        await click(container, 'Send message');
+        await flush();
+
+        expect(container.textContent).toContain('Retry this update');
+        expect(container.textContent).toContain('Callable down');
+        const firstClientMessageId = chatMocks.sendTeamChatMessage.mock.calls[0][0].clientMessageId;
+
+        await click(container, 'Retry');
+
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledTimes(2);
+        expect(chatMocks.sendTeamChatMessage.mock.calls[1][0].clientMessageId).toBe(firstClientMessageId);
+        expect(chatMocks.sendTeamChatMessage.mock.calls[1][0].text).toBe('Retry this update');
+    });
+
     it('sends attachment-only updates and clears local previews after posting', async () => {
         const { container } = await renderMessages('/messages/team-1');
         const fileInput = container.querySelector('input[type="file"]');
