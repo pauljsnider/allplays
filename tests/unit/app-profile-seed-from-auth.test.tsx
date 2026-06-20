@@ -33,7 +33,8 @@ const publicActionsMocks = vi.hoisted(() => ({
 const pushServiceMocks = vi.hoisted(() => ({
     enablePushNotificationsForUser: vi.fn(),
     getPushNotificationPermissionStatus: vi.fn(),
-    openPushNotificationSettings: vi.fn()
+    openPushNotificationSettings: vi.fn(),
+    runPushNotificationPrimer: vi.fn()
 }));
 
 const shellLayoutState = vi.hoisted(() => ({
@@ -129,6 +130,7 @@ describe('Profile seed from auth.profile', () => {
             canOpenSettings: false
         });
         pushServiceMocks.openPushNotificationSettings.mockResolvedValue(undefined);
+        pushServiceMocks.runPushNotificationPrimer.mockResolvedValue(true);
         shellLayoutState.isDesktopWeb = false;
         shellLayoutState.isNative = false;
     });
