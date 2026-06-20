@@ -20,6 +20,7 @@ const profileServiceMocks = {
 };
 
 const locationAssignMock = vi.fn();
+let localStorageEntries: Map<string, string>;
 
 async function loadPushService() {
     return await import('./pushService');
@@ -54,6 +55,22 @@ describe('pushService permission states', () => {
             value: {
                 ...window.location,
                 assign: locationAssignMock
+            }
+        });
+        localStorageEntries = new Map();
+        Object.defineProperty(window, 'localStorage', {
+            configurable: true,
+            value: {
+                getItem: vi.fn((key: string) => localStorageEntries.get(key) || null),
+                setItem: vi.fn((key: string, value: string) => {
+                    localStorageEntries.set(key, value);
+                }),
+                removeItem: vi.fn((key: string) => {
+                    localStorageEntries.delete(key);
+                }),
+                clear: vi.fn(() => {
+                    localStorageEntries.clear();
+                })
             }
         });
     });
@@ -148,6 +165,61 @@ describe('pushService permission states', () => {
                 state: 'blocked',
                 canOpenSettings: true
             }
+        });
+    });
+
+    it('registers the native token after the OS prompt is granted', async () => {
+        firebaseMessagingMocks.checkPermissions.mockResolvedValue({ receive: 'prompt' });
+        firebaseMessagingMocks.requestPermissions.mockResolvedValue({ receive: 'granted' });
+        const { enablePushNotificationsForUser } = await loadPushService();
+
+        await expect(enablePushNotificationsForUser('user-1')).resolves.toEqual({
+            token: 'native-token',
+            platform: 'ios'
+        });
+
+        expect(firebaseMessagingMocks.requestPermissions).toHaveBeenCalledTimes(1);
+        expect(profileServiceMocks.saveNotificationDeviceToken).toHaveBeenCalledWith('user-1', {
+            token: 'native-token',
+            platform: 'ios',
+            userAgent: navigator.userAgent || ''
+        });
+    });
+
+    it('tracks notification primer decline while allowing the app to ask again later', async () => {
+        const {
+            getPushNotificationPrimerState,
+            runPushNotificationPrimer
+        } = await loadPushService();
+
+        expect(getPushNotificationPrimerState('messages')).toMatchObject({
+            hasResponded: false,
+            accepted: false,
+            declined: false,
+            canAskAgain: true
+        });
+
+        const declinePrimer = vi.fn(() => false);
+        await expect(runPushNotificationPrimer('messages', { confirm: declinePrimer })).resolves.toBe(false);
+        expect(declinePrimer).toHaveBeenCalledWith(expect.objectContaining({
+            title: 'Turn on message notifications?'
+        }), expect.objectContaining({
+            context: 'messages'
+        }));
+        expect(getPushNotificationPrimerState('messages')).toMatchObject({
+            hasResponded: true,
+            accepted: false,
+            declined: true,
+            canAskAgain: true
+        });
+
+        const acceptPrimer = vi.fn(() => true);
+        await expect(runPushNotificationPrimer('messages', { confirm: acceptPrimer })).resolves.toBe(true);
+        expect(getPushNotificationPrimerState('messages')).toMatchObject({
+            hasResponded: true,
+            accepted: true,
+            declined: false,
+            canAskAgain: false
         });
     });
 
