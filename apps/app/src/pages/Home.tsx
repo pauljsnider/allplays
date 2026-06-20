@@ -27,7 +27,14 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import { HomePageSkeleton } from '../components/PageSkeletons';
-import { loadParentHomeSummaryBootstrap, loadParentHomeWithSecondaryData } from '../lib/homeService';
+import {
+  buildParentHomeFromSecondarySnapshot,
+  hydrateParentHomeScheduleSlice,
+  loadParentHomeFeesSlice,
+  loadParentHomeInboxSlice,
+  loadParentHomeSummaryBootstrap,
+  type ParentHomeSecondarySnapshot
+} from '../lib/homeService';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import {
   blockFriend,
@@ -144,16 +151,95 @@ export function Home({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [loadedHomeDetailsUserId, setLoadedHomeDetailsUserId] = useState<string | null>(null);
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
+  const [homeSecondaryPending, setHomeSecondaryPending] = useState(0);
+  const homeRefreshRequestId = useRef(0);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
   const hasStartedInitialHomeLoadRef = useRef(false);
 
   const authUserId = auth.user?.uid || null;
   const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
+  const homeRefreshing = loading || homeSecondaryPending > 0;
+
+  const startProgressiveHomeSecondaryLoad = (
+    user: NonNullable<AuthState['user']>,
+    schedule: Awaited<ReturnType<typeof loadParentHomeSummaryBootstrap>>['schedule'],
+    refreshId: number
+  ) => {
+    const snapshot: ParentHomeSecondarySnapshot = {
+      schedule,
+      inboxTeams: [],
+      fees: []
+    };
+    let latestHome = buildParentHomeFromSecondarySnapshot(snapshot);
+    const isCurrentRefresh = () => homeRefreshRequestId.current === refreshId && auth.user?.uid === user.uid;
+    const publishHome = () => {
+      latestHome = buildParentHomeFromSecondarySnapshot(snapshot);
+      if (isCurrentRefresh()) {
+        setHome(latestHome);
+      }
+    };
+    const runSlice = async <T,>(loadSlice: () => Promise<T>, applySlice: (value: T) => void) => {
+      setHomeSecondaryPending((count) => count + 1);
+      try {
+        const value = await loadSlice();
+        if (!isCurrentRefresh()) return;
+        applySlice(value);
+        publishHome();
+      } catch (sliceError) {
+        if (!isCurrentRefresh()) return;
+        const appError = toAppServiceError(sliceError, 'Unable to refresh Home details.');
+        setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
+      } finally {
+        setHomeSecondaryPending((count) => Math.max(0, count - 1));
+      }
+    };
+
+    const sliceTasks = [
+      runSlice(
+        () => hydrateParentHomeScheduleSlice(user, snapshot.schedule),
+        (hydratedSchedule) => {
+          snapshot.schedule = hydratedSchedule;
+        }
+      ),
+      runSlice(
+        () => loadParentHomeInboxSlice(user),
+        (inboxTeams) => {
+          snapshot.inboxTeams = inboxTeams;
+        }
+      ),
+      runSlice(
+        () => loadParentHomeFeesSlice(user, snapshot.schedule),
+        (fees) => {
+          snapshot.fees = fees;
+        }
+      )
+    ];
+
+    void Promise.allSettled(sliceTasks).then(() => {
+      if (!isCurrentRefresh()) return;
+      setLoadedHomeDetailsUserId(user.uid);
+      void runSecondaryLoad(
+        async () => {
+          setSocial(await loadSocialHome(user, latestHome));
+        },
+        {
+          getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
+          rethrow: false,
+          onError: (secondaryError) => {
+            if (!isCurrentRefresh()) return;
+            setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')) });
+          }
+        }
+      );
+    });
+  };
 
   const refreshHome = async ({ force = false }: { force?: boolean } = {}) => {
     const user = auth.user;
     if (!user) return;
+    const refreshId = homeRefreshRequestId.current + 1;
+    homeRefreshRequestId.current = refreshId;
     const hasExistingHome = loadedHomeDetailsUserId === user.uid;
     clearError();
     setHomeLoadError(null);
@@ -161,32 +247,13 @@ export function Home({ auth }: { auth: AuthState }) {
     return runPrimaryLoad(
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, { force });
+        if (homeRefreshRequestId.current !== refreshId || auth.user?.uid !== user.uid) {
+          return summary;
+        }
         setHome(summary.home);
+        setLoadedHomeDetailsUserId(user.uid);
         setHomeLoadError(null);
-
-        void runSecondaryLoad(
-          async () => {
-            const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
-            setHome(secondaryHome);
-            setSocial(await loadSocialHome(user, secondaryHome));
-            setLoadedHomeDetailsUserId(user.uid);
-            setHomeLoadError(null);
-          },
-          {
-            rethrow: false,
-            getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
-            onError: (secondaryError) => {
-              const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
-              if (!hasExistingHome) {
-                setHomeLoadError(appError);
-                setLoadedHomeDetailsUserId(null);
-                setSocial(emptySocialHome());
-                return;
-              }
-              setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
-            }
-          }
-        );
+        startProgressiveHomeSecondaryLoad(user, summary.schedule, refreshId);
 
         return summary;
       },
@@ -342,8 +409,8 @@ export function Home({ auth }: { auth: AuthState }) {
             <h1 className="mt-0.5 truncate text-xl font-black leading-tight text-gray-950">Today for your players</h1>
             <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{displayName}</p>
           </div>
-          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refreshHome({ force: true })} disabled={loading} aria-label="Refresh Home" title="Refresh Home">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+          <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0 sm:!w-auto sm:!px-3 text-xs" onClick={() => refreshHome({ force: true })} disabled={homeRefreshing} aria-label="Refresh Home" title="Refresh Home">
+            {homeRefreshing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
             <span className="hidden sm:inline">Refresh</span>
           </button>
         </div>

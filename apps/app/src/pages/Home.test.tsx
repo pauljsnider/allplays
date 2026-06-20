@@ -6,6 +6,10 @@ import { Home } from './Home';
 import type { AuthState } from '../lib/types';
 
 const homeServiceMocks = vi.hoisted(() => ({
+  buildParentHomeFromSecondarySnapshot: vi.fn(),
+  hydrateParentHomeScheduleSlice: vi.fn(),
+  loadParentHomeFeesSlice: vi.fn(),
+  loadParentHomeInboxSlice: vi.fn(),
   loadParentHomeSummaryBootstrap: vi.fn(),
   loadParentHomeWithSecondaryData: vi.fn()
 }));
@@ -309,7 +313,11 @@ describe('Home', () => {
       value: vi.fn(),
       writable: true
     });
-    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: baseHome, schedule: [] });
+    homeServiceMocks.buildParentHomeFromSecondarySnapshot.mockImplementation(() => baseHome);
+    homeServiceMocks.hydrateParentHomeScheduleSlice.mockImplementation((_, schedule) => Promise.resolve(schedule));
+    homeServiceMocks.loadParentHomeFeesSlice.mockResolvedValue([]);
+    homeServiceMocks.loadParentHomeInboxSlice.mockResolvedValue([]);
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: baseHome, schedule: { children: [], events: [] } });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(baseHome);
     socialServiceMocks.loadSocialHome.mockResolvedValue(baseSocial);
     scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValue({ hasAccess: false, teamCount: 0 });
@@ -362,14 +370,14 @@ describe('Home', () => {
     expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
   });
 
-  it('shows retryable Home error UI when the initial secondary load fails', async () => {
-    homeServiceMocks.loadParentHomeWithSecondaryData.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+  it('keeps summary content visible when an initial secondary slice fails', async () => {
+    homeServiceMocks.loadParentHomeInboxSlice.mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByText('Home could not connect')).toBeTruthy();
-    expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(await screen.findByText('Home details could not refresh while offline.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Retry loading Home' })).toBeNull();
   });
 
   it('refreshes the social feed with the async loading helper', async () => {
@@ -549,8 +557,8 @@ describe('Home', () => {
 
   it('renders Today content from larger Home payloads and keeps it visible after refresh', async () => {
     const largeHome = buildLargeHomeModel();
-    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: largeHome, schedule: [] });
-    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(largeHome);
+    homeServiceMocks.buildParentHomeFromSecondarySnapshot.mockImplementation(() => largeHome);
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: largeHome, schedule: { children: [], events: [] } });
 
     renderHome(signedInAuth);
 
@@ -564,7 +572,9 @@ describe('Home', () => {
 
     await waitFor(() => {
       expect(homeServiceMocks.loadParentHomeSummaryBootstrap).toHaveBeenCalledTimes(2);
-      expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(2);
+      expect(homeServiceMocks.hydrateParentHomeScheduleSlice).toHaveBeenCalledTimes(2);
+      expect(homeServiceMocks.loadParentHomeInboxSlice).toHaveBeenCalledTimes(2);
+      expect(homeServiceMocks.loadParentHomeFeesSlice).toHaveBeenCalledTimes(2);
     });
 
     expect(screen.getByRole('heading', { name: 'Today for your players' })).toBeTruthy();

@@ -4,6 +4,7 @@ import { loadChatInbox } from './chatService';
 import { startUxTimer } from './uxTiming';
 import {
   buildParentHomeModel,
+  type ParentHomeFee,
   type ParentHomeInboxTeam,
   type ParentHomeModel
 } from './homeLogic';
@@ -20,6 +21,12 @@ import type { AuthUser } from './types';
 const homeSummaryTtlMs = 45 * 1000;
 const homeSecondaryTtlMs = 30 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
+
+export type ParentHomeSecondarySnapshot = {
+  schedule: ParentScheduleLoadResult;
+  inboxTeams: ParentHomeInboxTeam[];
+  fees: ParentHomeFee[];
+};
 
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
   if (!user?.uid) {
@@ -119,22 +126,45 @@ export async function loadParentHomeWithSecondaryData(
   const cacheKey = `home-secondary:${user.uid}`;
   return loadCachedAppData(cacheKey, async () => {
     const schedule = options.schedule || await loadParentScheduleSummary(user, { force: options.force });
-    await hydrateParentScheduleDetails(schedule, user);
-    const [chatInbox, rawFees] = await Promise.all([
-      loadChatInbox(user).catch((error) => {
-        throw toAppServiceError(error, 'Unable to load Home chat.');
-      }),
-      Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
-        throw toAppServiceError(error, 'Unable to load Home fees.');
-      })
+    const [hydratedSchedule, inboxTeams, fees] = await Promise.all([
+      hydrateParentHomeScheduleSlice(user, schedule),
+      loadParentHomeInboxSlice(user),
+      loadParentHomeFeesSlice(user, schedule)
     ]);
-    return buildParentHomeModel({
-      children: schedule.children,
-      events: schedule.events,
-      inboxTeams: normalizeInboxTeams(chatInbox.teams || []),
-      fees: (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee))
-    });
+    return buildParentHomeFromSecondarySnapshot({ schedule: hydratedSchedule, inboxTeams, fees });
   }, { ttlMs: homeSecondaryTtlMs, force: options.force });
+}
+
+export async function hydrateParentHomeScheduleSlice(user: AuthUser, schedule: ParentScheduleLoadResult) {
+  await hydrateParentScheduleDetails(schedule, user);
+  return schedule;
+}
+
+export async function loadParentHomeInboxSlice(user: AuthUser) {
+  const chatInbox = await loadChatInbox(user).catch((error) => {
+    throw toAppServiceError(error, 'Unable to load Home chat.');
+  });
+  return normalizeInboxTeams(chatInbox.teams || []);
+}
+
+export async function loadParentHomeFeesSlice(user: AuthUser, schedule: ParentScheduleLoadResult) {
+  const rawFees = await Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
+    throw toAppServiceError(error, 'Unable to load Home fees.');
+  });
+  return (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee));
+}
+
+export function buildParentHomeFromSecondarySnapshot({
+  schedule,
+  inboxTeams = [],
+  fees = []
+}: ParentHomeSecondarySnapshot): ParentHomeModel {
+  return buildParentHomeModel({
+    children: schedule.children,
+    events: schedule.events,
+    inboxTeams,
+    fees
+  });
 }
 
 export async function loadParentScheduleSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentScheduleLoadResult> {
