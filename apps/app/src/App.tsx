@@ -15,6 +15,7 @@ import {
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { shouldReloadTeamsToHome } from './lib/reloadRouting';
 import { addPushNotificationOpenListener, ensureAndroidNotificationChannels } from './lib/pushService';
+import { hasAuthHint } from './lib/authHint';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
 
@@ -46,7 +47,7 @@ const TeamMedia = lazy(() => import('./pages/TeamMedia').then((module) => ({ def
 const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
 const VerifyPending = lazy(() => import('./pages/VerifyPending').then((module) => ({ default: module.VerifyPending })));
 
-const protectedRouteBootstrapGraceMs = 3000;
+const protectedRouteBootstrapGraceMs = 800;
 
 export default function App() {
   const auth = useAuth();
@@ -224,6 +225,9 @@ function isBrowserReload() {
 
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {
   const [bootstrapGraceExpired, setBootstrapGraceExpired] = useState(false);
+  // Snapshot the persisted hint once at mount so a returning signed-in user gets
+  // the app shell + skeleton immediately instead of a blocking spinner (#2038).
+  const optimisticReturningUser = useRef(hasAuthHint()).current;
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -235,31 +239,35 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
     return () => window.clearTimeout(timeoutId);
   }, []);
 
-  if (auth.loading && !auth.user) {
-    return <LoadingScreen />;
+  // Auth not yet resolved: optimistically render the shell+skeleton for a known
+  // returning user; otherwise hold the lightweight loading screen briefly.
+  if (!auth.user && (auth.loading || !bootstrapGraceExpired)) {
+    return optimisticReturningUser ? renderShell(<ProtectedRouteLoadingState pathname={location.pathname} />) : <LoadingScreen />;
   }
 
-  if (!auth.user && !bootstrapGraceExpired) {
-    return <LoadingScreen />;
-  }
-
+  // Resolved signed-out: redirect (no protected content rendered for users
+  // without a hint, so there is no flash of protected UI).
   if (!auth.user) {
     return <Navigate to="/auth" replace />;
   }
 
-  return (
-    <AppShell auth={auth}>
-      <ErrorBoundary
-        name={`route:${location.pathname}`}
-        resetKey={`${location.pathname}${location.search}`}
-        onGoHome={() => navigate('/home', { replace: true })}
-      >
-        <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>
-          {children}
-        </Suspense>
-      </ErrorBoundary>
-    </AppShell>
-  );
+  return renderShell(children);
+
+  function renderShell(content: ReactNode) {
+    return (
+      <AppShell auth={auth}>
+        <ErrorBoundary
+          name={`route:${location.pathname}`}
+          resetKey={`${location.pathname}${location.search}`}
+          onGoHome={() => navigate('/home', { replace: true })}
+        >
+          <Suspense fallback={<ProtectedRouteLoadingState pathname={location.pathname} />}>
+            {content}
+          </Suspense>
+        </ErrorBoundary>
+      </AppShell>
+    );
+  }
 }
 
 function LoadingScreen() {

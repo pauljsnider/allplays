@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AuthState, AuthUser } from './types';
 import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
+import { clearAuthHint, writeAuthHint } from './authHint';
 
 export function useAuth(): AuthState {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -21,6 +22,7 @@ export function useAuth(): AuthState {
     });
 
     if (!currentUser) {
+      clearAuthHint();
       setUser(null);
       setProfile(null);
       setLoading(false);
@@ -29,6 +31,7 @@ export function useAuth(): AuthState {
 
     try {
       const hydrated = await hydrateFirebaseUser(currentUser);
+      if (hydrated.user?.uid) writeAuthHint(hydrated.user.uid);
       setUser(hydrated.user);
       setProfile(hydrated.profile);
       return hydrated.user;
@@ -48,6 +51,7 @@ export function useAuth(): AuthState {
       setError(null);
 
       if (!firebaseUser) {
+        clearAuthHint();
         setUser(null);
         setProfile(null);
         setLoading(false);
@@ -56,6 +60,7 @@ export function useAuth(): AuthState {
 
       try {
         const hydrated = await hydrateFirebaseUser(firebaseUser);
+        if (hydrated.user?.uid) writeAuthHint(hydrated.user.uid);
         setUser(hydrated.user);
         setProfile(hydrated.profile);
       } catch (hydrateError: any) {
@@ -72,6 +77,7 @@ export function useAuth(): AuthState {
 
   const signOutAndClear = useCallback(async () => {
     setError(null);
+    clearAuthHint();
     const cleanup = signOut();
     setUser(null);
     setProfile(null);
