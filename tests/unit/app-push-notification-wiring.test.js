@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { ANDROID_NOTIFICATION_CHANNELS } = require('../../functions/notification-delivery-metadata.cjs');
+
+function extractAppAndroidChannelIds(source) {
+    return [...source.matchAll(/id: '([^']+)'/g)].map((match) => match[1]);
+}
 
 describe('app push notification wiring', () => {
     it('registers native notification-open listeners and consumes pending routes after auth bootstrap', () => {
@@ -15,9 +23,7 @@ describe('app push notification wiring', () => {
 
     it('keeps Android channel metadata local to the app so Vite does not try to import the Functions CommonJS bundle in the browser', () => {
         const source = readFileSync(new URL('../../apps/app/src/lib/pushService.ts', import.meta.url), 'utf8');
-        expect(source).toContain("id: 'allplays_messages'");
-        expect(source).toContain("id: 'allplays_game_day'");
-        expect(source).toContain("id: 'allplays_schedule'");
+        expect(extractAppAndroidChannelIds(source)).toEqual(ANDROID_NOTIFICATION_CHANNELS.map((channel) => channel.id));
         expect(source).not.toContain('notification-delivery-metadata.cjs');
     });
 });

@@ -3,7 +3,16 @@ import { loadChatInbox, markTeamChatRead } from './chatService';
 import type { AuthUser } from './types';
 
 function isNativeRuntime(): boolean {
-    return Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
+    const protocol = typeof window === 'undefined' ? '' : window.location.protocol;
+    return Capacitor.isNativePlatform() || protocol === 'capacitor:';
+}
+
+export function normalizeAppIconBadgeCount(count: unknown): number {
+    const numericCount = typeof count === 'number' ? count : Number(count);
+    if (!Number.isFinite(numericCount) || numericCount <= 0) {
+        return 0;
+    }
+    return Math.floor(numericCount);
 }
 
 /**
@@ -16,8 +25,9 @@ export async function updateAppIconBadge(count: number): Promise<void> {
     if (!isNativeRuntime()) return;
     try {
         const { Badge } = await import('@capawesome/capacitor-badge');
-        if (count > 0) {
-            await Badge.set({ count });
+        const normalizedCount = normalizeAppIconBadgeCount(count);
+        if (normalizedCount > 0) {
+            await Badge.set({ count: normalizedCount });
         } else {
             await Badge.clear();
         }
@@ -29,7 +39,7 @@ export async function updateAppIconBadge(count: number): Promise<void> {
 export async function refreshUnreadChatBadge(user: AuthUser | null): Promise<void> {
     if (!user?.uid || !isNativeRuntime()) return;
     const result = await loadChatInbox(user, { includeLastMessages: false });
-    const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
+    const totalUnread = result.teams.reduce((sum, team) => sum + normalizeAppIconBadgeCount(team.unreadCount), 0);
     await updateAppIconBadge(totalUnread);
 }
 
