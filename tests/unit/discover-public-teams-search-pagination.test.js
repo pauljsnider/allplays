@@ -10,7 +10,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getDocs: vi.fn(),
 }));
 
-vi.mock('../../js/firebase.js?v=18', () => ({
+vi.mock('../../js/firebase.js?v=19', () => ({
     db: {},
     auth: { currentUser: null },
     storage: {},

@@ -1187,7 +1187,7 @@
 
         function loadFirebaseModule() {
             if (!firebaseModulePromise) {
-                firebaseModulePromise = import('./js/firebase.js?v=17').catch((error) => {
+                firebaseModulePromise = import('./js/firebase.js?v=19').catch((error) => {
                     firebaseModulePromise = null;
                     throw error;
                 });

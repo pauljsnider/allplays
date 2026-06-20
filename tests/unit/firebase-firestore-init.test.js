@@ -80,7 +80,7 @@ vi.mock('../../js/vendor/firebase-functions.js', () => ({
     httpsCallable: vi.fn()
 }));
 
-vi.mock('../../js/firebase-runtime-config.js?v=8', () => ({
+vi.mock('../../js/firebase-runtime-config.js?v=9', () => ({
     resolvePrimaryFirebaseConfig: vi.fn(async () => ({
         apiKey: 'test-key',
         authDomain: 'example.test',
@@ -106,7 +106,7 @@ describe('firebase firestore initialization', () => {
         });
         firestoreMocks.getFirestore.mockReturnValue(existingDb);
 
-        const module = await import('../../js/firebase.js?v=18');
+        const module = await import('../../js/firebase.js?v=19');
 
         expect(module.db).toBe(existingDb);
         expect(firestoreMocks.initializeFirestore).toHaveBeenCalledTimes(1);

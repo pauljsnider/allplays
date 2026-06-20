@@ -29,7 +29,7 @@ const firebaseMocks = vi.hoisted(() => ({
 
 const uploadTaskQueue = vi.hoisted(() => []);
 
-vi.mock('../../js/firebase.js?v=18', () => ({
+vi.mock('../../js/firebase.js?v=19', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-1' } },
     storage: {},
