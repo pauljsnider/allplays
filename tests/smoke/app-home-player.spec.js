@@ -92,28 +92,7 @@ async function mockHomePlayerModules(page) {
                     };
                 }
 
-                export async function loadParentHomeSummary(...args) {
-                    return loadParentHome(...args);
-                }
-
-                export async function loadParentHomeSummaryBootstrap(...args) {
-                    const home = await loadParentHome(...args);
-                    return { home, schedule: [] };
-                }
-
-                export async function loadParentTeamsSummary(...args) {
-                    return loadParentHome(...args);
-                }
-
-                export async function loadParentScheduleSummary() {
-                    return [];
-                }
-
-                export async function loadParentHomeWithSecondaryData(...args) {
-                    return loadParentHome(...args);
-                }
-
-                export async function loadParentHome() {
+                function buildHomeModel() {
                     const nextEvent = event();
                     const practice = event({
                         eventKey: 'team-1::practice-1::player-1',
@@ -168,6 +147,47 @@ async function mockHomePlayerModules(page) {
                             packetsReady: 1
                         }
                     };
+                }
+
+                export async function loadParentHomeSummary(...args) {
+                    return loadParentHome(...args);
+                }
+
+                export async function loadParentHomeSummaryBootstrap(...args) {
+                    const home = await loadParentHome(...args);
+                    return { home, schedule: [] };
+                }
+
+                export async function loadParentTeamsSummary(...args) {
+                    return loadParentHome(...args);
+                }
+
+                export async function loadParentScheduleSummary() {
+                    return [];
+                }
+
+                export async function loadParentHomeWithSecondaryData(...args) {
+                    return loadParentHome(...args);
+                }
+
+                export async function hydrateParentHomeScheduleSlice(user, schedule) {
+                    return schedule;
+                }
+
+                export async function loadParentHomeInboxSlice() {
+                    return [];
+                }
+
+                export async function loadParentHomeFeesSlice() {
+                    return [];
+                }
+
+                export function buildParentHomeFromSecondarySnapshot() {
+                    return buildHomeModel();
+                }
+
+                export async function loadParentHome() {
+                    return buildHomeModel();
                 }
             `
         });
