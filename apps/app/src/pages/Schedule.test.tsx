@@ -79,7 +79,7 @@ describe('Schedule', () => {
   });
 
   it('waits for the first schedule load to finish before recording first meaningful render', async () => {
-    let resolveSchedule: ((value: { children: Array<{ playerId: string; playerName: string; teamId: string; teamName: string }>; events: [] }) => void) | null = null;
+    let resolveSchedule!: (value: { children: Array<{ playerId: string; playerName: string; teamId: string; teamName: string }>; events: [] }) => void;
     scheduleServiceMocks.loadParentSchedule.mockImplementationOnce(() => new Promise((resolve) => {
       resolveSchedule = resolve;
     }));
@@ -88,7 +88,7 @@ describe('Schedule', () => {
 
     expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
 
-    resolveSchedule?.({
+    resolveSchedule({
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
       ],

@@ -320,8 +320,8 @@ describe('Home', () => {
   });
 
   it('waits for the initial secondary Home load to finish before recording first meaningful render', async () => {
-    let resolveBootstrap: ((value: { home: typeof baseHome; schedule: [] }) => void) | null = null;
-    let resolveSecondary: ((value: typeof baseHome) => void) | null = null;
+    let resolveBootstrap!: (value: { home: typeof baseHome; schedule: [] }) => void;
+    let resolveSecondary!: (value: typeof baseHome) => void;
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(() => new Promise((resolve) => {
       resolveBootstrap = resolve;
     }));
@@ -333,12 +333,12 @@ describe('Home', () => {
 
     expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
 
-    resolveBootstrap?.({ home: baseHome, schedule: [] });
+    resolveBootstrap({ home: baseHome, schedule: [] });
 
     expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
     expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
 
-    resolveSecondary?.(baseHome);
+    resolveSecondary(baseHome);
 
     await waitFor(() => {
       expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
