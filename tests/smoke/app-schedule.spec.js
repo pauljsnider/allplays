@@ -434,6 +434,13 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
+                export async function loadParentScheduleChildren() {
+                    return [
+                        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
+                        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
+                    ];
+                }
+
                 export async function hydrateParentScheduleDetails(schedule) {
                     return schedule;
                 }
