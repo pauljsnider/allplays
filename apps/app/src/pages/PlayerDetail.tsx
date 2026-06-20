@@ -525,10 +525,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
 }
 
 function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
-  if (!data.access.canEditRosterDetails) {
-    return null;
-  }
-
+  const canEditRosterDetails = data.access.canEditRosterDetails;
   const [name, setName] = useState(data.player.name || data.child.playerName || '');
   const [number, setNumber] = useState(String(data.player.number || ''));
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -554,6 +551,10 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
       if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  if (!canEditRosterDetails) {
+    return null;
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -632,10 +633,7 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
 }
 
 function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
-  if (!data.access.isLinkedParent && !auth.isAdmin && !auth.isPlatformAdmin) {
-    return null;
-  }
-
+  const canEditProfile = data.access.isLinkedParent || auth.isAdmin || auth.isPlatformAdmin;
   const [emergencyName, setEmergencyName] = useState(data.privateProfile?.emergencyContact?.name || '');
   const [emergencyPhone, setEmergencyPhone] = useState(data.privateProfile?.emergencyContact?.phone || '');
   const [medicalInfo, setMedicalInfo] = useState(data.privateProfile?.medicalInfo || '');
@@ -650,6 +648,10 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
       if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  if (!canEditProfile) {
+    return null;
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
