@@ -4,6 +4,7 @@ import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const scheduleMocks = vi.hoisted(() => ({
     loadParentSchedule: vi.fn(),
+    loadParentScheduleChildren: vi.fn(),
     hydrateParentScheduleDetails: vi.fn((schedule) => Promise.resolve(schedule))
 }));
 
@@ -83,6 +84,14 @@ beforeEach(() => {
         ],
         events: [event()]
     });
+    scheduleMocks.loadParentScheduleChildren.mockResolvedValue([
+        {
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Pat Star'
+        }
+    ]);
     chatMocks.loadChatInbox.mockResolvedValue({
         teams: [
             {
@@ -297,6 +306,30 @@ describe('React app Home service', () => {
         });
 
         expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user, { includeLastMessages: false });
+    });
+
+    it('uses the shared parent child resolver for the fast Teams summary', async () => {
+        const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentTeamsSummary({ ...user, parentOf: [] }, { force: true });
+
+        expect(scheduleMocks.loadParentScheduleChildren).toHaveBeenCalledWith(expect.objectContaining({
+            uid: 'user-1',
+            parentOf: []
+        }));
+        expect(home.players).toEqual([
+            expect.objectContaining({
+                teamId: 'team-1',
+                playerId: 'player-1',
+                playerName: 'Pat Star'
+            })
+        ]);
+        expect(home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                teamId: 'team-1',
+                players: [expect.objectContaining({ playerId: 'player-1' })]
+            })
+        ]));
     });
 
     it('composes the fast Home summary without optional secondary data', async () => {

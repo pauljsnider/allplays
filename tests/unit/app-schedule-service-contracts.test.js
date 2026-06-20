@@ -424,7 +424,6 @@ describe('React app schedule service contract integration', () => {
 
         expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
         expect(dbMocks.getTeams).not.toHaveBeenCalled();
-        expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
         expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
         expect(dbMocks.getGames).toHaveBeenCalledWith('team-1', {});
@@ -566,10 +565,7 @@ describe('React app schedule service contract integration', () => {
         const result = await loadParentSchedule(user());
 
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
-        expect(result.children).toEqual([
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
-        ]);
+        expect(result.children).toEqual([]);
         expect(result.events).toEqual([]);
     });
 

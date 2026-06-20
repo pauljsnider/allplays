@@ -160,10 +160,10 @@ vi.mock('./appDataCache', () => ({
 
 import { addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
-import { expandRecurrence, fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
+import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
@@ -180,6 +180,66 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");
   expect(scheduleEventDetailSource).toContain("../lib/adapters/legacyScheduleHelpers");
+});
+
+describe('parent schedule child scope', () => {
+  const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], parentOf: [] } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isTeamActive).mockImplementation((team: any) => (
+      team?.active !== false &&
+      team?.archived !== true &&
+      !['archived', 'inactive', 'disabled'].includes(String(team?.status || '').trim().toLowerCase())
+    ));
+  });
+
+  it('hydrates linked children from profile parentPlayerKeys when auth parentOf is empty', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1']
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getPlayers).mockResolvedValue([
+      { id: 'player-1', name: 'Avery Lee', active: true }
+    ] as any);
+
+    const children = await loadParentScheduleChildren(parentUser);
+
+    expect(children).toEqual([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+    ]);
+    expect(getTeam).toHaveBeenCalledWith('team-1');
+    expect(getPlayers).toHaveBeenCalledWith('team-1', { includeInactive: true });
+  });
+
+  it('filters inactive teams and inactive roster players from parent child links', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-active', playerId: 'player-active', teamName: 'Old Team', playerName: 'Old Player' },
+        { teamId: 'team-active', playerId: 'player-inactive', teamName: 'Old Team', playerName: 'Inactive Player' },
+        { teamId: 'team-archived', playerId: 'player-archived', teamName: 'Archived Team', playerName: 'Archived Player' }
+      ]
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'team-active': { id: 'team-active', name: 'Active Team', active: true },
+      'team-archived': { id: 'team-archived', name: 'Archived Team', archived: true }
+    }[teamId] || null) as any);
+    vi.mocked(getPlayers).mockImplementation(async (teamId: string) => {
+      if (teamId !== 'team-active') return [] as any;
+      return [
+        { id: 'player-active', name: 'Active Player', active: true },
+        { id: 'player-inactive', name: 'Inactive Player', active: false }
+      ] as any;
+    });
+
+    const children = await loadParentScheduleChildren(parentUser);
+
+    expect(children).toEqual([
+      { teamId: 'team-active', teamName: 'Active Team', playerId: 'player-active', playerName: 'Active Player' }
+    ]);
+  });
 });
 
 describe('scheduled practice writes', () => {
