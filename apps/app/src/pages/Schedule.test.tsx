@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -166,7 +167,7 @@ describe('Schedule', () => {
   });
 
   it('keeps a dedicated labeled close control alongside the text close action in the calendar picker', () => {
-    const source = readFileSync(new URL('./Schedule.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(resolve(process.cwd(), 'apps/app/src/pages/Schedule.tsx'), 'utf8');
 
     expect(source).toContain('aria-label="Close calendar events"');
     expect(source).toContain('>\n              Close\n            </button>');
