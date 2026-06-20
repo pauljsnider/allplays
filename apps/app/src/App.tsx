@@ -12,6 +12,7 @@ import {
   nativeBackExitPressWindowMs,
   type NativeBackButtonEvent
 } from './lib/nativeBackButton';
+import { addNativeDeepLinkListener } from './lib/nativeDeepLinkRouting';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { shouldReloadTeamsToHome } from './lib/reloadRouting';
 import { readAuthBootstrapHint } from './lib/authBootstrapHint';
@@ -128,6 +129,24 @@ export default function App() {
     }
 
     registerBackButtonListener();
+    return () => {
+      disposed = true;
+      removeListener();
+    };
+  }, [navigate]);
+
+  useEffect(() => {
+    let removeListener = () => {};
+    let disposed = false;
+
+    async function registerDeepLinkListener() {
+      removeListener = await addNativeDeepLinkListener((route) => {
+        navigate(route);
+      });
+      if (disposed) removeListener();
+    }
+
+    registerDeepLinkListener();
     return () => {
       disposed = true;
       removeListener();
