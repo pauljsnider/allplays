@@ -30,8 +30,40 @@ const feeMocks = vi.hoisted(() => ({
     }))
 }));
 
+vi.mock('@capacitor/core', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('@sentry/browser', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
+vi.mock('../../apps/app/node_modules/@sentry/browser/build/npm/esm/index.js', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/scheduleService', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
+vi.mock('../../apps/app/src/lib/chatService', () => chatMocks);
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 

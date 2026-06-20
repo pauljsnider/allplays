@@ -107,11 +107,44 @@ const rsvpMocks = vi.hoisted(() => ({
     resolveMyRsvpByChildForGame: vi.fn()
 }));
 
+vi.mock('@capacitor/core', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('@sentry/browser', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
+vi.mock('../../apps/app/node_modules/@sentry/browser/build/npm/esm/index.js', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
 vi.mock('../../apps/app/src/lib/chatService.ts', () => ({
+    sendTeamChatMessage: vi.fn()
+}));
+vi.mock('../../apps/app/src/lib/chatService', () => ({
     sendTeamChatMessage: vi.fn()
 }));
 vi.mock('../../apps/app/src/lib/chatLogic.ts', () => ({
