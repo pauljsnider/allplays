@@ -356,6 +356,10 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                 export async function openPushNotificationSettings() {
                     window.__appProfileCalls.openPushSettings += 1;
                 }
+
+                export async function runPushNotificationPrimer() {
+                    return { completed: false, status: 'skipped' };
+                }
             `
         });
     });
