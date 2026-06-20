@@ -67,6 +67,15 @@ function createFirestoreMock({ indexedTargets = [], preferences = {}, devices = 
     };
 }
 
+function normalizeTargets(targets = []) {
+    return targets.map((target) => ({
+        uid: target.uid,
+        deviceId: target.deviceId,
+        token: target.token,
+        teamId: target.teamId
+    }));
+}
+
 function createHarness({ candidateUsers = [], indexedTargets = [], preferences = {}, devices = {} } = {}) {
     const helperSource = getSourceSlice(
         'function normalizeNotificationAlbumVisibility',
@@ -127,7 +136,7 @@ describe('team media notification recipients', () => {
 
         const targets = await harness.getTargetsForCategory('team-1', 'media', null, audienceContext);
 
-        expect(targets).toEqual([
+        expect(normalizeTargets(targets)).toEqual([
             {
                 uid: 'staff-1',
                 deviceId: 'staff-device',
@@ -155,7 +164,7 @@ describe('team media notification recipients', () => {
 
         const targets = await harness.getTargetsForCategory('team-1', 'media', null, { albumVisibility: 'team' });
 
-        expect(targets).toEqual([
+        expect(normalizeTargets(targets)).toEqual([
             {
                 uid: 'parent-1',
                 deviceId: 'parent-device',
@@ -189,7 +198,7 @@ describe('team media notification recipients', () => {
 
         const targets = await harness.getTargetsForCategory('team-1', 'media', null, { albumVisibility: 'private' });
 
-        expect(targets).toEqual([
+        expect(normalizeTargets(targets)).toEqual([
             {
                 uid: 'staff-1',
                 deviceId: 'staff-device',
