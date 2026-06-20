@@ -194,6 +194,30 @@ describe('React app Home service', () => {
         });
     });
 
+    it('keeps rendering Home secondary data when fees fail for a non-permission reason', async () => {
+        dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentHomeWithSecondaryData(user, {
+            schedule: {
+                children: [
+                    {
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        playerId: 'player-1',
+                        playerName: 'Pat Star'
+                    }
+                ],
+                events: [event()]
+            }
+        });
+
+        expect(home.fees).toEqual([]);
+        expect(home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-1', unreadCount: 2 })
+        ]));
+    });
+
     it('throws a typed network error when the Teams summary chat load fails', async () => {
         chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');

@@ -21,6 +21,14 @@ const homeSummaryTtlMs = 45 * 1000;
 const homeSecondaryTtlMs = 30 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
 
+function rethrowIfPermissionError(error: unknown, fallbackMessage: string) {
+  const appError = toAppServiceError(error, fallbackMessage);
+  if (appError.type === 'permission') {
+    throw appError;
+  }
+  return appError;
+}
+
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
   if (!user?.uid) {
     return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
@@ -134,23 +142,28 @@ export async function loadParentHomeWithSecondaryData(
     // immediately and fills in chat badges / fee items / hydrated RSVP states as
     // each arrives, instead of blocking on all of them before any update (#2037).
     // A per-slice failure degrades that card rather than gating the whole page.
-    await Promise.allSettled([
+    const results = await Promise.allSettled([
       hydrateParentScheduleDetails(schedule, user).then(emit).catch((error) => {
-        console.warn('[home] Schedule hydration failed:', error);
+        console.warn('[home] Schedule hydration failed:', rethrowIfPermissionError(error, 'Unable to hydrate Home schedule.'));
       }),
       loadChatInbox(user).then((chatInbox) => {
         inboxTeams = normalizeInboxTeams(chatInbox.teams || []);
         emit();
       }).catch((error) => {
-        console.warn('[home] Chat inbox failed:', error);
+        console.warn('[home] Chat inbox failed:', rethrowIfPermissionError(error, 'Unable to load Home chat.'));
       }),
       Promise.resolve(listParentTeamFeeRecipients(user.uid, children)).then((rawFees) => {
         fees = (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee));
         emit();
       }).catch((error) => {
-        console.warn('[home] Fees failed:', error);
+        console.warn('[home] Fees failed:', rethrowIfPermissionError(error, 'Unable to load Home fees.'));
       })
     ]);
+
+    const permissionFailure = results.find((result) => result.status === 'rejected');
+    if (permissionFailure?.status === 'rejected') {
+      throw permissionFailure.reason;
+    }
 
     return buildParentHomeModel({ children, events, inboxTeams, fees });
   }, { ttlMs: homeSecondaryTtlMs, force: options.force });
