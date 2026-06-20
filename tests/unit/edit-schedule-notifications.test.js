@@ -135,8 +135,15 @@ describe('edit schedule notification wiring', () => {
 });
 
 describe('notifyGameCreated Cloud Function trigger', () => {
+    function readNotifyGameCreatedTrigger() {
+        return functionsSource.slice(
+            functionsSource.indexOf('const notifyGameCreated = functions.firestore'),
+            functionsSource.indexOf('exports.notifyGameCreated = notifyGameCreated;')
+        );
+    }
+
     it('is wired as an onCreate trigger on the games subcollection', () => {
-        const triggerBody = functionsSource.slice(functionsSource.indexOf('exports.notifyGameCreated'));
+        const triggerBody = readNotifyGameCreatedTrigger();
 
         expect(triggerBody).toContain(".document('teams/{teamId}/games/{gameId}')");
         expect(triggerBody).toContain('.onCreate(');
@@ -145,10 +152,7 @@ describe('notifyGameCreated Cloud Function trigger', () => {
     });
 
     it('sends a schedule category notification for a new game', () => {
-        const triggerBody = functionsSource.slice(
-            functionsSource.indexOf('exports.notifyGameCreated'),
-            functionsSource.indexOf('const PUBLIC_RSVP_TOKEN_TTL_DAYS')
-        );
+        const triggerBody = readNotifyGameCreatedTrigger();
 
         expect(triggerBody).toContain("isPractice ? 'practice' : 'schedule'");
         expect(triggerBody).toContain("New game: ");
@@ -156,20 +160,16 @@ describe('notifyGameCreated Cloud Function trigger', () => {
     });
 
     it('skips draft events and returns null', () => {
-        const triggerBody = functionsSource.slice(
-            functionsSource.indexOf('exports.notifyGameCreated'),
-            functionsSource.indexOf('const PUBLIC_RSVP_TOKEN_TTL_DAYS')
-        );
+        const triggerBody = readNotifyGameCreatedTrigger();
 
         expect(triggerBody).toContain("if (status === 'draft') return null;");
     });
 
-    it('skips imported events and returns null', () => {
-        const triggerBody = functionsSource.slice(
-            functionsSource.indexOf('exports.notifyGameCreated'),
-            functionsSource.indexOf('const PUBLIC_RSVP_TOKEN_TTL_DAYS')
-        );
+    it('routes large app import batches to the summary workflow before skipping legacy imported events', () => {
+        const triggerBody = readNotifyGameCreatedTrigger();
 
+        expect(triggerBody).toContain('if (importBatch && importBatch.totalCount > 3) {');
+        expect(triggerBody).toContain('return registerScheduleImportBatchEvent({ teamId, gameId, game, batch: importBatch });');
         expect(triggerBody).toContain('if (game.source || game.sourceMetadata) return null;');
     });
 
