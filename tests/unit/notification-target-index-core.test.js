@@ -103,6 +103,7 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain("firestore.collection(`teams/${teamId}/notificationRecipients`)");
         expect(targetResolverSource).toContain("where(`categories.${category}`, '==', true)");
         expect(targetResolverSource).toContain('if (!uid || uid === actorUid || !eligibleUsers.has(uid)) return [];');
+        expect(targetResolverSource).toContain('if (data.categories && data.categories[category] !== true) return [];');
         expect(targetResolverSource).toContain('users/${uid}/notificationPreferences/${teamId}');
         expect(targetResolverSource).toContain('users/${uid}/notificationDevices');
         expect(targetResolverSource).toContain('if (!NOTIFICATION_CATEGORIES.includes(category)) return []');

@@ -461,15 +461,34 @@ export function getStaffRsvpReminderMetadataTarget(eventId: string) {
   };
 }
 
-export function buildStaffRsvpReminderMetadata(userId: string | null | undefined, missingCount: number, emailCount: number, sentAt = new Date().toISOString()) {
+function normalizeNonNegativeCount(value: unknown) {
+  return Math.max(0, Number.parseInt(String(value || 0), 10) || 0);
+}
+
+export function buildStaffRsvpReminderMetadata(
+  userId: string | null | undefined,
+  missingCount: number,
+  emailCount: number,
+  sentAt = new Date().toISOString(),
+  pushMetrics: {
+    rsvpPushSuccessCount?: unknown;
+    rsvpPushFailureCount?: unknown;
+    rsvpPushTargetCount?: unknown;
+    rsvpPushError?: unknown;
+  } = {}
+) {
   return {
     sent: true,
     sentAt,
     lastAction: 'rsvp_reminder',
     lastSentAt: sentAt,
     lastSentBy: userId || null,
-    lastRsvpReminderCount: Math.max(0, Number.parseInt(String(missingCount || 0), 10) || 0),
-    lastRsvpEmailCount: Math.max(0, Number.parseInt(String(emailCount || 0), 10) || 0)
+    lastRsvpReminderCount: normalizeNonNegativeCount(missingCount),
+    lastRsvpEmailCount: normalizeNonNegativeCount(emailCount),
+    lastRsvpPushSuccessCount: normalizeNonNegativeCount(pushMetrics.rsvpPushSuccessCount),
+    lastRsvpPushFailureCount: normalizeNonNegativeCount(pushMetrics.rsvpPushFailureCount),
+    lastRsvpPushTargetCount: normalizeNonNegativeCount(pushMetrics.rsvpPushTargetCount),
+    lastRsvpPushError: compactString(pushMetrics.rsvpPushError) || null
   };
 }
 

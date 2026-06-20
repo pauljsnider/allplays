@@ -97,6 +97,7 @@ function buildNotificationTestEnv({
     privateProfileDocs = {},
     indexedRecipients = [],
     indexedTargets = [],
+    notificationRecipientDocs = null,
     preferenceDocs = {},
     deviceDocs = {},
     invalidTokenResponses = []
@@ -113,6 +114,7 @@ function buildNotificationTestEnv({
         parentQueries: 0,
         recipientQueries: 0,
         targetQueries: 0,
+        recipientDocGets: 0,
         recipientCollectionGets: 0,
         preferenceGets: 0,
         deviceGets: 0,
@@ -123,15 +125,44 @@ function buildNotificationTestEnv({
         deleteCalls: 0
     };
 
-    const notificationRecipientDocs = (indexedRecipients.length ? indexedRecipients : indexedTargets).map((target, index) => ({
-        id: `${target.uid || `user-${index}`}__${target.deviceId || `device-${index}`}`,
-        data: {
-            uid: target.uid,
-            deviceId: target.deviceId,
-            token: target.token,
-            categories: target.categories || {}
-        }
-    }));
+    const notificationRecipientDocsList = notificationRecipientDocs || Array.from(
+        (indexedRecipients.length ? indexedRecipients : indexedTargets).reduce((docsByUid, target, index) => {
+            const uid = String(target.uid || `user-${index}`).trim();
+            const existing = docsByUid.get(uid) || {
+                id: uid,
+                data: {
+                    uid,
+                    teamId,
+                    roles: target.roles || ['parent'],
+                    categories: {},
+                    tokens: []
+                }
+            };
+            existing.data.categories = {
+                ...existing.data.categories,
+                ...(target.categories || {})
+            };
+            const tokenEntries = Array.isArray(target.tokens)
+                ? target.tokens
+                : [{
+                    deviceId: target.deviceId || `device-${index}`,
+                    token: target.token,
+                    platform: target.platform,
+                    userAgent: target.userAgent
+                }];
+            tokenEntries.forEach((entry) => {
+                if (!entry?.token) return;
+                existing.data.tokens.push({
+                    deviceId: entry.deviceId || `device-${existing.data.tokens.length}`,
+                    token: entry.token,
+                    platform: entry.platform,
+                    userAgent: entry.userAgent
+                });
+            });
+            docsByUid.set(uid, existing);
+            return docsByUid;
+        }, new Map()).values()
+    );
 
     const notificationTargetDocs = indexedTargets.map((target, index) => ({
         id: `${target.uid || `user-${index}`}__${target.deviceId || `device-${index}`}`,
@@ -214,6 +245,17 @@ function buildNotificationTestEnv({
                     const data = docStore.get(path);
                     return makeDocSnapshot({ id: this.id, ref: this, data, exists: data !== undefined });
                 }
+                if (path.startsWith(`teams/${teamId}/notificationRecipients/`)) {
+                    counts.recipientDocGets += 1;
+                    const docId = String(path).split('/').pop();
+                    const entry = notificationRecipientDocsList.find((recipientDoc) => recipientDoc.id === docId);
+                    return makeDocSnapshot({
+                        id: docId,
+                        ref: this,
+                        data: entry?.data,
+                        exists: Boolean(entry)
+                    });
+                }
                 if (docStore.has(path)) {
                     return makeDocSnapshot({ id: this.id, ref: this, data: docStore.get(path), exists: true });
                 }
@@ -276,7 +318,7 @@ function buildNotificationTestEnv({
                         async get() {
                             counts.recipientQueries += 1;
                             const category = String(field || '').replace(/^categories\./, '');
-                            const docs = notificationRecipientDocs.filter((entry) => op === '==' && value === true && entry.data.categories?.[category] === true)
+                            const docs = notificationRecipientDocsList.filter((entry) => op === '==' && value === true && entry.data.categories?.[category] === true)
                                 .map((entry) => makeDocSnapshot({
                                     id: entry.id,
                                     ref: doc(`${path}/${entry.id}`),
@@ -291,7 +333,7 @@ function buildNotificationTestEnv({
                     return {
                         async get() {
                             counts.recipientCollectionGets += 1;
-                            return makeQuerySnapshot(notificationRecipientDocs.slice(0, 1).map((entry) => makeDocSnapshot({
+                            return makeQuerySnapshot(notificationRecipientDocsList.slice(0, 1).map((entry) => makeDocSnapshot({
                                 id: entry.id,
                                 ref: doc(`${path}/${entry.id}`),
                                 data: entry.data,
@@ -302,7 +344,7 @@ function buildNotificationTestEnv({
                 },
                 async get() {
                     counts.recipientCollectionGets += 1;
-                    return makeQuerySnapshot(notificationRecipientDocs.map((entry) => makeDocSnapshot({
+                    return makeQuerySnapshot(notificationRecipientDocsList.map((entry) => makeDocSnapshot({
                         id: entry.id,
                         ref: doc(`${path}/${entry.id}`),
                         data: entry.data,

@@ -80,6 +80,11 @@ describe('edit schedule notification wiring', () => {
         expect(source).toContain('await sendRsvpReminder(');
         expect(source).toContain('sendPublicRsvpReminderEmails');
         expect(source).toContain("'scheduleNotifications.lastRsvpEmailCount': emailResult?.sentCount || 0");
+        expect(source).toContain("'scheduleNotifications.lastRsvpPushSuccessCount': emailResult?.rsvpPushSuccessCount || 0");
+        expect(source).toContain("'scheduleNotifications.lastRsvpPushTargetCount': emailResult?.rsvpPushTargetCount || 0");
+        expect(functionsSource).toContain('await sendRsvpReminderPushNotifications({');
+        expect(functionsSource).toContain('recipientUserIds: result.recipientUserIds');
+        expect(functionsSource).toContain('rsvpPushSuccessCount: rsvpPushResult.successCount');
         expect(source).toContain('await maybeNotifyScheduleChange(');
     });
 
