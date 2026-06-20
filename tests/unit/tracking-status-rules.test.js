@@ -8,6 +8,7 @@ describe('tracking status Firestore rules', () => {
         expect(rules).toContain('match /trackingItems/{itemId}');
         expect(rules).toContain('match /memberTracking/{trackingId}');
         expect(rules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || canReadPublicTrackingStatus(teamId, resource.data);');
+        expect(rules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || canReadNestedTrackingStatus(teamId, itemId, trackingId, resource.data);');
         expect(rules).toContain('allow create, update, delete: if isTeamOwnerOrAdmin(teamId);');
     });
 });
