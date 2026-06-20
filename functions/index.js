@@ -3749,6 +3749,70 @@ function hasPracticePacketContent(packet = null) {
   return Array.isArray(packet?.blocks) && packet.blocks.length > 0;
 }
 
+function collectPracticePacketAssignedPlayerIds(packet = {}, session = {}) {
+  const playerIds = new Set();
+  const collectValue = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach(collectValue);
+      return;
+    }
+    if (typeof value === 'object') {
+      collectValue(value.playerId || value.childId || value.id);
+      return;
+    }
+    const normalized = String(value || '').trim();
+    if (normalized) {
+      playerIds.add(normalized);
+    }
+  };
+
+  [
+    packet.playerIds,
+    packet.assignedPlayerIds,
+    packet.targetPlayerIds,
+    packet.childIds,
+    packet.players,
+    packet.assignedPlayers,
+    session.playerIds,
+    session.assignedPlayerIds,
+    session.targetPlayerIds
+  ].forEach(collectValue);
+
+  return Array.from(playerIds);
+}
+
+async function resolvePracticePacketAssignedParentUserIds(teamId, packet = {}, session = {}) {
+  const directParentUserIds = [
+    packet.parentUserIds,
+    packet.recipientUserIds,
+    packet.assignedParentUserIds
+  ].flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const assignedPlayerIds = collectPracticePacketAssignedPlayerIds(packet, session);
+
+  if (!directParentUserIds.length && !assignedPlayerIds.length) {
+    return null;
+  }
+
+  const userIds = new Set(directParentUserIds);
+  const parentLookups = await Promise.allSettled(
+    assignedPlayerIds.map((playerId) => firestore.collection('users')
+      .where('parentPlayerKeys', 'array-contains', `${teamId}::${playerId}`)
+      .get())
+  );
+  parentLookups.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    (result.value.docs || []).forEach((docSnap) => {
+      const uid = String(docSnap.id || '').trim();
+      if (uid) userIds.add(uid);
+    });
+  });
+
+  return Array.from(userIds);
+}
+
 function getCertificateNotificationPlayerKey(certificate = {}, teamId = '') {
   const resolvedTeamId = String(certificate.teamId || teamId || '').trim();
   const playerId = String(certificate.playerId || certificate.childId || '').trim();
@@ -3868,23 +3932,29 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
   }
 
   const { teamId, sessionId } = context.params || {};
-  const [allPracticeTargets, candidateUsers] = await Promise.all([
+  const [allPracticeTargets, candidateUsers, assignedParentUserIds] = await Promise.all([
     getTargetsForCategory(teamId, 'practice', null),
-    getCandidateUsersForTeam(teamId)
+    getCandidateUsersForTeam(teamId),
+    resolvePracticePacketAssignedParentUserIds(teamId, afterPacket, afterData)
   ]);
   const parentUserIds = new Set(
     candidateUsers
       .filter((user) => Array.isArray(user?.roles) && user.roles.includes('parent'))
       .map((user) => user.uid)
   );
-  const parentTargets = allPracticeTargets.filter((target) => parentUserIds.has(target.uid));
+  const assignedParentUserIdSet = Array.isArray(assignedParentUserIds) ? new Set(assignedParentUserIds) : null;
+  const parentTargets = allPracticeTargets.filter((target) => (
+    parentUserIds.has(target.uid)
+    && (!assignedParentUserIdSet || assignedParentUserIdSet.has(target.uid))
+  ));
 
   if (!parentTargets.length) {
     functions.logger.warn('notifyPracticePacketAssigned found no practice-enabled parent targets.', {
       teamId,
       sessionId,
       totalPracticeTargets: allPracticeTargets.length,
-      parentUserCount: parentUserIds.size
+      parentUserCount: parentUserIds.size,
+      assignedParentUserCount: assignedParentUserIdSet ? assignedParentUserIdSet.size : null
     });
     return null;
   }
