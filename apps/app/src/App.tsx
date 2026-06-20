@@ -14,7 +14,6 @@ import {
 } from './lib/nativeBackButton';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { shouldReloadTeamsToHome } from './lib/reloadRouting';
-import { addPushNotificationOpenListener, ensureAndroidNotificationChannels } from './lib/pushService';
 import { readAuthBootstrapHint } from './lib/authBootstrapHint';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
@@ -136,19 +135,29 @@ export default function App() {
   }, [navigate]);
 
   useEffect(() => {
-    let removeListener = async () => {};
+    let active = true;
+    let removeListener = () => {};
 
     async function registerPushListener() {
+      // Dynamically import the push stack (Firebase messaging) so it stays out of
+      // the boot critical path; registration only needs to run after first paint.
+      const { addPushNotificationOpenListener, ensureAndroidNotificationChannels } = await import('./lib/pushService');
       await ensureAndroidNotificationChannels();
-      removeListener = await addPushNotificationOpenListener((route) => {
+      const remove = await addPushNotificationOpenListener((route) => {
         if (authUserRef.current) {
           navigate(route, { replace: true });
         }
       });
+      if (!active) {
+        remove();
+        return;
+      }
+      removeListener = remove;
     }
 
-    registerPushListener();
+    void registerPushListener();
     return () => {
+      active = false;
       removeListener();
     };
   }, [navigate]);
