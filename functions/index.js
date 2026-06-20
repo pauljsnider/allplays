@@ -97,6 +97,9 @@ const {
   buildNotificationDeliveryOptions
 } = require('./notification-delivery-metadata.cjs');
 const {
+  getStaleNotificationTokenCutoffMillis
+} = require('./notification-token-sweep-core.cjs');
+const {
   coerceDate,
   getEventTitle,
   formatScheduleUpdateDate
@@ -4544,6 +4547,38 @@ async function pruneInvalidTokens(sendResult, targets) {
   }
 }
 
+async function sweepStaleNotificationDeviceTokens(nowMillis = Date.now()) {
+  const cutoff = admin.firestore.Timestamp.fromMillis(getStaleNotificationTokenCutoffMillis(nowMillis));
+  const pageSize = 400;
+  let deletedCount = 0;
+  let pageCount = 0;
+
+  while (pageCount < 20) {
+    pageCount += 1;
+    const snapshot = await firestore.collectionGroup('notificationDevices')
+      .where('updatedAt', '<', cutoff)
+      .limit(pageSize)
+      .get();
+    if (snapshot.empty) break;
+
+    const batch = firestore.batch();
+    snapshot.docs.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
+      deletedCount += 1;
+    });
+    await batch.commit();
+
+    if (snapshot.docs.length < pageSize) break;
+  }
+
+  functions.logger.info('Swept stale notification device tokens.', {
+    deletedCount,
+    pageCount,
+    cutoffMillis: cutoff.toMillis?.() || null
+  });
+  return { deletedCount, pageCount };
+}
+
 async function cleanupNotificationInbox(inboxRef) {
   const oldItemsSnap = await inboxRef
     .orderBy('createdAt', 'desc')
@@ -5134,12 +5169,17 @@ exports._internal = {
   dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
   sendCategoryNotification,
+  sweepStaleNotificationDeviceTokens,
   sendRsvpReminderPushNotifications,
   sendPracticePacketDueTomorrowReminders,
   syncNotificationRecipientForTeamUser,
   syncNotificationRecipientsForUserChange,
   syncNotificationRecipientsForTeamChange
 };
+
+exports.sweepStaleNotificationDeviceTokens = functions.pubsub
+  .schedule('every 24 hours')
+  .onRun(() => sweepStaleNotificationDeviceTokens());
 
 exports.queueTeamMediaNotificationBatch = functions.firestore
   .document('teams/{teamId}/mediaItems/{itemId}')

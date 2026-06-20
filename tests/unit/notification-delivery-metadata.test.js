@@ -145,4 +145,12 @@ describe('notification delivery metadata', () => {
         expect(serviceWorkerSource).toContain('payload?.fcmOptions?.link');
         expect(serviceWorkerSource).toContain('event.waitUntil(clients.openWindow(link));');
     });
+
+    it('versions and expires cached Firebase service worker config', () => {
+        expect(serviceWorkerSource).toContain("const CONFIG_CACHE_VERSION = 'v2';");
+        expect(serviceWorkerSource).toContain('const CONFIG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;');
+        expect(serviceWorkerSource).toContain('cached?.version !== CONFIG_CACHE_VERSION');
+        expect(serviceWorkerSource).toContain('Date.now() - cached.cachedAt > CONFIG_CACHE_TTL_MS');
+        expect(serviceWorkerSource).toContain('cachedAt: Date.now()');
+    });
 });
