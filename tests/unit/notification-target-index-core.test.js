@@ -102,7 +102,7 @@ describe('notification target index core helpers', () => {
 
         expect(targetResolverSource).toContain("firestore.collection(`teams/${teamId}/notificationRecipients`)");
         expect(targetResolverSource).toContain("where(`categories.${category}`, '==', true)");
-        expect(targetResolverSource).toContain('if (uid === actorUid) return null;');
+        expect(targetResolverSource).toContain('if (!uid || uid === actorUid || !eligibleUsers.has(uid)) return [];');
         expect(targetResolverSource).toContain('users/${uid}/notificationPreferences/${teamId}');
         expect(targetResolverSource).toContain('users/${uid}/notificationDevices');
         expect(targetResolverSource).toContain('if (!NOTIFICATION_CATEGORIES.includes(category)) return []');
@@ -114,8 +114,8 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('const missingUsers = users.filter');
         expect(targetResolverSource).toContain('teamNotificationRecipientIndexIsEmpty(teamId)');
         expect(targetResolverSource).toContain('if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId))');
-        expect(targetResolverSource).toContain('await backfillNotificationRecipientsForTeam(teamId, users);');
+        expect(targetResolverSource).toContain("await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });");
         expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
-        expect(functionsSource).toContain('buildTeamNotificationIndexRefs(target.teamId, target.uid, target.deviceId)');
+        expect(functionsSource).toContain('buildTeamNotificationTargetRef(target.teamId, target.uid, target.deviceId)');
     });
 });

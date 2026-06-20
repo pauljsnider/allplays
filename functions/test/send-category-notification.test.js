@@ -141,6 +141,10 @@ test('getTargetsForCategory falls back to legacy resolution and backfills recipi
                 adminEmails: []
             },
             parentUserIds: ['parent-1'],
+            userDocs: {
+                'coach-1': { email: 'coach@example.com', parentTeamIds: [] },
+                'parent-1': { email: 'parent@example.com', parentTeamIds: ['team-1'] }
+            },
             preferenceDocs: {
                 'users/coach-1/notificationPreferences/team-1': { schedule: true },
                 'users/parent-1/notificationPreferences/team-1': { schedule: true }
@@ -173,8 +177,15 @@ test('getTargetsForCategory falls back to legacy resolution and backfills recipi
                     .map((write) => write.path)
                     .sort(),
                 [
-                'teams/team-1/notificationRecipients/coach-1__coach-device',
-                'teams/team-1/notificationRecipients/parent-1__parent-device'
+                    'teams/team-1/notificationRecipients/coach-1',
+                    'teams/team-1/notificationRecipients/parent-1'
+                ]);
+            assert.deepEqual(env.dedupWrites
+                .filter((write) => write.path === 'teams/team-1/notificationRecipients/coach-1' || write.path === 'teams/team-1/notificationRecipients/parent-1')
+                .map((write) => ({ path: write.path, tokens: write.value.tokens?.length || 0 }))
+                .sort((a, b) => a.path.localeCompare(b.path)), [
+                { path: 'teams/team-1/notificationRecipients/coach-1', tokens: 1 },
+                { path: 'teams/team-1/notificationRecipients/parent-1', tokens: 1 }
             ]);
         } finally {
             cleanup();
@@ -264,7 +275,6 @@ test('sendCategoryNotification prunes invalid tokens from both notification inde
 
             assert.equal(result?.failureCount, 1);
             assert.deepEqual(env.deletedPaths.sort(), [
-                'teams/team-1/notificationRecipients/coach-1__coach-device',
                 'teams/team-1/notificationTargets/coach-1__coach-device',
                 'users/coach-1/notificationDevices/coach-device'
             ]);

@@ -1867,6 +1867,10 @@ service cloud.firestore {
         allow read, write: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /notificationRecipients/{uid} {
+        allow read, write: if false;
+      }
+
       // In-app audit records for officiating assignment lifecycle changes.
       match /officiatingNotifications/{notificationId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||

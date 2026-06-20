@@ -253,7 +253,14 @@ describe('getTargetsForCategory', () => {
         );
 
         await expect(getTargetsForCategory('team-1', 'awards', null, {}, [{ uid: 'parent-1', roles: ['parent'] }])).resolves.toEqual([
-            { uid: 'parent-1', deviceId: 'device-1', token: 'token-1', teamId: 'team-1' }
+            {
+                uid: 'parent-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                teamId: 'team-1',
+                platform: '',
+                userAgent: ''
+            }
         ]);
     });
 });
