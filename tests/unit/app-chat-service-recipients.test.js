@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const dbMocks = vi.hoisted(() => ({
     canAccessTeamChat: vi.fn(),
@@ -65,6 +66,7 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
 }));
 
 beforeEach(() => {
+    clearAppDataCache();
     vi.clearAllMocks();
     dbMocks.canAccessTeamChat.mockImplementation((user, team) => team.id !== 'team-denied');
     dbMocks.canModerateChat.mockImplementation((user, team) => team.id === 'team-coach');
