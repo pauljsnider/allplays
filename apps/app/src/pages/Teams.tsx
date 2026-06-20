@@ -61,7 +61,7 @@ function emptyHome(): ParentHomeModel {
 export function Teams({ auth }: { auth: AuthState }) {
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -152,6 +152,16 @@ export function Teams({ auth }: { auth: AuthState }) {
   const teamRoles = useMemo(() => getLoadedTeamRoles(home.teams), [home.teams]);
   const hasManagementTeam = useMemo(() => home.teams.some((team) => isTeamManagementRole(team.role)), [home.teams]);
 
+  const handleSelectTeam = (teamId: string) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (teamId) {
+      nextParams.set('selectedTeamId', teamId);
+    } else {
+      nextParams.delete('selectedTeamId');
+    }
+    setSearchParams(nextParams);
+  };
+
   return (
     <PullToRefresh onRefresh={() => loadTeams()} disabled={!auth.user?.uid}>
     <div className={`teams-page ${isDesktopWeb ? 'teams-page-web' : ''} space-y-4`}>
@@ -176,7 +186,7 @@ export function Teams({ auth }: { auth: AuthState }) {
       ) : home.teams.length ? (
         isDesktopWeb ? (
           <div className="teams-web-workbench">
-            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} variant="rail" />
+            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} onSelectTeam={handleSelectTeam} variant="rail" />
             <div className="min-w-0 space-y-4">
               {selectedTeam ? <SelectedTeamPanel team={selectedTeam} variant="web" /> : null}
               {hasManagementTeam ? <WebsiteToolsNotice compact /> : null}
@@ -184,7 +194,7 @@ export function Teams({ auth }: { auth: AuthState }) {
           </div>
         ) : (
           <>
-            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} />
+            <TeamLauncher teams={home.teams} selectedTeamId={selectedTeam?.teamId || ''} onSelectTeam={handleSelectTeam} />
             {selectedTeam ? <SelectedTeamPanel team={selectedTeam} /> : null}
           </>
         )
@@ -277,9 +287,10 @@ function TeamsHeader({ loading, refreshing, teams, teamRoles, onRefresh }: {
   );
 }
 
-function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
+function TeamLauncher({ teams, selectedTeamId, onSelectTeam, variant = 'grid' }: {
   teams: ParentHomeTeam[];
   selectedTeamId: string;
+  onSelectTeam: (teamId: string) => void;
   variant?: 'grid' | 'rail';
 }) {
   const [query, setQuery] = useState('');
@@ -308,7 +319,7 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
       </label>
       <div className={`${isRail ? 'teams-team-rail-list mt-3 space-y-2' : 'mt-3 grid gap-2 xl:grid-cols-2'}`}>
         {visibleTeams.length ? visibleTeams.map((team) => (
-          <TeamLauncherRow key={team.teamId} team={team} selected={team.teamId === selectedTeamId} compact={isRail} />
+          <TeamLauncherRow key={team.teamId} team={team} selected={team.teamId === selectedTeamId} compact={isRail} onSelect={() => onSelectTeam(team.teamId)} />
         )) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No teams match that search.</div>
         )}
@@ -317,13 +328,13 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
   );
 }
 
-function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHomeTeam; selected: boolean; compact?: boolean }) {
+function TeamLauncherRow({ team, selected, compact = false, onSelect }: { team: ParentHomeTeam; selected: boolean; compact?: boolean; onSelect: () => void }) {
   const hasSchedule = team.eventCount > 0 || team.players.length > 0;
   const nextEventSummary = getTeamNextEventSummary(team);
 
   return (
     <article className={`team-launcher-row flex min-w-0 items-center gap-2 rounded-2xl border bg-white p-2 shadow-sm transition ${compact ? 'team-launcher-row-compact' : ''} ${selected ? 'border-primary-300 bg-primary-50/50 ring-2 ring-primary-100' : 'border-gray-200 hover:border-primary-200 hover:bg-primary-50/25'}`}>
-      <Link to={`/teams/${encodeURIComponent(team.teamId)}`} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 text-left" aria-current={selected ? 'page' : undefined} aria-label={`Open ${team.teamName}`}>
+      <button type="button" className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 text-left" onClick={onSelect} aria-pressed={selected} aria-label={`Open ${team.teamName}`}>
         <TeamAvatar name={team.teamName} photoUrl={team.photoUrl} />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
@@ -339,7 +350,7 @@ function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHome
           </span>
           {nextEventSummary && !compact ? <span className="mt-1 block truncate text-[11px] font-bold text-gray-500">{nextEventSummary}</span> : null}
         </span>
-      </Link>
+      </button>
       <div className="flex flex-none items-center gap-1">
         <TeamQuickLink to={`/messages/${encodeURIComponent(team.teamId)}`} label={`${team.teamName} messages`} icon={MessageCircle} badge={team.unreadCount} />
         {hasSchedule ? <TeamQuickLink to={getTeamSchedulePath(team.teamId)} label={`${team.teamName} schedule`} icon={CalendarDays} badge={team.openActions} /> : null}
