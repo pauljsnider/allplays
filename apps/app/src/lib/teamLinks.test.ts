@@ -37,6 +37,11 @@ describe('teamLinks', () => {
     });
   });
 
+  it('rejects non-youtube hosts and non-http schemes for embed urls', () => {
+    expect(parseTeamLivestreamInput('https://evil.example/youtube.com/embed/LJNfHqRRhBI')).toBeNull();
+    expect(parseTeamLivestreamInput('<iframe src="javascript:window.location=\'https://www.youtube.com/embed/LJNfHqRRhBI\'"></iframe>')).toBeNull();
+  });
+
   it('parses twitch urls and rejects garbage', () => {
     expect(parseTeamLivestreamInput('https://www.twitch.tv/MyTeamChannel')).toEqual({
       twitchChannel: 'myteamchannel',
