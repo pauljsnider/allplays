@@ -7993,10 +7993,16 @@ export async function getRsvpBreakdownByPlayer(teamId, gameId) {
 }
 
 export async function getPublicTrackingItems(teamId) {
-    const snap = await getDocs(collection(db, `teams/${teamId}/trackingItems`));
+    const snap = await getDocs(query(
+        collection(db, `teams/${teamId}/trackingItems`),
+        where('visibility', '==', 'public'),
+        where('status', '==', 'active'),
+        where('archived', '==', false),
+        where('active', '==', true)
+    ));
     return snap.docs
         .map((docSnap) => normalizeTrackingItem({ id: docSnap.id, ...docSnap.data() }))
-        .filter((item) => isPublicTrackingItem(item) && item.active !== false && item.archived !== true && item.status !== 'archived');
+        .filter((item) => isPublicTrackingItem(item));
 }
 
 export async function getPlayerTrackingStatuses(teamId, playerIds = []) {

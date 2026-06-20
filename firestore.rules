@@ -277,6 +277,16 @@ service cloud.firestore {
              isPublicTrackingItem(get(itemPath).data);
     }
 
+    function canReadNestedTrackingStatus(teamId, itemId, trackingId, data) {
+      let playerId = data.get('playerId', data.get('childId', data.get('memberId', trackingId)));
+      let itemPath = /databases/$(database)/documents/teams/$(teamId)/trackingItems/$(itemId);
+      return playerId is string &&
+             playerId.size() > 0 &&
+             (isParentForPlayer(teamId, playerId) || isPlayerSelf(teamId, playerId)) &&
+             exists(itemPath) &&
+             canReadPublicTrackingItem(teamId, get(itemPath).data);
+    }
+
     function hasIncentivePlayerLink(data) {
       return data.teamId is string &&
              data.playerId is string &&
@@ -1776,6 +1786,11 @@ service cloud.firestore {
                       request.resource.data.createdAt == resource.data.createdAt &&
                       hasTrackingItemUpdateAudit(request.resource.data);
         allow delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /memberTracking/{trackingId} {
+          allow read: if isTeamOwnerOrAdmin(teamId) || canReadNestedTrackingStatus(teamId, itemId, trackingId, resource.data);
+          allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        }
       }
 
       match /calendarTokens/{tokenId} {
