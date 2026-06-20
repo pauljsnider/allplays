@@ -268,7 +268,7 @@ describe('private AI service', () => {
         const { sendPrivateAiMessage } = await import('../../apps/app/src/lib/privateAiService.ts');
         const result = await sendPrivateAiMessage(authUser, 'What do I need to do?');
 
-        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser);
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, { includePastGames: false });
         expect(firebaseMocks.addDoc).toHaveBeenCalledTimes(2);
         expect(firebaseMocks.addDoc.mock.calls[0][1]).toMatchObject({
             role: 'user',
@@ -381,6 +381,19 @@ describe('private AI service', () => {
             })
         });
         expect(playerMocks.loadParentPlayerDetail).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
+    });
+
+    it('opts all-range AI schedule lookups into full history loads', async () => {
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'get_schedule', args: { range: 'all', limit: 5 } })).resolves.toMatchObject({
+            ok: true,
+            data: expect.objectContaining({
+                events: expect.any(Array)
+            })
+        });
+
+        expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, { includePastGames: true });
     });
 
     it('retrieves help workflow pages for functional questions', async () => {
