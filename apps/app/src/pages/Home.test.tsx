@@ -373,6 +373,25 @@ describe('Home', () => {
     expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
   });
 
+  it('renders secondary Home slices progressively via onPartial (#2037)', async () => {
+    let capturedOnPartial: ((model: typeof baseHome) => void) | undefined;
+    // Emit a partial slice, then never resolve — so anything rendered must have
+    // come from the progressive onPartial update, not the final result.
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementation((_user: unknown, options: any) => {
+      capturedOnPartial = options?.onPartial;
+      options?.onPartial?.({
+        ...baseHome,
+        fees: [{ teamId: 'team-1', id: 'fee-1', title: 'Spring dues', teamName: 'Team One' }]
+      });
+      return new Promise(() => {});
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Spring dues')).toBeTruthy();
+    expect(capturedOnPartial).toBeTypeOf('function');
+  });
+
   it('renders secondary Home details before social data finishes loading', async () => {
     const largeHome = buildLargeHomeModel();
     let resolveSocial!: (value: typeof baseSocial) => void;
