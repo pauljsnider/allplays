@@ -252,11 +252,11 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
         });
 
         expect(result).toBeNull();
-        expect(harness.checkAndSetNotificationDedup).toHaveBeenCalledWith('team-1', 'schedule', 'game-1');
+        expect(harness.checkAndSetNotificationDedup).toHaveBeenCalledWith('team-1', 'schedule', 'game-1', null);
         expect(harness.sendEachForMulticast).not.toHaveBeenCalled();
         expect(harness.functions.logger.info).toHaveBeenCalledWith(
             'Notification dedup: skipping duplicate send',
-            { teamId: 'team-1', category: 'schedule', gameId: 'game-1' }
+            { teamId: 'team-1', category: 'schedule', gameId: 'game-1', dedupKey: null }
         );
     });
 
