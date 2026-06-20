@@ -5,6 +5,7 @@ import {
     expandRecurrence as legacyExpandRecurrence,
     extractOpponent as legacyExtractOpponent,
     fetchAndParseCalendar as legacyFetchAndParseCalendar,
+    generateSeriesId as legacyGenerateSeriesId,
     getCalendarEventTrackingId as legacyGetCalendarEventTrackingId,
     isPracticeEvent as legacyIsPracticeEvent,
     isTrackedCalendarEvent as legacyIsTrackedCalendarEvent
@@ -23,6 +24,7 @@ import {
     getSubstitutionOptions as legacyGetSubstitutionOptions
 } from '../../../../../js/game-day-live-substitutions.js';
 import { buildRotationPlanFromGamePlan as legacyBuildRotationPlanFromGamePlan } from '../../../../../js/game-plan-interop.js';
+import { applyPracticeRecurrenceFields as legacyApplyPracticeRecurrenceFields } from '../../../../../js/edit-schedule-practice-payload.js';
 
 function normalizeArray<T = unknown>(value: T[] | null | undefined) {
     return Array.isArray(value) ? value : [];
@@ -129,4 +131,26 @@ export function getSubstitutionOptions(input: Record<string, unknown>): any {
 
 export function applyLiveSubstitution(input: Record<string, unknown>): any {
     return legacyApplyLiveSubstitution(normalizeRecord(input)) as any;
+}
+
+export function generateSeriesId() {
+    return String(legacyGenerateSeriesId() || '').trim();
+}
+
+export function applyPracticeRecurrenceFields(payload: {
+    practiceData: Record<string, any>;
+    isRecurring?: boolean;
+    editingPracticeId?: string | null;
+    editingSeriesId?: string | null;
+    recurrenceConfig?: Record<string, unknown>;
+    startDate?: Date;
+    endDate?: Date;
+    Timestamp: { fromDate: (date: Date) => unknown };
+    deleteField: () => unknown;
+    generateSeriesId?: () => string;
+}) {
+    return legacyApplyPracticeRecurrenceFields({
+        ...payload,
+        generateSeriesId: payload.generateSeriesId || generateSeriesId
+    }) as Record<string, any>;
 }
