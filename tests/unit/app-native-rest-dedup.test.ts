@@ -13,6 +13,7 @@ describe('native REST read dedup', () => {
   });
 
   it('reuses the same loader promise for repeated native reads inside the dedup window', async () => {
+    vi.useFakeTimers();
     const loader = vi.fn(async () => ({ documents: [{ name: 'teams/team-1' }] }));
     const key = getNativeRestDedupKey('https://firestore.test/teams/team-1');
 
@@ -25,6 +26,10 @@ describe('native REST read dedup', () => {
 
     await expect(loadDedupedNativeRestRequest(key, loader)).resolves.toEqual({ documents: [{ name: 'teams/team-1' }] });
     expect(loader).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(5001);
+    await expect(loadDedupedNativeRestRequest(key, loader)).resolves.toEqual({ documents: [{ name: 'teams/team-1' }] });
+    expect(loader).toHaveBeenCalledTimes(2);
   });
 
   it('retries failed reads instead of caching the rejection', async () => {
@@ -36,6 +41,11 @@ describe('native REST read dedup', () => {
     await expect(loadDedupedNativeRestRequest(key, loader)).rejects.toThrow('network');
     await expect(loadDedupedNativeRestRequest(key, loader)).resolves.toEqual({ ok: true });
     expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('includes the request method in the dedup cache key', () => {
+    expect(getNativeRestDedupKey('https://firestore.test/teams/team-1', { method: 'GET' }))
+      .not.toEqual(getNativeRestDedupKey('https://firestore.test/teams/team-1', { method: 'POST' }));
   });
 
   it('limits dedup candidates to native read requests', () => {

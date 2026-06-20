@@ -1,10 +1,21 @@
 type NativeRestDedupEntry<T> = {
   promise: Promise<T>;
   expiresAt: number;
+  cleanupTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const defaultDedupWindowMs = 5 * 1000;
 const nativeRestDedupCache = new Map<string, NativeRestDedupEntry<unknown>>();
+
+function deleteNativeRestDedupEntry(key: string, promise?: Promise<unknown>) {
+  const entry = nativeRestDedupCache.get(key);
+  if (!entry) return;
+  if (promise && entry.promise !== promise) return;
+  if (entry.cleanupTimer) {
+    clearTimeout(entry.cleanupTimer);
+  }
+  nativeRestDedupCache.delete(key);
+}
 
 export function shouldDedupNativeRestRequest(path: string, init: RequestInit = {}) {
   const method = String(init.method || 'GET').toUpperCase();
@@ -27,24 +38,44 @@ export function loadDedupedNativeRestRequest<T>(
   if (existing && existing.expiresAt > now) {
     return existing.promise;
   }
+  if (existing) {
+    deleteNativeRestDedupEntry(key, existing.promise);
+  }
 
-  const promise = loader().catch((error) => {
-    if (nativeRestDedupCache.get(key)?.promise === promise) {
-      nativeRestDedupCache.delete(key);
-    }
-    throw error;
+  let resolvePromise!: (value: T | PromiseLike<T>) => void;
+  let rejectPromise!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
   });
-  nativeRestDedupCache.set(key, {
+
+  const entry: NativeRestDedupEntry<T> = {
     promise,
-    expiresAt: now + dedupWindowMs
-  });
+    expiresAt: now + dedupWindowMs,
+    cleanupTimer: null
+  };
+  entry.cleanupTimer = setTimeout(() => {
+    deleteNativeRestDedupEntry(key, promise);
+  }, Math.max(0, dedupWindowMs));
+  nativeRestDedupCache.set(key, entry);
+
+  Promise.resolve()
+    .then(loader)
+    .then((result) => {
+      resolvePromise(result);
+    })
+    .catch((error) => {
+      deleteNativeRestDedupEntry(key, promise);
+      rejectPromise(error);
+    });
+
   return promise;
 }
 
 export function clearNativeRestDedup(prefix = '') {
   [...nativeRestDedupCache.keys()].forEach((key) => {
     if (!prefix || key.startsWith(prefix)) {
-      nativeRestDedupCache.delete(key);
+      deleteNativeRestDedupEntry(key);
     }
   });
 }
