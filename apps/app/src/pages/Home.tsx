@@ -71,7 +71,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
-import { recordFirstMeaningfulRender } from '../lib/uxTiming';
+import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import {
@@ -164,7 +164,8 @@ export function Home({ auth }: { auth: AuthState }) {
   const startProgressiveHomeSecondaryLoad = (
     user: NonNullable<AuthState['user']>,
     schedule: Awaited<ReturnType<typeof loadParentHomeSummaryBootstrap>>['schedule'],
-    refreshId: number
+    refreshId: number,
+    timer: ReturnType<typeof startScreenMountTimer>
   ) => {
     const snapshot: ParentHomeSecondarySnapshot = {
       schedule,
@@ -179,6 +180,7 @@ export function Home({ auth }: { auth: AuthState }) {
         setHome(latestHome);
       }
     };
+    let sliceErrorMessage = '';
     const runSlice = async <T,>(loadSlice: () => Promise<T>, applySlice: (value: T) => void) => {
       setHomeSecondaryPending((count) => count + 1);
       try {
@@ -189,6 +191,7 @@ export function Home({ auth }: { auth: AuthState }) {
       } catch (sliceError) {
         if (!isCurrentRefresh()) return;
         const appError = toAppServiceError(sliceError, 'Unable to refresh Home details.');
+        sliceErrorMessage = appError.message;
         setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
       } finally {
         setHomeSecondaryPending((count) => Math.max(0, count - 1));
@@ -218,17 +221,41 @@ export function Home({ auth }: { auth: AuthState }) {
 
     void Promise.allSettled(sliceTasks).then(() => {
       if (!isCurrentRefresh()) return;
-      setLoadedHomeDetailsUserId(user.uid);
       void runSecondaryLoad(
         async () => {
-          setSocial(await loadSocialHome(user, latestHome));
+          const socialHome = await loadSocialHome(user, latestHome);
+          if (!isCurrentRefresh()) return;
+          setSocial(socialHome);
+          setLoadedHomeDetailsUserId(user.uid);
+          timer.end({
+            hydrated: !sliceErrorMessage,
+            playerCount: latestHome.players.length,
+            teamCount: latestHome.teams.length,
+            upcomingEventCount: latestHome.upcomingEvents.length,
+            actionItemCount: latestHome.actionItems.length,
+            feeCount: latestHome.fees.length,
+            socialFeedCount: socialHome.feedItems.length,
+            friendCount: socialHome.friends.length,
+            ...(sliceErrorMessage ? { error: sliceErrorMessage } : {})
+          });
         },
         {
           getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
           rethrow: false,
           onError: (secondaryError) => {
             if (!isCurrentRefresh()) return;
-            setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')) });
+            const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
+            setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });
+            setLoadedHomeDetailsUserId(user.uid);
+            timer.end({
+              hydrated: false,
+              playerCount: latestHome.players.length,
+              teamCount: latestHome.teams.length,
+              upcomingEventCount: latestHome.upcomingEvents.length,
+              actionItemCount: latestHome.actionItems.length,
+              feeCount: latestHome.fees.length,
+              error: appError.message
+            });
           }
         }
       );
@@ -244,6 +271,10 @@ export function Home({ auth }: { auth: AuthState }) {
     clearError();
     setHomeLoadError(null);
     setSocialStatus(null);
+    const timer = startScreenMountTimer('home', {
+      force,
+      hasExistingHome
+    });
     return runPrimaryLoad(
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, { force });
@@ -251,9 +282,9 @@ export function Home({ auth }: { auth: AuthState }) {
           return summary;
         }
         setHome(summary.home);
-        setLoadedHomeDetailsUserId(user.uid);
         setHomeLoadError(null);
-        startProgressiveHomeSecondaryLoad(user, summary.schedule, refreshId);
+        setLoadedHomeDetailsUserId(hasExistingHome ? user.uid : null);
+        startProgressiveHomeSecondaryLoad(user, summary.schedule, refreshId, timer);
 
         return summary;
       },
@@ -261,7 +292,12 @@ export function Home({ auth }: { auth: AuthState }) {
         getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome),
         rethrow: false,
         onError: (loadError) => {
-          setHomeLoadError(toAppServiceError(loadError, 'Unable to load Home.'));
+          const appError = toAppServiceError(loadError, 'Unable to load Home.');
+          setHomeLoadError(appError);
+          timer.end({
+            hydrated: false,
+            error: appError.message
+          });
           if (!hasExistingHome) {
             setHome(emptyHome());
             setSocial(emptySocialHome());
@@ -285,13 +321,13 @@ export function Home({ auth }: { auth: AuthState }) {
   useRefreshOnResume(() => { void refreshHome({ force: true }); }, { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
-    if (!hasStartedInitialHomeLoadRef.current || loading || socialLoading) {
+    if (!hasStartedInitialHomeLoadRef.current || loading || socialLoading || homeSecondaryPending > 0) {
       return;
     }
     if (hasLoadedHomeDetails || homeLoadError) {
       recordFirstMeaningfulRender('home');
     }
-  }, [hasLoadedHomeDetails, homeLoadError, loading, socialLoading]);
+  }, [hasLoadedHomeDetails, homeLoadError, loading, socialLoading, homeSecondaryPending]);
 
   useEffect(() => {
     let cancelled = false;
