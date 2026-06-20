@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      root-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "npm"
+    directory: "/apps/app"
+    schedule:
+      interval: "weekly"
+    groups:
+      app-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
