@@ -64,6 +64,21 @@ describe('AppShell', () => {
     expect(searchButton.getAttribute('data-testid')).toBe('app-shell-search-trigger');
   });
 
+  it('announces notification count changes through a live region', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={auth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const notificationStatus = screen.getByTestId('app-shell-notification-status');
+    expect(notificationStatus.getAttribute('role')).toBe('status');
+    expect(notificationStatus.getAttribute('aria-live')).toBe('polite');
+    expect(notificationStatus.textContent).toBe('No unread notifications');
+  });
+
   it('keeps the mobile search trigger discoverable with a stable selector', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
 

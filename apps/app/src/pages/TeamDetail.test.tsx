@@ -349,7 +349,33 @@ describe('TeamDetail', () => {
       }
     }));
     await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Alex New added to roster.')).toBeTruthy();
+    const status = await screen.findByText('Alex New added to roster.');
+    expect(status.closest('[role="status"]')?.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('uses descriptive alt text for team and roster photos', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      team: {
+        ...model.team,
+        photoUrl: 'https://cdn.example.test/team.jpg'
+      },
+      players: [
+        { ...model.players[0], photoUrl: 'https://cdn.example.test/player.jpg' }
+      ]
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByAltText('Bears team photo')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    expect(await screen.findByAltText('Pat Star player photo')).toBeTruthy();
   });
 
   it('lets team staff manage tracking items and player statuses from the roster tab', async () => {

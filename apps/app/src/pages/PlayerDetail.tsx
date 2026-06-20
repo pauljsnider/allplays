@@ -199,7 +199,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
           <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-base font-black text-primary-700">
-            {data.player.photoUrl ? <img src={data.player.photoUrl} alt="" className="h-full w-full object-cover" /> : <span>{jersey || getInitials(playerName)}</span>}
+            {data.player.photoUrl ? <img src={data.player.photoUrl} alt={`${playerName} profile photo`} className="h-full w-full object-cover" /> : <span>{jersey || getInitials(playerName)}</span>}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Player</div>
@@ -586,7 +586,7 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <img src={previewUrl} alt="" className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Player')}
+          {previewUrl ? <img src={previewUrl} alt={`${name || data.child.playerName || 'Player'} roster photo preview`} className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Player')}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -681,7 +681,7 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <img src={previewUrl} alt="" className="h-full w-full object-cover" /> : getInitials(playerName)}
+          {previewUrl ? <img src={previewUrl} alt={`${playerName} profile photo preview`} className="h-full w-full object-cover" /> : getInitials(playerName)}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -1912,7 +1912,12 @@ function CardText({ title, detail }: { title: string; detail: string }) {
 function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const isError = tone === 'error';
   return (
-    <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+    <div
+      className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}
+      role={isError ? 'alert' : 'status'}
+      aria-live={isError ? 'assertive' : 'polite'}
+      aria-atomic="true"
+    >
       {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
       {message}
     </div>

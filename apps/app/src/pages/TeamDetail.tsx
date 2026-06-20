@@ -408,7 +408,7 @@ function TeamHero({ model }: { model: TeamDetailModel }) {
     <section className="app-card overflow-hidden">
       <div className="relative h-32 bg-gray-950 sm:h-44">
         {team.photoUrl ? (
-          <img src={team.photoUrl} alt="" className="h-full w-full object-cover opacity-90" />
+          <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover opacity-90" />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#111827_0%,#4338ca_50%,#047857_100%)]">
             <span className="text-5xl font-black text-white">{getInitials(team.name)}</span>
@@ -664,7 +664,7 @@ function AddPlayerCard({ teamId, authUser, onCreated }: {
           </button>
         )}
       </div>
-      {status ? <div className={`mt-3 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{status.message}</div> : null}
+      {status ? <div className={`mt-3 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status" aria-live="polite" aria-atomic="true">{status.message}</div> : null}
       {open ? (
         <form className="mt-3 space-y-3" onSubmit={submit}>
           <label className="block">
@@ -880,7 +880,7 @@ function TrackingAdminCard({
           Show archived
         </label>
       </div>
-      {statusMessage ? <div className={`mt-3 text-xs font-black ${statusMessage.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{statusMessage.message}</div> : null}
+      {statusMessage ? <div className={`mt-3 text-xs font-black ${statusMessage.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status" aria-live="polite" aria-atomic="true">{statusMessage.message}</div> : null}
       <form className="mt-3 space-y-3 rounded-xl border border-white/80 bg-white p-3" onSubmit={submitItem}>
         <div className="text-sm font-black text-gray-950">{editingItemId ? 'Edit tracking item' : 'Add tracking item'}</div>
         <label className="block">
@@ -2453,7 +2453,7 @@ function InternalAction({ icon: Icon, label, detail, to }: { icon: LucideIcon; l
 function PlayerPhoto({ name, photoUrl, small = false }: { name: string; photoUrl?: string | null; small?: boolean }) {
   const sizeClass = small ? 'h-8 w-8 text-[10px]' : 'h-11 w-11 text-xs';
   if (photoUrl) {
-    return <img src={photoUrl} alt="" className={`${sizeClass} flex-none rounded-full object-cover ring-1 ring-gray-200`} loading="lazy" />;
+    return <img src={photoUrl} alt={`${name} player photo`} className={`${sizeClass} flex-none rounded-full object-cover ring-1 ring-gray-200`} loading="lazy" />;
   }
   return (
     <span className={`${sizeClass} flex flex-none items-center justify-center rounded-full bg-gray-900 font-black text-white`}>
@@ -2463,7 +2463,7 @@ function PlayerPhoto({ name, photoUrl, small = false }: { name: string; photoUrl
 }
 
 function SponsorImage({ sponsor }: { sponsor: { name: string; imageUrl: string | null } }) {
-  if (sponsor.imageUrl) return <img src={sponsor.imageUrl} alt="" className="h-12 w-12 flex-none rounded-xl object-cover" loading="lazy" />;
+  if (sponsor.imageUrl) return <img src={sponsor.imageUrl} alt={`${sponsor.name} sponsor logo`} className="h-12 w-12 flex-none rounded-xl object-cover" loading="lazy" />;
   return (
     <span className="flex h-12 w-12 flex-none items-center justify-center rounded-xl bg-white text-gray-500">
       <LinkIcon className="h-5 w-5" aria-hidden="true" />
