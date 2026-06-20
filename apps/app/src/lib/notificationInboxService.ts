@@ -3,13 +3,14 @@ import {
     collection,
     db,
     doc,
+    functions,
+    httpsCallable,
     limit,
     onSnapshot,
     orderBy,
     query,
     updateDoc,
-    serverTimestamp,
-    writeBatch
+    serverTimestamp
 } from '../../../../js/firebase.js';
 
 export type NotificationInboxItem = {
@@ -108,10 +109,6 @@ export async function markAllNotificationsRead(uid: string, items: NotificationI
         return;
     }
 
-    const batch = writeBatch(db);
-    const readAt = serverTimestamp();
-    unreadItemIds.forEach((itemId) => {
-        batch.update(doc(db, `users/${uid}/notificationInbox`, itemId), { readAt });
-    });
-    await batch.commit();
+    const callable = httpsCallable(functions, 'markAllNotificationInboxRead');
+    await callable({});
 }

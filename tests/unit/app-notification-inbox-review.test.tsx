@@ -10,10 +10,16 @@ const { navigateMock } = vi.hoisted(() => ({
     navigateMock: vi.fn(),
 }));
 
+const { callableMock } = vi.hoisted(() => ({
+    callableMock: vi.fn(),
+}));
+
 const firebaseMocks = vi.hoisted(() => ({
     collection: vi.fn((_db: unknown, path: string) => ({ path })),
     db: {},
     doc: vi.fn(),
+    functions: {},
+    httpsCallable: vi.fn(() => callableMock),
     limit: vi.fn((count: number) => ({ type: 'limit', count })),
     onSnapshot: vi.fn(() => vi.fn()),
     orderBy: vi.fn((field: string, direction: string) => ({ type: 'orderBy', field, direction })),
@@ -217,14 +223,8 @@ describe('Notification inbox review regressions', () => {
         ]);
     });
 
-    it('marks only visible unread notifications read in a single batch', async () => {
-        const batch = {
-            update: vi.fn(),
-            commit: vi.fn(() => Promise.resolve()),
-        };
-        firebaseMocks.writeBatch.mockReturnValue(batch);
-        firebaseMocks.serverTimestamp.mockReturnValue('server-time');
-        firebaseMocks.doc.mockImplementation((_db: unknown, path: string, itemId?: string) => ({ path: itemId ? `${path}/${itemId}` : path }));
+    it('marks visible unread notifications read through the backend callable path', async () => {
+        callableMock.mockResolvedValue({ data: { status: 'success', updatedCount: 2 } });
 
         await markAllNotificationsRead('user-1', [
             notificationItem({ id: 'unread-1', readAt: null }),
@@ -232,11 +232,9 @@ describe('Notification inbox review regressions', () => {
             notificationItem({ id: 'unread-2', readAt: null }),
         ]);
 
-        expect(firebaseMocks.writeBatch).toHaveBeenCalledWith(firebaseMocks.db);
-        expect(batch.update).toHaveBeenCalledTimes(2);
-        expect(batch.update).toHaveBeenNthCalledWith(1, { path: 'users/user-1/notificationInbox/unread-1' }, { readAt: 'server-time' });
-        expect(batch.update).toHaveBeenNthCalledWith(2, { path: 'users/user-1/notificationInbox/unread-2' }, { readAt: 'server-time' });
-        expect(batch.commit).toHaveBeenCalled();
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'markAllNotificationInboxRead');
+        expect(callableMock).toHaveBeenCalledWith({});
+        expect(firebaseMocks.writeBatch).not.toHaveBeenCalled();
     });
 
     it('shows loading spinner when inboxState is loading and no items are present', () => {
