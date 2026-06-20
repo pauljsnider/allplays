@@ -331,6 +331,10 @@ describe('Notification bell in AppShell', () => {
 
         renderShell(true);
 
+        await waitFor(() => {
+            expect(capturedOnError).toBeTypeOf('function');
+        });
+
         // Trigger the error callback before any items arrive
         act(() => {
             capturedOnError?.(new Error('Firestore unavailable'));
