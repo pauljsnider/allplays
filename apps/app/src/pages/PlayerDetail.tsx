@@ -45,6 +45,8 @@ import {
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
+import { formatDateTileParts } from '../lib/datetime';
+import { formatMoneyFromCents } from '../lib/money';
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -1883,11 +1885,13 @@ function EmptyCard({ icon: Icon, title, detail }: { icon: LucideIcon; title: str
 }
 
 function DateTile({ date }: { date: Date }) {
+  const { month, day, weekday } = formatDateTileParts(date);
+
   return (
     <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-xl bg-gray-50 shadow-inner ring-1 ring-gray-200">
-      <div className="text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{date.toLocaleDateString('en-US', { month: 'short' })}</div>
-      <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{date.getDate()}</div>
-      <div className="mt-0.5 text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+      <div className="text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{month}</div>
+      <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{day}</div>
+      <div className="mt-0.5 text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{weekday}</div>
     </div>
   );
 }
@@ -1954,10 +1958,10 @@ function formatAverage(value: number) {
 }
 
 function formatMoney(cents: number, sign = true) {
-  const safeCents = Number.isFinite(Number(cents)) ? Number(cents) : 0;
-  const dollars = `$${(Math.abs(safeCents) / 100).toFixed(2)}`;
-  if (!sign) return dollars;
-  return safeCents >= 0 ? `+${dollars}` : `-${dollars}`;
+  return formatMoneyFromCents(cents, {
+    absolute: !sign,
+    signDisplay: sign ? 'always' : 'auto'
+  });
 }
 
 function getIncentiveStatLabel(statOptions: Array<{ key: string; label: string }>, statKey: string) {

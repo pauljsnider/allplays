@@ -1,3 +1,5 @@
+import { formatEventDate, formatEventTime, formatLongEventDate, type DateTimeFormatOptions } from './datetime';
+
 export type ParentScheduleFilter = 'upcoming-all' | 'upcoming-games' | 'upcoming-practices' | 'availability' | 'recent-results' | 'past-all';
 export type ScheduleViewMode = 'list' | 'compact' | 'calendar' | 'packets';
 export type ScheduleTimeRange = 'week' | 'month' | 'quarter' | 'all';
@@ -319,12 +321,12 @@ export function getLiveClockViewModel(event: Pick<ParentScheduleEvent, 'type' | 
   };
 }
 
-export function formatEventDateLabel(date: Date) {
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+export function formatEventDateLabel(date: Date, options: DateTimeFormatOptions = {}) {
+  return formatEventDate(date, options);
 }
 
-export function formatEventTimeLabel(date: Date) {
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+export function formatEventTimeLabel(date: Date, options: DateTimeFormatOptions = {}) {
+  return formatEventTime(date, options);
 }
 
 export function getScheduleTitle(event: Pick<ParentScheduleEvent, 'type' | 'title' | 'opponent'>) {
@@ -949,7 +951,7 @@ export function getScheduleForecastHref(location: string | null | undefined, dat
 
   let query = `weather in ${normalizedLocation}`;
   if (date) {
-    const formattedDate = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const formattedDate = formatLongEventDate(date);
     query += ` on ${formattedDate}`;
   }
 

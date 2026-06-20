@@ -35,6 +35,7 @@ import {
   type ScheduleTimeRange,
   type ScheduleViewMode
 } from '../lib/scheduleLogic';
+import { formatDateTileParts, formatLongMonthDay, formatMonthYear } from '../lib/datetime';
 import type { AuthState } from '../lib/types';
 
 const filterOptions: Array<{ value: ParentScheduleFilter; label: string }> = [
@@ -2006,14 +2007,15 @@ function ScheduleEventCard({ event }: {
   const mapHref = getScheduleMapHref(event.location);
   const forecastHref = getScheduleForecastHref(event.location, event.date);
   const childLabel = getScheduleChildLabel(event);
+  const dateTile = formatDateTileParts(event.date);
 
   return (
     <>
       <Link to={detailPath} className={`block border-b border-gray-100 px-3 py-2 transition last:border-b-0 hover:bg-gray-50 sm:hidden ${event.isCancelled ? 'opacity-65' : ''}`}>
         <div className="flex items-center gap-2.5">
           <div className="flex h-12 w-11 flex-none flex-col items-center justify-center rounded-lg bg-gray-50 ring-1 ring-gray-100">
-            <div className="text-[10px] font-black uppercase leading-none tracking-[0.04em] text-gray-500">{event.date.toLocaleDateString('en-US', { month: 'short' })}</div>
-            <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{event.date.getDate()}</div>
+            <div className="text-[10px] font-black uppercase leading-none tracking-[0.04em] text-gray-500">{dateTile.month}</div>
+            <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{dateTile.day}</div>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
@@ -2039,8 +2041,8 @@ function ScheduleEventCard({ event }: {
       <article className={`app-card schedule-event-card hidden p-4 transition sm:block ${event.isCancelled ? 'opacity-65' : ''}`}>
         <div className="flex items-start gap-3">
           <div className="schedule-card-date flex h-16 w-16 flex-none flex-col items-center justify-center rounded-2xl bg-gray-50 shadow-inner ring-1 ring-gray-200">
-            <div className="text-2xl font-black leading-none text-gray-950">{event.date.getDate()}</div>
-            <div className="mt-1 text-[10px] font-black uppercase tracking-[0.08em] text-gray-500">{event.date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+            <div className="text-2xl font-black leading-none text-gray-950">{dateTile.day}</div>
+            <div className="mt-1 text-[10px] font-black uppercase tracking-[0.08em] text-gray-500">{dateTile.weekday}</div>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -2177,7 +2179,7 @@ function CalendarSchedule({ month, entries, selectedDay, selectedDayEntries, onM
   onDaySelect: (day: Date) => void;
   onDayClose: () => void;
 }) {
-  const monthLabel = month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const monthLabel = formatMonthYear(month);
   const monthStart = new Date(month.getFullYear(), month.getMonth(), 1);
   const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
   const startDow = monthStart.getDay();
@@ -2257,7 +2259,7 @@ function CalendarEventPicker({ day, entries, onClose }: {
 }) {
   if (!day) return null;
 
-  const dayLabel = day.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const dayLabel = formatLongMonthDay(day);
   const eventCountLabel = `${entries.length} ${entries.length === 1 ? 'event' : 'events'}`;
 
   return (

@@ -64,6 +64,7 @@ import {
   type ParentScheduleEvent,
   type RsvpResponse
 } from '../lib/scheduleLogic';
+import { formatDateTileParts, formatShortMonthDay } from '../lib/datetime';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
@@ -297,6 +298,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const displayName = auth.user?.displayName || auth.user?.email || 'ALL PLAYS User';
   const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
   const today = new Date();
+  const todayTile = formatDateTileParts(today);
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
 
   const openComposer = (type: SocialPostType = 'manual_post') => {
@@ -365,8 +367,8 @@ export function Home({ auth }: { auth: AuthState }) {
       <section className="home-hero app-card overflow-hidden">
         <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
           <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-2xl bg-gray-950 text-white shadow-sm">
-            <div className="text-[10px] font-black uppercase leading-none tracking-[0.08em] text-gray-300">{today.toLocaleDateString('en-US', { month: 'short' })}</div>
-            <div className="mt-0.5 text-xl font-black leading-none">{today.getDate()}</div>
+            <div className="text-[10px] font-black uppercase leading-none tracking-[0.08em] text-gray-300">{todayTile.month}</div>
+            <div className="mt-0.5 text-xl font-black leading-none">{todayTile.day}</div>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
@@ -1744,7 +1746,7 @@ function formatSocialDate(date: Date) {
   if (diffMinutes < 60) return `${diffMinutes}m`;
   const diffHours = Math.round(diffMinutes / 60);
   if (diffHours < 24) return `${diffHours}h`;
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return formatShortMonthDay(date);
 }
 
 function PulseChip({ icon: Icon, label, value, urgent = false }: { icon: LucideIcon; label: string; value: string; urgent?: boolean }) {
@@ -1852,11 +1854,13 @@ function HomeEventCard({ event }: { event: ParentScheduleEvent }) {
 }
 
 function DateTile({ date }: { date: Date }) {
+  const { month, day, weekday } = formatDateTileParts(date);
+
   return (
     <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-xl bg-gray-50 shadow-inner ring-1 ring-gray-200">
-      <div className="text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{date.toLocaleDateString('en-US', { month: 'short' })}</div>
-      <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{date.getDate()}</div>
-      <div className="mt-0.5 text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+      <div className="text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{month}</div>
+      <div className="mt-0.5 text-lg font-black leading-none text-gray-950">{day}</div>
+      <div className="mt-0.5 text-[10px] font-black uppercase leading-none tracking-[0.06em] text-gray-500">{weekday}</div>
     </div>
   );
 }

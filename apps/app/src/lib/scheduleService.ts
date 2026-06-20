@@ -90,6 +90,8 @@ import {
   normalizeRideRequestStatus,
   normalizeRsvpResponse,
   normalizeScheduleDate,
+  formatEventDateLabel,
+  formatEventTimeLabel,
   validateExternalCalendarUrl,
   buildStaffRsvpReminderMetadata,
   buildStaffRsvpReminderMessage,
@@ -1189,11 +1191,7 @@ export function normalizeGameScoreValue(value: unknown) {
 function formatCancelledGameDate(value: unknown) {
   const eventDate = normalizeScheduleDate(value);
   if (!eventDate) return 'date TBD';
-  return eventDate.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric'
-  });
+  return formatEventDateLabel(eventDate);
 }
 
 export function buildCancelScheduledGameChatMessage(event: Pick<ParentScheduleEvent, 'opponent' | 'title' | 'date'>, titleOverride?: string | null) {
@@ -4332,7 +4330,7 @@ export async function sendStaffRsvpReminder(event: ParentScheduleEvent, user: Au
     text: buildStaffRsvpReminderMessage({
       eventType: event.type,
       title: getScheduleTitle(event),
-      dateLabel: `${event.date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })} at ${event.date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`,
+      dateLabel: `${formatEventDateLabel(event.date)} at ${formatEventTimeLabel(event.date)}`,
       missingCount: preview.missingPlayerCount
     }),
     files: [],

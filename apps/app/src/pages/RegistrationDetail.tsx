@@ -17,6 +17,7 @@ import {
   requiresRegistrationOption,
   hasQuantityDiscountRule
 } from '../lib/adapters/legacyRegistration';
+import { formatMoneyFromCents } from '../lib/money';
 import type { AuthState } from '../lib/types';
 
 type FieldErrors = Record<string, string>;
@@ -823,7 +824,7 @@ function formatOptionAvailability(option: any, counts: Record<string, any>) {
 }
 
 function formatMoney(cents: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency || 'USD' }).format((Number(cents) || 0) / 100);
+  return formatMoneyFromCents(cents, { currency });
 }
 
 function StatusPill({ value }: { value: string }) {

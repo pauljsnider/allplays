@@ -68,6 +68,7 @@ import {
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
+import { formatMoneyFromCents } from './money';
 import type { AuthUser } from './types';
 
 const legacyOrigin = 'https://allplays.ai';
@@ -1141,10 +1142,7 @@ function getArrayField(source: any, keys: string[]) {
 }
 
 function formatCurrency(cents: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency || 'USD'
-  }).format((Number(cents) || 0) / 100);
+  return formatMoneyFromCents(cents, { currency });
 }
 
 function escapeIcs(value: unknown) {

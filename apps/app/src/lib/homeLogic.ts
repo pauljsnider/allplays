@@ -4,6 +4,8 @@ import {
   normalizeRsvpResponse,
   type ParentScheduleEvent
 } from './scheduleLogic';
+import { formatEventDate } from './datetime';
+import { formatMoneyFromCents } from './money';
 import type { ParentScheduleChild } from './scheduleService';
 
 export type HomeActionKind = 'rsvp' | 'packet' | 'assignment' | 'rideshare' | 'fee' | 'message';
@@ -519,11 +521,11 @@ function toDate(value: unknown) {
 }
 
 function formatHomeActionDate(date: Date) {
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  return formatEventDate(date);
 }
 
 function formatHomeCurrency(value: number | string) {
   const cents = Number(value);
   if (!Number.isFinite(cents)) return 'Balance';
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+  return formatMoneyFromCents(cents);
 }

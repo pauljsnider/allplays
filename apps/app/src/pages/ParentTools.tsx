@@ -55,6 +55,7 @@ import {
 } from '../lib/parentToolsService';
 import { getCalendarEventShareText } from '../lib/parentToolsService';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { formatMoneyFromCents } from '../lib/money';
 import type { ParentScheduleEvent } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
 
@@ -1487,7 +1488,7 @@ function splitLines(value: string) {
 }
 
 function formatMoney(cents: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(cents) || 0) / 100);
+  return formatMoneyFromCents(cents);
 }
 
 function formatDetailAmount(row: Record<string, any>) {

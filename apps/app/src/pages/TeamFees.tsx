@@ -12,6 +12,7 @@ import {
   type TeamFeeRecipientSummary
 } from '../lib/teamFeesService';
 import { copyPublicText, sharePublicUrl } from '../lib/publicActions';
+import { formatMoneyFromCents } from '../lib/money';
 import type { AuthState } from '../lib/types';
 
 type RecipientFormState = {
@@ -32,7 +33,7 @@ type RecipientFormState = {
 };
 
 function formatMoney(cents: number) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((Number(cents) || 0) / 100);
+  return formatMoneyFromCents(cents);
 }
 
 function todayIsoDate() {
